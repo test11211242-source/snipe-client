@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: pc-build
@@ -31,40 +31,31 @@ jobs:
         run: npm run build
 
       - name: Create latest.yml
-        shell: pwsh
         run: |
-          $version = "${{ github.event.inputs.version }}"
-          $exeFile = "dist/Snipe_Client_Setup_$version.exe"
+          VERSION="${{ github.event.inputs.version }}"
+          EXE_FILE="dist/Snipe_Client_Setup_${VERSION}.exe"
 
-          $fileBytes = [System.IO.File]::ReadAllBytes($exeFile)
-          $sha512 = [System.Security.Cryptography.SHA512]::Create()
-          $hashBytes = $sha512.ComputeHash($fileBytes)
-          $sha512Hash = [Convert]::ToBase64String($hashBytes)
-          $fileSize = (Get-Item $exeFile).Length
-          $releaseDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+          SHA512=$(sha512sum "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64)
+          FILE_SIZE=$(stat -c%s "$EXE_FILE")
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
 
-          $yaml = @"
-          version: $version
+          cat > dist/latest.yml << EOF
+          version: ${VERSION}
           files:
-            - url: Snipe_Client_Setup_$version.exe
-              sha512: $sha512Hash
-              size: $fileSize
-          path: Snipe_Client_Setup_$version.exe
-          sha512: $sha512Hash
-          releaseDate: '$releaseDate'
-          "@
+            - url: Snipe_Client_Setup_${VERSION}.exe
+              sha512: ${SHA512}
+              size: ${FILE_SIZE}
+          path: Snipe_Client_Setup_${VERSION}.exe
+          sha512: ${SHA512}
+          releaseDate: '${RELEASE_DATE}'
+          EOF
 
-          Set-Content -Path "dist/latest.yml" -Value $yaml
-
-      - name: Setup SSH with shimataro action
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: 'placeholder'
-
-      - name: Add server to known hosts
-        run: ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
-        shell: bash
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
       - name: Upload installer to server
         env:
