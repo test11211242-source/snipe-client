@@ -1,0 +1,129 @@
+name: Build and Publish Snipe Client
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 3.1.21)'
+        required: true
+        type: string
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Update version
+        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Build Windows installer
+        run: npm run build
+
+      - name: Create latest.yml
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          $exeFile = "dist/Snipe_Client_Setup_$version.exe"
+
+          $fileBytes = [System.IO.File]::ReadAllBytes($exeFile)
+          $sha512 = [System.Security.Cryptography.SHA512]::Create()
+          $hashBytes = $sha512.ComputeHash($fileBytes)
+          $sha512Hash = [Convert]::ToBase64String($hashBytes)
+          $fileSize = (Get-Item $exeFile).Length
+          $releaseDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+
+          $yaml = @"
+          version: $version
+          files:
+            - url: Snipe_Client_Setup_$version.exe
+              sha512: $sha512Hash
+              size: $fileSize
+          path: Snipe_Client_Setup_$version.exe
+          sha512: $sha512Hash
+          releaseDate: '$releaseDate'
+          "@
+
+          Set-Content -Path "dist/latest.yml" -Value $yaml
+
+      - name: Upload installer to server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+
+          VERSION="${{ github.event.inputs.version }}"
+
+          # Upload installer
+          scp dist/Snipe_Client_Setup_${VERSION}.exe ${SERVER_USER}@${SERVER_HOST}:/home/ubuntu/snipe/data/updates/downloads/
+
+          # Upload latest.yml
+          scp dist/latest.yml ${SERVER_USER}@${SERVER_HOST}:/home/ubuntu/snipe/data/updates/downloads/
+
+      - name: Update versions.json on server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          ssh ${SERVER_USER}@${SERVER_HOST} << 'ENDSSH'
+          cd /home/ubuntu/snipe/data/updates
+
+          # Create or update versions.json
+          node -e "
+          const fs = require('fs');
+          const version = '$VERSION';
+          const versionsPath = 'versions.json';
+
+          let data = {
+            latest_version: version,
+            versions: {},
+            last_updated: new Date().toISOString()
+          };
+
+          if (fs.existsSync(versionsPath)) {
+            data = JSON.parse(fs.readFileSync(versionsPath, 'utf-8'));
+          }
+
+          data.latest_version = version;
+          data.versions[version] = {
+            release_date: new Date().toISOString(),
+            release_notes: 'Обновление версии ' + version,
+            is_critical: false,
+            changelog: ['Обновление до версии ' + version],
+            installer_filename: 'Snipe_Client_Setup_' + version + '.exe',
+            uploaded_by: 'github-actions'
+          };
+          data.last_updated = new Date().toISOString();
+
+          fs.writeFileSync(versionsPath, JSON.stringify(data, null, 2));
+          console.log('✅ versions.json updated to version ' + version);
+          "
+          ENDSSH
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ github.event.inputs.version }}
+          path: |
+            dist/Snipe_Client_Setup_*.exe
+            dist/latest.yml
