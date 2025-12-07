@@ -11,6 +11,9 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pc-build
 
     steps:
       - name: Checkout code
