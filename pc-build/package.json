@@ -63,7 +63,7 @@
     },
     "publish": {
       "provider": "generic",
-      "url": "http://130.61.118.215:8000/api/app/updates"
+      "url": "http://130.61.118.215:8080/api/app"
     }
   }
 }
