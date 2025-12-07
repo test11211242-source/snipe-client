@@ -1,6 +1,6 @@
 {
   "name": "snipe-client",
-  "version": "3.1.22",
+  "version": "3.1.23",
   "description": "Snipe CR",
   "main": "app/main.js",
   "author": "ArtCS",
@@ -38,6 +38,10 @@
       {
         "from": "python_scripts",
         "to": "python_scripts"
+      },
+      {
+        "from": "python-portable",
+        "to": "python-portable"
       }
     ],
     "win": {
