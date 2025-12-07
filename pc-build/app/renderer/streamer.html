@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель стримера - Snipe</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #050511;
+            --bg-secondary: #0a0a1f;
+            --bg-card: rgba(15, 15, 35, 0.8);
+            --border-color: rgba(139, 92, 246, 0.1);
+            --text-primary: #f0f0f5;
+            --text-secondary: #a0a0b8;
+            --accent-purple: #8B5CF6;
+            --accent-blue: #3B82F6;
+            --accent-pink: #EC4899;
+            --success: #10B981;
+            --error: #EF4444;
+            --warning: #F59E0B;
+            --glass: rgba(255, 255, 255, 0.02);
+            --shadow-glow: 0 0 40px rgba(139, 92, 246, 0.3);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Анимированный градиентный фон */
+        .animated-bg {
+            position: fixed;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            z-index: -1;
+            animation: aurora 20s ease-in-out infinite;
+            background: 
+                radial-gradient(ellipse at 20% 0%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 100%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 0% 100%, rgba(236, 72, 153, 0.15) 0%, transparent 50%),
+                var(--bg-primary);
+        }
+
+        @keyframes aurora {
+            0%, 100% { transform: rotate(0deg) scale(1); }
+            25% { transform: rotate(90deg) scale(1.1); }
+            50% { transform: rotate(180deg) scale(1); }
+            75% { transform: rotate(270deg) scale(1.1); }
+        }
+
+        /* Header */
+        .header {
+            height: 80px;
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(15, 15, 35, 0.95) 100%);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+            position: relative;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .back-btn {
+            padding: 10px 20px;
+            background: var(--glass);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            text-decoration: none;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .back-btn:hover {
+            background: var(--accent-purple);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
+        }
+
+        .header-title {
+            font-size: 28px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Main Layout */
+        .main-layout {
+            height: calc(100vh - 80px);
+            display: flex;
+            position: relative;
+        }
+
+        /* Tabs Navigation */
+        .tabs-nav {
+            width: 250px;
+            background: linear-gradient(180deg, 
+                rgba(15, 15, 35, 0.9) 0%, 
+                rgba(10, 10, 31, 0.8) 50%,
+                rgba(5, 5, 17, 0.9) 100%);
+            border-right: 1px solid var(--border-color);
+            backdrop-filter: blur(15px);
+            padding: 20px 0;
+            overflow-y: auto;
+        }
+
+        .tabs-nav::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                45deg,
+                rgba(139, 92, 246, 0.02) 0%,
+                transparent 30%,
+                rgba(59, 130, 246, 0.02) 100%
+            );
+            pointer-events: none;
+        }
+
+        .nav-section {
+            margin-bottom: 30px;
+            padding: 0 20px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            padding-left: 5px;
+        }
+
+        .tab-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .tab-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .tab-item:hover::before {
+            left: 100%;
+        }
+
+        .tab-item:hover {
+            background: var(--glass);
+            border-color: var(--border-color);
+            transform: translateX(4px);
+        }
+
+        .tab-item.active {
+            background: linear-gradient(135deg, 
+                rgba(139, 92, 246, 0.15) 0%,
+                rgba(59, 130, 246, 0.1) 100%);
+            border-color: var(--accent-purple);
+            box-shadow: 0 0 20px rgba(139, 92, 246, 0.2);
+        }
+
+        .tab-label {
+            font-weight: 500;
+            font-size: 14px;
+            margin-left: 4px;
+        }
+
+        .tab-badge {
+            margin-left: auto;
+            background: var(--accent-purple);
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        /* Content Area */
+        .tab-content {
+            flex: 1;
+            background: rgba(5, 5, 17, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .content-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            opacity: 0;
+            transform: translateX(30px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        .content-panel.active {
+            opacity: 1;
+            transform: translateX(0);
+            pointer-events: auto;
+        }
+
+        /* Content Styles */
+        .content-header {
+            margin-bottom: 30px;
+        }
+
+        .content-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .content-description {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent-purple);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #7C3AED;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--glass);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        .btn-danger {
+            background: var(--error);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #DC2626;
+        }
+
+        /* Status indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.success { background: var(--success); }
+        .status-dot.warning { background: var(--warning); }
+        .status-dot.info { background: var(--accent-blue); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Messages */
+        .message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .message.show { display: flex; }
+        
+        .message.success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+
+        .message.error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            color: var(--error);
+        }
+
+        .message.warning {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+        }
+
+        .message.info {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main-layout {
+                flex-direction: column;
+            }
+            
+            .tabs-nav {
+                width: 100%;
+                height: auto;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                overflow-x: auto;
+                overflow-y: hidden;
+                padding: 10px 20px;
+            }
+            
+            .nav-section {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 0;
+                white-space: nowrap;
+            }
+            
+            .section-title {
+                display: none;
+            }
+            
+            .content-panel {
+                padding: 20px;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--accent-purple);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #7C3AED;
+        }
+
+        /* Toggle переключатель для deck sharing */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .toggle {
+            display: none;
+        }
+
+        .toggle-label {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border-color);
+        }
+
+        .toggle:checked + .toggle-label {
+            background: var(--success);
+            border-color: var(--success);
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle:checked + .toggle-label .toggle-slider {
+            transform: translateX(30px);
+        }
+
+        .toggle-label:hover {
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
+        }
+
+        /* Статус deck sharing */
+        .deck-sharing-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .status-indicator.loading {
+            background: var(--warning);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-indicator.enabled {
+            background: var(--success);
+        }
+
+        .status-indicator.disabled {
+            background: var(--text-secondary);
+        }
+
+        .status-indicator.error {
+            background: var(--error);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="animated-bg"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <button class="back-btn" onclick="goBack()">
+                <span>←</span>
+                <span>Назад</span>
+            </button>
+            <h1 class="header-title">
+                <span>Панель стримера</span>
+            </h1>
+        </div>
+        <div id="global-status" class="status-info"></div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+        <!-- Tabs Navigation -->
+        <nav class="tabs-nav">
+            <div class="nav-section">
+                <div class="section-title">Основные функции</div>
+                <div class="tab-item active" data-tab="predictions">
+                    <span class="tab-label">Автопрогнозы</span>
+                    <span class="tab-badge" id="predictions-badge">0</span>
+                </div>
+                <div class="tab-item" data-tab="overlay">
+                    <span class="tab-label">Оверлей</span>
+                    <span class="tab-badge">Скоро</span>
+                </div>
+                <div class="tab-item" data-tab="alerts">
+                    <span class="tab-label">Алерты</span>
+                    <span class="tab-badge">Скоро</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="section-title">Интеграции</div>
+                <div class="tab-item" data-tab="twitch">
+                    <span class="tab-label">Twitch</span>
+                    <div class="status-dot" id="twitch-status"></div>
+                </div>
+                <div class="tab-item" data-tab="discord">
+                    <span class="tab-label">Discord</span>
+                    <span class="tab-badge">Скоро</span>
+                </div>
+                <div class="tab-item" data-tab="obs">
+                    <span class="tab-label">OBS</span>
+                    <span class="tab-badge">Скоро</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="section-title">Настройки</div>
+                <div class="tab-item" data-tab="settings">
+                    <span class="tab-label">Общие</span>
+                </div>
+                <div class="tab-item" data-tab="triggers">
+                    <span class="tab-label">Триггеры</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Content Area -->
+        <div class="tab-content">
+            <!-- Predictions Tab -->
+            <div class="content-panel active" data-panel="predictions">
+                <div class="content-header">
+                    <h2 class="content-title">Автоматические прогнозы</h2>
+                    <p class="content-description">
+                        Создавайте автоматические прогнозы на Twitch на основе детекции результатов ваших боев
+                    </p>
+                </div>
+
+                <div id="predictions-messages"></div>
+
+                <div class="card-grid">
+                    <!-- Twitch Connection Status -->
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Подключение к Twitch</span>
+                        </div>
+                        
+                        <div id="twitch-auth-status">
+                            <div class="auth-status loading">
+                                <div class="status-dot info"></div>
+                                <div>
+                                    <div>Проверяем подключение...</div>
+                                    <small>Загрузка данных авторизации</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="auth-actions" style="margin-top: 16px;">
+                            <button class="btn btn-primary" id="connect-twitch-btn" style="display: none;">
+                                <span>Подключить Twitch</span>
+                            </button>
+                            <button class="btn btn-secondary" id="disconnect-twitch-btn" style="display: none;">
+                                <span>Отключить</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Bot Status & Control -->
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Управление ботом</span>
+                        </div>
+
+                        <div class="bot-status">
+                            <div class="status-dot" id="bot-status-dot"></div>
+                            <div>
+                                <div id="bot-status-text">Бот неактивен</div>
+                                <small id="bot-status-details">Для запуска подключите Twitch</small>
+                            </div>
+                        </div>
+
+                        <div class="bot-actions" style="margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+                            <button class="btn btn-success" id="start-bot-btn" disabled>
+                                <span>Запустить бота</span>
+                            </button>
+                            <button class="btn btn-danger" id="stop-bot-btn" disabled>
+                                <span>Остановить</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="card">
+                    <div class="card-title">
+                        <span>Статистика прогнозов</span>
+                    </div>
+                    
+                    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px;">
+                        <div class="stat-item" style="text-align: center; padding: 16px; background: var(--glass); border-radius: 8px;">
+                            <div class="stat-value" style="font-size: 24px; font-weight: 600; color: var(--accent-purple);" id="total-predictions">0</div>
+                            <div class="stat-label" style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Всего прогнозов</div>
+                        </div>
+                        <div class="stat-item" style="text-align: center; padding: 16px; background: var(--glass); border-radius: 8px;">
+                            <div class="stat-value" style="font-size: 24px; font-weight: 600; color: var(--success);" id="success-rate">0%</div>
+                            <div class="stat-label" style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Точность</div>
+                        </div>
+                        <div class="stat-item" style="text-align: center; padding: 16px; background: var(--glass); border-radius: 8px;">
+                            <div class="stat-value" style="font-size: 24px; font-weight: 600; color: var(--accent-blue);" id="current-streak">0</div>
+                            <div class="stat-label" style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Текущая серия</div>
+                        </div>
+                        <div class="stat-item" style="text-align: center; padding: 16px; background: var(--glass); border-radius: 8px;">
+                            <div class="stat-value" style="font-size: 24px; font-weight: 600; color: var(--accent-pink);" id="active-prediction">—</div>
+                            <div class="stat-label" style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Активный прогноз</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Настройки прогнозов -->
+                <div class="card">
+                    <div class="card-title">
+                        <span>Настройки прогнозов</span>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                        <!-- Тип прогноза -->
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Тип прогноза</label>
+                            <select id="prediction-type" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                                <option value="win_lose">Выиграю этот бой?</option>
+                                <option value="win_streak">Выиграю N боев подряд?</option>
+                                <option value="mix">Случайный тип</option>
+                            </select>
+                        </div>
+
+                        <!-- Время участия -->
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Время участия</label>
+                            <select id="prediction-window" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                                <option value="30">30 секунд</option>
+                                <option value="60" selected>1 минута</option>
+                                <option value="120">2 минуты</option>
+                                <option value="300">5 минут</option>
+                                <option value="600">10 минут</option>
+                                <option value="900">15 минут</option>
+                                <option value="1200">20 минут</option>
+                                <option value="1800">30 минут</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <!-- Количество побед подряд -->
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Побед подряд</label>
+                            <input type="number" id="win-streak-count" value="2" min="2" max="10" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                            <small style="font-size: 12px; color: var(--text-secondary);">Для типа "N боев подряд"</small>
+                        </div>
+
+                        <!-- Задержка между прогнозами -->
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Задержка между прогнозами</label>
+                            <input type="number" id="delay-between-predictions" value="5" min="1" max="60" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                            <small style="font-size: 12px; color: var(--text-secondary);">Секунд между созданием прогнозов</small>
+                        </div>
+                    </div>
+
+                    <!-- Дополнительные настройки -->
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                            <input type="checkbox" id="auto-create-next" checked style="width: 16px; height: 16px;">
+                            <label for="auto-create-next" style="font-size: 14px; color: var(--text-primary); cursor: pointer;">Автоматически создавать следующий прогноз</label>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <input type="checkbox" id="smart-predictions" style="width: 16px; height: 16px;">
+                            <label for="smart-predictions" style="font-size: 14px; color: var(--text-primary); cursor: pointer;">Умные прогнозы (учитывать статистику)</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Overlay Tab -->
+            <div class="content-panel" data-panel="overlay">
+                <div class="content-header">
+                    <h2 class="content-title">Оверлей для стрима</h2>
+                    <p class="content-description">
+                        Настройка визуальных элементов для отображения на стриме
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+
+            <!-- Alerts Tab -->
+            <div class="content-panel" data-panel="alerts">
+                <div class="content-header">
+                    <h2 class="content-title">Алерты и уведомления</h2>
+                    <p class="content-description">
+                        Настройка звуковых и визуальных алертов
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+
+            <!-- Twitch Tab -->
+            <div class="content-panel" data-panel="twitch">
+                <div class="content-header">
+                    <h2 class="content-title">Интеграция с Twitch</h2>
+                    <p class="content-description">
+                        Управление подключением и настройками Twitch API
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>Автоматические колоды в чат</span>
+                        <div class="toggle-container">
+                            <input type="checkbox" id="deckSharingToggle" class="toggle">
+                            <label for="deckSharingToggle" class="toggle-label">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Автоматически отправляет колоды соперников в Twitch чат при их обнаружении во время игры.
+                        Формат: "Никнейм: Evo BabyD, Evo Cannon, Hog, Lightning..."
+                    </p>
+                    <div class="deck-sharing-status" id="deckSharingStatus">
+                        <span class="status-indicator loading"></span>
+                        <span>Проверка настроек...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Discord Tab -->
+            <div class="content-panel" data-panel="discord">
+                <div class="content-header">
+                    <h2 class="content-title">Интеграция с Discord</h2>
+                    <p class="content-description">
+                        Подключение к Discord боту для уведомлений
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+
+            <!-- OBS Tab -->
+            <div class="content-panel" data-panel="obs">
+                <div class="content-header">
+                    <h2 class="content-title">Интеграция с OBS</h2>
+                    <p class="content-description">
+                        Подключение к OBS Studio для управления сценами
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="content-panel" data-panel="settings">
+                <div class="content-header">
+                    <h2 class="content-title">Общие настройки</h2>
+                    <p class="content-description">
+                        Основные параметры панели стримера
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+
+            <!-- Triggers Tab -->
+            <div class="content-panel" data-panel="triggers">
+                <div class="content-header">
+                    <h2 class="content-title">Управление триггерами</h2>
+                    <p class="content-description">
+                        Настройка триггеров для детекции результатов боя
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>В разработке</span>
+                    </div>
+                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Современная система управления JWT токенами -->
+    <script src="assets/js/token-manager.js"></script>
+    <script src="assets/js/streamer.js"></script>
+    
+    <script>
+        // Функция возврата к главному экрану (как в Discord)
+        function goBack() {
+            console.log('🔙 Возврат к главному экрану...');
+            window.location.href = 'app.html';
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Настройка областей OCR</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #050511;
+            --bg-secondary: #0a0a1f;
+            --bg-card: rgba(15, 15, 35, 0.95);
+            --border-color: rgba(139, 92, 246, 0.2);
+            --text-primary: #f0f0f5;
+            --text-secondary: #a0a0b8;
+            --accent-purple: #8B5CF6;
+            --accent-blue: #3B82F6;
+            --accent-pink: #EC4899;
+            --success: #10B981;
+            --error: #EF4444;
+            --warning: #8B5CF6;
+            --glass: rgba(255, 255, 255, 0.02);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: transparent;
+            color: var(--text-primary);
+            overflow: hidden;
+            cursor: crosshair;
+            user-select: none;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(5, 5, 17, 0.85);
+            backdrop-filter: blur(0.1px);
+            pointer-events: none;
+        }
+
+        /* Инструкции */
+        .instructions {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, 
+                rgba(20, 20, 35, 0.98), 
+                rgba(15, 15, 30, 0.98)
+            );
+            backdrop-filter: blur(20px);
+            padding: 50px;
+            border-radius: 30px;
+            text-align: center;
+            max-width: 800px;
+            box-shadow: 
+                0 30px 60px rgba(0, 0, 0, 0.8),
+                0 0 100px rgba(139, 92, 246, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            pointer-events: all;
+            animation: modal-appear 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes modal-appear {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -40%) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+        }
+
+        .instructions::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, 
+                var(--accent-purple), 
+                var(--accent-pink), 
+                var(--accent-blue), 
+                var(--accent-purple)
+            );
+            border-radius: 30px;
+            opacity: 0.3;
+            z-index: -1;
+            /* animation: gradient-rotate 4s linear infinite; */ /* Отключено */
+        }
+
+        @keyframes gradient-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .instructions h2 {
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 30px;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 40px rgba(139, 92, 246, 0.5);
+        }
+
+        .step {
+            background: var(--bg-primary);
+            padding: 25px;
+            border-radius: 20px;
+            margin-bottom: 20px;
+            text-align: left;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 
+                inset 2px 2px 5px rgba(0, 0, 0, 0.5),
+                inset -2px -2px 5px rgba(255, 255, 255, 0.02);
+        }
+
+        .step::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .step:hover::before {
+            left: 100%;
+        }
+
+        .step:hover {
+            transform: translateY(-2px);
+            border-color: rgba(139, 92, 246, 0.4);
+            box-shadow: 
+                0 8px 25px rgba(139, 92, 246, 0.2),
+                inset 2px 2px 5px rgba(0, 0, 0, 0.5),
+                inset -2px -2px 5px rgba(255, 255, 255, 0.02);
+        }
+
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 35px;
+            height: 35px;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+            border-radius: 50%;
+            text-align: center;
+            margin-right: 20px;
+            font-weight: 700;
+            font-size: 16px;
+            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.5);
+        }
+
+        .step-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+        }
+
+        .step-description {
+            color: var(--text-secondary);
+            font-size: 15px;
+            margin-left: 55px;
+            line-height: 1.5;
+        }
+
+        .mode-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .mode-badge.fast {
+            background: linear-gradient(135deg, 
+                rgba(102, 126, 234, 0.2), 
+                rgba(59, 130, 246, 0.2)
+            );
+            color: var(--accent-blue);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+        }
+
+        .mode-badge.precise {
+            background: linear-gradient(135deg, 
+                rgba(118, 75, 162, 0.2), 
+                rgba(236, 72, 153, 0.2)
+            );
+            color: var(--accent-pink);
+            border: 1px solid rgba(236, 72, 153, 0.3);
+        }
+
+        .mode-badge.both {
+            background: linear-gradient(135deg, 
+                rgba(16, 185, 129, 0.2), 
+                rgba(5, 150, 105, 0.2)
+            );
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 20px;
+            margin-top: 40px;
+            justify-content: center;
+        }
+
+        .button {
+            padding: 14px 35px;
+            border: none;
+            border-radius: 15px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .button.primary {
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+            color: white;
+            box-shadow: 
+                0 8px 25px rgba(139, 92, 246, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        }
+
+        .button.primary:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 
+                0 12px 35px rgba(139, 92, 246, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+
+        .button.secondary {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 2px solid var(--border-color);
+            box-shadow: 
+                0 4px 15px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .button.secondary:hover {
+            background: rgba(40, 40, 60, 0.8);
+            border-color: rgba(139, 92, 246, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Информация о выделении */
+        .selection-info {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, 
+                rgba(20, 20, 35, 0.98), 
+                rgba(15, 15, 30, 0.98)
+            );
+            backdrop-filter: blur(20px);
+            padding: 25px 50px;
+            border-radius: 20px;
+            display: none;
+            animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 20px 40px rgba(0, 0, 0, 0.8),
+                0 0 60px rgba(139, 92, 246, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+
+        .selection-info.active {
+            display: block;
+        }
+
+        .region-label {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .region-label.trigger {
+            background: linear-gradient(135deg, var(--success), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .region-label.normal {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .region-label.precise {
+            background: linear-gradient(135deg, var(--accent-pink), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .region-hint {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* Боксы выделения */
+        .selection-box {
+            position: absolute;
+            border: 3px solid;
+            pointer-events: none;
+            transition: all 0.1s ease;
+            animation: selection-glow 2s ease-in-out infinite;
+        }
+
+        @keyframes selection-glow {
+            0%, 100% {
+                opacity: 0.8;
+                filter: drop-shadow(0 0 10px currentColor);
+            }
+            50% {
+                opacity: 1;
+                filter: drop-shadow(0 0 20px currentColor);
+            }
+        }
+
+        .selection-box.trigger {
+            border-color: var(--success);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .selection-box.normal {
+            border-color: var(--accent-blue);
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        .selection-box.precise {
+            border-color: var(--accent-pink);
+            background: rgba(236, 72, 153, 0.1);
+        }
+
+        .selection-box.preview {
+            border-style: solid;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { 
+                opacity: 0.6;
+                transform: scale(1);
+            }
+            50% { 
+                opacity: 0.9;
+                transform: scale(1.01);
+            }
+        }
+
+        /* Модальное окно предпросмотра */
+        .preview-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, 
+                rgba(20, 20, 35, 0.98), 
+                rgba(15, 15, 30, 0.98)
+            );
+            backdrop-filter: blur(20px);
+            padding: 40px;
+            border-radius: 30px;
+            display: none;
+            max-width: 1000px;
+            box-shadow: 
+                0 30px 60px rgba(0, 0, 0, 0.8),
+                0 0 100px rgba(139, 92, 246, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            animation: modal-appear 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .preview-modal.active {
+            display: block;
+        }
+
+        .preview-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 30px;
+            text-align: center;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .preview-images {
+            display: flex;
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .preview-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .preview-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            border: 2px solid var(--border-color);
+            border-radius: 15px;
+            box-shadow: 
+                0 10px 30px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .preview-image:hover {
+            transform: scale(1.05);
+            border-color: rgba(139, 92, 246, 0.5);
+            box-shadow: 
+                0 15px 40px rgba(139, 92, 246, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .error-message {
+            background: linear-gradient(135deg, 
+                rgba(239, 68, 68, 0.1), 
+                rgba(220, 38, 38, 0.1)
+            );
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: var(--error);
+            padding: 18px;
+            border-radius: 15px;
+            margin-top: 25px;
+            text-align: center;
+            display: none;
+            font-weight: 500;
+            box-shadow: 
+                0 4px 15px rgba(239, 68, 68, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        /* Анимация успеха */
+        .success-animation {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 120px;
+            animation: success-burst 1.2s ease-out;
+            pointer-events: none;
+            filter: drop-shadow(0 0 40px var(--success));
+        }
+
+        @keyframes success-burst {
+            0% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.3);
+            }
+            50% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1.2);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(1.8);
+            }
+        }
+
+        /* Курсор кастомный */
+        .custom-cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--accent-purple);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 10000;
+            transition: all 0.1s ease;
+            transform: translate(-50%, -50%);
+        }
+
+        .custom-cursor::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: var(--accent-purple);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="overlay"></div>
+    <div class="custom-cursor" id="custom-cursor"></div>
+
+    <div class="instructions" id="instructions">
+        <h2>Настройка областей OCR</h2>
+        
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">1</span>
+                Область триггера <span class="mode-badge both">Оба режима</span>
+            </div>
+            <div class="step-description">
+                Выделите область, где появляется синий экран "VS" перед боем. 
+                Эта область используется для автоматического определения начала матча.
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">2</span>
+                Быстрая область <span class="mode-badge fast">Быстрый режим</span>
+            </div>
+            <div class="step-description">
+                Небольшая область с ником и медалями противника. 
+                Появляется сразу после экрана VS для мгновенного поиска.
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">3</span>
+                Точная область <span class="mode-badge precise">Точный режим</span>
+            </div>
+            <div class="step-description">
+                Расширенная область включающая ник, медали и название клана. 
+                Появляется через 3-4 секунды для более точного поиска.
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button class="button primary" onclick="startSetup()">Начать настройку</button>
+            <button class="button secondary" onclick="cancelSetup()">Отмена</button>
+        </div>
+    </div>
+
+    <div class="selection-info" id="selection-info">
+        <div class="region-label trigger" id="region-label">Выделите область триггера</div>
+        <div class="region-hint">Нажмите и перетащите для выделения области</div>
+    </div>
+
+    <div class="preview-modal" id="preview-modal">
+        <h3 class="preview-title">Предпросмотр настроенных областей</h3>
+        <div class="preview-images">
+            <div class="preview-item">
+                <div class="preview-label">Область триггера</div>
+                <img id="trigger-preview" class="preview-image" />
+            </div>
+            <div class="preview-item">
+                <div class="preview-label">Быстрая область</div>
+                <img id="normal-preview" class="preview-image" />
+            </div>
+            <div class="preview-item">
+                <div class="preview-label">Точная область</div>
+                <img id="precise-preview" class="preview-image" />
+            </div>
+        </div>
+        <div class="button-group">
+            <button class="button primary" onclick="saveRegions()">Сохранить</button>
+            <button class="button secondary" onclick="retrySetup()">Настроить заново</button>
+        </div>
+        <div class="error-message" id="error-message"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const customCursor = document.getElementById('custom-cursor');
+        let screenshot = null;
+        let isSelecting = false;
+        let currentRegion = 'trigger_area';
+        let startX, startY, endX, endY;
+        let regions = {
+            trigger_area: null,
+            normal_data_area: null,
+            precise_data_area: null,
+            screen_resolution: {
+                width: 0,  // Будет обновлено при загрузке скриншота
+                height: 0  // Будет обновлено при загрузке скриншота
+            }
+        };
+        
+        // 🆕 ЭТАП 1.1: Переменные для валидации границ окна
+        let windowBounds = null;
+        let setupMode = 'screen';
+        let scaleFactor = 1;
+        let setupContext = null;  // 🆕 Контекст настройки (окно или экран)
+
+        // Кастомный курсор
+        document.addEventListener('mousemove', (e) => {
+            customCursor.style.left = e.clientX + 'px';
+            customCursor.style.top = e.clientY + 'px';
+        });
+
+        // Получаем скриншот от main процесса
+        window.electronAPI.on('screenshot', (screenshotData) => {
+            screenshot = new Image();
+            screenshot.onload = () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                ctx.drawImage(screenshot, 0, 0, canvas.width, canvas.height);
+                
+                // Обновляем screen_resolution реальными размерами скриншота
+                regions.screen_resolution = {
+                    width: screenshot.naturalWidth,
+                    height: screenshot.naturalHeight
+                };
+                console.log('Physical screen resolution:', regions.screen_resolution);
+            };
+            screenshot.src = screenshotData;
+        });
+        
+        // 🆕 ЭТАП 2.1: Получение контекста настройки
+        window.electronAPI.on('setup-context', (contextData) => {
+            setupContext = contextData;
+            
+            // Обновляем UI для оконного режима
+            if (setupContext && setupContext.mode === 'window') {
+                updateUIForWindowMode(setupContext);
+            }
+        });
+        
+        // 🆕 ЭТАП 1.1: Получение границ окна для валидации
+        window.electronAPI.on('window-bounds', (boundsData) => {
+            windowBounds = boundsData.bounds;
+            setupMode = boundsData.mode;
+            scaleFactor = boundsData.scaleFactor;
+            
+            // Обновляем инструкции для оконного режима
+            if (setupMode === 'window' && windowBounds) {
+                updateInstructionsForWindowMode();
+            }
+        });
+
+        function startSetup() {
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('selection-info').classList.add('active');
+            canvas.style.cursor = 'crosshair';
+            customCursor.style.display = 'block';
+        }
+
+        function cancelSetup() {
+            window.close();
+        }
+
+        // Обработка выделения областей
+        canvas.addEventListener('mousedown', (e) => {
+            if (!regions.trigger_area || !regions.normal_data_area || !regions.precise_data_area) {
+                isSelecting = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                
+                // Удаляем предыдущие выделения для текущей области
+                const existingBoxes = document.querySelectorAll(`.selection-box:not(.preview)`);
+                existingBoxes.forEach(box => {
+                    const isTrigger = box.classList.contains('trigger');
+                    const isNormal = box.classList.contains('normal');
+                    const isPrecise = box.classList.contains('precise');
+                    
+                    if ((currentRegion === 'trigger_area' && isTrigger) ||
+                        (currentRegion === 'normal_data_area' && isNormal) ||
+                        (currentRegion === 'precise_data_area' && isPrecise)) {
+                        box.remove();
+                    }
+                });
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isSelecting) {
+                endX = e.clientX;
+                endY = e.clientY;
+                drawSelectionBox();
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (isSelecting) {
+                isSelecting = false;
+                endX = e.clientX;
+                endY = e.clientY;
+                
+                // Сохраняем координаты
+                const x = Math.min(startX, endX);
+                const y = Math.min(startY, endY);
+                const width = Math.abs(endX - startX);
+                const height = Math.abs(endY - startY);
+                
+                if (width > 10 && height > 10) {
+                    // 🆕 ЭТАП 1.1: Валидация границ области перед сохранением
+                    const validationResult = validateRegionBounds({ x, y, width, height });
+                    if (!validationResult.valid) {
+                        showValidationError(validationResult.error);
+                        return; // Прерываем создание области
+                    }
+                    
+                    regions[currentRegion] = { x, y, width, height };
+                    
+                    // Создаём постоянную рамку
+                    const permanentBox = document.createElement('div');
+                    permanentBox.className = 'selection-box permanent';
+                    
+                    if (currentRegion === 'trigger_area') {
+                        permanentBox.classList.add('trigger');
+                        currentRegion = 'normal_data_area';
+                        document.getElementById('region-label').textContent = 'Выделите быструю область';
+                        document.getElementById('region-label').className = 'region-label normal';
+                    } else if (currentRegion === 'normal_data_area') {
+                        permanentBox.classList.add('normal');
+                        currentRegion = 'precise_data_area';
+                        document.getElementById('region-label').textContent = 'Выделите точную область';
+                        document.getElementById('region-label').className = 'region-label precise';
+                    } else if (currentRegion === 'precise_data_area') {
+                        permanentBox.classList.add('precise');
+                        showPreview();
+                    }
+                    
+                    permanentBox.style.left = x + 'px';
+                    permanentBox.style.top = y + 'px';
+                    permanentBox.style.width = width + 'px';
+                    permanentBox.style.height = height + 'px';
+                    document.body.appendChild(permanentBox);
+                }
+            }
+        });
+
+        function drawSelectionBox() {
+            // Удаляем временную рамку
+            const tempBox = document.querySelector('.selection-box.temp');
+            if (tempBox) tempBox.remove();
+            
+            const box = document.createElement('div');
+            box.className = 'selection-box temp';
+            
+            if (currentRegion === 'trigger_area') {
+                box.classList.add('trigger');
+            } else if (currentRegion === 'normal_data_area') {
+                box.classList.add('normal');
+            } else if (currentRegion === 'precise_data_area') {
+                box.classList.add('precise');
+            }
+            
+            box.style.left = Math.min(startX, endX) + 'px';
+            box.style.top = Math.min(startY, endY) + 'px';
+            box.style.width = Math.abs(endX - startX) + 'px';
+            box.style.height = Math.abs(endY - startY) + 'px';
+            document.body.appendChild(box);
+        }
+
+        function showPreview() {
+            document.getElementById('selection-info').classList.remove('active');
+            customCursor.style.display = 'none';
+            
+            // Создаём превью изображений
+            const createPreview = (region, elementId) => {
+                const previewCanvas = document.createElement('canvas');
+                const previewCtx = previewCanvas.getContext('2d');
+                previewCanvas.width = region.width;
+                previewCanvas.height = region.height;
+                previewCtx.drawImage(
+                    screenshot,
+                    region.x * (screenshot.width / canvas.width),
+                    region.y * (screenshot.height / canvas.height),
+                    region.width * (screenshot.width / canvas.width),
+                    region.height * (screenshot.height / canvas.height),
+                    0, 0,
+                    region.width,
+                    region.height
+                );
+                document.getElementById(elementId).src = previewCanvas.toDataURL();
+            };
+            
+            createPreview(regions.trigger_area, 'trigger-preview');
+            createPreview(regions.normal_data_area, 'normal-preview');
+            createPreview(regions.precise_data_area, 'precise-preview');
+            
+            document.getElementById('preview-modal').classList.add('active');
+            
+            // Показываем области на экране с анимацией
+            showPreviewBoxes();
+        }
+
+        function showPreviewBoxes() {
+            // Удаляем все временные рамки
+            document.querySelectorAll('.selection-box.temp').forEach(box => box.remove());
+            
+            // Добавляем класс preview к существующим рамкам
+            document.querySelectorAll('.selection-box.permanent').forEach(box => {
+                box.classList.add('preview');
+            });
+        }
+
+        function retrySetup() {
+            // Сброс настроек
+            regions.trigger_area = null;
+            regions.normal_data_area = null;
+            regions.precise_data_area = null;
+            currentRegion = 'trigger_area';
+            
+            document.getElementById('preview-modal').classList.remove('active');
+            document.getElementById('selection-info').classList.add('active');
+            document.getElementById('region-label').textContent = 'Выделите область триггера';
+            document.getElementById('region-label').className = 'region-label trigger';
+            customCursor.style.display = 'block';
+            
+            // Удаляем все рамки
+            document.querySelectorAll('.selection-box').forEach(box => box.remove());
+        }
+
+        async function saveRegions() {
+            const saveButton = event.target;
+            saveButton.disabled = true;
+            saveButton.textContent = 'Анализ профиля...';
+            
+            try {
+                // Конвертируем координаты в реальные значения экрана
+                const scaleX = screenshot.width / canvas.width;
+                const scaleY = screenshot.height / canvas.height;
+                
+                // 🎯 НОВАЯ ЛОГИКА: Создание персонального профиля триггера
+                console.log('🔍 Создание персонального профиля для области триггера...');
+                
+                // Создаем персональный профиль для trigger_area
+                const triggerProfile = await createPersonalTriggerProfile(
+                    regions.trigger_area, 
+                    scaleX, 
+                    scaleY
+                );
+                
+                if (!triggerProfile.success) {
+                    throw new Error(`Ошибка создания профиля: ${triggerProfile.error}`);
+                }
+                
+                console.log('✅ Персональный профиль создан:', triggerProfile);
+                
+                saveButton.textContent = 'Сохранение...';
+                
+                const finalRegions = {
+                    trigger_area: {
+                        x: Math.round(regions.trigger_area.x * scaleX),
+                        y: Math.round(regions.trigger_area.y * scaleY),
+                        width: Math.round(regions.trigger_area.width * scaleX),
+                        height: Math.round(regions.trigger_area.height * scaleY),
+                        // 🆕 Персональные данные профиля
+                        color_palette: triggerProfile.color_palette,
+                        template_base64: triggerProfile.template_base64,
+                        created_at: new Date().toISOString()
+                    },
+                    normal_data_area: {
+                        x: Math.round(regions.normal_data_area.x * scaleX),
+                        y: Math.round(regions.normal_data_area.y * scaleY),
+                        width: Math.round(regions.normal_data_area.width * scaleX),
+                        height: Math.round(regions.normal_data_area.height * scaleY)
+                    },
+                    precise_data_area: {
+                        x: Math.round(regions.precise_data_area.x * scaleX),
+                        y: Math.round(regions.precise_data_area.y * scaleY),
+                        width: Math.round(regions.precise_data_area.width * scaleX),
+                        height: Math.round(regions.precise_data_area.height * scaleY)
+                    },
+                    screen_resolution: regions.screen_resolution
+                };
+                
+                const result = await window.electronAPI.ocr.saveRegions(finalRegions);
+                
+                if (result.success) {
+                    // Показываем анимацию успеха
+                    const successIcon = document.createElement('div');
+                    successIcon.className = 'success-animation';
+                    successIcon.textContent = '✅';
+                    document.body.appendChild(successIcon);
+                    
+                    setTimeout(() => {
+                        window.close();
+                    }, 1000);
+                } else {
+                    throw new Error(result.error || 'Ошибка сохранения областей');
+                }
+                
+            } catch (error) {
+                console.error('❌ Ошибка сохранения регионов:', error);
+                document.getElementById('error-message').textContent = error.message || 'Неизвестная ошибка';
+                document.getElementById('error-message').style.display = 'block';
+                saveButton.disabled = false;
+                saveButton.textContent = 'Сохранить';
+            }
+        }
+
+        /**
+         * Создание персонального профиля триггера из выделенной области
+         * @param {Object} triggerArea - Координаты области триггера (canvas координаты)
+         * @param {number} scaleX - Масштаб по X для конвертации в реальные координаты
+         * @param {number} scaleY - Масштаб по Y для конвертации в реальные координаты
+         * @returns {Object} Результат анализа {success, color_palette, template_base64, error}
+         */
+        async function createPersonalTriggerProfile(triggerArea, scaleX, scaleY) {
+            try {
+                // Создаем временный canvas для вырезки области триггера
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Размеры области в реальных координатах экрана
+                const realWidth = Math.round(triggerArea.width * scaleX);
+                const realHeight = Math.round(triggerArea.height * scaleY);
+                const realX = Math.round(triggerArea.x * scaleX);
+                const realY = Math.round(triggerArea.y * scaleY);
+                
+                // Настраиваем размер временного canvas
+                tempCanvas.width = realWidth;
+                tempCanvas.height = realHeight;
+                
+                // Создаем временное изображение из скриншота
+                const img = new Image();
+                const imagePromise = new Promise((resolve, reject) => {
+                    img.onload = () => resolve(img);
+                    img.onerror = () => reject(new Error('Не удалось загрузить скриншот'));
+                });
+                
+                img.src = canvas.toDataURL();
+                await imagePromise;
+                
+                // Вырезаем область триггера из исходного изображения
+                tempCtx.drawImage(
+                    img,
+                    triggerArea.x, triggerArea.y, triggerArea.width, triggerArea.height, // source
+                    0, 0, realWidth, realHeight // destination
+                );
+                
+                // Конвертируем в base64 для передачи в Python
+                const triggerImageBase64 = tempCanvas.toDataURL('image/png').split(',')[1];
+                
+                console.log(`📸 Вырезана область триггера: ${realWidth}x${realHeight} пикселей`);
+                
+                // Вызываем Python анализатор через IPC
+                const profileResult = await window.electronAPI.ocr.analyzeProfile({
+                    imageData: triggerImageBase64,
+                    size: {
+                        width: realWidth,
+                        height: realHeight
+                    }
+                });
+                
+                if (!profileResult.success) {
+                    throw new Error(profileResult.error || 'Ошибка анализа профиля');
+                }
+                
+                return {
+                    success: true,
+                    color_palette: profileResult.color_palette,
+                    template_base64: profileResult.template_base64,
+                    analysis_info: {
+                        image_size: `${realWidth}x${realHeight}`,
+                        colors_found: profileResult.color_palette.length
+                    }
+                };
+                
+            } catch (error) {
+                console.error('❌ Ошибка создания персонального профиля:', error);
+                return {
+                    success: false,
+                    error: error.message || 'Неизвестная ошибка анализа'
+                };
+            }
+        }
+
+        // 🆕 ЭТАП 1.1: Функции валидации границ окна
+        function validateRegionBounds(region) {
+            if (!windowBounds || setupMode !== 'window') {
+                return { valid: true }; // Для полноэкранного режима ограничений нет
+            }
+            
+            // Конвертируем координаты canvas в физические пиксели для сравнения с bounds
+            const scaleX = screenshot.naturalWidth / canvas.width;
+            const scaleY = screenshot.naturalHeight / canvas.height;
+            
+            const physicalRegion = {
+                x: Math.round(region.x * scaleX),
+                y: Math.round(region.y * scaleY),
+                width: Math.round(region.width * scaleX),
+                height: Math.round(region.height * scaleY)
+            };
+            
+            const withinBounds = physicalRegion.x >= windowBounds.x && 
+                                physicalRegion.y >= windowBounds.y &&
+                                physicalRegion.x + physicalRegion.width <= windowBounds.x + windowBounds.width &&
+                                physicalRegion.y + physicalRegion.height <= windowBounds.y + windowBounds.height;
+            
+            if (!withinBounds) {
+                return {
+                    valid: false,
+                    error: 'Область должна быть внутри выбранного окна'
+                };
+            }
+            
+            return { valid: true };
+        }
+        
+        function showValidationError(errorMessage) {
+            // Показываем временное сообщение об ошибке
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'validation-error';
+            errorDiv.style.cssText = `
+                position: absolute;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: linear-gradient(135deg, rgba(239, 68, 68, 0.9), rgba(220, 38, 38, 0.9));
+                color: white;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-weight: 600;
+                box-shadow: 0 8px 25px rgba(239, 68, 68, 0.3);
+                z-index: 10000;
+                animation: errorSlide 0.3s ease-out;
+            `;
+            errorDiv.textContent = errorMessage;
+            
+            document.body.appendChild(errorDiv);
+            
+            // Удаляем через 3 секунды
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    errorDiv.remove();
+                }
+            }, 3000);
+        }
+        
+        function updateInstructionsForWindowMode() {
+            const instructionsTitle = document.querySelector('.instructions h2');
+            if (instructionsTitle && setupMode === 'window') {
+                instructionsTitle.textContent = 'Настройка областей OCR (Оконный режим)';
+                
+                // Добавляем информацию о том, что области ограничены окном
+                const existingNote = document.getElementById('window-mode-note');
+                if (!existingNote) {
+                    const noteDiv = document.createElement('div');
+                    noteDiv.id = 'window-mode-note';
+                    noteDiv.style.cssText = `
+                        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+                        border: 1px solid rgba(59, 130, 246, 0.3);
+                        border-radius: 10px;
+                        padding: 15px;
+                        margin-bottom: 20px;
+                        color: var(--accent-blue);
+                        font-size: 14px;
+                        text-align: center;
+                    `;
+                    noteDiv.innerHTML = '📍 Области можно выделять только внутри выбранного окна';
+                    
+                    const instructions = document.getElementById('instructions');
+                    const firstStep = instructions.querySelector('.step');
+                    instructions.insertBefore(noteDiv, firstStep);
+                }
+            }
+        }
+        
+        // 🆕 ЭТАП 2.1: Обновление UI для оконного режима
+        function updateUIForWindowMode(context) {
+            console.log('🪟 Обновление UI для оконного режима:', context);
+            
+            // Обновляем заголовок
+            const instructionsTitle = document.querySelector('.instructions h2');
+            if (instructionsTitle) {
+                instructionsTitle.innerHTML = `
+                    🪟 Настройка областей OCR<br>
+                    <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || 'Неизвестно'}</small>
+                `;
+            }
+            
+            // Создаем информационную панель
+            createWindowInfoPanel(context.targetWindow);
+            
+            // Обновляем инструкции
+            updateInstructionsForWindowMode();
+        }
+        
+        // 🆕 ЭТАП 2.1: Создание информационной панели о окне
+        function createWindowInfoPanel(windowInfo) {
+            if (!windowInfo) return;
+            
+            // Удаляем существующую панель
+            const existingPanel = document.getElementById('window-info-panel');
+            if (existingPanel) {
+                existingPanel.remove();
+            }
+            
+            const panel = document.createElement('div');
+            panel.id = 'window-info-panel';
+            panel.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: var(--bg-card);
+                border: 1px solid var(--border-color);
+                border-radius: 15px;
+                padding: 20px;
+                min-width: 280px;
+                backdrop-filter: blur(10px);
+                z-index: 1000;
+                color: var(--text-primary);
+                font-family: inherit;
+                box-shadow: var(--shadow-glow);
+            `;
+            
+            panel.innerHTML = `
+                <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                    <div style="
+                        width: 40px; 
+                        height: 40px; 
+                        background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+                        border-radius: 10px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin-right: 12px;
+                        font-size: 18px;
+                    ">🪟</div>
+                    <div>
+                        <div style="font-weight: 600; color: var(--text-primary);">Выбранное окно</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">режим оконного захвата</div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Название:</div>
+                    <div style="font-size: 14px; font-weight: 500; color: var(--accent-blue);">${windowInfo.name}</div>
+                </div>
+                
+                ${windowInfo.executableName ? `
+                <div style="margin-bottom: 10px;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Приложение:</div>
+                    <div style="font-size: 14px; color: var(--text-primary);">${windowInfo.executableName}</div>
+                </div>
+                ` : ''}
+                
+                <div style="
+                    background: rgba(139, 92, 246, 0.1);
+                    border: 1px solid rgba(139, 92, 246, 0.3);
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin-top: 15px;
+                    font-size: 12px;
+                    color: var(--accent-purple);
+                    text-align: center;
+                ">
+                    📍 Области можно выделять только<br>внутри данного окна
+                </div>
+            `;
+            
+            document.body.appendChild(panel);
+            
+            // Анимация появления
+            panel.style.transform = 'translateX(100%)';
+            panel.style.transition = 'transform 0.3s ease-out';
+            
+            setTimeout(() => {
+                panel.style.transform = 'translateX(0)';
+            }, 100);
+        }
+        
+        // Добавляем CSS для анимации ошибки
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes errorSlide {
+                from {
+                    opacity: 0;
+                    transform: translateX(-50%) translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(-50%) translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Закрытие по Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (document.getElementById('preview-modal').classList.contains('active')) {
+                    retrySetup();
+                } else {
+                    cancelSetup();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
