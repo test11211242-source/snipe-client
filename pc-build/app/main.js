@@ -161,4 +161,4 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('💥 Необработанный отказ промиса:', reason);
-});
+});// Test change Fri Jan  9 21:42:42 UTC 2026
