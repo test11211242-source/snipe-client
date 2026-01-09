@@ -297,8 +297,44 @@ class StoreManager {
         console.log('🪟 Последнее выбранное окно сохранено:', windowInfo.name);
     }
 
+    // === 🆕 МЕТОДЫ ДЛЯ КЕША КАРТ (ImageCacheManager) ===
+
+    /**
+     * Получить метаданные кеша карт
+     */
+    getCardsCache() {
+        return this.store.get('cardsCache', {
+            version: 0,
+            contentHash: '',
+            lastCheck: 0
+        });
+    }
+
+    /**
+     * Сохранить метаданные кеша карт
+     */
+    setCardsCache(cacheData) {
+        this.store.set('cardsCache', {
+            ...cacheData,
+            lastUpdated: new Date().toISOString()
+        });
+        console.log('🎴 Метаданные кеша карт сохранены');
+    }
+
+    /**
+     * Обновить версию и хеш кеша карт
+     */
+    updateCardsCacheVersion(version, contentHash) {
+        const cache = this.getCardsCache();
+        cache.version = version;
+        cache.contentHash = contentHash;
+        cache.lastCheck = Date.now();
+        this.setCardsCache(cache);
+        console.log(`🎴 Версия кеша обновлена: v${version}, hash: ${contentHash.substring(0, 8)}...`);
+    }
+
     // === 🆕 МЕТОДЫ ДЛЯ ЦЕЛИ ЗАХВАТА (ЭКРАН ИЛИ ОКНО) ===
-    
+
     /**
      * Получить выбранную цель захвата для мониторинга
      */

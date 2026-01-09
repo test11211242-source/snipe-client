@@ -236,6 +236,7 @@ class IpcManager {
         this.registerWidgetHandlers();
         this.registerUpdateHandlers();
         this.registerSettingsHandlers();
+        this.registerCacheHandlers(); // 🆕 Обработчики для кеша изображений карт
         this.registerAppHandlers();
 
         // 🆕 ЭТАП 2.1: Настройка EventBus обработчиков
@@ -1309,6 +1310,75 @@ class IpcManager {
         });
 
         console.log('⚙️ Обработчики настроек зарегистрированы');
+    }
+
+    // === Кеш изображений карт ===
+
+    registerCacheHandlers() {
+        this.registerHandler('cache:get-card-image', async (event, cardName, level) => {
+            console.log(`🎴 IPC: Получение пути к изображению карты: ${cardName}, level: ${level}`);
+
+            try {
+                const imageCache = this.appManager.modules.imageCache;
+
+                if (!imageCache) {
+                    console.warn('⚠️ ImageCacheManager не инициализирован');
+                    return null;
+                }
+
+                const imagePath = imageCache.getCardImagePath(cardName, level);
+                return imagePath;
+
+            } catch (error) {
+                console.error('❌ Ошибка получения пути к изображению карты:', error);
+                return null;
+            }
+        });
+
+        this.registerHandler('cache:force-update', async () => {
+            console.log('🔄 IPC: Принудительное обновление кеша карт');
+
+            try {
+                const imageCache = this.appManager.modules.imageCache;
+
+                if (!imageCache) {
+                    return {
+                        success: false,
+                        error: 'ImageCacheManager не инициализирован'
+                    };
+                }
+
+                const result = await imageCache.checkAndUpdate(true);
+                return result;
+
+            } catch (error) {
+                console.error('❌ Ошибка принудительного обновления кеша:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        });
+
+        this.registerHandler('cache:get-status', async () => {
+            console.log('📊 IPC: Получение статуса кеша карт');
+
+            try {
+                const imageCache = this.appManager.modules.imageCache;
+
+                if (!imageCache) {
+                    return { initialized: false };
+                }
+
+                return imageCache.getCacheStatus();
+
+            } catch (error) {
+                console.error('❌ Ошибка получения статуса кеша:', error);
+                return { error: error.message };
+            }
+        });
+
+        console.log('🎴 Обработчики кеша изображений зарегистрированы');
     }
 
     // === Общие обработчики приложения ===

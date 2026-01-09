@@ -435,6 +435,14 @@
 
         // Обновление виджета
         function updateWidget(playerData) {
+            // Проверяем если игрок не найден
+            if (playerData.player_not_found || playerData.success === false) {
+                const nickname = playerData.searched_nickname || 
+                                playerData.ocr_result?.nickname || 'Неизвестный';
+                showPlayerNotFoundMessage(nickname);
+                return;
+            }
+            
             const player = playerData.player || {};
             const decks = playerData.decks || [];
             
@@ -446,17 +454,60 @@
             if (decks.length > 0) {
                 const deck = decks[0];
                 displayDeck(deck);
+            } else {
+                // Нет колоды в Path of Legends
+                showNoPolMessage();
             }
         }
 
+        // Показать сообщение "Игрок не найден"
+        function showPlayerNotFoundMessage(nickname) {
+            document.getElementById('player-name').textContent = nickname;
+            document.getElementById('player-rating').textContent = '-';
+            
+            const container = document.getElementById('deck-container');
+            container.innerHTML = `
+                <div style="
+                    grid-column: 1 / -1;
+                    text-align: center;
+                    padding: 20px;
+                    color: #ef4444;
+                    font-size: 14px;
+                ">
+                    ❌ Игрок ${nickname} не найден
+                </div>
+            `;
+            document.getElementById('average-elixir').textContent = '-';
+            document.getElementById('deck-weakness').textContent = '';
+        }
+
+        // Показать сообщение об отсутствии PoL колоды
+        function showNoPolMessage() {
+            const container = document.getElementById('deck-container');
+            container.innerHTML = `
+                <div style="
+                    grid-column: 1 / -1;
+                    text-align: center;
+                    padding: 20px;
+                    color: #fbbf24;
+                    font-size: 14px;
+                ">
+                    ⚠️ Игрок не играл в Path of Legends
+                </div>
+            `;
+            document.getElementById('average-elixir').textContent = '-';
+            document.getElementById('deck-weakness').textContent = '';
+        }
+
         // Отображение колоды
-        function displayDeck(deck) {
+        async function displayDeck(deck) {
             const container = document.getElementById('deck-container');
             container.innerHTML = '';
-            
+
             if (!deck.cards || deck.cards.length === 0) return;
-            
-            deck.cards.forEach((card, index) => {
+
+            for (let index = 0; index < deck.cards.length; index++) {
+                const card = deck.cards[index];
                 const cardEl = document.createElement('div');
                 cardEl.className = 'deck-card';
 
@@ -472,27 +523,40 @@
                     cardEl.classList.add('hero');
                 }
 
-                // Определяем иконку: приоритет display_icon_url -> по level -> обычная
-                let iconUrl = card.icon_url;
+                // Определяем fallback URL для случая, если кеш недоступен
+                let fallbackUrl = card.icon_url;
                 if (card.display_icon_url) {
-                    iconUrl = card.display_icon_url;
+                    fallbackUrl = card.display_icon_url;
                 } else if (isHero && card.hero_icon_url) {
-                    iconUrl = card.hero_icon_url;
+                    fallbackUrl = card.hero_icon_url;
                 } else if (isEvolution && card.evolution_icon_url) {
-                    iconUrl = card.evolution_icon_url;
+                    fallbackUrl = card.evolution_icon_url;
+                }
+
+                // Получаем путь к закешированному изображению
+                const level = card.evolution_level || 0;
+                let imageSource = fallbackUrl;
+
+                try {
+                    const cachedPath = await window.electronAPI.invoke('cache:get-card-image', card.name, level);
+                    if (cachedPath) {
+                        imageSource = cachedPath;
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Не удалось получить кеш для ${card.name}, используем URL`);
                 }
 
                 // Бейдж только для эволюций
                 const badge = isEvolution ? '<span class="evolution-badge">💎</span>' : '';
 
                 cardEl.innerHTML = `
-                    <img src="${iconUrl}" alt="${card.name}" loading="lazy">
+                    <img src="${imageSource}" alt="${card.name}" loading="lazy" onerror="this.src='${fallbackUrl}'">
                     ${badge}
                     <div class="tooltip">${card.name}</div>
                 `;
 
                 container.appendChild(cardEl);
-            });
+            }
             
             // Обновляем средний эликсир
             const avgElixir = deck.average_elixir || calculateAverageElixir(deck.cards);

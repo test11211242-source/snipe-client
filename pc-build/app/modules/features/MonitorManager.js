@@ -624,8 +624,15 @@ class MonitorManager {
                 this.eventBus.emit('monitor:player-found', { playerData });
                 this.showPlayerFoundNotification(playerData);
             } else {
-                console.error('❌ Ошибка OCR сервера:', response.status);
-                this.eventBus.emit('monitor:error', `Ошибка OCR: ${response.status}`);
+                // Игрок не найден - всё равно отправляем данные для обновления UI
+                const playerData = response.data || {};
+                playerData.player_not_found = true;
+                playerData.searched_nickname = playerData.ocr_result?.nickname || 
+                                               playerData.searched_nickname || 'Неизвестный';
+                console.log('❌ Игрок не найден:', playerData.searched_nickname);
+                
+                // Отправляем событие для обновления UI с сообщением об ошибке
+                this.eventBus.emit('monitor:player-found', { playerData });
             }
             
         } catch (error) {

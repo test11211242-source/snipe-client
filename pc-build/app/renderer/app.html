@@ -2859,12 +2859,15 @@
             }
         }
 
-        function generateDeckHtml(deck) {
+        async function generateDeckHtml(deck) {
             if (!deck || !deck.cards || deck.cards.length === 0) {
                 return '<div class="detail-item"><div class="detail-label">Колода не найдена</div></div>';
             }
 
-            const cardsHtml = deck.cards.map((card, index) => {
+            const cardsHtmlArray = [];
+
+            for (let index = 0; index < deck.cards.length; index++) {
+                const card = deck.cards[index];
                 const cardName = card.name || 'Карта';
 
                 // evolution_level: 0=обычная, 1=эволюция, 2+=чемпион
@@ -2872,14 +2875,27 @@
                 const isEvolution = evolutionLevel === 1 || card.is_evolution === true;
                 const isHero = evolutionLevel >= 2;
 
-                // Определяем иконку: приоритет display_icon_url -> по level -> обычная
-                let iconUrl = card.icon_url || '';
+                // Определяем fallback URL для случая, если кеш недоступен
+                let fallbackUrl = card.icon_url || '';
                 if (card.display_icon_url) {
-                    iconUrl = card.display_icon_url;
+                    fallbackUrl = card.display_icon_url;
                 } else if (isHero && card.hero_icon_url) {
-                    iconUrl = card.hero_icon_url;
+                    fallbackUrl = card.hero_icon_url;
                 } else if (isEvolution && card.evolution_icon_url) {
-                    iconUrl = card.evolution_icon_url;
+                    fallbackUrl = card.evolution_icon_url;
+                }
+
+                // Получаем путь к закешированному изображению
+                const level = evolutionLevel;
+                let imageSource = fallbackUrl;
+
+                try {
+                    const cachedPath = await window.electronAPI.invoke('cache:get-card-image', cardName, level);
+                    if (cachedPath) {
+                        imageSource = cachedPath;
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Не удалось получить кеш для ${cardName}, используем URL`);
                 }
 
                 // CSS классы
@@ -2894,18 +2910,20 @@
                 const typeLabel = isHero ? ' (Hero)' : (isEvolution ? ' (Evolution)' : '');
                 const debugTitle = `${cardName}${typeLabel} [Pos: ${index}]`;
 
-                return `
+                cardsHtmlArray.push(`
                     <div class="deck-card-item ${classes}"
                         title="${debugTitle}"
                         data-evolution-level="${evolutionLevel}"
                         data-position="${index}">
-                        <img src="${iconUrl}"
+                        <img src="${imageSource}"
                             alt="${cardName}"
-                            onerror="this.style.display='none'"
+                            onerror="this.src='${fallbackUrl}'"
                             loading="lazy">
                     </div>
-                `;
-            }).join('');
+                `);
+            }
+
+            const cardsHtml = cardsHtmlArray.join('');
 
             const averageElixir = deck.average_elixir ? deck.average_elixir.toFixed(1) : 'N/A';
 
@@ -2919,24 +2937,54 @@
             `;
         }
 
-        function addResultCard(playerData) {
+        async function addResultCard(playerData) {
             const container = document.getElementById('results-container');
-            
+
             const emptyState = container.querySelector('.empty-state');
             if (emptyState) {
                 emptyState.remove();
             }
-            
+
+            // Проверяем если игрок не найден
+            if (playerData.player_not_found || playerData.success === false) {
+                const nickname = playerData.searched_nickname || 
+                                playerData.ocr_result?.nickname || 'Неизвестный';
+                
+                const card = document.createElement('div');
+                card.className = 'result-card';
+                card.innerHTML = `
+                    <div class="player-header">
+                        <div class="player-name">${nickname}</div>
+                        <div class="player-trophies" style="color: #ef4444;">❌ Не найден</div>
+                    </div>
+                    <div class="player-details">
+                        <div class="detail-item" style="grid-column: 1 / -1;">
+                            <div class="detail-value" style="color: #ef4444; text-align: center; padding: 20px;">
+                                ❌ Игрок ${nickname} не найден
+                            </div>
+                        </div>
+                    </div>
+                    <div class="timestamp">${new Date().toLocaleTimeString()}</div>
+                `;
+                
+                if (container.firstChild) {
+                    container.insertBefore(card, container.firstChild);
+                } else {
+                    container.appendChild(card);
+                }
+                return;
+            }
+
             const player = playerData.player || {};
             const ocrResult = playerData.ocr_result || {};
             const decks = playerData.decks || [];
             const searchResult = playerData.search_result || {};
-            
+
             const playerName = player.name || ocrResult.nickname || 'Неизвестный';
             const playerRating = player.rating || ocrResult.rating || 0;
             const playerClan = player.clan_name || 'Без клана';
             const playerRank = player.rank || 'N/A';
-            
+
             let deckInfo = '';
             if (decks && decks.length > 0) {
                 const recentDeck = decks[0];
@@ -2944,7 +2992,17 @@
                     const costs = recentDeck.cards.map(c => c.elixir_cost).filter(c => c !== null && c !== undefined);
                     recentDeck.average_elixir = costs.length > 0 ? (costs.reduce((a, b) => a + b, 0) / costs.length) : 0;
                 }
-                deckInfo = generateDeckHtml(recentDeck);
+                deckInfo = await generateDeckHtml(recentDeck);
+            } else {
+                // Нет колоды в Path of Legends
+                deckInfo = `
+                    <div class="detail-item" style="grid-column: 1 / -1;">
+                        <div class="detail-label">Колода</div>
+                        <div class="detail-value" style="color: #fbbf24;">
+                            ⚠️ Игрок не играл в Path of Legends
+                        </div>
+                    </div>
+                `;
             }
             
             const searchStatus = playerData.success ? '✅ Найден' : '❌ Не найден';

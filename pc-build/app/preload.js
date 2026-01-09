@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
       'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
-      'store:get', 'store:set', 'store:has', 'store:delete'
+      'store:get', 'store:set', 'store:has', 'store:delete',
+      'cache:get-card-image', 'cache:force-update', 'cache:get-status'
     ];
     
     if (allowedChannels.includes(channel)) {
@@ -123,7 +124,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLastSelected: () => ipcRenderer.invoke('window:get-last-selected'),
     clearCache: () => ipcRenderer.invoke('window:clear-cache')
   },
-  
+
+  // 🎴 Кеш изображений карт
+  cache: {
+    getCardImage: (cardName, level) => ipcRenderer.invoke('cache:get-card-image', cardName, level),
+    forceUpdate: () => ipcRenderer.invoke('cache:force-update'),
+    getStatus: () => ipcRenderer.invoke('cache:get-status')
+  },
+
   // Слушатели событий
   on: (channel, callback) => {
     const validChannels = [

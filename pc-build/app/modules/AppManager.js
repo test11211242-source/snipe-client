@@ -2,6 +2,7 @@ const ConfigManager = require('./core/ConfigManager');
 const StoreManager = require('./core/StoreManager');
 const EventBus = require('./core/EventBus');
 const IpcManager = require('./core/IpcManager');
+const ImageCacheManager = require('./core/ImageCacheManager');
 const ServerManager = require('./network/ServerManager');
 const ApiManager = require('./network/ApiManager');
 const WebSocketManager = require('./network/WebSocketManager');
@@ -32,13 +33,14 @@ class AppManager {
             this.modules.store = new StoreManager();
             this.modules.eventBus = new EventBus();
             this.modules.server = new ServerManager();
-            
+
             console.log('✅ Базовые модули инициализированы');
             
             // 2. Инициализация сетевых модулей
             this.modules.api = new ApiManager();
             this.modules.websocket = new WebSocketManager();
-            
+            this.modules.imageCache = new ImageCacheManager(this.modules.store, this.modules.api);
+
             console.log('✅ Сетевые модули инициализированы');
             
             // 3. Инициализация модулей авторизации
@@ -342,6 +344,19 @@ class AppManager {
                 };
             }
             
+            // 2.5. Инициализация и проверка кеша изображений карт
+            console.log('🎴 Проверка кеша изображений карт...');
+            try {
+                await this.modules.imageCache.initialize();
+                // Запускаем проверку в фоне, не блокируя запуск
+                this.modules.imageCache.checkAndUpdate().catch(error => {
+                    console.warn('⚠️ Ошибка обновления кеша изображений:', error);
+                });
+            } catch (error) {
+                console.warn('⚠️ Ошибка инициализации кеша изображений:', error);
+                // Не критично, продолжаем работу
+            }
+
             // 3. Проверка авторизации
             console.log('🔐 Проверка авторизации...');
             const authResult = await this.modules.auth.initializeOnStartup();
@@ -786,6 +801,10 @@ class AppManager {
     
     getStreamerManager() {
         return this.modules.streamer;
+    }
+
+    getImageCache() {
+        return this.modules.imageCache;
     }
 }
 
