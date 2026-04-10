@@ -26,9 +26,33 @@ echo ""
 
 # Проверка аргумента версии
 if [ -z "$1" ]; then
-    # Получить текущую версию
-    CURRENT_VERSION=$(node -p "require('./package.json').version")
+    # Получить текущую версию из package.json и опубликованную версию с сервера
+    PACKAGE_VERSION=$(node -p "require('./package.json').version")
+    PUBLISHED_VERSION=$(node -e "const fs=require('fs'); const path='/home/ubuntu/snipe/data/updates/versions.json'; try { const data=JSON.parse(fs.readFileSync(path, 'utf8')); process.stdout.write(data.latest_version || ''); } catch (error) {}")
+
+    CURRENT_VERSION=$(node -e "
+const versions = process.argv.slice(1).filter(Boolean);
+const parse = (value) => value.split('.').map((part) => Number(part) || 0);
+versions.sort((left, right) => {
+  const a = parse(left);
+  const b = parse(right);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) {
+      return a[i] - b[i];
+    }
+  }
+  return 0;
+});
+process.stdout.write(versions[versions.length - 1] || '0.0.0');
+" "$PACKAGE_VERSION" "$PUBLISHED_VERSION")
+
     echo -e "${BLUE}→ Текущая версия: ${GREEN}$CURRENT_VERSION${NC}"
+
+    if [ -n "$PUBLISHED_VERSION" ] && [ "$PUBLISHED_VERSION" != "$PACKAGE_VERSION" ]; then
+        echo -e "${YELLOW}→ Локальная package.json: ${PACKAGE_VERSION}${NC}"
+        echo -e "${YELLOW}→ Опубликованная версия: ${PUBLISHED_VERSION}${NC}"
+    fi
+
     echo ""
     
     # Разбить версию на части
@@ -97,6 +121,14 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
+# Синхронизируем package.json/package-lock с новой версией после подтверждения
+CURRENT_PACKAGE_VERSION=$(node -p "require('./package.json').version")
+if [ "$CURRENT_PACKAGE_VERSION" != "$NEW_VERSION" ]; then
+    npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version >/dev/null
+    echo -e "${GREEN}✓ package.json обновлен до ${NEW_VERSION}${NC}"
+    echo ""
+fi
+
 echo ""
 echo -e "${BLUE}════════════════════════════════════════════${NC}"
 echo -e "${BLUE}  Шаг 1/4: Коммит изменений в клиенте${NC}"
@@ -107,16 +139,27 @@ REPO_ROOT="/home/ubuntu/snipe"
 SCRIPT_DIR="$(pwd)"
 cd "$REPO_ROOT"
 
-# Проверка наличия изменений ТОЛЬКО в pc-build/
-CHANGED_FILES=$(git status --porcelain pc-build/app pc-build/package.json pc-build/package-lock.json 2>/dev/null)
+# Проверка наличия изменений только в релевантных файлах pc-build/
+CHANGED_FILES=$(git status --porcelain \
+    pc-build/app \
+    pc-build/package.json \
+    pc-build/package-lock.json \
+    pc-build/.github/workflows/build-and-publish.yml \
+    pc-build/publish-update.sh \
+    2>/dev/null)
 
 if [ -n "$CHANGED_FILES" ]; then
     echo -e "${YELLOW}Найдены изменения для коммита:${NC}"
     echo "$CHANGED_FILES"
     echo ""
     
-    # Добавляем только файлы клиента
-    git add pc-build/app/ pc-build/package.json pc-build/package-lock.json
+    # Добавляем только файлы клиента и публикации
+    git add \
+        pc-build/app/ \
+        pc-build/package.json \
+        pc-build/package-lock.json \
+        pc-build/.github/workflows/build-and-publish.yml \
+        pc-build/publish-update.sh
     
     # Определяем тип коммита на основе типа версии
     if [ "$VERSION_TYPE" = "1" ]; then
@@ -241,7 +284,7 @@ else
 fi
 
 # Проверяем versions.json
-LATEST=$(cat /home/ubuntu/snipe/data/updates/versions.json 2>/dev/null | grep -o '"latest_version":"[^"]*"' | cut -d'"' -f4)
+LATEST=$(node -e "const fs=require('fs'); const path='/home/ubuntu/snipe/data/updates/versions.json'; try { const data=JSON.parse(fs.readFileSync(path, 'utf8')); process.stdout.write(data.latest_version || ''); } catch (error) {}")
 if [ "$LATEST" = "$NEW_VERSION" ]; then
     echo -e "${GREEN}✓ versions.json обновлен: $LATEST${NC}"
 else
