@@ -144,7 +144,7 @@ CHANGED_FILES=$(git status --porcelain \
     pc-build/app \
     pc-build/package.json \
     pc-build/package-lock.json \
-    pc-build/.github/workflows/build-and-publish.yml \
+    .github/workflows/build-and-publish.yml \
     pc-build/publish-update.sh \
     2>/dev/null)
 
@@ -158,7 +158,7 @@ if [ -n "$CHANGED_FILES" ]; then
         pc-build/app/ \
         pc-build/package.json \
         pc-build/package-lock.json \
-        pc-build/.github/workflows/build-and-publish.yml \
+        .github/workflows/build-and-publish.yml \
         pc-build/publish-update.sh
     
     # Определяем тип коммита на основе типа версии
