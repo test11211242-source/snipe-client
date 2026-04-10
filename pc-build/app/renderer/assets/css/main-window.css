@@ -60,13 +60,13 @@ button {
 }
 
 .app-shell {
-    min-height: 100vh;
+    height: 100vh;
 }
 
 .app-frame {
     display: grid;
     grid-template-columns: 248px minmax(0, 1fr);
-    min-height: 100vh;
+    height: 100vh;
 }
 
 .boot-overlay {
