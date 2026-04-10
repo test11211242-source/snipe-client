@@ -35,7 +35,9 @@ class ConfigManager {
                 ocrRegions: { type: 'object' },
                 searchMode: { type: 'string', default: 'fast' },
                 deckMode: { type: 'string', default: 'pol' },
-                manualHotkeys: { type: 'array', default: [] }
+                manualHotkeys: { type: 'array', default: [] },
+                autoOpenWidget: { type: 'boolean', default: true },
+                widgetState: { type: 'object', default: {} }
             }
         };
 

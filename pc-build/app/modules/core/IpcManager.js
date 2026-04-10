@@ -705,7 +705,12 @@ class IpcManager {
                 
                 const store = this.appManager.getStore();
                 store.setWindowProfile(executableName, profile);
-                
+
+                const mainWindow = this.windowManager?.getWindow?.('main');
+                if (mainWindow?.webContents) {
+                    mainWindow.webContents.send('window-profile-updated', { executableName });
+                }
+                 
                 return { success: true };
                 
             } catch (error) {
@@ -1046,28 +1051,15 @@ class IpcManager {
                     throw new Error('Окно виджета не найдено');
                 }
                 
-                // 🔧 РАБОЧЕЕ РЕШЕНИЕ ИЗ СТАРОГО ПРОЕКТА
-                if (flag) {
-                    // Устанавливаем alwaysOnTop с уровнем приоритета
-                    widgetWindow.setAlwaysOnTop(true, 'screen-saver');
-                    
-                    // Показываем на всех рабочих столах
-                    widgetWindow.setVisibleOnAllWorkspaces(true);
-                    
-                    // Принудительно показываем и фокусируемся
-                    widgetWindow.show();
-                    widgetWindow.focus();
-                    
-                    console.log('✅ Виджет закреплен поверх всех окон (с screen-saver приоритетом)');
-                } else {
-                    // Отключаем alwaysOnTop
-                    widgetWindow.setAlwaysOnTop(false);
-                    
-                    // Убираем с всех рабочих столов
-                    widgetWindow.setVisibleOnAllWorkspaces(false);
-                    
-                    console.log('✅ Виджет откреплен от переднего плана');
+                widgetWindow.setAlwaysOnTop(!!flag, flag ? 'floating' : 'normal');
+
+                if (this.appManager?.getStore?.()) {
+                    this.appManager.getStore().setWidgetState({ alwaysOnTop: !!flag });
                 }
+
+                console.log(flag
+                    ? '✅ Виджет закреплен поверх окон'
+                    : '✅ Виджет откреплен от переднего плана');
                 
                 return { success: true, alwaysOnTop: flag };
             } catch (error) {
@@ -1091,6 +1083,12 @@ class IpcManager {
                 }
                 
                 widgetWindow.setSize(width, height);
+
+                if (this.appManager?.getStore?.()) {
+                    this.appManager.getStore().setWidgetState({
+                        bounds: widgetWindow.getBounds()
+                    });
+                }
                 
                 return { success: true };
             } catch (error) {
@@ -1124,6 +1122,36 @@ class IpcManager {
                 return { success: true };
             } catch (error) {
                 console.error('❌ Ошибка перемещения виджета:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        this.registerHandler('widget:get-state', async () => {
+            try {
+                const store = this.appManager?.getStore?.();
+                if (!store) {
+                    throw new Error('StoreManager недоступен');
+                }
+
+                return {
+                    success: true,
+                    state: store.getWidgetState()
+                };
+            } catch (error) {
+                return { success: false, error: error.message, state: null };
+            }
+        });
+
+        this.registerHandler('widget:save-state', async (event, state) => {
+            try {
+                const store = this.appManager?.getStore?.();
+                if (!store) {
+                    throw new Error('StoreManager недоступен');
+                }
+
+                store.setWidgetState(state || {});
+                return { success: true };
+            } catch (error) {
                 return { success: false, error: error.message };
             }
         });

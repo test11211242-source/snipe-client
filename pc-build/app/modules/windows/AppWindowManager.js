@@ -129,15 +129,18 @@ class AppWindowManager extends WindowManager {
         }
 
         const screenSize = this.getScreenSize();
+        const store = this.appManager?.getStore?.();
+        const widgetState = store?.getWidgetState?.() || {};
+        const savedBounds = widgetState?.bounds || null;
 
         const config = {
-            width: 450,
-            height: 350,
-            x: screenSize.width - 470,
-            y: 20,
+            width: savedBounds?.width || 450,
+            height: savedBounds?.height || 350,
+            x: Number.isFinite(savedBounds?.x) ? savedBounds.x : screenSize.width - 470,
+            y: Number.isFinite(savedBounds?.y) ? savedBounds.y : 20,
             frame: false,
             transparent: true,
-            alwaysOnTop: false,
+            alwaysOnTop: !!widgetState?.alwaysOnTop,
             skipTaskbar: false,
             resizable: false,
             movable: true,
@@ -152,8 +155,25 @@ class AppWindowManager extends WindowManager {
         if (playerData) {
             window.webContents.on('did-finish-load', () => {
                 window.webContents.send('player-data', playerData);
+                window.webContents.send('widget-state', widgetState);
+            });
+        } else {
+            window.webContents.on('did-finish-load', () => {
+                window.webContents.send('widget-state', widgetState);
             });
         }
+
+        const persistWidgetBounds = () => {
+            const currentStore = this.appManager?.getStore?.();
+            if (!currentStore?.setWidgetState) {
+                return;
+            }
+
+            currentStore.setWidgetState({
+                bounds: window.getBounds(),
+                alwaysOnTop: window.isAlwaysOnTop()
+            });
+        };
 
         // Магнитное прилипание к краям экрана
         window.on('moved', () => {
@@ -188,6 +208,16 @@ class AppWindowManager extends WindowManager {
             if (newX !== bounds.x || newY !== bounds.y) {
                 window.setPosition(newX, newY);
             }
+
+            persistWidgetBounds();
+        });
+
+        window.on('resized', () => {
+            persistWidgetBounds();
+        });
+
+        window.on('close', () => {
+            persistWidgetBounds();
         });
 
         return window;
@@ -200,7 +230,11 @@ class AppWindowManager extends WindowManager {
      */
     toggleWidget(playerData = null) {
         if (this.hasWindow('widget')) {
-            this.closeWindow('widget');
+            if (playerData) {
+                this.createWidget(playerData);
+            } else {
+                this.closeWindow('widget');
+            }
         } else {
             this.createWidget(playerData);
         }

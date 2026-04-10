@@ -658,6 +658,10 @@
             return singleRegionSetupTypes.includes(setupContext?.setupType);
         }
 
+        function isWindowProfileSetup() {
+            return setupContext?.setupType === 'window_capture_profile';
+        }
+
         function isTriggerProfileSetup() {
             return setupContext?.setupType === 'streamer_result_trigger_area';
         }
@@ -695,6 +699,10 @@
                 return !!regions[getSingleRegionSetupKey()];
             }
 
+            if (isWindowProfileSetup()) {
+                return !!(regions.normal_data_area && regions.precise_data_area);
+            }
+
             return !!(regions.trigger_area && regions.normal_data_area && regions.precise_data_area);
         }
 
@@ -720,6 +728,20 @@
                 return {
                     text: meta.promptText,
                     className: `region-label ${getRegionStyleClass(meta.key)}`
+                };
+            }
+
+            if (isWindowProfileSetup()) {
+                if (regionKey === 'precise_data_area') {
+                    return {
+                        text: 'Выделите точную область',
+                        className: 'region-label precise'
+                    };
+                }
+
+                return {
+                    text: 'Выделите быструю область',
+                    className: 'region-label normal'
                 };
             }
 
@@ -796,6 +818,68 @@
             updateCurrentRegionPrompt();
         }
 
+        function applyWindowProfileSetupMode() {
+            currentRegion = 'normal_data_area';
+            regions.trigger_area = null;
+            regions.normal_data_area = null;
+            regions.precise_data_area = null;
+
+            const instructionsTitle = document.querySelector('.instructions h2');
+            if (instructionsTitle) {
+                instructionsTitle.textContent = 'Настройка OCR профиля для bind';
+            }
+
+            const instructions = document.getElementById('instructions');
+            instructions.querySelectorAll('.step').forEach(step => step.remove());
+
+            const buttonGroup = instructions.querySelector('.button-group');
+
+            const fastStep = document.createElement('div');
+            fastStep.className = 'step';
+            fastStep.innerHTML = `
+                <div class="step-title">
+                    <span class="step-number">1</span>
+                    Быстрая область <span class="mode-badge fast">Быстрый режим</span>
+                </div>
+                <div class="step-description">
+                    Выделите область с ником и рейтингом соперника для bind-поиска в fast режиме.
+                </div>
+            `;
+
+            const preciseStep = document.createElement('div');
+            preciseStep.className = 'step';
+            preciseStep.innerHTML = `
+                <div class="step-title">
+                    <span class="step-number">2</span>
+                    Точная область <span class="mode-badge precise">Точный режим</span>
+                </div>
+                <div class="step-description">
+                    Выделите расширенную область с ником, рейтингом и кланом для bind-поиска в precise режиме.
+                </div>
+            `;
+
+            instructions.insertBefore(fastStep, buttonGroup);
+            instructions.insertBefore(preciseStep, buttonGroup);
+
+            const previewTitle = document.querySelector('.preview-title');
+            if (previewTitle) {
+                previewTitle.textContent = 'Предпросмотр OCR профиля bind';
+            }
+
+            const previewItems = document.querySelectorAll('.preview-item');
+            if (previewItems[0]) {
+                previewItems[0].style.display = 'none';
+            }
+            if (previewItems[1]) {
+                previewItems[1].style.display = 'block';
+            }
+            if (previewItems[2]) {
+                previewItems[2].style.display = 'block';
+            }
+
+            updateCurrentRegionPrompt();
+        }
+
         // Кастомный курсор
         document.addEventListener('mousemove', (e) => {
             customCursor.style.left = e.clientX + 'px';
@@ -826,6 +910,8 @@
 
             if (isSingleRegionSetup()) {
                 applySingleRegionSetupMode();
+            } else if (isWindowProfileSetup()) {
+                applyWindowProfileSetupMode();
             }
             
             // Обновляем UI для оконного режима
@@ -913,6 +999,13 @@
 
                     if (isSingleRegionSetup()) {
                         showPreview();
+                    } else if (isWindowProfileSetup()) {
+                        if (currentRegion === 'normal_data_area') {
+                            currentRegion = 'precise_data_area';
+                            updateCurrentRegionPrompt();
+                        } else {
+                            showPreview();
+                        }
                     } else if (currentRegion === 'trigger_area') {
                         currentRegion = 'normal_data_area';
                         updateCurrentRegionPrompt();
@@ -972,9 +1065,13 @@
                 document.getElementById(elementId).src = previewCanvas.toDataURL();
             };
             
-            createPreview(isSingleRegionSetup() ? regions[getSingleRegionSetupKey()] : regions.trigger_area, 'trigger-preview');
-
-            if (!isSingleRegionSetup()) {
+            if (isSingleRegionSetup()) {
+                createPreview(regions[getSingleRegionSetupKey()], 'trigger-preview');
+            } else if (isWindowProfileSetup()) {
+                createPreview(regions.normal_data_area, 'normal-preview');
+                createPreview(regions.precise_data_area, 'precise-preview');
+            } else {
+                createPreview(regions.trigger_area, 'trigger-preview');
                 createPreview(regions.normal_data_area, 'normal-preview');
                 createPreview(regions.precise_data_area, 'precise-preview');
             }
@@ -1003,7 +1100,11 @@
             if (isSingleRegionSetup()) {
                 regions[getSingleRegionSetupKey()] = null;
             }
-            currentRegion = isSingleRegionSetup() ? getSingleRegionSetupKey() : 'trigger_area';
+            currentRegion = isSingleRegionSetup()
+                ? getSingleRegionSetupKey()
+                : isWindowProfileSetup()
+                    ? 'normal_data_area'
+                    : 'trigger_area';
             
             document.getElementById('preview-modal').classList.remove('active');
             document.getElementById('selection-info').classList.add('active');
@@ -1021,58 +1122,84 @@
 
             const saveButton = event.target;
             saveButton.disabled = true;
-            saveButton.textContent = 'Анализ профиля...';
+            saveButton.textContent = isWindowProfileSetup() ? 'Сохранение...' : 'Анализ профиля...';
             
             try {
                 // Конвертируем координаты в реальные значения экрана
                 const scaleX = screenshot.width / canvas.width;
                 const scaleY = screenshot.height / canvas.height;
-                
-                // 🎯 НОВАЯ ЛОГИКА: Создание персонального профиля триггера
-                console.log('🔍 Создание персонального профиля для области триггера...');
-                
-                // Создаем персональный профиль для trigger_area
-                const triggerProfile = await createPersonalTriggerProfile(
-                    regions.trigger_area, 
-                    scaleX, 
-                    scaleY
-                );
-                
-                if (!triggerProfile.success) {
-                    throw new Error(`Ошибка создания профиля: ${triggerProfile.error}`);
-                }
-                
-                console.log('✅ Персональный профиль создан:', triggerProfile);
-                
-                saveButton.textContent = 'Сохранение...';
-                
-                const finalRegions = {
-                    trigger_area: {
-                        x: Math.round(regions.trigger_area.x * scaleX),
-                        y: Math.round(regions.trigger_area.y * scaleY),
-                        width: Math.round(regions.trigger_area.width * scaleX),
-                        height: Math.round(regions.trigger_area.height * scaleY),
-                        // 🆕 Персональные данные профиля
-                        color_palette: triggerProfile.color_palette,
-                        template_base64: triggerProfile.template_base64,
+
+                let finalRegions;
+
+                if (isWindowProfileSetup()) {
+                    finalRegions = {
+                        normal_data_area: {
+                            x: Math.round(regions.normal_data_area.x * scaleX),
+                            y: Math.round(regions.normal_data_area.y * scaleY),
+                            width: Math.round(regions.normal_data_area.width * scaleX),
+                            height: Math.round(regions.normal_data_area.height * scaleY)
+                        },
+                        precise_data_area: {
+                            x: Math.round(regions.precise_data_area.x * scaleX),
+                            y: Math.round(regions.precise_data_area.y * scaleY),
+                            width: Math.round(regions.precise_data_area.width * scaleX),
+                            height: Math.round(regions.precise_data_area.height * scaleY)
+                        },
+                        screen_resolution: regions.screen_resolution,
+                        profile_type: 'manual_bind_ocr',
                         created_at: new Date().toISOString()
-                    },
-                    normal_data_area: {
-                        x: Math.round(regions.normal_data_area.x * scaleX),
-                        y: Math.round(regions.normal_data_area.y * scaleY),
-                        width: Math.round(regions.normal_data_area.width * scaleX),
-                        height: Math.round(regions.normal_data_area.height * scaleY)
-                    },
-                    precise_data_area: {
-                        x: Math.round(regions.precise_data_area.x * scaleX),
-                        y: Math.round(regions.precise_data_area.y * scaleY),
-                        width: Math.round(regions.precise_data_area.width * scaleX),
-                        height: Math.round(regions.precise_data_area.height * scaleY)
-                    },
-                    screen_resolution: regions.screen_resolution
-                };
-                
-                const result = await window.electronAPI.ocr.saveRegions(finalRegions);
+                    };
+                } else {
+                    // 🎯 НОВАЯ ЛОГИКА: Создание персонального профиля триггера
+                    console.log('🔍 Создание персонального профиля для области триггера...');
+
+                    const triggerProfile = await createPersonalTriggerProfile(
+                        regions.trigger_area,
+                        scaleX,
+                        scaleY
+                    );
+
+                    if (!triggerProfile.success) {
+                        throw new Error(`Ошибка создания профиля: ${triggerProfile.error}`);
+                    }
+
+                    console.log('✅ Персональный профиль создан:', triggerProfile);
+                    saveButton.textContent = 'Сохранение...';
+
+                    finalRegions = {
+                        trigger_area: {
+                            x: Math.round(regions.trigger_area.x * scaleX),
+                            y: Math.round(regions.trigger_area.y * scaleY),
+                            width: Math.round(regions.trigger_area.width * scaleX),
+                            height: Math.round(regions.trigger_area.height * scaleY),
+                            color_palette: triggerProfile.color_palette,
+                            template_base64: triggerProfile.template_base64,
+                            created_at: new Date().toISOString()
+                        },
+                        normal_data_area: {
+                            x: Math.round(regions.normal_data_area.x * scaleX),
+                            y: Math.round(regions.normal_data_area.y * scaleY),
+                            width: Math.round(regions.normal_data_area.width * scaleX),
+                            height: Math.round(regions.normal_data_area.height * scaleY)
+                        },
+                        precise_data_area: {
+                            x: Math.round(regions.precise_data_area.x * scaleX),
+                            y: Math.round(regions.precise_data_area.y * scaleY),
+                            width: Math.round(regions.precise_data_area.width * scaleX),
+                            height: Math.round(regions.precise_data_area.height * scaleY)
+                        },
+                        screen_resolution: regions.screen_resolution
+                    };
+                }
+
+                saveButton.textContent = 'Сохранение...';
+                 
+                const result = isWindowProfileSetup()
+                    ? await window.electronAPI.window.saveProfile(
+                        setupContext?.profileExecutableName || setupContext?.targetWindow?.executableName || `window:${setupContext?.targetWindow?.name || 'unknown'}`,
+                        finalRegions
+                    )
+                    : await window.electronAPI.ocr.saveRegions(finalRegions);
                 
                 if (result.success) {
                     // Показываем анимацию успеха
@@ -1304,7 +1431,7 @@
         function updateInstructionsForWindowMode() {
             const instructionsTitle = document.querySelector('.instructions h2');
             if (instructionsTitle && setupMode === 'window') {
-                if (!isSingleRegionSetup()) {
+                if (!isSingleRegionSetup() && !isWindowProfileSetup()) {
                     instructionsTitle.textContent = 'Настройка областей OCR (Оконный режим)';
                 }
                 
@@ -1341,7 +1468,9 @@
             if (instructionsTitle) {
                 const titleText = isSingleRegionSetup()
                     ? `🪟 ${getSingleRegionSetupMeta().title}`
-                    : '🪟 Настройка областей OCR';
+                    : isWindowProfileSetup()
+                        ? '🪟 Настройка OCR профиля для bind'
+                        : '🪟 Настройка областей OCR';
                 instructionsTitle.innerHTML = `
                     ${titleText}<br>
                     <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || 'Неизвестно'}</small>

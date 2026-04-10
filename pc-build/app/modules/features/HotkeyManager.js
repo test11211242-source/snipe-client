@@ -1,8 +1,12 @@
 let globalShortcut;
+let nativeImage;
 try {
-    globalShortcut = require('electron').globalShortcut;
+    const electron = require('electron');
+    globalShortcut = electron.globalShortcut;
+    nativeImage = electron.nativeImage;
 } catch (error) {
     globalShortcut = null;
+    nativeImage = null;
 }
 
 class HotkeyManager {
@@ -95,7 +99,9 @@ class HotkeyManager {
     decorateProfiles(profiles) {
         return profiles.map((profile) => ({
             ...profile,
-            registration: this.getRegistrationState(profile.id)
+            registration: this.getRegistrationState(profile.id),
+            ocrProfileConfigured: this.hasConfiguredRegionsForTarget(profile.target),
+            ocrProfileMessage: this.getOcrProfileMessage(profile.target)
         }));
     }
 
@@ -121,6 +127,90 @@ class HotkeyManager {
 
     createProfileLabel(profile) {
         return profile.label || profile.accelerator || 'manual hotkey';
+    }
+
+    isValidRegion(region) {
+        return !!(
+            region &&
+            typeof region.x === 'number' &&
+            typeof region.y === 'number' &&
+            typeof region.width === 'number' &&
+            typeof region.height === 'number' &&
+            region.width > 0 &&
+            region.height > 0
+        );
+    }
+
+    hasConfiguredRegionsForTarget(target) {
+        return !!this.getOcrRegionsForTarget(target);
+    }
+
+    getTargetProfileKey(target) {
+        if (!target) {
+            return '';
+        }
+
+        const executableName = this.normalizeString(target.executableName);
+        if (executableName) {
+            return executableName;
+        }
+
+        const targetName = this.normalizeString(target.name);
+        return targetName ? `window:${targetName}` : '';
+    }
+
+    getOcrRegionsForTarget(target) {
+        if (!target) {
+            return null;
+        }
+
+        if (target.targetType === 'screen') {
+            const globalRegions = this.storeManager.getOcrRegions();
+            return this.hasManualLookupRegions(globalRegions) ? globalRegions : null;
+        }
+
+        const profileKey = this.getTargetProfileKey(target);
+        if (!profileKey) {
+            return null;
+        }
+
+        const profile = this.storeManager.getWindowProfile(profileKey);
+        return this.hasManualLookupRegions(profile) ? profile : null;
+    }
+
+    hasManualLookupRegions(profile) {
+        return !!(
+            profile &&
+            this.isValidRegion(profile.normal_data_area) &&
+            this.isValidRegion(profile.precise_data_area)
+        );
+    }
+
+    getOcrProfileMessage(target) {
+        if (!target) {
+            return 'Сначала выберите окно и сохраните bind.';
+        }
+
+        if (target.targetType === 'screen') {
+            return this.hasConfiguredRegionsForTarget(target)
+                ? 'Используются общие OCR области приложения.'
+                : 'Для экранного бинда нужно настроить общие OCR области на странице Захват.';
+        }
+
+        const windowName = target.name || target.executableName || 'окно';
+        return this.hasConfiguredRegionsForTarget(target)
+            ? `OCR профиль для окна ${windowName} настроен.`
+            : `Для окна ${windowName} ещё не настроены trigger/fast/precise области.`;
+    }
+
+    getProfileRegionForSearchMode(ocrProfile, searchMode) {
+        if (!ocrProfile) {
+            return null;
+        }
+
+        return searchMode === 'precise'
+            ? ocrProfile.precise_data_area
+            : ocrProfile.normal_data_area;
     }
 
     setRegistrationState(profileId, state, message = '') {
@@ -270,13 +360,32 @@ class HotkeyManager {
         }
 
         if (profile.target.targetType === 'screen') {
-            return await this.captureScreen();
+            const screenshot = await this.captureScreen();
+            const ocrProfile = this.getOcrRegionsForTarget(profile.target);
+            if (!ocrProfile) {
+                throw new Error('Для экранного бинда не настроены общие OCR области');
+            }
+
+            return {
+                imageBuffer: this.cropScreenshotToSearchRegion(screenshot.dataURL, ocrProfile, profile.searchMode),
+                resolvedTarget: screenshot.resolvedTarget
+            };
         }
 
         const resolvedTarget = await this.resolveWindowTarget(profile.target);
         const screenshot = await this.captureWindow(resolvedTarget);
+        const ocrProfile = this.getOcrRegionsForTarget({
+            targetType: 'window',
+            executableName: resolvedTarget.executableName,
+            name: resolvedTarget.name
+        });
+
+        if (!ocrProfile) {
+            throw new Error(`Для окна ${resolvedTarget.name} не настроены OCR области bind-профиля`);
+        }
+
         return {
-            imageBuffer: this.dataUrlToBuffer(screenshot.dataURL),
+            imageBuffer: this.cropScreenshotToSearchRegion(screenshot.dataURL, ocrProfile, profile.searchMode),
             resolvedTarget
         };
     }
@@ -347,12 +456,50 @@ class HotkeyManager {
         }
 
         return {
-            imageBuffer: this.dataUrlToBuffer(screenshotResult.screenshot),
+            dataURL: screenshotResult.screenshot,
             resolvedTarget: {
                 targetType: 'screen',
                 name: 'Full Screen'
             }
         };
+    }
+
+    cropScreenshotToSearchRegion(dataUrl, ocrProfile, searchMode) {
+        if (!nativeImage) {
+            throw new Error('nativeImage недоступен');
+        }
+
+        const selectedRegion = this.getProfileRegionForSearchMode(ocrProfile, searchMode);
+        if (!this.isValidRegion(selectedRegion)) {
+            throw new Error(`Для режима ${searchMode} не настроена область захвата`);
+        }
+
+        const image = nativeImage.createFromDataURL(dataUrl);
+        const imageSize = image.getSize();
+        const sourceResolution = ocrProfile.screen_resolution || imageSize;
+
+        const scaleX = imageSize.width / sourceResolution.width;
+        const scaleY = imageSize.height / sourceResolution.height;
+
+        const cropRegion = {
+            x: Math.max(0, Math.round(selectedRegion.x * scaleX)),
+            y: Math.max(0, Math.round(selectedRegion.y * scaleY)),
+            width: Math.max(1, Math.round(selectedRegion.width * scaleX)),
+            height: Math.max(1, Math.round(selectedRegion.height * scaleY))
+        };
+
+        const boundedRegion = {
+            x: Math.min(cropRegion.x, Math.max(0, imageSize.width - 1)),
+            y: Math.min(cropRegion.y, Math.max(0, imageSize.height - 1)),
+            width: Math.min(cropRegion.width, imageSize.width - cropRegion.x),
+            height: Math.min(cropRegion.height, imageSize.height - cropRegion.y)
+        };
+
+        if (boundedRegion.width <= 0 || boundedRegion.height <= 0) {
+            throw new Error('Область OCR выходит за границы текущего скриншота');
+        }
+
+        return image.crop(boundedRegion).toPNG();
     }
 
     dataUrlToBuffer(dataUrl) {

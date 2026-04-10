@@ -29,7 +29,7 @@
             color: var(--text-primary);
             overflow: hidden;
             user-select: none;
-            -webkit-app-region: drag;
+            -webkit-app-region: no-drag;
         }
 
         /* Контейнер виджета */
@@ -82,10 +82,12 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 10px;
+            -webkit-app-region: drag;
+            cursor: move;
         }
 
         .widget-container.compact .widget-header {
-            display: none;
+            margin-bottom: 6px;
         }
 
         .player-info {
@@ -120,6 +122,7 @@
         .widget-controls {
             display: flex;
             gap: 8px;
+            -webkit-app-region: no-drag;
         }
 
         .control-button {
@@ -415,19 +418,30 @@
     <script>
         let isPinned = false;
         let currentMode = 'expanded'; // compact, expanded, analytical
-        let isDragging = false;
-        let dragStartX = 0;
-        let dragStartY = 0;
-        let widgetX = 0;
-        let widgetY = 0;
 
         // Получаем данные игрока
         window.electronAPI.on('player-data', (data) => {
             updateWidget(data);
         });
 
+        window.electronAPI.on('widget-state', (state) => {
+            applyWidgetState(state || {});
+        });
+
         function getDeckModeLabel(mode) {
             return mode === 'gt' ? 'GT' : 'Path of Legends';
+        }
+
+        function getWidgetSizeForMode(mode) {
+            if (mode === 'compact') {
+                return { width: 400, height: 130 };
+            }
+
+            if (mode === 'analytical') {
+                return { width: 450, height: 260 };
+            }
+
+            return { width: 450, height: 210 };
         }
 
         // Обновление виджета
@@ -602,17 +616,10 @@
             widget.className = `widget-container ${currentMode}`;
             
             // Изменяем размер окна в зависимости от режима
-            switch(currentMode) {
-                case 'compact':
-                    window.electronAPI.widget.resize(400, 100);
-                    break;
-                case 'expanded':
-                    window.electronAPI.widget.resize(450, 200);
-                    break;
-                case 'analytical':
-                    window.electronAPI.widget.resize(450, 250);
-                    break;
-            }
+            const nextSize = getWidgetSizeForMode(currentMode);
+            window.electronAPI.widget.resize(nextSize.width, nextSize.height);
+
+            window.electronAPI.widget.saveState({ mode: currentMode });
         }
 
         // Закрепление окна (рабочий вариант из старого проекта)
@@ -644,12 +651,7 @@
                     widget.style.boxShadow = '0 10px 40px rgba(0, 0, 0, 0.8), 0 0 60px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)';
                 }
                 
-                if (isPinned) {
-                    // Дополнительная проверка через секунду
-                    setTimeout(() => {
-                        console.log('Дополнительная активация виджета');
-                    }, 1000);
-                }
+                window.electronAPI.widget.saveState({ alwaysOnTop: isPinned });
             }).catch(error => {
                 console.error('Ошибка при изменении AlwaysOnTop:', error);
                 
@@ -661,6 +663,38 @@
                     button.classList.remove('pinned');
                 }
             });
+        }
+
+        function applyWidgetState(state) {
+            if (!state) {
+                return;
+            }
+
+            const widget = document.getElementById('widget');
+            const button = document.getElementById('pin-button');
+
+            if (state.mode && ['compact', 'expanded', 'analytical'].includes(state.mode)) {
+                currentMode = state.mode;
+                widget.className = `widget-container ${currentMode}`;
+
+                if (!state.bounds) {
+                    const nextSize = getWidgetSizeForMode(currentMode);
+                    window.electronAPI.widget.resize(nextSize.width, nextSize.height);
+                }
+            }
+
+            isPinned = !!state.alwaysOnTop;
+            if (isPinned) {
+                button.classList.add('pinned');
+                button.title = 'Открепить от переднего плана';
+                widget.style.borderColor = 'rgba(91, 140, 255, 0.55)';
+                widget.style.boxShadow = '0 18px 36px rgba(4, 10, 18, 0.4), 0 0 0 1px rgba(91, 140, 255, 0.2)';
+            } else {
+                button.classList.remove('pinned');
+                button.title = 'Закрепить поверх окон';
+                widget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                widget.style.boxShadow = '0 20px 50px rgba(4, 10, 18, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.04)';
+            }
         }
 
 
@@ -681,37 +715,6 @@
             }
         });
 
-        // Перетаскивание окна
-        const widget = document.getElementById('widget');
-        
-        widget.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.control-button') || e.target.closest('.deck-card')) return;
-            
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            widget.classList.add('dragging');
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            
-            const deltaX = e.clientX - dragStartX;
-            const deltaY = e.clientY - dragStartY;
-            
-            window.electronAPI.widget.move(deltaX, deltaY);
-            
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                widget.classList.remove('dragging');
-            }
-        });
-
         // Горячие клавиши
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -727,8 +730,19 @@
         
         // Инициализация
         window.addEventListener('load', () => {
-            // Устанавливаем начальный размер
-            window.electronAPI.widget.resize(450, 200);
+            window.electronAPI.widget.getState().then((result) => {
+                if (result?.success && result.state) {
+                    applyWidgetState(result.state);
+                }
+
+                if (!result?.state?.bounds) {
+                    const initialSize = getWidgetSizeForMode(result?.state?.mode || currentMode);
+                    window.electronAPI.widget.resize(initialSize.width, initialSize.height);
+                }
+            }).catch(() => {
+                const initialSize = getWidgetSizeForMode(currentMode);
+                window.electronAPI.widget.resize(initialSize.width, initialSize.height);
+            });
         });
     </script>
 </body>

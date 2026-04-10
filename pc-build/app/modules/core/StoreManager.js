@@ -297,6 +297,25 @@ class StoreManager {
         console.log('🪟 Автооткрытие виджета:', autoOpen);
     }
 
+    getWidgetState() {
+        return this.store.get('widgetState', {
+            alwaysOnTop: false,
+            mode: 'expanded',
+            bounds: null
+        });
+    }
+
+    setWidgetState(widgetState) {
+        const currentState = this.getWidgetState();
+        const nextState = {
+            ...currentState,
+            ...(widgetState || {})
+        };
+
+        this.store.set('widgetState', nextState);
+        console.log('🪟 Состояние виджета обновлено');
+    }
+
     // === 🆕 ЭТАП 2.2 + 2.3: Методы для работы с профилями окон ===
     
     /**

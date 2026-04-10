@@ -147,6 +147,8 @@ function createHotkeyProfile(index = 0) {
         searchMode: 'fast',
         deckMode: 'pol',
         target: null,
+        ocrProfileConfigured: false,
+        ocrProfileMessage: 'Сначала выберите окно и сохраните bind.',
         registration: {
             state: 'disabled',
             registered: false,
@@ -218,6 +220,7 @@ createApp({
             cacheBusy: false,
             streamerBusy: false,
             serverPollHandle: null,
+            autoOpenWidget: true,
             hotkeyProfiles: [],
             hotkeysSaving: false,
             hotkeyWindowDialogVisible: false,
@@ -416,6 +419,19 @@ createApp({
             };
         },
 
+        createWindowPayload(windowInfo) {
+            if (!windowInfo) {
+                return null;
+            }
+
+            return {
+                id: windowInfo.id || '',
+                name: windowInfo.name || '',
+                executableName: windowInfo.executableName || '',
+                processId: Number.isFinite(Number(windowInfo.processId)) ? Number(windowInfo.processId) : null
+            };
+        },
+
         serializeHotkeyProfiles() {
             return this.hotkeyProfiles.map((profile) => ({
                 id: profile.id,
@@ -456,6 +472,30 @@ createApp({
             } catch (error) {
                 console.error('Ошибка загрузки hotkeys:', error);
                 this.hotkeyProfiles = [];
+            }
+        },
+
+        async loadWidgetSettings() {
+            try {
+                this.autoOpenWidget = await window.electronAPI.store.get('autoOpenWidget', true);
+            } catch (error) {
+                console.error('Ошибка загрузки настроек виджета:', error);
+                this.autoOpenWidget = true;
+            }
+        },
+
+        async saveAutoOpenWidget() {
+            try {
+                await window.electronAPI.store.set('autoOpenWidget', this.autoOpenWidget);
+                this.notify(
+                    this.autoOpenWidget
+                        ? 'Виджет будет открываться автоматически'
+                        : 'Автооткрытие виджета отключено',
+                    'success'
+                );
+            } catch (error) {
+                this.autoOpenWidget = !this.autoOpenWidget;
+                this.notify(`Ошибка сохранения настройки виджета: ${error.message}`, 'error');
             }
         },
 
@@ -539,6 +579,14 @@ createApp({
             return profile?.registration?.message || 'Сохраните бинды, чтобы применить global shortcuts';
         },
 
+        getHotkeyOcrChipTone(profile) {
+            return profile?.ocrProfileConfigured ? 'success' : 'warning';
+        },
+
+        getHotkeyOcrChipLabel(profile) {
+            return profile?.ocrProfileConfigured ? 'OCR готов' : 'Нет OCR профиля';
+        },
+
         getHotkeyTargetLabel(profile) {
             if (!profile?.target) {
                 return 'Окно не выбрано';
@@ -553,6 +601,36 @@ createApp({
             }
 
             return profile.target.executableName || 'Окно из текущего списка desktopCapturer';
+        },
+
+        getHotkeyProfileKey(profile) {
+            if (!profile?.target) {
+                return '';
+            }
+
+            return profile.target.executableName || `window:${profile.target.name || ''}`;
+        },
+
+        handleWindowProfileUpdated(payload = {}) {
+            const executableKey = payload.executableName || '';
+            let updated = false;
+
+            this.hotkeyProfiles = this.hotkeyProfiles.map((profile) => {
+                if (this.getHotkeyProfileKey(profile) !== executableKey) {
+                    return profile;
+                }
+
+                updated = true;
+                return {
+                    ...profile,
+                    ocrProfileConfigured: true,
+                    ocrProfileMessage: `OCR профиль для окна ${profile.target?.name || profile.target?.executableName || 'окно'} настроен.`
+                };
+            });
+
+            if (!updated) {
+                this.loadHotkeyProfiles();
+            }
         },
 
         mapKeyToAccelerator(event) {
@@ -684,18 +762,48 @@ createApp({
                 targetType: 'window',
                 ...this.selectedHotkeyWindow
             });
+            profile.ocrProfileConfigured = false;
+            profile.ocrProfileMessage = `Для окна ${profile.target.name || profile.target.executableName || 'окно'} ещё не настроены trigger/fast/precise области.`;
 
             this.closeHotkeyTargetDialog();
         },
 
         clearHotkeyTarget(profile) {
             profile.target = null;
+            profile.ocrProfileConfigured = false;
+            profile.ocrProfileMessage = 'Сначала выберите окно и сохраните bind.';
+        },
+
+        async configureHotkeyOcrProfile(profile) {
+            if (!profile?.target) {
+                this.notify('Сначала выберите окно для bind-профиля', 'error');
+                return;
+            }
+
+            try {
+                const targetWindow = this.createWindowPayload(profile.target);
+                await window.electronAPI.ocr.setupRegions({
+                    mode: 'window',
+                    targetWindow,
+                    setupType: 'window_capture_profile',
+                    profileExecutableName: targetWindow.executableName || `window:${targetWindow.name}`,
+                    profileWindowName: targetWindow.name,
+                    bindProfileId: profile.id
+                });
+            } catch (error) {
+                this.notify(`Ошибка запуска настройки bind OCR: ${error.message}`, 'error');
+            }
         },
 
         async testHotkeyProfile(profile) {
             try {
                 const payload = {
-                    ...profile,
+                    id: profile.id,
+                    label: profile.label || '',
+                    enabled: Boolean(profile.enabled),
+                    accelerator: profile.accelerator || '',
+                    searchMode: profile.searchMode === 'precise' ? 'precise' : 'fast',
+                    deckMode: profile.deckMode === 'gt' ? 'gt' : 'pol',
                     target: this.cloneTarget(profile.target)
                 };
 
@@ -1308,18 +1416,19 @@ createApp({
                 if (this.selectedCaptureMode === 'screen') {
                     await window.electronAPI.ocr.setupRegions();
                 } else if (this.selectedWindow) {
+                    const targetWindow = this.createWindowPayload(this.selectedWindow);
                     const context = {
                         mode: 'window',
-                        targetWindow: this.selectedWindow
+                        targetWindow
                     };
 
-                    const setTargetResult = await window.electronAPI.monitor.setWindowTarget(this.selectedWindow);
+                    const setTargetResult = await window.electronAPI.monitor.setWindowTarget(targetWindow);
                     if (!setTargetResult?.success) {
                         throw new Error(setTargetResult?.error || 'Не удалось выбрать окно для захвата');
                     }
 
                     await window.electronAPI.ocr.setupRegions(context);
-                    await window.electronAPI.window.saveSelection(this.selectedWindow);
+                    await window.electronAPI.window.saveSelection(targetWindow);
                 } else {
                     throw new Error('Выберите окно для настройки OCR');
                 }
@@ -1678,6 +1787,11 @@ createApp({
                 this.handleServerStatus(serverInfo);
             });
 
+            window.electronAPI.on('window-profile-updated', (payload) => {
+                this.handleWindowProfileUpdated(payload);
+                this.notify('OCR профиль окна обновлён', 'success');
+            });
+
             window.electronAPI.on('update-download-progress', (progress) => {
                 this.handleUpdateProgress(progress);
             });
@@ -1698,6 +1812,7 @@ createApp({
                 this.loadTriggerSettings(),
                 this.loadRegions(),
                 this.loadCaptureTarget(),
+                this.loadWidgetSettings(),
                 this.loadHotkeyProfiles(),
                 this.loadMonitoringStatus(),
                 this.loadVersion(),

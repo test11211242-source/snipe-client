@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Белый список разрешенных каналов
     const allowedChannels = [
       'window:get-available', 'window:save-selection', 'window:get-last-selected', 'window:clear-cache',
+      'window:save-profile', 'window:get-profile',
       'auth:login', 'auth:register', 'auth:logout', 'auth:success',
       'tokens:getUser',
       'invite:get-hwid', 'invite:check-access', 'invite:validate-key', 'invite:get-key-info',
@@ -17,7 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
       'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
       'store:get', 'store:set', 'store:has', 'store:delete',
-      'cache:get-card-image', 'cache:force-update', 'cache:get-status'
+      'cache:get-card-image', 'cache:force-update', 'cache:get-status',
+      'widget:get-state', 'widget:save-state'
     ];
     
     if (allowedChannels.includes(channel)) {
@@ -120,7 +122,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: () => ipcRenderer.invoke('widget:close'),
     setAlwaysOnTop: (flag) => ipcRenderer.invoke('widget:setAlwaysOnTop', flag),
     resize: (width, height) => ipcRenderer.invoke('widget:resize', width, height),
-    move: (deltaX, deltaY) => ipcRenderer.invoke('widget:move', deltaX, deltaY)
+    move: (deltaX, deltaY) => ipcRenderer.invoke('widget:move', deltaX, deltaY),
+    getState: () => ipcRenderer.invoke('widget:get-state'),
+    saveState: (state) => ipcRenderer.invoke('widget:save-state', state)
   },
   
   // 🎯 Прямой доступ к хранилищу (для расширенных настроек)
@@ -137,7 +141,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAvailable: (forceRefresh = false) => ipcRenderer.invoke('window:get-available', forceRefresh),
     saveSelection: (windowData) => ipcRenderer.invoke('window:save-selection', windowData),
     getLastSelected: () => ipcRenderer.invoke('window:get-last-selected'),
-    clearCache: () => ipcRenderer.invoke('window:clear-cache')
+    clearCache: () => ipcRenderer.invoke('window:clear-cache'),
+    saveProfile: (executableName, profile) => ipcRenderer.invoke('window:save-profile', executableName, profile),
+    getProfile: (executableName) => ipcRenderer.invoke('window:get-profile', executableName)
   },
 
   // 🎴 Кеш изображений карт
@@ -169,7 +175,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'update-download-progress', // Прогресс скачивания
       'update-info-changed', // Изменение информации об обновлении
       'update-downloaded', // Обновление скачано
-      'update-error' // Ошибка обновления
+      'update-error', // Ошибка обновления
+      'widget-state',
+      'window-profile-updated'
     ];
     
     if (validChannels.includes(channel)) {

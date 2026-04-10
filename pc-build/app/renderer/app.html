@@ -706,6 +706,26 @@
                                 </div>
                             </article>
 
+                            <article class="section-card">
+                                <div class="section-header">
+                                    <div>
+                                        <div class="eyebrow">Виджет</div>
+                                        <h2 class="section-title">Поведение виджета</h2>
+                                        <p class="section-description">Управление автооткрытием overlay после нового результата.</p>
+                                    </div>
+                                </div>
+
+                                <div class="setting-stack">
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" v-model="autoOpenWidget" @change="saveAutoOpenWidget">
+                                        <span>Открывать виджет автоматически после найденного игрока</span>
+                                    </label>
+                                    <div class="helper-text">
+                                        Если выключить опцию, виджет будет открываться только вручную из Results или Tools.
+                                    </div>
+                                </div>
+                            </article>
+
                             <article class="section-card span-2">
                                 <div class="section-header">
                                     <div>
@@ -736,6 +756,9 @@
                                                 <span class="inline-chip" :class="getHotkeyRegistrationChipTone(profile)">
                                                     {{ getHotkeyRegistrationChipLabel(profile) }}
                                                 </span>
+                                                <span class="inline-chip" :class="getHotkeyOcrChipTone(profile)">
+                                                    {{ getHotkeyOcrChipLabel(profile) }}
+                                                </span>
                                                 <label class="checkbox-row compact">
                                                     <input type="checkbox" v-model="profile.enabled">
                                                     <span>Активен</span>
@@ -765,9 +788,11 @@
                                                 <div class="key-value-item">
                                                     <div class="key-value-value">{{ getHotkeyTargetLabel(profile) }}</div>
                                                     <div class="helper-text">{{ getHotkeyTargetMeta(profile) }}</div>
+                                                    <div class="helper-text">{{ profile.ocrProfileMessage }}</div>
                                                 </div>
                                                 <div class="inline-actions">
                                                     <button class="secondary-button" @click="openHotkeyTargetDialog(profile.id)">Выбрать окно</button>
+                                                    <button class="secondary-button" @click="configureHotkeyOcrProfile(profile)" :disabled="!profile.target">Настроить OCR области</button>
                                                     <button class="ghost-button" @click="clearHotkeyTarget(profile)" :disabled="!profile.target">Очистить</button>
                                                 </div>
                                             </div>
