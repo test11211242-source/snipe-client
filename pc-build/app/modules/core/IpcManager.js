@@ -236,6 +236,7 @@ class IpcManager {
         this.registerWidgetHandlers();
         this.registerUpdateHandlers();
         this.registerSettingsHandlers();
+        this.registerHotkeyHandlers();
         this.registerCacheHandlers(); // 🆕 Обработчики для кеша изображений карт
         this.registerAppHandlers();
 
@@ -1315,6 +1316,67 @@ class IpcManager {
         });
 
         console.log('⚙️ Обработчики настроек зарегистрированы');
+    }
+
+    registerHotkeyHandlers() {
+        this.registerHandler('hotkeys:get-all', async () => {
+            try {
+                const hotkeys = this.appManager.getHotkeys();
+                if (!hotkeys) {
+                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
+                }
+
+                return hotkeys.getProfilesWithStates();
+            } catch (error) {
+                return { success: false, error: error.message, profiles: [] };
+            }
+        });
+
+        this.registerHandler('hotkeys:save-all', async (event, profiles) => {
+            try {
+                const hotkeys = this.appManager.getHotkeys();
+                if (!hotkeys) {
+                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
+                }
+
+                return await hotkeys.saveProfiles(profiles);
+            } catch (error) {
+                return { success: false, error: error.message, profiles: [] };
+            }
+        });
+
+        this.registerHandler('hotkeys:test-run', async (event, profile) => {
+            try {
+                const hotkeys = this.appManager.getHotkeys();
+                if (!hotkeys) {
+                    return { success: false, error: 'HotkeyManager не инициализирован' };
+                }
+
+                const result = await hotkeys.testProfile(profile);
+                return {
+                    success: true,
+                    found: result.found,
+                    playerData: result.playerData
+                };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        this.registerHandler('hotkeys:refresh-registration', async () => {
+            try {
+                const hotkeys = this.appManager.getHotkeys();
+                if (!hotkeys) {
+                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
+                }
+
+                return await hotkeys.refreshRegistrations();
+            } catch (error) {
+                return { success: false, error: error.message, profiles: [] };
+            }
+        });
+
+        console.log('⌨️ Обработчики hotkeys зарегистрированы');
     }
 
     // === Кеш изображений карт ===

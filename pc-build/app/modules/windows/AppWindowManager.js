@@ -50,10 +50,10 @@ class AppWindowManager extends WindowManager {
         const screenSize = this.getScreenSize();
         
         const config = {
-            width: Math.min(1200, screenSize.width * 0.8),
-            height: Math.min(800, screenSize.height * 0.8),
-            minWidth: 1000,
-            minHeight: 600,
+            width: Math.min(1440, screenSize.width * 0.88),
+            height: Math.min(900, screenSize.height * 0.88),
+            minWidth: 1180,
+            minHeight: 720,
             autoHideMenuBar: true
         };
 
@@ -63,13 +63,22 @@ class AppWindowManager extends WindowManager {
         window.webContents.on('did-finish-load', () => {
             if (this.appManager) {
                 const appState = this.appManager.getAppState();
+                const regions = this.appManager.getStore().getOcrRegions?.() || null;
+                const server = this.appManager.getServer?.()?.getCurrentServer?.() || null;
+                const serverStatus = this.appManager.getServer?.()?.getServerStatus?.() || {};
                 
                 // Извлекаем данные пользователя из auth состояния для правильной структуры
                 const userData = {
                     user: appState.auth?.user || null,
                     initialized: appState.initialized,
                     searchMode: appState.store?.settings?.searchMode || 'fast',
-                    deckMode: appState.store?.settings?.deckMode || 'pol'
+                    deckMode: appState.store?.settings?.deckMode || 'pol',
+                    regions,
+                    server: server ? {
+                        mode: server.mode,
+                        url: server.url,
+                        available: !!serverStatus.available
+                    } : null
                 };
                 window.webContents.send('user-data', userData);
             }

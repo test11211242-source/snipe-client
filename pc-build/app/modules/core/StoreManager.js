@@ -194,6 +194,17 @@ class StoreManager {
         console.log('🃏 Режим колоды изменен:', mode);
     }
 
+    getManualHotkeys() {
+        const profiles = this.store.get('manualHotkeys', []);
+        return Array.isArray(profiles) ? profiles : [];
+    }
+
+    setManualHotkeys(profiles) {
+        const safeProfiles = Array.isArray(profiles) ? profiles : [];
+        this.store.set('manualHotkeys', safeProfiles);
+        console.log(`⌨️ Сохранено manual hotkeys: ${safeProfiles.length}`);
+    }
+
     // === Методы для работы с задержками триггеров ===
     
     getTriggerDelays() {
@@ -524,6 +535,7 @@ class StoreManager {
             settings: {
                 searchMode: this.getSearchMode(),
                 deckMode: this.getDeckMode(),
+                manualHotkeys: this.getManualHotkeys(),
                 autoOpenWidget: this.getAutoOpenWidget()
             },
             windows: {

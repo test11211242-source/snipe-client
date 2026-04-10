@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ocr:setup', 'ocr:save-regions', 'ocr:get-regions', 'ocr:analyze-profile',
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
+      'hotkeys:get-all', 'hotkeys:save-all', 'hotkeys:test-run', 'hotkeys:refresh-registration',
       'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
       'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
       'store:get', 'store:set', 'store:has', 'store:delete',
@@ -104,6 +105,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCurrent: () => ipcRenderer.invoke('server:get-current'),
     switch: (mode) => ipcRenderer.invoke('server:switch', mode),
     check: () => ipcRenderer.invoke('server:check')
+  },
+
+  hotkeys: {
+    getAll: () => ipcRenderer.invoke('hotkeys:get-all'),
+    saveAll: (profiles) => ipcRenderer.invoke('hotkeys:save-all', profiles),
+    testRun: (profile) => ipcRenderer.invoke('hotkeys:test-run', profile),
+    refreshRegistration: () => ipcRenderer.invoke('hotkeys:refresh-registration')
   },
   
   // Виджет

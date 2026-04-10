@@ -703,52 +703,109 @@ class MonitorManager {
     async handlePlayerLookupAction(actionData) {
         try {
             console.log('🎯 Обработка данных действия:', actionData.id);
-            
-            // 🔑 ПРЕВЕНТИВНАЯ ПРОВЕРКА ТОКЕНОВ ПЕРЕД КАЖДЫМ OCR ЗАПРОСОМ
-            console.log('🔍 [OCR] Превентивная проверка токенов...');
-            await this.checkAndRefreshTokens();
-            
-            // Конвертируем base64 обратно в изображение для отправки на сервер
+
             const imageBuffer = Buffer.from(actionData.image_b64, 'base64');
-            
-            // Подготавливаем данные для отправки на OCR сервер
-            const formData = new FormData();
-            formData.append('image', imageBuffer, {
-                filename: 'screenshot.png',
-                contentType: 'image/png'
+            const playerData = await this.submitOcrRequest({
+                imageBuffer,
+                timestamp: actionData.timestamp,
+                searchMode: actionData.id.includes('fast') ? 'fast' : 'precise',
+                deckMode: this.storeManager.getDeckMode() || 'pol',
+                sourceLabel: actionData.id || 'trigger'
             });
-            formData.append('timestamp', actionData.timestamp);
-            formData.append('search_mode', actionData.id.includes('fast') ? 'fast' : 'precise');
-            formData.append('deck_mode', this.storeManager.getDeckMode() || 'pol');
-            
-            // Отправляем на сервер через ApiManager (токен добавляется автоматически)
-            console.log('📡 [OCR] Отправка запроса на сервер...');
-            const response = await this.apiManager.post('/api/ocr/process', formData, {
-                headers: formData.getHeaders()
-            });
-            
-            if (response.success) {
-                const playerData = response.data;
-                console.log('✅ OCR данные получены:', playerData.ocr_result?.nickname || 'Unknown');
-                
-                // Отправляем событие как обычно
-                this.eventBus.emit('monitor:player-found', { playerData });
-                this.showPlayerFoundNotification(playerData);
-            } else {
-                // Игрок не найден - всё равно отправляем данные для обновления UI
-                const playerData = response.data || {};
-                playerData.player_not_found = true;
-                playerData.searched_nickname = playerData.ocr_result?.nickname || 
-                                               playerData.searched_nickname || 'Неизвестный';
-                console.log('❌ Игрок не найден:', playerData.searched_nickname);
-                
-                // Отправляем событие для обновления UI с сообщением об ошибке
-                this.eventBus.emit('monitor:player-found', { playerData });
-            }
+
+            this.dispatchLookupResult(playerData, { showNotification: true });
             
         } catch (error) {
             console.error('❌ Ошибка обработки ACTION_DATA:', error);
             this.eventBus.emit('monitor:error', `Ошибка обработки: ${error.message}`);
+        }
+    }
+
+    dispatchLookupResult(playerData, options = {}) {
+        const showNotification = options.showNotification !== false;
+
+        if (playerData?.player_not_found || playerData?.success === false) {
+            playerData.player_not_found = true;
+            playerData.searched_nickname = playerData.ocr_result?.nickname ||
+                playerData.searched_nickname ||
+                'Неизвестный';
+
+            console.log('❌ Игрок не найден:', playerData.searched_nickname);
+            this.eventBus.emit('monitor:player-found', { playerData });
+            return {
+                success: true,
+                found: false,
+                playerData
+            };
+        }
+
+        console.log('✅ OCR данные получены:', playerData.ocr_result?.nickname || playerData.player?.name || 'Unknown');
+        this.eventBus.emit('monitor:player-found', { playerData });
+
+        if (showNotification) {
+            this.showPlayerFoundNotification(playerData);
+        }
+
+        return {
+            success: true,
+            found: true,
+            playerData
+        };
+    }
+
+    async submitOcrRequest({ imageBuffer, timestamp, searchMode, deckMode, sourceLabel = 'manual' }) {
+        console.log(`🔍 [OCR] Подготовка запроса (${sourceLabel})...`);
+        await this.checkAndRefreshTokens();
+
+        const formData = new FormData();
+        formData.append('image', imageBuffer, {
+            filename: 'screenshot.png',
+            contentType: 'image/png'
+        });
+        formData.append('timestamp', timestamp || new Date().toISOString());
+        formData.append('search_mode', searchMode === 'precise' ? 'precise' : 'fast');
+        formData.append('deck_mode', deckMode === 'gt' ? 'gt' : 'pol');
+
+        console.log('📡 [OCR] Отправка запроса на сервер...');
+        const response = await this.apiManager.post('/api/ocr/process', formData, {
+            headers: formData.getHeaders()
+        });
+
+        if (response.success) {
+            return response.data;
+        }
+
+        const playerData = response.data || {};
+        playerData.player_not_found = true;
+        playerData.success = false;
+        playerData.searched_nickname = playerData.ocr_result?.nickname ||
+            playerData.searched_nickname ||
+            'Неизвестный';
+        return playerData;
+    }
+
+    async runManualLookup({ imageBuffer, timestamp, searchMode, deckMode, sourceLabel = 'manual', targetLabel = '' }) {
+        const resolvedSearchMode = searchMode === 'precise' ? 'precise' : 'fast';
+        const resolvedDeckMode = deckMode === 'gt' ? 'gt' : 'pol';
+        const statusTarget = targetLabel ? ` (${targetLabel})` : '';
+
+        try {
+            this.eventBus.emit('monitor:status', `Ручной поиск: ${sourceLabel}${statusTarget}`);
+
+            const playerData = await this.submitOcrRequest({
+                imageBuffer,
+                timestamp: timestamp || new Date().toISOString(),
+                searchMode: resolvedSearchMode,
+                deckMode: resolvedDeckMode,
+                sourceLabel
+            });
+
+            return this.dispatchLookupResult(playerData, { showNotification: true });
+
+        } catch (error) {
+            console.error('❌ Ошибка ручного OCR поиска:', error);
+            this.eventBus.emit('monitor:error', `Ручной поиск (${sourceLabel}): ${error.message}`);
+            throw error;
         }
     }
 
