@@ -68,7 +68,8 @@ class AppWindowManager extends WindowManager {
                 const userData = {
                     user: appState.auth?.user || null,
                     initialized: appState.initialized,
-                    searchMode: appState.store?.settings?.searchMode || 'fast'  // 🔧 ИСПРАВЛЕНИЕ: правильный путь к searchMode
+                    searchMode: appState.store?.settings?.searchMode || 'fast',
+                    deckMode: appState.store?.settings?.deckMode || 'pol'
                 };
                 window.webContents.send('user-data', userData);
             }

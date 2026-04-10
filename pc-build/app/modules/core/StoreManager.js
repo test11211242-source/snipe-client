@@ -102,6 +102,78 @@ class StoreManager {
         return regions && regions.trigger_area && regions.normal_data_area;
     }
 
+    // === Настройки стримерских автопрогнозов ===
+
+    getStreamerPredictionAreas() {
+        return this.store.get('streamerPredictionAreas', {});
+    }
+
+    getStreamerPredictionConfig(userId = null) {
+        const resolvedUserId = userId || this.getUser()?.id;
+        if (!resolvedUserId) {
+            return {};
+        }
+
+        const areas = this.getStreamerPredictionAreas();
+        return areas[resolvedUserId] || {};
+    }
+
+    setStreamerPredictionConfig(config, userId = null) {
+        const resolvedUserId = userId || this.getUser()?.id;
+        if (!resolvedUserId) {
+            throw new Error('Невозможно сохранить streamer prediction config без пользователя');
+        }
+
+        const areas = this.getStreamerPredictionAreas();
+        areas[resolvedUserId] = config;
+        this.store.set('streamerPredictionAreas', areas);
+        console.log(`🎥 Streamer prediction config сохранен для пользователя ${resolvedUserId}`);
+    }
+
+    clearStreamerPredictionConfig(userId = null) {
+        const resolvedUserId = userId || this.getUser()?.id;
+        if (!resolvedUserId) {
+            return;
+        }
+
+        const areas = this.getStreamerPredictionAreas();
+        delete areas[resolvedUserId];
+        this.store.set('streamerPredictionAreas', areas);
+        console.log(`🗑️ Streamer prediction config удален для пользователя ${resolvedUserId}`);
+    }
+
+    getStreamerResultTriggerArea(userId = null) {
+        return this.getStreamerPredictionConfig(userId).result_trigger_area || null;
+    }
+
+    getStreamerResultDataArea(userId = null) {
+        return this.getStreamerPredictionConfig(userId).result_data_area || null;
+    }
+
+    setStreamerResultTriggerArea(area, userId = null) {
+        const config = this.getStreamerPredictionConfig(userId);
+        this.setStreamerPredictionConfig({
+            ...config,
+            result_trigger_area: area
+        }, userId);
+    }
+
+    setStreamerResultDataArea(area, userId = null) {
+        const config = this.getStreamerPredictionConfig(userId);
+        this.setStreamerPredictionConfig({
+            ...config,
+            result_data_area: area
+        }, userId);
+    }
+
+    hasStreamerResultTriggerArea(userId = null) {
+        return !!this.getStreamerResultTriggerArea(userId);
+    }
+
+    hasStreamerResultDataArea(userId = null) {
+        return !!this.getStreamerResultDataArea(userId);
+    }
+
     // === Методы для работы с режимом поиска ===
     
     getSearchMode() {
@@ -111,6 +183,15 @@ class StoreManager {
     setSearchMode(mode) {
         this.store.set('searchMode', mode);
         console.log('🔍 Режим поиска изменен:', mode);
+    }
+
+    getDeckMode() {
+        return this.store.get('deckMode', 'pol');
+    }
+
+    setDeckMode(mode) {
+        this.store.set('deckMode', mode);
+        console.log('🃏 Режим колоды изменен:', mode);
     }
 
     // === Методы для работы с задержками триггеров ===
@@ -442,6 +523,7 @@ class StoreManager {
             },
             settings: {
                 searchMode: this.getSearchMode(),
+                deckMode: this.getDeckMode(),
                 autoOpenWidget: this.getAutoOpenWidget()
             },
             windows: {

@@ -47,6 +47,19 @@ class StreamerPanel {
             error: null
         };
 
+        this.monitorState = {
+            isRunning: false,
+            loading: true
+        };
+
+        this.predictionAreasState = {
+            triggerConfigured: false,
+            triggerArea: null,
+            dataConfigured: false,
+            dataArea: null,
+            loading: true
+        };
+
         console.log('[Streamer] StreamerPanel создан');
         this.init();
     }
@@ -86,7 +99,10 @@ class StreamerPanel {
             
             // Проверяем Twitch подключение
             await this.checkTwitchConnection();
-            
+
+            // Проверяем готовность локального мониторинга и result trigger
+            await this.refreshPredictionEnvironment();
+             
             // Инициализируем deck sharing
             await this.initializeDeckSharing();
             
@@ -133,6 +149,16 @@ class StreamerPanel {
         
         if (stopBotBtn) {
             stopBotBtn.addEventListener('click', () => this.stopBot());
+        }
+
+        const configureResultTriggerAreaBtn = document.getElementById('configure-result-trigger-area-btn');
+        if (configureResultTriggerAreaBtn) {
+            configureResultTriggerAreaBtn.addEventListener('click', () => this.configureResultTriggerArea());
+        }
+
+        const configureResultDataAreaBtn = document.getElementById('configure-result-data-area-btn');
+        if (configureResultDataAreaBtn) {
+            configureResultDataAreaBtn.addEventListener('click', () => this.configureResultDataArea());
         }
 
         // Настройки прогнозов
@@ -276,6 +302,208 @@ class StreamerPanel {
             winStreakGroup.style.opacity = isStreakType ? '1' : '0.5';
             winStreakGroup.style.pointerEvents = isStreakType ? 'auto' : 'none';
         }
+    }
+
+    async refreshPredictionEnvironment() {
+        await Promise.all([
+            this.updateMonitorStatus(),
+            this.loadPredictionAreas()
+        ]);
+
+        this.updatePredictionRequirementsUI();
+    }
+
+    async updateMonitorStatus() {
+        try {
+            this.monitorState.loading = true;
+
+            if (!window.electronAPI?.monitor?.getStatus) {
+                this.monitorState.isRunning = false;
+                return;
+            }
+
+            const result = await window.electronAPI.monitor.getStatus();
+            this.monitorState.isRunning = !!(result?.success && result.status?.isRunning);
+        } catch (error) {
+            console.error('❌ [Streamer] Ошибка получения статуса мониторинга:', error);
+            this.monitorState.isRunning = false;
+        } finally {
+            this.monitorState.loading = false;
+        }
+    }
+
+    async loadPredictionAreas() {
+        try {
+            this.predictionAreasState.loading = true;
+
+            if (!window.electronAPI?.streamerConfig?.getResultConfig) {
+                this.predictionAreasState.triggerConfigured = false;
+                this.predictionAreasState.triggerArea = null;
+                this.predictionAreasState.dataConfigured = false;
+                this.predictionAreasState.dataArea = null;
+                return;
+            }
+
+            const result = await window.electronAPI.streamerConfig.getResultConfig();
+            const config = result?.config || {};
+
+            this.predictionAreasState.triggerArea = config.result_trigger_area || null;
+            this.predictionAreasState.triggerConfigured = !!config.result_trigger_area;
+            this.predictionAreasState.dataArea = config.result_data_area || null;
+            this.predictionAreasState.dataConfigured = !!config.result_data_area;
+        } catch (error) {
+            console.error('❌ [Streamer] Ошибка получения зон результата:', error);
+            this.predictionAreasState.triggerConfigured = false;
+            this.predictionAreasState.triggerArea = null;
+            this.predictionAreasState.dataConfigured = false;
+            this.predictionAreasState.dataArea = null;
+        } finally {
+            this.predictionAreasState.loading = false;
+        }
+    }
+
+    updatePredictionRequirementsUI() {
+        const monitorStatus = document.getElementById('monitor-prereq-status');
+        const resultTriggerAreaStatus = document.getElementById('result-trigger-area-status');
+        const resultDataAreaStatus = document.getElementById('result-data-area-status');
+
+        if (monitorStatus) {
+            if (this.monitorState.loading) {
+                monitorStatus.textContent = 'Проверяем...';
+                monitorStatus.style.color = 'var(--warning)';
+            } else if (this.monitorState.isRunning) {
+                monitorStatus.textContent = 'Снайп-мониторинг активен';
+                monitorStatus.style.color = 'var(--success)';
+            } else {
+                monitorStatus.textContent = 'Сначала запустите систему снайпа';
+                monitorStatus.style.color = 'var(--error)';
+            }
+        }
+
+        if (resultTriggerAreaStatus) {
+            if (this.predictionAreasState.loading) {
+                resultTriggerAreaStatus.textContent = 'Проверяем...';
+                resultTriggerAreaStatus.style.color = 'var(--warning)';
+            } else if (this.predictionAreasState.triggerConfigured) {
+                const area = this.predictionAreasState.triggerArea;
+                resultTriggerAreaStatus.textContent = `Настроена: ${area.width}x${area.height}`;
+                resultTriggerAreaStatus.style.color = 'var(--success)';
+            } else {
+                resultTriggerAreaStatus.textContent = 'Не настроена';
+                resultTriggerAreaStatus.style.color = 'var(--warning)';
+            }
+        }
+
+        if (resultDataAreaStatus) {
+            if (this.predictionAreasState.loading) {
+                resultDataAreaStatus.textContent = 'Проверяем...';
+                resultDataAreaStatus.style.color = 'var(--warning)';
+            } else if (this.predictionAreasState.dataConfigured) {
+                const area = this.predictionAreasState.dataArea;
+                resultDataAreaStatus.textContent = `Настроена: ${area.width}x${area.height}`;
+                resultDataAreaStatus.style.color = 'var(--success)';
+            } else {
+                resultDataAreaStatus.textContent = 'Не настроена';
+                resultDataAreaStatus.style.color = 'var(--warning)';
+            }
+        }
+
+        this.updateBotUI();
+    }
+
+    canStartPredictions() {
+        return this.twitchState.connected &&
+            this.monitorState.isRunning &&
+            this.predictionAreasState.triggerConfigured &&
+            this.predictionAreasState.dataConfigured;
+    }
+
+    getPredictionStartBlocker() {
+        if (!this.twitchState.connected) {
+            return 'Для запуска подключите Twitch канал';
+        }
+
+        if (!this.monitorState.isRunning) {
+            return 'Сначала запустите систему снайпа';
+        }
+
+        if (!this.predictionAreasState.triggerConfigured) {
+            return 'Настройте trigger area результата';
+        }
+
+        if (!this.predictionAreasState.dataConfigured) {
+            return 'Настройте data area результата';
+        }
+
+        return 'Готов к запуску';
+    }
+
+    buildPredictionPayload() {
+        return {
+            prediction_type: this.predictionSettings.predictionType,
+            prediction_window: this.predictionSettings.predictionWindow,
+            win_streak_count: this.predictionSettings.winStreakCount,
+            delay_between_predictions: this.predictionSettings.delayBetweenPredictions,
+            auto_create_next: this.predictionSettings.autoCreateNext,
+            smart_predictions: this.predictionSettings.smartPredictions
+        };
+    }
+
+    async applyPredictionMonitorMode(enabled, reason) {
+        if (!window.electronAPI?.store || !window.electronAPI?.monitor) {
+            throw new Error('Electron API для управления мониторингом недоступен');
+        }
+
+        const previousValue = await window.electronAPI.store.get('streamerPredictionMonitorEnabled', false);
+        await window.electronAPI.store.set('streamerPredictionMonitorEnabled', enabled);
+
+        if (!this.monitorState.isRunning) {
+            return;
+        }
+
+        const restartResult = await window.electronAPI.monitor.restart(reason);
+        if (!restartResult?.success) {
+            await window.electronAPI.store.set('streamerPredictionMonitorEnabled', previousValue);
+            throw new Error(restartResult?.error || 'Не удалось перезапустить мониторинг');
+        }
+
+        await this.updateMonitorStatus();
+    }
+
+    async openPredictionAreaSetup(setupType, successMessage) {
+        try {
+            if (!window.electronAPI?.ocr?.setupRegions || !window.electronAPI?.monitor?.getCaptureTarget) {
+                throw new Error('Настройка области результата недоступна в этой сборке');
+            }
+
+            const captureTargetResult = await window.electronAPI.monitor.getCaptureTarget();
+            const target = captureTargetResult?.target || null;
+            const setupContext = {
+                setupType,
+                mode: target?.targetType === 'window' ? 'window' : 'screen',
+                targetWindow: target?.targetType === 'window' ? target : null
+            };
+
+            await window.electronAPI.ocr.setupRegions(setupContext);
+            this.showMessage(successMessage, 'info');
+        } catch (error) {
+            console.error('❌ [Streamer] Ошибка открытия настройки streamer area:', error);
+            this.showMessage('Не удалось открыть настройку области: ' + error.message, 'error');
+        }
+    }
+
+    async configureResultTriggerArea() {
+        return this.openPredictionAreaSetup(
+            'streamer_result_trigger_area',
+            'Окно настройки trigger area открыто'
+        );
+    }
+
+    async configureResultDataArea() {
+        return this.openPredictionAreaSetup(
+            'streamer_result_data_area',
+            'Окно настройки data area открыто'
+        );
     }
 
     switchTab(tabName) {
@@ -478,9 +706,22 @@ class StreamerPanel {
                     this.botState.predictions = {
                         total: response.status.statistics.total_predictions || 0,
                         successRate: response.status.statistics.success_rate || 0,
-                        currentStreak: response.status.statistics.current_streak || 0,
-                        active: response.status.statistics.active_prediction || null
+                        currentStreak: response.status.statistics.current_win_streak || 0,
+                        active: response.status.current_prediction?.prediction?.title || null
                     };
+                }
+
+                if (!this.botState.isActive && window.electronAPI?.store) {
+                    await window.electronAPI.store.set('streamerPredictionsActive', false);
+
+                    const predictionMonitorEnabled = await window.electronAPI.store.get('streamerPredictionMonitorEnabled', false);
+                    if (predictionMonitorEnabled) {
+                        try {
+                            await this.applyPredictionMonitorMode(false, 'синхронизация локального состояния автопрогнозов');
+                        } catch (syncError) {
+                            console.error('❌ [Streamer] Ошибка синхронизации monitor mode:', syncError);
+                        }
+                    }
                 }
             }
             
@@ -503,13 +744,18 @@ class StreamerPanel {
         if (statusDot) {
             statusDot.className = 'status-dot';
             if (this.botState.isActive) {
-                statusDot.classList.add(this.botState.status === 'detecting' ? 'warning' : 'success');
+                const waitingForResultStates = ['waiting_result', 'detecting'];
+                statusDot.classList.add(waitingForResultStates.includes(this.botState.status) ? 'warning' : 'success');
             }
         }
 
         // Обновляем текст состояния
         const stateTexts = {
             'idle': 'Бот неактивен',
+            'waiting_battle_start': 'Ожидание нового боя',
+            'waiting_result': 'Ожидание результата боя',
+            'processing_result': 'Обработка результата',
+            'closing': 'Закрытие и создание нового прогноза',
             'running': 'Бот активен',
             'detecting': 'Ожидание результата боя',
             'processing': 'Обработка результата',
@@ -522,17 +768,19 @@ class StreamerPanel {
 
         if (statusDetails) {
             if (this.botState.isActive) {
-                statusDetails.textContent = 'Автоматические прогнозы активны';
-            } else if (!this.twitchState.connected) {
-                statusDetails.textContent = 'Для запуска подключите Twitch канал';
+                if (!this.monitorState.isRunning) {
+                    statusDetails.textContent = 'Снайп остановлен: prediction-цикл не сможет получить новый бой';
+                } else {
+                    statusDetails.textContent = 'Автоматические прогнозы активны';
+                }
             } else {
-                statusDetails.textContent = 'Готов к запуску';
+                statusDetails.textContent = this.getPredictionStartBlocker();
             }
         }
 
         // Обновляем кнопки
         if (startBtn) {
-            startBtn.disabled = this.botState.isActive || !this.twitchState.connected;
+            startBtn.disabled = this.botState.isActive || !this.canStartPredictions();
         }
         
         if (stopBtn) {
@@ -541,32 +789,60 @@ class StreamerPanel {
     }
 
     async startBot() {
+        let predictionMonitorModeApplied = false;
+
         try {
-            if (!this.twitchState.connected) {
-                this.showMessage('Сначала подключите Twitch канал', 'warning');
+            await this.refreshPredictionEnvironment();
+
+            if (!this.canStartPredictions()) {
+                this.showMessage(this.getPredictionStartBlocker(), 'warning');
                 return;
             }
 
-            this.showMessage('Запускаем бота...', 'info');
+            this.showMessage('Применяем триггеры для автопрогнозов...', 'info');
             this.setButtonLoading('start-bot-btn', true);
 
+            await this.applyPredictionMonitorMode(true, 'включение автопрогнозов');
+            predictionMonitorModeApplied = true;
+
+            this.showMessage('Запускаем бота...', 'info');
+
             // Передаем текущие настройки прогнозов
-            const response = await this.apiCall('/api/streamer/bot/start', 'POST', this.predictionSettings);
+            const response = await this.apiCall('/api/streamer/bot/start', 'POST', this.buildPredictionPayload());
             
             if (response.success) {
                 this.botState.isActive = true;
-                this.botState.status = 'running';
+                this.botState.status = response.bot_status?.state || 'waiting_battle_start';
+
+                if (window.electronAPI?.store) {
+                    await window.electronAPI.store.set('streamerPredictionsActive', true);
+                }
+
                 this.updateBotUI();
-                this.showMessage('Бот запущен! Прогнозы будут создаваться автоматически', 'success');
+                this.showMessage('Бот запущен. Новый прогноз будет создаваться автоматически после каждого результата', 'success');
             } else {
                 throw new Error(response.error || 'Неизвестная ошибка запуска');
             }
             
         } catch (error) {
             console.error('❌ [Streamer] Ошибка запуска бота:', error);
+
+            if (window.electronAPI?.store) {
+                await window.electronAPI.store.set('streamerPredictionsActive', false);
+            }
+
+            if (predictionMonitorModeApplied) {
+                try {
+                    await this.applyPredictionMonitorMode(false, 'откат после ошибки запуска автопрогнозов');
+                } catch (rollbackError) {
+                    console.error('❌ [Streamer] Ошибка отката мониторинга:', rollbackError);
+                }
+            }
+
             this.showMessage('Ошибка запуска бота: ' + error.message, 'error');
         } finally {
             this.setButtonLoading('start-bot-btn', false);
+            await this.refreshPredictionEnvironment();
         }
     }
 
@@ -580,6 +856,13 @@ class StreamerPanel {
             if (response.success) {
                 this.botState.isActive = false;
                 this.botState.status = 'idle';
+
+                if (window.electronAPI?.store) {
+                    await window.electronAPI.store.set('streamerPredictionsActive', false);
+                }
+
+                await this.applyPredictionMonitorMode(false, 'выключение автопрогнозов');
+
                 this.updateBotUI();
                 this.showMessage('Бот остановлен', 'warning');
             } else {
@@ -591,6 +874,7 @@ class StreamerPanel {
             this.showMessage('Ошибка остановки бота: ' + error.message, 'error');
         } finally {
             this.setButtonLoading('stop-bot-btn', false);
+            await this.refreshPredictionEnvironment();
         }
     }
 
@@ -631,7 +915,10 @@ class StreamerPanel {
     startPeriodicUpdates() {
         // Обновляем статус каждые 5 секунд
         this.updateInterval = setInterval(() => {
-            this.updateBotStatus();
+            Promise.allSettled([
+                this.refreshPredictionEnvironment(),
+                this.updateBotStatus()
+            ]);
         }, 5000);
         
         console.log('[Streamer] Периодические обновления запущены');
@@ -690,15 +977,24 @@ class StreamerPanel {
             const response = await fetch(fullUrl, options);
             
             if (!response.ok) {
+                let errorPayload = null;
+                try {
+                    errorPayload = await response.json();
+                } catch (_) {
+                    errorPayload = null;
+                }
+
+                const serverMessage = errorPayload?.detail || errorPayload?.message;
+
                 // Специальная обработка 403 ошибки
                 if (response.status === 403) {
-                    throw new Error('Нет доступа: авторизуйтесь в приложении или получите роль STREAMER');
+                    throw new Error(serverMessage || 'Нет доступа: авторизуйтесь в приложении или получите роль STREAMER');
                 }
                 // Специальная обработка 401 ошибки
                 if (response.status === 401) {
-                    throw new Error('Токен авторизации истёк. Перезайдите в приложение');
+                    throw new Error(serverMessage || 'Токен авторизации истёк. Перезайдите в приложение');
                 }
-                throw new Error(`Ошибка сервера ${response.status}: ${response.statusText}`);
+                throw new Error(serverMessage || `Ошибка сервера ${response.status}: ${response.statusText}`);
             }
 
             return await response.json();

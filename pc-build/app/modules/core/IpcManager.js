@@ -862,102 +862,102 @@ class IpcManager {
             return { success: true, status };
         });
 
-        // === STREAMER MANAGER HANDLERS ===
+        this.registerHandler('streamer:get-result-config', async () => {
+            console.log('📍 IPC: Получение конфигурации result-зон стримера');
 
-        this.registerHandler('streamer:get-status', async () => {
-            console.log('🎮 IPC: Получение статуса стримера');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
+            try {
+                const api = this.appManager.getApi();
+                const store = this.appManager.getStore();
+                const response = await api.get('/api/streamer/result-config');
+
+                if (response.success && response.data?.success) {
+                    const config = {
+                        result_trigger_area: response.data.trigger_area || null,
+                        result_data_area: response.data.data_area || null
+                    };
+                    store.setStreamerPredictionConfig(config);
+
+                    return {
+                        success: true,
+                        config
+                    };
+                }
+
+                return {
+                    success: false,
+                    error: response.error || response.userMessage || 'Не удалось получить конфигурацию result-зон',
+                    config: store.getStreamerPredictionConfig()
+                };
+            } catch (error) {
+                console.error('❌ Ошибка получения конфигурации result-зон:', error);
+                return {
+                    success: false,
+                    error: error.message,
+                    config: this.appManager.getStore().getStreamerPredictionConfig()
+                };
             }
-            
-            const status = streamerManager.getStatus();
-            return { success: true, status };
         });
 
-        this.registerHandler('streamer:check-twitch', async () => {
-            console.log('💜 IPC: Проверка Twitch подключения');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
+        this.registerHandler('streamer:save-result-trigger-area', async (event, area) => {
+            console.log('💾 IPC: Сохранение trigger-area результата стримера');
+
+            try {
+                const api = this.appManager.getApi();
+                const store = this.appManager.getStore();
+                const response = await api.post('/api/streamer/result-trigger-area', area);
+
+                if (!response.success || !response.data?.success) {
+                    return {
+                        success: false,
+                        error: response.error || response.userMessage || 'Не удалось сохранить trigger-area результата'
+                    };
+                }
+
+                const savedArea = response.data.area_data || area;
+                store.setStreamerResultTriggerArea(savedArea);
+
+                return {
+                    success: true,
+                    area: savedArea
+                };
+            } catch (error) {
+                console.error('❌ Ошибка сохранения trigger-area результата:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
             }
-            
-            return await streamerManager.checkTwitchConnection();
         });
 
-        this.registerHandler('streamer:get-twitch-auth-url', async () => {
-            console.log('🔗 IPC: Получение ссылки авторизации Twitch');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
-            }
-            
-            return await streamerManager.getTwitchAuthUrl();
-        });
+        this.registerHandler('streamer:save-result-data-area', async (event, area) => {
+            console.log('💾 IPC: Сохранение data-area результата стримера');
 
-        this.registerHandler('streamer:disconnect-twitch', async () => {
-            console.log('🔌 IPC: Отключение Twitch');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
-            }
-            
-            return await streamerManager.disconnectTwitch();
-        });
+            try {
+                const api = this.appManager.getApi();
+                const store = this.appManager.getStore();
+                const response = await api.post('/api/streamer/result-data-area', area);
 
-        this.registerHandler('streamer:start-bot', async (event, settings) => {
-            console.log('🤖 IPC: Запуск бота прогнозов');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
-            }
-            
-            // Обновляем настройки если переданы
-            if (settings) {
-                streamerManager.updateSettings(settings);
-            }
-            
-            return await streamerManager.startPredictionBot();
-        });
+                if (!response.success || !response.data?.success) {
+                    return {
+                        success: false,
+                        error: response.error || response.userMessage || 'Не удалось сохранить data-area результата'
+                    };
+                }
 
-        this.registerHandler('streamer:stop-bot', async () => {
-            console.log('⏹️ IPC: Остановка бота прогнозов');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
-            }
-            
-            return await streamerManager.stopPredictionBot();
-        });
+                const savedArea = response.data.area_data || area;
+                store.setStreamerResultDataArea(savedArea);
 
-        this.registerHandler('streamer:update-settings', async (event, settings) => {
-            console.log('⚙️ IPC: Обновление настроек стримера');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
+                return {
+                    success: true,
+                    area: savedArea
+                };
+            } catch (error) {
+                console.error('❌ Ошибка сохранения data-area результата:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
             }
-            
-            streamerManager.updateSettings(settings);
-            return { success: true };
-        });
-
-        this.registerHandler('streamer:get-statistics', async () => {
-            console.log('📊 IPC: Получение статистики стримера');
-            
-            const streamerManager = this.appManager.getStreamerManager();
-            if (!streamerManager) {
-                return { success: false, error: 'StreamerManager не подключен' };
-            }
-            
-            const statistics = streamerManager.getStatistics();
-            return { success: true, statistics };
         });
 
         // 🆕 ЭТАП 2.1: Обработчики для управления целью захвата
@@ -1222,6 +1222,7 @@ class IpcManager {
             
             const settings = {
                 searchMode: this.appManager.getStore().getSearchMode(),
+                deckMode: this.appManager.getStore().getDeckMode(),
                 serverMode: this.appManager.getStore().getServerMode(),
                 ocrRegions: this.appManager.getStore().getOcrRegions(),
                 timestamp: new Date().toISOString()
@@ -1239,6 +1240,10 @@ class IpcManager {
             try {
                 if (settings.searchMode) {
                     this.appManager.getStore().setSearchMode(settings.searchMode);
+                }
+
+                if (settings.deckMode) {
+                    this.appManager.getStore().setDeckMode(settings.deckMode);
                 }
                 
                 if (settings.serverMode) {

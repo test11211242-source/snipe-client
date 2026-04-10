@@ -50,6 +50,10 @@ class WebSocketManager {
     // === Подключение к WebSocket ===
     
     async connect() {
+        // Восстанавливаем auto-reconnect при явном вызове connect()
+        // (мог быть сброшен через disconnect() при смене сервера)
+        this.shouldReconnect = true;
+        
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             console.log('🔌 WebSocket уже подключен или подключается');
             return { success: true, status: 'already_connected' };

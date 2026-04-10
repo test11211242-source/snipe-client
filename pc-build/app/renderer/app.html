@@ -1958,15 +1958,35 @@
             </div>
 
             <div class="control-section">
-                <h3 class="section-title">Режим поиска</h3>
+                <h3 class="section-title">OCR режим</h3>
                 <div class="mode-toggle-container">
-                    <div class="mode-indicator" id="mode-indicator">Быстрый режим</div>
+                    <div class="mode-indicator" id="mode-indicator">Быстрый OCR</div>
                     <label class="mode-toggle">
                         <input type="checkbox" id="search-mode-toggle" onchange="toggleSearchMode()">
                         <span class="mode-slider"></span>
                     </label>
                     <div class="mode-description" id="mode-description">
-                        Поиск только по рейтингу
+                        Поиск игрока по нику и рейтингу
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3 class="section-title">Тип колоды</h3>
+                <div class="server-toggle-container">
+                    <div class="server-status">
+                        <div class="server-mode" id="deck-mode-label">Path of Legends</div>
+                    </div>
+                    <div class="server-switch-buttons">
+                        <button class="server-btn active" id="deck-pol-btn" onclick="setDeckMode('pol')">
+                            🏆 PoL
+                        </button>
+                        <button class="server-btn test" id="deck-gt-btn" onclick="setDeckMode('gt')">
+                            🏅 GT
+                        </button>
+                    </div>
+                    <div class="mode-description" id="deck-mode-description" style="margin-top: 12px;">
+                        Ranked колоды из Path of Legends
                     </div>
                 </div>
             </div>
@@ -2115,6 +2135,7 @@
         let currentUser = null;
         let lastPlayerData = null;
         let searchMode = 'fast';
+        let deckMode = 'pol';
         let currentServerMode = 'global';
         let serverSwitching = false;
 
@@ -2251,6 +2272,11 @@
             if (data.searchMode !== undefined) {
                 searchMode = data.searchMode || 'fast';
                 updateModeUI();
+            }
+
+            if (data.deckMode !== undefined) {
+                deckMode = data.deckMode || 'pol';
+                updateDeckModeUI();
             }
             
             if (data.server) {
@@ -2840,7 +2866,7 @@
             await window.electronAPI.settings.saveSearchMode(searchMode);
             
             updateModeUI();
-            showStatus(`Активирован ${searchMode === 'fast' ? 'быстрый' : 'точный'} режим`, 'success');
+            showStatus(`OCR режим: ${searchMode === 'fast' ? 'быстрый' : 'точный'}`, 'success');
         }
 
         function updateModeUI() {
@@ -2850,16 +2876,109 @@
             
             if (searchMode === 'precise') {
                 toggle.checked = true;
-                indicator.textContent = 'Точный режим';
-                description.textContent = 'Поиск по рейтингу + клану';
+                indicator.textContent = 'Точный OCR';
+                description.textContent = 'Поиск игрока по нику, рейтингу и клану';
             } else {
                 toggle.checked = false;
-                indicator.textContent = 'Быстрый режим';
-                description.textContent = 'Поиск только по рейтингу';
+                indicator.textContent = 'Быстрый OCR';
+                description.textContent = 'Поиск игрока по нику и рейтингу';
             }
         }
 
-        async function generateDeckHtml(deck) {
+        function getDeckModeMeta(mode) {
+            if (mode === 'gt') {
+                return {
+                    label: 'GT режим',
+                    description: 'Турнирные колоды из battlelog'
+                };
+            }
+
+            return {
+                label: 'Path of Legends',
+                description: 'Ranked колоды из Path of Legends'
+            };
+        }
+
+        function getDeckModeLabel(mode) {
+            return getDeckModeMeta(mode).label;
+        }
+
+        function getRequestedDeckMode(playerData = null) {
+            return playerData?.deck_mode || deckMode || 'pol';
+        }
+
+        function getBattleTypeLabel(deck, fallbackMode = 'pol') {
+            const battleType = deck?.battle_type;
+
+            if (battleType === 'grandTournament') {
+                return 'GT';
+            }
+
+            if (battleType === 'pathOfLegends') {
+                return 'PoL';
+            }
+
+            if (battleType === 'tournament') {
+                return 'Турнир';
+            }
+
+            if (battleType === 'challenge') {
+                return 'Challenge';
+            }
+
+            if (battleType === 'friendly') {
+                return 'Friendly';
+            }
+
+            return fallbackMode === 'gt' ? 'GT' : 'PoL';
+        }
+
+        async function setDeckMode(mode) {
+            if (!['pol', 'gt'].includes(mode)) {
+                return;
+            }
+
+            if (deckMode === mode) {
+                updateDeckModeUI();
+                return;
+            }
+
+            try {
+                deckMode = mode;
+                await window.electronAPI.store.set('deckMode', mode);
+                updateDeckModeUI();
+                showStatus(`Тип колоды: ${getDeckModeLabel(mode)}`, 'success');
+            } catch (error) {
+                console.error('Ошибка сохранения режима колоды:', error);
+                showStatus('Ошибка сохранения режима колоды', 'error');
+            }
+        }
+
+        function updateDeckModeUI() {
+            const label = document.getElementById('deck-mode-label');
+            const description = document.getElementById('deck-mode-description');
+            const polBtn = document.getElementById('deck-pol-btn');
+            const gtBtn = document.getElementById('deck-gt-btn');
+            const meta = getDeckModeMeta(deckMode);
+
+            if (label) {
+                label.textContent = meta.label;
+            }
+
+            if (description) {
+                description.textContent = meta.description;
+            }
+
+            if (polBtn) {
+                polBtn.classList.toggle('active', deckMode === 'pol');
+            }
+
+            if (gtBtn) {
+                gtBtn.classList.toggle('active', deckMode === 'gt');
+            }
+        }
+
+        async function generateDeckHtml(deck, requestedDeckMode = 'pol') {
             if (!deck || !deck.cards || deck.cards.length === 0) {
                 return '<div class="detail-item"><div class="detail-label">Колода не найдена</div></div>';
             }
@@ -2926,10 +3045,11 @@
             const cardsHtml = cardsHtmlArray.join('');
 
             const averageElixir = deck.average_elixir ? deck.average_elixir.toFixed(1) : 'N/A';
+            const battleTypeLabel = getBattleTypeLabel(deck, requestedDeckMode);
 
             return `
                 <div class="detail-item" style="grid-column: 1 / -1;">
-                    <div class="detail-label">Последняя колода (⚡${averageElixir})</div>
+                    <div class="detail-label">Последняя колода (${battleTypeLabel} • ⚡${averageElixir})</div>
                     <div class="deck-cards-grid">
                         ${cardsHtml}
                     </div>
@@ -2979,6 +3099,8 @@
             const ocrResult = playerData.ocr_result || {};
             const decks = playerData.decks || [];
             const searchResult = playerData.search_result || {};
+            const requestedDeckMode = getRequestedDeckMode(playerData);
+            const requestedDeckModeLabel = getDeckModeLabel(requestedDeckMode);
 
             const playerName = player.name || ocrResult.nickname || 'Неизвестный';
             const playerRating = player.rating || ocrResult.rating || 0;
@@ -2992,14 +3114,14 @@
                     const costs = recentDeck.cards.map(c => c.elixir_cost).filter(c => c !== null && c !== undefined);
                     recentDeck.average_elixir = costs.length > 0 ? (costs.reduce((a, b) => a + b, 0) / costs.length) : 0;
                 }
-                deckInfo = await generateDeckHtml(recentDeck);
+                deckInfo = await generateDeckHtml(recentDeck, requestedDeckMode);
             } else {
-                // Нет колоды в Path of Legends
+                // Нет колоды в выбранном режиме
                 deckInfo = `
                     <div class="detail-item" style="grid-column: 1 / -1;">
                         <div class="detail-label">Колода</div>
                         <div class="detail-value" style="color: #fbbf24;">
-                            ⚠️ Игрок не играл в Path of Legends
+                            ⚠️ Игрок не играл в ${requestedDeckModeLabel}
                         </div>
                     </div>
                 `;
@@ -3031,6 +3153,10 @@
                     <div class="detail-item">
                         <div class="detail-label">Метод</div>
                         <div class="detail-value">${searchMethod}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Режим колоды</div>
+                        <div class="detail-value">${requestedDeckModeLabel}</div>
                     </div>
                     ${deckInfo}
                 </div>

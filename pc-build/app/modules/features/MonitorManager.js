@@ -16,6 +16,7 @@ class MonitorManager {
         
         this.pythonProcess = null;
         this.isRunning = false;
+        this.isRestarting = false;
         this.messageBuffer = '';
         this.currentProfilesFile = null;
         
@@ -135,6 +136,7 @@ class MonitorManager {
         console.log(`🔄 Перезапуск Python процесса: ${reason}`);
         
         try {
+            this.isRestarting = true;
             this.eventBus.emit('monitor:status', 'Перезапуск мониторинга...');
             
             this.stop();
@@ -153,6 +155,8 @@ class MonitorManager {
             const errorMsg = `Ошибка перезапуска: ${error.message}`;
             this.eventBus.emit('monitor:error', errorMsg);
             return { success: false, error: errorMsg };
+        } finally {
+            this.isRestarting = false;
         }
     }
 
@@ -253,6 +257,13 @@ class MonitorManager {
                 
                 const actionData = JSON.parse(jsonData);
                 await this.handleActionData(actionData);
+
+            } else if (message.startsWith('TRIGGER_FIRED:')) {
+                const jsonData = message.substring(15);
+                console.log('>>> TRIGGER_FIRED:', jsonData);
+
+                const triggerData = JSON.parse(jsonData);
+                await this.handleTriggerFired(triggerData);
                 
             } else if (message.startsWith('PLAYER_FOUND:')) {
                 const jsonData = message.substring(13);
@@ -363,6 +374,15 @@ class MonitorManager {
             
             // Используем API Manager для проверки
             const response = await this.apiManager.get('/health', { timeout: 5000 });
+            
+            // apiManager.get() не бросает исключений — проверяем response.success
+            if (!response.success) {
+                console.error('❌ Сервер недоступен:', response.userMessage || response.error);
+                return { 
+                    available: false, 
+                    error: response.userMessage || 'Сервер не запущен или недоступен'
+                };
+            }
             
             console.log('✅ Сервер доступен');
             return { available: true };
@@ -518,6 +538,9 @@ class MonitorManager {
     createTriggerProfiles() {
         try {
             const regions = this.storeManager.getOcrRegions();
+            const streamerResultTriggerArea = this.storeManager.getStreamerResultTriggerArea?.() || null;
+            const streamerResultDataArea = this.storeManager.getStreamerResultDataArea?.() || null;
+            const predictionMonitorEnabled = this.storeManager.get('streamerPredictionMonitorEnabled', false);
             const mode = this.storeManager.getSearchMode(); // 'fast' или 'precise'
             const delays = this.storeManager.getTriggerDelays();
             const triggerSettings = this.storeManager.getTriggerSettings();
@@ -541,7 +564,7 @@ class MonitorManager {
             }
             
             // Создаем профиль для текущего режима
-            const profile = {
+            const startProfile = {
                 id: `start_battle_${mode}`,
                 
                 // Область триггера (общая для всех режимов)
@@ -570,25 +593,114 @@ class MonitorManager {
                 hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
             };
             
-            console.log(`🎯 Создан профиль триггера для ${mode} режима:`, {
-                id: profile.id,
-                delay: profile.capture_delay,
-                cooldown: profile.cooldown,
-                personal_colors: hasPersonalProfile ? profile.color_palette.length : 0,
-                has_template: !!profile.template_base64
+            const profiles = [startProfile];
+
+            if (predictionMonitorEnabled) {
+                if (this.hasTriggerProfile(streamerResultTriggerArea) && this.isValidRegion(streamerResultDataArea)) {
+                    const resultProfile = {
+                        id: 'battle_result',
+                        monitor_region: streamerResultTriggerArea,
+                        data_capture_region: streamerResultDataArea,
+                        action_type: 'capture_prediction_result',
+                        capture_delay: 0,
+                        cooldown: 60,
+                        confirmations_needed: 1,
+                        color_palette: streamerResultTriggerArea.color_palette || startProfile.color_palette,
+                        template_base64: streamerResultTriggerArea.template_base64 || '',
+                        hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
+                    };
+
+                    profiles.push(resultProfile);
+                } else {
+                    console.warn('⚠️ Автопрогнозы включены, но result trigger/data areas настроены не полностью - второй триггер не добавлен');
+                }
+            }
+
+            console.log(`🎯 Созданы профили триггеров для ${mode} режима:`, {
+                count: profiles.length,
+                ids: profiles.map(profile => profile.id)
             });
             
-            return [profile];
+            return profiles;
             
         } catch (error) {
             console.error('❌ Ошибка создания профилей триггеров:', error);
             return [];
         }
     }
+
+    isValidRegion(region) {
+        return !!(
+            region &&
+            typeof region.x === 'number' &&
+            typeof region.y === 'number' &&
+            typeof region.width === 'number' &&
+            typeof region.height === 'number' &&
+            region.width > 0 &&
+            region.height > 0
+        );
+    }
+
+    hasTriggerProfile(region) {
+        return this.isValidRegion(region) &&
+            Array.isArray(region.color_palette) &&
+            region.color_palette.length > 0 &&
+            typeof region.template_base64 === 'string' &&
+            region.template_base64.length > 0;
+    }
+
+    isPredictionsBotActive() {
+        return !!this.storeManager.get('streamerPredictionsActive', false);
+    }
+
+    async handleTriggerFired(triggerData) {
+        if (!triggerData?.id) {
+            return;
+        }
+
+        if (triggerData.id.startsWith('start_battle_') && this.isPredictionsBotActive()) {
+            await this.notifyPredictionBattleStart(triggerData.id);
+        }
+    }
+
+    async notifyPredictionBattleStart(triggerId) {
+        try {
+            console.log(`🎯 [Predictions] Отправляем battle-start для ${triggerId}`);
+
+            const response = await this.apiManager.post('/api/streamer/bot/battle-start', {
+                trigger_id: triggerId,
+                timestamp: new Date().toISOString()
+            });
+
+            if (response.success && response.data?.success) {
+                const message = response.data.message || (
+                    response.data.ignored
+                        ? 'Автопрогнозы уже ждут результат боя'
+                        : 'Автопрогнозы переключены в режим ожидания результата'
+                );
+                this.eventBus.emit('monitor:status', message);
+                return;
+            }
+
+            console.warn('⚠️ [Predictions] battle-start не принят сервером:', response.error || response.userMessage);
+        } catch (error) {
+            console.error('❌ [Predictions] Ошибка отправки battle-start:', error);
+        }
+    }
     
     // === ОБРАБОТКА ДАННЫХ ДЕЙСТВИЙ ===
     
     async handleActionData(actionData) {
+        const actionType = actionData.action_type || 'capture_and_send';
+
+        if (actionType === 'capture_prediction_result') {
+            return await this.handlePredictionResultAction(actionData);
+        }
+
+        return await this.handlePlayerLookupAction(actionData);
+    }
+
+    async handlePlayerLookupAction(actionData) {
         try {
             console.log('🎯 Обработка данных действия:', actionData.id);
             
@@ -607,13 +719,12 @@ class MonitorManager {
             });
             formData.append('timestamp', actionData.timestamp);
             formData.append('search_mode', actionData.id.includes('fast') ? 'fast' : 'precise');
+            formData.append('deck_mode', this.storeManager.getDeckMode() || 'pol');
             
             // Отправляем на сервер через ApiManager (токен добавляется автоматически)
             console.log('📡 [OCR] Отправка запроса на сервер...');
             const response = await this.apiManager.post('/api/ocr/process', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                }
+                headers: formData.getHeaders()
             });
             
             if (response.success) {
@@ -641,11 +752,54 @@ class MonitorManager {
         }
     }
 
+    async handlePredictionResultAction(actionData) {
+        try {
+            if (!this.isPredictionsBotActive()) {
+                console.log('ℹ️ [Predictions] battle-result проигнорирован: бот не активен');
+                return;
+            }
+
+            console.log('🎯 [Predictions] Обработка результата боя:', actionData.id);
+            await this.checkAndRefreshTokens();
+
+            const imageBuffer = Buffer.from(actionData.image_b64, 'base64');
+            const formData = new FormData();
+            formData.append('screenshot', imageBuffer, {
+                filename: 'battle_result.png',
+                contentType: 'image/png'
+            });
+
+            const response = await this.apiManager.post('/api/streamer/bot/battle-result', formData, {
+                headers: formData.getHeaders()
+            });
+
+            if (!response.success || !response.data?.success) {
+                throw new Error(response.error || response.userMessage || 'Сервер не смог обработать результат боя');
+            }
+
+            if (response.data.ignored) {
+                console.log('ℹ️ [Predictions] Результат боя проигнорирован:', response.data.message || 'ignored');
+                if (response.data.analysis?.result === 'unknown') {
+                    this.eventBus.emit('monitor:status', 'Автопрогнозы: результат боя не распознан, прогноз оставлен открытым');
+                }
+                return;
+            }
+
+            const detectedResult = response.data.result === 'win' ? 'победа' : 'поражение';
+            this.eventBus.emit('monitor:status', `Автопрогнозы: определен результат боя (${detectedResult})`);
+
+        } catch (error) {
+            console.error('❌ [Predictions] Ошибка обработки результата боя:', error);
+            this.eventBus.emit('monitor:error', `Автопрогнозы: ${error.message}`);
+        }
+    }
+
     // === СОСТОЯНИЕ МОНИТОРА ===
 
     getStatus() {
         return {
             isRunning: this.isRunning,
+            isRestarting: this.isRestarting,
             hasProcess: !!this.pythonProcess,
             searchMode: this.storeManager.getSearchMode() || 'fast',
             profilesCount: this.createTriggerProfiles().length
@@ -661,6 +815,7 @@ class MonitorManager {
     getDebugInfo() {
         return {
             isRunning: this.isRunning,
+            isRestarting: this.isRestarting,
             hasProcess: !!this.pythonProcess,
             processId: this.pythonProcess?.pid,
             searchMode: this.storeManager.getSearchMode(),

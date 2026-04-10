@@ -77,6 +77,9 @@ class ApiManager {
                 
                 // Проверяем, нужно ли обновить токен
                 if (this.shouldRefreshToken(error, originalRequest)) {
+                    // Помечаем запрос как повторный чтобы избежать бесконечного цикла
+                    originalRequest._retry = true;
+                    
                     console.log('🔄 Попытка обновления токена...');
                     
                     try {
@@ -214,26 +217,8 @@ class ApiManager {
             const response = await this.api.get(url, config);
             return { success: true, data: response.data };
         } catch (error) {
-            // Проверяем, нужно ли обновить токен и повторить запрос
-            if (this.shouldRefreshToken(error, config)) {
-                console.log('🔄 401 ошибка, пробуем refresh токена и повтор GET запроса...');
-                config._retry = true;
-                
-                const refreshSuccess = await this.refreshToken();
-                if (refreshSuccess.success) {
-                    try {
-                        console.log('✅ Токен обновлен, повторяем GET запрос...');
-                        const retryResponse = await this.api.get(url, config);
-                        return { success: true, data: retryResponse.data };
-                    } catch (retryError) {
-                        console.error('❌ Повторный GET запрос также неудачен:', retryError);
-                        return this.handleRequestError(retryError, 'GET', url);
-                    }
-                } else {
-                    console.error('❌ Не удалось обновить токен для GET запроса');
-                }
-            }
-            
+            // Retry при 401 уже обрабатывается в response interceptor (setupResponseInterceptor)
+            // Здесь просто обрабатываем финальную ошибку
             return this.handleRequestError(error, 'GET', url);
         }
     }
@@ -243,26 +228,8 @@ class ApiManager {
             const response = await this.api.post(url, data, config);
             return { success: true, data: response.data };
         } catch (error) {
-            // Проверяем, нужно ли обновить токен и повторить запрос
-            if (this.shouldRefreshToken(error, config)) {
-                console.log('🔄 401 ошибка, пробуем refresh токена и повтор POST запроса...');
-                config._retry = true;
-                
-                const refreshSuccess = await this.refreshToken();
-                if (refreshSuccess.success) {
-                    try {
-                        console.log('✅ Токен обновлен, повторяем POST запрос...');
-                        const retryResponse = await this.api.post(url, data, config);
-                        return { success: true, data: retryResponse.data };
-                    } catch (retryError) {
-                        console.error('❌ Повторный POST запрос также неудачен:', retryError);
-                        return this.handleRequestError(retryError, 'POST', url);
-                    }
-                } else {
-                    console.error('❌ Не удалось обновить токен для POST запроса');
-                }
-            }
-            
+            // Retry при 401 уже обрабатывается в response interceptor (setupResponseInterceptor)
+            // Здесь просто обрабатываем финальную ошибку
             return this.handleRequestError(error, 'POST', url);
         }
     }
@@ -315,7 +282,7 @@ class ApiManager {
             errorInfo.userMessage = 'Ошибка сервера';
         } else {
             errorInfo.type = 'UNKNOWN_ERROR';
-            errorInfo.userMessage = error.response?.data?.message || 'Неизвестная ошибка';
+            errorInfo.userMessage = error.response?.data?.detail || error.response?.data?.message || 'Неизвестная ошибка';
         }
         
         console.error(`❌ ${method} ${url}:`, errorInfo);

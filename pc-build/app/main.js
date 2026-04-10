@@ -130,7 +130,9 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-        if (appManager && appManager.isAuthenticated()) {
+        if (!appManager) return; // Приложение не инициализировано
+        
+        if (appManager.isAuthenticated()) {
             appManager.createWindow('main');
         } else {
             appManager.createWindow('auth');
@@ -138,7 +140,15 @@ app.on('activate', () => {
     }
 });
 
-app.on('before-quit', async () => {
+let isQuitting = false;
+app.on('before-quit', (event) => {
+    // Guard: если cleanup уже выполнен, выходим без задержки
+    if (isQuitting) return;
+    
+    // Предотвращаем немедленный выход, чтобы дождаться cleanup
+    event.preventDefault();
+    isQuitting = true;
+    
     console.log('👋 Завершение работы приложения...');
 
     if (updateManager) {
@@ -146,7 +156,20 @@ app.on('before-quit', async () => {
     }
 
     if (appManager) {
-        await appManager.cleanup();
+        // Даём cleanup максимум 3 секунды, потом выходим принудительно
+        const forceQuitTimeout = setTimeout(() => {
+            console.log('⚠️ Cleanup таймаут, принудительный выход');
+            app.quit();
+        }, 3000);
+        
+        appManager.cleanup()
+            .catch(err => console.error('❌ Ошибка cleanup:', err.message))
+            .finally(() => {
+                clearTimeout(forceQuitTimeout);
+                app.quit();
+            });
+    } else {
+        app.quit();
     }
 });
 

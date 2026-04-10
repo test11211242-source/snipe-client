@@ -11,7 +11,6 @@ const InviteManager = require('./auth/InviteManager');
 const UpdateManager = require('./features/UpdateManager');
 const OcrManager = require('./features/OcrManager');
 const MonitorManager = require('./features/MonitorManager');
-const StreamerManager = require('./features/StreamerManager');
 const AppWindowManager = require('./windows/AppWindowManager');
 const SetupWindow = require('./windows/SetupWindow');
 
@@ -58,7 +57,6 @@ class AppManager {
             this.modules.update.setApiManager(this.modules.api);
             this.modules.ocr = new OcrManager(this.modules.api, this.modules.eventBus);
             this.modules.monitor = new MonitorManager(this.modules.eventBus, this.modules.store, this.modules.api);
-            this.modules.streamer = new StreamerManager(this.modules.eventBus, this.modules.store, this.modules.api, this.modules.monitor);
             this.modules.windowManager = new AppWindowManager(this, this.modules.eventBus);
             this.modules.setupWindow = new SetupWindow(this, this.modules.eventBus);
             
@@ -196,12 +194,16 @@ class AppManager {
         this.modules.eventBus.on('monitor:stopped', () => {
             console.log('⏹️ Monitor остановлен');
             this.emitAppEvent('monitor_stopped');
+
+            if (!this.modules.monitor?.isRestarting) {
+                void this.handlePredictionsAfterMonitorStop();
+            }
         });
         
         // Window события
-        this.modules.eventBus.on('window:create:setup', () => {
+        this.modules.eventBus.on('window:create:setup', (context) => {
             console.log('⚙️ Создание окна настройки OCR областей');
-            this.createWindow('setup');
+            this.createWindow('setup', context);
         });
         
         // Fallback callbacks для старых модулей
@@ -291,6 +293,48 @@ class AppManager {
             } catch (createError) {
                 console.error('❌ Критическая ошибка создания окна авторизации:', createError);
             }
+        }
+    }
+
+    async handlePredictionsAfterMonitorStop() {
+        try {
+            const predictionsActive = this.modules.store?.get('streamerPredictionsActive', false);
+            if (!predictionsActive) {
+                return;
+            }
+
+            console.log('🛑 Monitor остановлен вручную - останавливаем автопрогнозы');
+
+            let stopSucceeded = false;
+            let lastError = 'Неизвестная ошибка';
+
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const response = await this.modules.api.post('/api/streamer/bot/stop');
+                if (response.success || response.status === 404) {
+                    stopSucceeded = true;
+                    break;
+                }
+
+                lastError = response.error || response.userMessage || lastError;
+                console.warn(`⚠️ Попытка ${attempt} остановки prediction-бота не удалась:`, lastError);
+
+                if (attempt < 2) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            if (!stopSucceeded) {
+                const errorMessage = `Автопрогнозы не удалось остановить после остановки monitor: ${lastError}`;
+                this.modules.eventBus?.emit('monitor:error', errorMessage);
+                console.error(`❌ ${errorMessage}`);
+                return;
+            }
+
+            this.modules.store.set('streamerPredictionsActive', false);
+            this.modules.store.set('streamerPredictionMonitorEnabled', false);
+        } catch (error) {
+            console.error('❌ Ошибка автоостановки prediction-бота после остановки monitor:', error);
+            this.modules.eventBus?.emit('monitor:error', `Автопрогнозы: ${error.message}`);
         }
     }
     
@@ -583,7 +627,7 @@ class AppManager {
                     result = this.modules.windowManager.createMainWindow();
                     break;
                 case 'setup':
-                    result = this.modules.windowManager.createSetupWindow();
+                    result = this.modules.windowManager.createSetupWindow(data);
                     break;
                 case 'widget':
                     result = this.modules.windowManager.createWidget(data);
@@ -797,10 +841,6 @@ class AppManager {
 
     getWindowManager() {
         return this.modules.windowManager;
-    }
-    
-    getStreamerManager() {
-        return this.modules.streamer;
     }
 
     getImageCache() {

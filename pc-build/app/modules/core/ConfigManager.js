@@ -33,7 +33,8 @@ class ConfigManager {
                 serverUrl: { type: 'string', default: 'http://130.61.118.215:8080' },
                 serverMode: { type: 'string', default: 'global' },
                 ocrRegions: { type: 'object' },
-                searchMode: { type: 'string', default: 'fast' }
+                searchMode: { type: 'string', default: 'fast' },
+                deckMode: { type: 'string', default: 'pol' }
             }
         };
 

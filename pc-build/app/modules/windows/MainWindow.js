@@ -148,6 +148,7 @@ class MainWindow extends WindowManager {
             const user = store.get('user');
             const regions = store.get('ocrRegions'); 
             const searchMode = store.get('searchMode', 'fast'); // 🔧 ИСПРАВЛЕНИЕ: значение по умолчанию
+            const deckMode = store.get('deckMode', 'pol');
             const tokens = store.get('tokens');
             
             // Получаем информацию о сервере через appManager
@@ -158,6 +159,7 @@ class MainWindow extends WindowManager {
                 user, 
                 regions, 
                 searchMode,
+                deckMode,
                 tokens,
                 server: serverInfo ? {
                     mode: serverInfo.mode,

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ocr:setup', 'ocr:save-regions', 'ocr:get-regions', 'ocr:analyze-profile',
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
+      'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
       'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
       'store:get', 'store:set', 'store:has', 'store:delete',
       'cache:get-card-image', 'cache:force-update', 'cache:get-status'
@@ -65,6 +66,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setWindowTarget: (windowInfo) => ipcRenderer.invoke('monitor:set-window-target', windowInfo),
     setScreenTarget: () => ipcRenderer.invoke('monitor:set-screen-target'),
     getCaptureTarget: () => ipcRenderer.invoke('monitor:get-capture-target')
+  },
+
+  streamerConfig: {
+    getResultConfig: () => ipcRenderer.invoke('streamer:get-result-config'),
+    saveResultTriggerArea: (area) => ipcRenderer.invoke('streamer:save-result-trigger-area', area),
+    saveResultDataArea: (area) => ipcRenderer.invoke('streamer:save-result-data-area', area)
   },
   
   // Приложение

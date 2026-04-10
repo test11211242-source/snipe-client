@@ -433,6 +433,10 @@
             updateWidget(data);
         });
 
+        function getDeckModeLabel(mode) {
+            return mode === 'gt' ? 'GT' : 'Path of Legends';
+        }
+
         // Обновление виджета
         function updateWidget(playerData) {
             // Проверяем если игрок не найден
@@ -445,6 +449,7 @@
             
             const player = playerData.player || {};
             const decks = playerData.decks || [];
+            const deckMode = playerData.deck_mode || 'pol';
             
             // Обновляем информацию об игроке
             document.getElementById('player-name').textContent = player.name || 'Неизвестный';
@@ -455,8 +460,8 @@
                 const deck = decks[0];
                 displayDeck(deck);
             } else {
-                // Нет колоды в Path of Legends
-                showNoPolMessage();
+                // Нет колоды в выбранном режиме
+                showNoDeckMessage(deckMode);
             }
         }
 
@@ -481,8 +486,9 @@
             document.getElementById('deck-weakness').textContent = '';
         }
 
-        // Показать сообщение об отсутствии PoL колоды
-        function showNoPolMessage() {
+        // Показать сообщение об отсутствии колоды в выбранном режиме
+        function showNoDeckMessage(deckMode) {
+            const deckModeLabel = getDeckModeLabel(deckMode);
             const container = document.getElementById('deck-container');
             container.innerHTML = `
                 <div style="
@@ -492,7 +498,7 @@
                     color: #fbbf24;
                     font-size: 14px;
                 ">
-                    ⚠️ Игрок не играл в Path of Legends
+                    ⚠️ Игрок не играл в ${deckModeLabel}
                 </div>
             `;
             document.getElementById('average-elixir').textContent = '-';
