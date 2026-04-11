@@ -1613,7 +1613,16 @@ createApp({
                     throw new Error(result.error || 'Не удалось начать скачивание');
                 }
 
-                this.notify('Скачивание обновления запущено', 'success');
+                if (result?.downloadPath) {
+                    this.handleUpdateDownloaded({
+                        filePath: result.downloadPath,
+                        version: result.version,
+                        type: result.type,
+                        fileSize: result.fileSize
+                    });
+                } else {
+                    this.notify('Скачивание обновления запущено', 'success');
+                }
             } catch (error) {
                 this.updateState = {
                     ...this.updateState,
@@ -1671,16 +1680,23 @@ createApp({
         },
 
         handleUpdateDownloaded(result) {
+            const nextFilePath = result?.filePath || '';
+            const alreadyHandled = this.updateState.status === 'downloaded' &&
+                this.updateState.downloadedFilePath &&
+                this.updateState.downloadedFilePath === nextFilePath;
+
             this.updateState = {
                 ...this.updateState,
                 status: 'downloaded',
                 text: 'Обновление готово к установке',
-                downloadedFilePath: result?.filePath || '',
+                downloadedFilePath: nextFilePath,
                 downloading: false,
                 progress: 100
             };
 
-            this.notify('Обновление готово к установке', 'success');
+            if (!alreadyHandled) {
+                this.notify('Обновление готово к установке', 'success');
+            }
         },
 
         handleUpdateError(errorMessage) {

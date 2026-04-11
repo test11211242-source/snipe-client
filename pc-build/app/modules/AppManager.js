@@ -56,6 +56,7 @@ class AppManager {
             // 4. Инициализация функциональных модулей
             this.modules.update = new UpdateManager(this.modules.api);
             this.modules.update.setApiManager(this.modules.api);
+            this.modules.update.setEventBus(this.modules.eventBus);
             this.modules.ocr = new OcrManager(this.modules.api, this.modules.eventBus);
             this.modules.monitor = new MonitorManager(this.modules.eventBus, this.modules.store, this.modules.api);
             this.modules.windowManager = new AppWindowManager(this, this.modules.eventBus);

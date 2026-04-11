@@ -108,6 +108,14 @@ class MainWindow extends WindowManager {
             this.sendToWindow('main', 'update-download-progress', data.progress);
         });
 
+        this.eventBus.on('update:downloaded', (data) => {
+            this.sendToWindow('main', 'update-downloaded', data);
+        });
+
+        this.eventBus.on('update:error', (data) => {
+            this.sendToWindow('main', 'update-error', data);
+        });
+
         // Общие события приложения
         this.eventBus.on('app:notification', (data) => {
             this.sendToWindow('main', 'app-notification', data);

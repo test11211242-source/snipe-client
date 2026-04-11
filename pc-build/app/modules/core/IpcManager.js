@@ -1169,14 +1169,7 @@ class IpcManager {
 
         this.registerHandler('update:download', async (event, downloadType = 'installer') => {
             console.log(`📥 IPC: Скачивание обновления (${downloadType})`);
-            
-            // Устанавливаем callback прогресса через EventBus
-            this.appManager.getUpdate().setProgressCallback((progress) => {
-                if (this.eventBus) {
-                    this.eventBus.emit('update:download:progress', { progress });
-                }
-            });
-            
+
             return await this.appManager.downloadUpdate(downloadType);
         });
 
