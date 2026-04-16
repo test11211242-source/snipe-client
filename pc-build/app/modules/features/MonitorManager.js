@@ -203,7 +203,7 @@ class MonitorManager {
             }
 
             const profilesFilePath = this.createProfilesTempFile(triggerProfiles);
-            const pythonScript = this.getPythonScriptPath();
+            const pythonScript = this.getTriggerDiagnosticsScriptPath();
             const pythonExecutable = this.getPythonExecutable();
             const captureParams = this.getCaptureParameters();
 
@@ -220,8 +220,8 @@ class MonitorManager {
                     '--target_id', captureParams.targetId,
                     '--profiles_file', profilesFilePath,
                     '--fps', '10',
-                    '--diagnostic_profile_id', triggerId,
-                    '--diagnostic_frames', '10'
+                    '--trigger_id', triggerId,
+                    '--frames', '10'
                 ], {
                     env: {
                         ...process.env,
@@ -517,6 +517,14 @@ class MonitorManager {
         } else {
             return path.join(__dirname, '../../../python_scripts/screen_monitor.py');
         }
+    }
+
+    getTriggerDiagnosticsScriptPath() {
+        if (app.isPackaged) {
+            return path.join(process.resourcesPath, 'python_scripts', 'trigger_diagnostics.py');
+        }
+
+        return path.join(__dirname, '../../../python_scripts/trigger_diagnostics.py');
     }
 
     // === ПРОВЕРКА СЕРВЕРА ===
