@@ -585,6 +585,11 @@ class AppManager {
         console.log('🔄 Перезапуск мониторинга через AppManager...');
         return await this.modules.monitor.restart(reason);
     }
+
+    async runTriggerDiagnostics(triggerId) {
+        console.log(`🧪 Запуск диагностики триггера через AppManager: ${triggerId}`);
+        return await this.modules.monitor.runTriggerDiagnostics(triggerId);
+    }
     
     async updateSearchMode(mode) {
         console.log(`🔄 Изменение режима поиска на '${mode}' через AppManager...`);

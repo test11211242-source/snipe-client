@@ -837,6 +837,136 @@
                                 </div>
                             </article>
                         </div>
+
+                        <article class="section-card span-2">
+                            <div class="section-header">
+                                <div>
+                                    <div class="eyebrow">Trigger diagnostics</div>
+                                    <h2 class="section-title">Диагностика триггера</h2>
+                                    <p class="section-description">
+                                        Проверяет текущий trigger на реальном target и показывает, где именно он ломается: ROI, thumbnail/hash, ORB, confirmations или cooldown.
+                                    </p>
+                                </div>
+
+                                <div class="inline-actions">
+                                    <button class="primary-button" @click="runTriggerDiagnostics" :disabled="diagnosticsRunning">
+                                        {{ diagnosticsRunning ? 'Диагностика...' : 'Запустить диагностику' }}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="setting-stack">
+                                <div class="setting-row">
+                                    <div class="setting-label">Профиль триггера</div>
+                                    <div class="segmented-control diagnostic-segmented">
+                                        <button
+                                            v-for="option in diagnosticTriggerOptions"
+                                            :key="option.value"
+                                            class="segmented-button"
+                                            :class="{ active: diagnosticTriggerKind === option.value }"
+                                            @click="diagnosticTriggerKind = option.value"
+                                        >
+                                            {{ option.label }}
+                                        </button>
+                                    </div>
+                                    <div class="helper-text">
+                                        {{ diagnosticTriggerOptions.find(option => option.value === diagnosticTriggerKind)?.description || '' }}
+                                    </div>
+                                </div>
+
+                                <div v-if="diagnosticReport" class="diagnostic-report-shell">
+                                    <div class="diagnostic-metrics-grid">
+                                        <div class="info-item">
+                                            <div class="info-label">Итог</div>
+                                            <div class="info-value">{{ getDiagnosticStatusLabel(diagnosticReport.final_status) }}</div>
+                                            <div class="inline-actions" style="margin-top: 10px;">
+                                                <span class="inline-chip" :class="getDiagnosticStatusChipTone(diagnosticReport.final_status)">
+                                                    {{ getDiagnosticStatusLabel(diagnosticReport.final_status) }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">Причина</div>
+                                            <div class="info-value">{{ getDiagnosticReasonLabel(diagnosticReport) }}</div>
+                                            <div class="helper-text">{{ getDiagnosticModeSummary(diagnosticReport) }}</div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">ROI</div>
+                                            <div class="info-value">{{ diagnosticReport.roi_valid ? 'Валидный' : 'Пустой/вне кадра' }}</div>
+                                            <div class="helper-text">
+                                                {{ diagnosticReport.roi_size?.width || 0 }}x{{ diagnosticReport.roi_size?.height || 0 }} px
+                                            </div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">Кадры</div>
+                                            <div class="info-value">{{ diagnosticReport.frames_processed || 0 }}</div>
+                                            <div class="helper-text">
+                                                Confirmations: {{ diagnosticReport.confirmations_current || 0 }}/{{ diagnosticReport.confirmations_needed || 0 }}
+                                            </div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">Thumbnail / Hash</div>
+                                            <div class="info-value">
+                                                {{ diagnosticReport.hash_distance ?? 'N/A' }} / {{ diagnosticReport.hash_threshold ?? 'N/A' }}
+                                            </div>
+                                            <div class="helper-text">
+                                                Diff: {{ diagnosticReport.thumbnail_diff !== null && diagnosticReport.thumbnail_diff !== undefined ? diagnosticReport.thumbnail_diff.toFixed(1) : 'N/A' }} / {{ diagnosticReport.thumbnail_threshold ?? 'N/A' }}
+                                            </div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">ORB</div>
+                                            <div class="info-value">
+                                                {{ diagnosticReport.orb_good_matches ?? 'N/A' }} good / {{ diagnosticReport.orb_matches_total ?? 'N/A' }} total
+                                            </div>
+                                            <div class="helper-text">
+                                                Keypoints: {{ diagnosticReport.orb_frame_keypoints ?? 'N/A' }} frame / {{ diagnosticReport.orb_template_keypoints ?? 'N/A' }} template
+                                            </div>
+                                        </div>
+                                        <div class="info-item">
+                                            <div class="info-label">Cooldown</div>
+                                            <div class="info-value">{{ diagnosticReport.cooldown_active ? 'Активен' : 'Готов' }}</div>
+                                            <div class="helper-text">
+                                                {{ diagnosticReport.cooldown_active ? `${(diagnosticReport.cooldown_remaining_sec || 0).toFixed(1)}s remaining` : 'Триггер не заблокирован cooldown' }}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="diagnostic-preview-grid">
+                                        <div class="diagnostic-preview-card">
+                                            <div class="diagnostic-preview-label">Текущий ROI</div>
+                                            <img v-if="diagnosticReport.current_roi_base64" :src="makeBase64DataUrl(diagnosticReport.current_roi_base64)" alt="Current ROI">
+                                            <div v-else class="window-preview placeholder">Нет превью</div>
+                                        </div>
+                                        <div class="diagnostic-preview-card">
+                                            <div class="diagnostic-preview-label">Сохранённый template</div>
+                                            <img v-if="diagnosticReport.template_preview_base64" :src="makeBase64DataUrl(diagnosticReport.template_preview_base64)" alt="Saved template">
+                                            <div v-else class="window-preview placeholder">Нет template</div>
+                                        </div>
+                                        <div class="diagnostic-preview-card">
+                                            <div class="diagnostic-preview-label">Current grayscale thumb</div>
+                                            <img v-if="diagnosticReport.current_thumb_base64" :src="makeBase64DataUrl(diagnosticReport.current_thumb_base64)" alt="Current thumbnail">
+                                            <div v-else class="window-preview placeholder">Нет thumb</div>
+                                        </div>
+                                        <div class="diagnostic-preview-card">
+                                            <div class="diagnostic-preview-label">Saved grayscale thumb</div>
+                                            <img v-if="diagnosticReport.template_thumb_base64" :src="makeBase64DataUrl(diagnosticReport.template_thumb_base64)" alt="Saved thumbnail">
+                                            <div v-else class="window-preview placeholder">Legacy profile</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="button-stack">
+                                        <button class="secondary-button" @click="copyDiagnosticReport">Скопировать JSON отчёт</button>
+                                    </div>
+                                </div>
+
+                                <div v-else class="empty-panel">
+                                    <h3 class="empty-title">Отчёт ещё не запускался</h3>
+                                    <p class="empty-text">
+                                        Нажми кнопку диагностики, и приложение покажет, проходит ли trigger ROI, thumbnail/hash precheck, ORB и не мешают ли confirmations или cooldown.
+                                    </p>
+                                </div>
+                            </div>
+                        </article>
                     </section>
 
                     <section v-else-if="activePage === 'tools'" class="page-layout">

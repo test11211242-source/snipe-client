@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'invite:get-hwid', 'invite:check-access', 'invite:validate-key', 'invite:get-key-info',
       'ocr:setup', 'ocr:save-regions', 'ocr:get-regions', 'ocr:analyze-profile',
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
+      'monitor:run-diagnostics',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
       'hotkeys:get-all', 'hotkeys:save-all', 'hotkeys:test-run', 'hotkeys:refresh-registration',
       'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
@@ -65,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stop: () => ipcRenderer.invoke('monitor:stop'),
     restart: (reason) => ipcRenderer.invoke('monitor:restart', reason),
     getStatus: () => ipcRenderer.invoke('monitor:get-status'),
+    runDiagnostics: (triggerId) => ipcRenderer.invoke('monitor:run-diagnostics', triggerId),
     // 🆕 Новые методы для управления целями захвата
     setWindowTarget: (windowInfo) => ipcRenderer.invoke('monitor:set-window-target', windowInfo),
     setScreenTarget: () => ipcRenderer.invoke('monitor:set-screen-target'),

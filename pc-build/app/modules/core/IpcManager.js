@@ -868,6 +868,16 @@ class IpcManager {
             return { success: true, status };
         });
 
+        this.registerHandler('monitor:run-diagnostics', async (event, triggerId) => {
+            console.log(`🧪 IPC: Диагностика триггера ${triggerId}`);
+
+            if (!this.appManager.runTriggerDiagnostics) {
+                return { success: false, error: 'MonitorManager не поддерживает диагностику' };
+            }
+
+            return await this.appManager.runTriggerDiagnostics(triggerId);
+        });
+
         this.registerHandler('streamer:get-result-config', async () => {
             console.log('📍 IPC: Получение конфигурации result-зон стримера');
 

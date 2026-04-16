@@ -221,6 +221,9 @@ createApp({
             streamerBusy: false,
             serverPollHandle: null,
             autoOpenWidget: true,
+            diagnosticsRunning: false,
+            diagnosticTriggerKind: 'current_battle',
+            diagnosticReport: null,
             hotkeyProfiles: [],
             hotkeysSaving: false,
             hotkeyWindowDialogVisible: false,
@@ -389,6 +392,21 @@ createApp({
             }
 
             return 'neutral';
+        },
+
+        diagnosticTriggerOptions() {
+            return [
+                {
+                    value: 'current_battle',
+                    label: `Боевой trigger (${this.searchModeMeta.label})`,
+                    description: 'Основной trigger старта боя для текущего OCR режима'
+                },
+                {
+                    value: 'battle_result',
+                    label: 'Streamer result trigger',
+                    description: 'Trigger результата боя для автопрогнозов'
+                }
+            ];
         }
     },
 
@@ -403,6 +421,92 @@ createApp({
 
         formatDateLabel(value) {
             return formatDateLabel(value);
+        },
+
+        getResolvedDiagnosticTriggerId() {
+            if (this.diagnosticTriggerKind === 'battle_result') {
+                return 'battle_result';
+            }
+
+            return `start_battle_${this.searchMode === 'precise' ? 'precise' : 'fast'}`;
+        },
+
+        getDiagnosticStatusChipTone(status) {
+            if (status === 'TRIGGER_READY') {
+                return 'success';
+            }
+
+            if (status === 'CONFIRMATION_PENDING' || status === 'COOLDOWN_ACTIVE') {
+                return 'warning';
+            }
+
+            return 'danger';
+        },
+
+        getDiagnosticStatusLabel(status) {
+            const labels = {
+                TRIGGER_READY: 'Trigger готов',
+                CONFIRMATION_PENDING: 'Ждёт подтверждение',
+                COOLDOWN_ACTIVE: 'Cooldown',
+                THUMBNAIL_FAIL: 'Thumbnail mismatch',
+                ORB_FAIL: 'ORB mismatch',
+                LEGACY_COLOR_FAIL: 'Color mismatch',
+                ROI_INVALID: 'ROI invalid'
+            };
+
+            return labels[status] || status || 'Неизвестно';
+        },
+
+        getDiagnosticModeSummary(report) {
+            return report?.legacy_color_mode
+                ? 'Legacy fallback: color palette -> ORB'
+                : 'Detector: thumbnail/hash -> ORB';
+        },
+
+        getDiagnosticReasonLabel(report) {
+            return report?.reason || 'Причина не указана';
+        },
+
+        makeBase64DataUrl(base64Value) {
+            return base64Value ? `data:image/png;base64,${base64Value}` : '';
+        },
+
+        async copyDiagnosticReport() {
+            if (!this.diagnosticReport) {
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(JSON.stringify(this.diagnosticReport, null, 2));
+                this.notify('Диагностический отчёт скопирован', 'success');
+            } catch (error) {
+                this.notify(`Ошибка копирования отчёта: ${error.message}`, 'error');
+            }
+        },
+
+        async runTriggerDiagnostics() {
+            if (this.diagnosticsRunning) {
+                return;
+            }
+
+            this.diagnosticsRunning = true;
+            this.diagnosticReport = null;
+
+            try {
+                const triggerId = this.getResolvedDiagnosticTriggerId();
+                const result = await window.electronAPI.monitor.runDiagnostics(triggerId);
+
+                if (!result?.success) {
+                    throw new Error(result?.error || 'Не удалось выполнить диагностику trigger');
+                }
+
+                this.diagnosticReport = result.report || null;
+                this.notify(`Диагностика ${triggerId} завершена`, 'success');
+            } catch (error) {
+                this.notify(`Ошибка диагностики: ${error.message}`, 'error');
+            } finally {
+                this.diagnosticsRunning = false;
+            }
         },
 
         cloneTarget(target) {

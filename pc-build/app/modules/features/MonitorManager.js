@@ -19,6 +19,7 @@ class MonitorManager {
         this.isRestarting = false;
         this.messageBuffer = '';
         this.currentProfilesFile = null;
+        this.diagnosticProcess = null;
         
         console.log('✅ MonitorManager инициализирован');
     }
@@ -51,13 +52,7 @@ class MonitorManager {
             
             // 🎯 Новая архитектура: создаем профили триггеров вместо простого режима
             const triggerProfiles = this.createTriggerProfiles();
-            
-            // 📝 Создаем временный файл для профилей (избегаем ENAMETOOLONG ошибку)
-            const tempDir = os.tmpdir();
-            const profilesFilePath = path.join(tempDir, `snipe_profiles_${Date.now()}.json`);
-            const profilesJson = JSON.stringify(triggerProfiles, null, 2);
-            
-            fs.writeFileSync(profilesFilePath, profilesJson, 'utf8');
+            const profilesFilePath = this.createProfilesTempFile(triggerProfiles);
             this.currentProfilesFile = profilesFilePath;
             console.log(`📄 Профили сохранены в временный файл: ${profilesFilePath}`);
             
@@ -157,6 +152,168 @@ class MonitorManager {
             return { success: false, error: errorMsg };
         } finally {
             this.isRestarting = false;
+        }
+    }
+
+    createProfilesTempFile(triggerProfiles) {
+        const tempDir = os.tmpdir();
+        const profilesFilePath = path.join(tempDir, `snipe_profiles_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`);
+        const profilesJson = JSON.stringify(triggerProfiles, null, 2);
+
+        fs.writeFileSync(profilesFilePath, profilesJson, 'utf8');
+        return profilesFilePath;
+    }
+
+    cleanupSpecificProfilesFile(filePath) {
+        if (!filePath) {
+            return;
+        }
+
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`🗑️ Временный файл профилей удален: ${filePath}`);
+            }
+        } catch (error) {
+            console.warn(`⚠️ Не удалось удалить временный файл: ${error.message}`);
+        }
+    }
+
+    async runTriggerDiagnostics(triggerId) {
+        if (this.pythonProcess || this.isRunning) {
+            return {
+                success: false,
+                error: 'Остановите мониторинг перед запуском диагностики триггера'
+            };
+        }
+
+        if (this.diagnosticProcess) {
+            return {
+                success: false,
+                error: 'Диагностика уже выполняется'
+            };
+        }
+
+        try {
+            const triggerProfiles = this.createTriggerProfiles();
+            const targetProfile = triggerProfiles.find((profile) => profile.id === triggerId);
+
+            if (!targetProfile) {
+                throw new Error(`Профиль триггера '${triggerId}' не найден или не настроен`);
+            }
+
+            const profilesFilePath = this.createProfilesTempFile(triggerProfiles);
+            const pythonScript = this.getPythonScriptPath();
+            const pythonExecutable = this.getPythonExecutable();
+            const captureParams = this.getCaptureParameters();
+
+            this.eventBus.emit('monitor:status', `Запуск диагностики триггера: ${triggerId}`);
+
+            return await new Promise((resolve) => {
+                let stdoutBuffer = '';
+                let stderrBuffer = '';
+                let diagnosticReport = null;
+
+                const diagnosticProcess = spawn(pythonExecutable, [
+                    pythonScript,
+                    '--target_type', captureParams.targetType,
+                    '--target_id', captureParams.targetId,
+                    '--profiles_file', profilesFilePath,
+                    '--fps', '10',
+                    '--diagnostic_profile_id', triggerId,
+                    '--diagnostic_frames', '10'
+                ], {
+                    env: {
+                        ...process.env,
+                        PYTHONIOENCODING: 'utf-8'
+                    },
+                    windowsHide: true
+                });
+
+                this.diagnosticProcess = diagnosticProcess;
+
+                const processChunk = (chunk) => {
+                    stdoutBuffer += chunk;
+                    const lines = stdoutBuffer.split('\n');
+                    stdoutBuffer = lines.pop() || '';
+
+                    lines.forEach((rawLine) => {
+                        const message = rawLine.trim();
+                        if (!message) {
+                            return;
+                        }
+
+                        console.log('Python diagnostic message:', message);
+
+                        if (message.startsWith('DIAG_DATA:')) {
+                            const jsonData = message.substring(10);
+                            try {
+                                diagnosticReport = JSON.parse(jsonData);
+                            } catch (error) {
+                                console.error('❌ Ошибка парсинга DIAG_DATA:', error);
+                            }
+                        }
+                    });
+                };
+
+                diagnosticProcess.stdout.setEncoding('utf-8');
+                diagnosticProcess.stderr.setEncoding('utf-8');
+
+                diagnosticProcess.stdout.on('data', (data) => {
+                    processChunk(data.toString());
+                });
+
+                diagnosticProcess.stderr.on('data', (data) => {
+                    const text = data.toString();
+                    stderrBuffer += text;
+                    console.log('Python diagnostic stderr:', text.trim());
+                });
+
+                diagnosticProcess.on('close', (code) => {
+                    if (stdoutBuffer.trim()) {
+                        processChunk('\n');
+                    }
+
+                    this.diagnosticProcess = null;
+                    this.cleanupSpecificProfilesFile(profilesFilePath);
+
+                    if (code !== 0 && !diagnosticReport) {
+                        resolve({
+                            success: false,
+                            error: stderrBuffer.trim() || `Диагностический процесс завершился с кодом ${code}`
+                        });
+                        return;
+                    }
+
+                    if (!diagnosticReport) {
+                        resolve({
+                            success: false,
+                            error: 'Диагностика не вернула отчёт'
+                        });
+                        return;
+                    }
+
+                    resolve({
+                        success: true,
+                        report: diagnosticReport,
+                        triggerId
+                    });
+                });
+
+                diagnosticProcess.on('error', (error) => {
+                    this.diagnosticProcess = null;
+                    this.cleanupSpecificProfilesFile(profilesFilePath);
+                    resolve({
+                        success: false,
+                        error: `Ошибка запуска диагностики: ${error.message}`
+                    });
+                });
+            });
+        } catch (error) {
+            return {
+                success: false,
+                error: error.message
+            };
         }
     }
 
@@ -999,6 +1156,16 @@ class MonitorManager {
         
         if (this.pythonProcess) {
             this.stop();
+        }
+
+        if (this.diagnosticProcess) {
+            try {
+                this.diagnosticProcess.kill();
+            } catch (error) {
+                console.warn('⚠️ Не удалось остановить диагностический процесс:', error.message);
+            } finally {
+                this.diagnosticProcess = null;
+            }
         }
         
         // Дополнительная очистка временного файла на случай, если он остался
