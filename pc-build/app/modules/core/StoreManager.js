@@ -325,17 +325,56 @@ class StoreManager {
         return this.store.get('windowProfiles', {});
     }
 
+    normalizeWindowProfileKey(value) {
+        return typeof value === 'string' ? value.trim() : '';
+    }
+
+    buildWindowProfileAliases(primaryKey, profile = {}) {
+        const aliases = new Set();
+
+        const addAlias = (value) => {
+            const normalized = this.normalizeWindowProfileKey(value);
+            if (!normalized) {
+                return;
+            }
+
+            aliases.add(normalized);
+            aliases.add(normalized.toLowerCase());
+        };
+
+        addAlias(primaryKey);
+        addAlias(profile._window_id);
+        addAlias(profile._executable_name);
+        addAlias(profile._window_name);
+
+        if (profile._window_name) {
+            addAlias(`window:${profile._window_name}`);
+        }
+
+        return Array.from(aliases);
+    }
+
     /**
      * Сохранить профиль окна по executable name
      */
     setWindowProfile(executableName, profile) {
         const profiles = this.getWindowProfiles();
-        profiles[executableName] = {
+        const aliases = this.buildWindowProfileAliases(executableName, profile);
+        const payload = {
             ...profile,
+            _profile_aliases: aliases,
             lastUsed: new Date().toISOString()
         };
+
+        aliases.forEach((alias) => {
+            profiles[alias] = payload;
+        });
+
         this.store.set('windowProfiles', profiles);
-        console.log(`🪟 Профиль окна сохранен для ${executableName}:`, profile);
+        console.log(`🪟 Профиль окна сохранен для ${executableName}:`, {
+            aliases,
+            profile: payload
+        });
     }
 
     /**
@@ -343,7 +382,25 @@ class StoreManager {
      */
     getWindowProfile(executableName) {
         const profiles = this.getWindowProfiles();
-        return profiles[executableName] || null;
+        const keysToTry = Array.isArray(executableName) ? executableName : [executableName];
+
+        for (const key of keysToTry) {
+            const normalized = this.normalizeWindowProfileKey(key);
+            if (!normalized) {
+                continue;
+            }
+
+            if (profiles[normalized]) {
+                return profiles[normalized];
+            }
+
+            const lowered = normalized.toLowerCase();
+            if (profiles[lowered]) {
+                return profiles[lowered];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -351,7 +408,18 @@ class StoreManager {
      */
     deleteWindowProfile(executableName) {
         const profiles = this.getWindowProfiles();
-        delete profiles[executableName];
+        const profile = this.getWindowProfile(executableName);
+
+        if (profile?._profile_aliases) {
+            profile._profile_aliases.forEach((alias) => {
+                delete profiles[alias];
+            });
+        } else {
+            const normalized = this.normalizeWindowProfileKey(executableName);
+            delete profiles[normalized];
+            delete profiles[normalized.toLowerCase()];
+        }
+
         this.store.set('windowProfiles', profiles);
         console.log(`🗑️ Профиль окна удален для ${executableName}`);
     }

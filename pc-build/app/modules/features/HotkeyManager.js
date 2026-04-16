@@ -145,18 +145,34 @@ class HotkeyManager {
         return !!this.getOcrRegionsForTarget(target);
     }
 
-    getTargetProfileKey(target) {
+    getTargetProfileKeys(target) {
         if (!target) {
-            return '';
+            return [];
         }
+
+        const keys = [];
+        const addKey = (value) => {
+            const normalized = this.normalizeString(value);
+            if (!normalized || keys.includes(normalized)) {
+                return;
+            }
+            keys.push(normalized);
+        };
 
         const executableName = this.normalizeString(target.executableName);
         if (executableName) {
-            return executableName;
+            addKey(executableName);
         }
 
         const targetName = this.normalizeString(target.name);
-        return targetName ? `window:${targetName}` : '';
+        if (targetName) {
+            addKey(`window:${targetName}`);
+            addKey(targetName);
+        }
+
+        addKey(target.id);
+
+        return keys;
     }
 
     getOcrRegionsForTarget(target) {
@@ -169,12 +185,12 @@ class HotkeyManager {
             return this.hasManualLookupRegions(globalRegions) ? globalRegions : null;
         }
 
-        const profileKey = this.getTargetProfileKey(target);
-        if (!profileKey) {
+        const profileKeys = this.getTargetProfileKeys(target);
+        if (!profileKeys.length) {
             return null;
         }
 
-        const profile = this.storeManager.getWindowProfile(profileKey);
+        const profile = this.storeManager.getWindowProfile(profileKeys);
         return this.hasManualLookupRegions(profile) ? profile : null;
     }
 
@@ -200,7 +216,7 @@ class HotkeyManager {
         const windowName = target.name || target.executableName || 'окно';
         return this.hasConfiguredRegionsForTarget(target)
             ? `OCR профиль для окна ${windowName} настроен.`
-            : `Для окна ${windowName} ещё не настроены trigger/fast/precise области.`;
+            : `Для окна ${windowName} ещё не настроены fast/precise OCR области.`;
     }
 
     getProfileRegionForSearchMode(ocrProfile, searchMode) {

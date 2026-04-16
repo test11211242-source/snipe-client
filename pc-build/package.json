@@ -1,6 +1,6 @@
 {
   "name": "snipe-client",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Snipe CR",
   "main": "app/main.js",
   "author": "ArtCS",

@@ -561,11 +561,15 @@ class OcrManager {
             console.log('✅ Персональный профиль успешно создан');
             console.log(`🎨 Найдено цветов: ${analysisResult.color_palette.length}`);
             console.log(`📏 Размер эталона: ${Math.round(analysisResult.template_base64.length / 1024)}KB`);
+            console.log(`🧠 Версия анализа: ${analysisResult.analysis_version || 1}`);
             
             return {
                 success: true,
                 color_palette: analysisResult.color_palette,
                 template_base64: analysisResult.template_base64,
+                thumb_gray_base64: analysisResult.thumb_gray_base64,
+                dhash64: analysisResult.dhash64,
+                analysis_version: analysisResult.analysis_version || 1,
                 analysis_info: analysisResult.analysis_info || {}
             };
             

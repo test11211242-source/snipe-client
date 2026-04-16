@@ -603,12 +603,27 @@ createApp({
             return profile.target.executableName || 'Окно из текущего списка desktopCapturer';
         },
 
-        getHotkeyProfileKey(profile) {
+        getHotkeyProfileKeys(profile) {
             if (!profile?.target) {
-                return '';
+                return [];
             }
 
-            return profile.target.executableName || `window:${profile.target.name || ''}`;
+            const keys = [];
+
+            if (profile.target.executableName) {
+                keys.push(profile.target.executableName);
+            }
+
+            if (profile.target.name) {
+                keys.push(`window:${profile.target.name}`);
+                keys.push(profile.target.name);
+            }
+
+            if (profile.target.id) {
+                keys.push(profile.target.id);
+            }
+
+            return keys;
         },
 
         handleWindowProfileUpdated(payload = {}) {
@@ -616,7 +631,7 @@ createApp({
             let updated = false;
 
             this.hotkeyProfiles = this.hotkeyProfiles.map((profile) => {
-                if (this.getHotkeyProfileKey(profile) !== executableKey) {
+                if (!this.getHotkeyProfileKeys(profile).includes(executableKey)) {
                     return profile;
                 }
 
@@ -763,7 +778,7 @@ createApp({
                 ...this.selectedHotkeyWindow
             });
             profile.ocrProfileConfigured = false;
-            profile.ocrProfileMessage = `Для окна ${profile.target.name || profile.target.executableName || 'окно'} ещё не настроены trigger/fast/precise области.`;
+            profile.ocrProfileMessage = `Для окна ${profile.target.name || profile.target.executableName || 'окно'} ещё не настроены fast/precise OCR области.`;
 
             this.closeHotkeyTargetDialog();
         },

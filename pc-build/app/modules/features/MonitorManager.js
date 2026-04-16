@@ -588,7 +588,12 @@ class MonitorManager {
                 
                 // 📸 Персональный эталонный скриншот 
                 template_base64: regions.trigger_area.template_base64 || "",
-                
+
+                // 🧠 Быстрый grayscale fingerprint для дешевого precheck
+                thumb_gray_base64: regions.trigger_area.thumb_gray_base64 || "",
+                dhash64: regions.trigger_area.dhash64 || "",
+                analysis_version: regions.trigger_area.analysis_version || 1,
+                 
                 // 🖼️ Настройка скрытия рамки захвата
                 hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
             };
@@ -607,6 +612,9 @@ class MonitorManager {
                         confirmations_needed: 1,
                         color_palette: streamerResultTriggerArea.color_palette || startProfile.color_palette,
                         template_base64: streamerResultTriggerArea.template_base64 || '',
+                        thumb_gray_base64: streamerResultTriggerArea.thumb_gray_base64 || '',
+                        dhash64: streamerResultTriggerArea.dhash64 || '',
+                        analysis_version: streamerResultTriggerArea.analysis_version || 1,
                         hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
                     };
 

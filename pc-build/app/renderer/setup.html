@@ -1174,6 +1174,9 @@
                             height: Math.round(regions.trigger_area.height * scaleY),
                             color_palette: triggerProfile.color_palette,
                             template_base64: triggerProfile.template_base64,
+                            thumb_gray_base64: triggerProfile.thumb_gray_base64,
+                            dhash64: triggerProfile.dhash64,
+                            analysis_version: triggerProfile.analysis_version || 1,
                             created_at: new Date().toISOString()
                         },
                         normal_data_area: {
@@ -1193,7 +1196,13 @@
                 }
 
                 saveButton.textContent = 'Сохранение...';
-                 
+
+                if (isWindowProfileSetup()) {
+                    finalRegions._window_name = setupContext?.targetWindow?.name || '';
+                    finalRegions._window_id = setupContext?.targetWindow?.id || '';
+                    finalRegions._executable_name = setupContext?.targetWindow?.executableName || '';
+                }
+                  
                 const result = isWindowProfileSetup()
                     ? await window.electronAPI.window.saveProfile(
                         setupContext?.profileExecutableName || setupContext?.targetWindow?.executableName || `window:${setupContext?.targetWindow?.name || 'unknown'}`,
@@ -1262,6 +1271,9 @@
                 if (regionProfile) {
                     finalArea.color_palette = regionProfile.color_palette;
                     finalArea.template_base64 = regionProfile.template_base64;
+                    finalArea.thumb_gray_base64 = regionProfile.thumb_gray_base64;
+                    finalArea.dhash64 = regionProfile.dhash64;
+                    finalArea.analysis_version = regionProfile.analysis_version || 1;
                 }
 
                 const result = isTriggerProfileSetup()
@@ -1294,7 +1306,7 @@
          * @param {Object} triggerArea - Координаты области триггера (canvas координаты)
          * @param {number} scaleX - Масштаб по X для конвертации в реальные координаты
          * @param {number} scaleY - Масштаб по Y для конвертации в реальные координаты
-         * @returns {Object} Результат анализа {success, color_palette, template_base64, error}
+         * @returns {Object} Результат анализа {success, color_palette, template_base64, thumb_gray_base64, dhash64, error}
          */
         async function createPersonalTriggerProfile(triggerArea, scaleX, scaleY) {
             try {
@@ -1351,9 +1363,13 @@
                     success: true,
                     color_palette: profileResult.color_palette,
                     template_base64: profileResult.template_base64,
+                    thumb_gray_base64: profileResult.thumb_gray_base64,
+                    dhash64: profileResult.dhash64,
+                    analysis_version: profileResult.analysis_version || 1,
                     analysis_info: {
                         image_size: `${realWidth}x${realHeight}`,
-                        colors_found: profileResult.color_palette.length
+                        colors_found: profileResult.color_palette.length,
+                        fingerprint_version: profileResult.analysis_version || 1
                     }
                 };
                 
