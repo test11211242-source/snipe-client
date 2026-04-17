@@ -40,11 +40,10 @@ app.whenReady().then(async () => {
             } else if (event === 'player_found') {
                 // Передаем событие о найденном игроке в UI
                 appManager.sendToWindow('main', 'player-found', data);
-
-                const shouldAutoOpenWidget = appManager.getStore?.()?.getAutoOpenWidget?.() !== false;
-                if (shouldAutoOpenWidget) {
-                    appManager.createWindow('widget', data);
-                }
+                
+                // Автоматически открываем виджет
+                // TODO: Проверить настройки автооткрытия
+                appManager.createWindow('widget', data);
                 
             } else if (event === 'ocr_reprocessed') {
                 // Передаем событие о переобработке OCR в UI

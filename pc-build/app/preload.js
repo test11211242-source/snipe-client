@@ -7,20 +7,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Белый список разрешенных каналов
     const allowedChannels = [
       'window:get-available', 'window:save-selection', 'window:get-last-selected', 'window:clear-cache',
-      'window:save-profile', 'window:get-profile',
       'auth:login', 'auth:register', 'auth:logout', 'auth:success',
       'tokens:getUser',
       'invite:get-hwid', 'invite:check-access', 'invite:validate-key', 'invite:get-key-info',
       'ocr:setup', 'ocr:save-regions', 'ocr:get-regions', 'ocr:analyze-profile',
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
-      'monitor:run-diagnostics',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
-      'hotkeys:get-all', 'hotkeys:save-all', 'hotkeys:test-run', 'hotkeys:refresh-registration',
       'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
       'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
       'store:get', 'store:set', 'store:has', 'store:delete',
-      'cache:get-card-image', 'cache:force-update', 'cache:get-status',
-      'widget:get-state', 'widget:save-state'
+      'cache:get-card-image', 'cache:force-update', 'cache:get-status'
     ];
     
     if (allowedChannels.includes(channel)) {
@@ -66,7 +62,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stop: () => ipcRenderer.invoke('monitor:stop'),
     restart: (reason) => ipcRenderer.invoke('monitor:restart', reason),
     getStatus: () => ipcRenderer.invoke('monitor:get-status'),
-    runDiagnostics: (triggerId) => ipcRenderer.invoke('monitor:run-diagnostics', triggerId),
     // 🆕 Новые методы для управления целями захвата
     setWindowTarget: (windowInfo) => ipcRenderer.invoke('monitor:set-window-target', windowInfo),
     setScreenTarget: () => ipcRenderer.invoke('monitor:set-screen-target'),
@@ -110,13 +105,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     switch: (mode) => ipcRenderer.invoke('server:switch', mode),
     check: () => ipcRenderer.invoke('server:check')
   },
-
-  hotkeys: {
-    getAll: () => ipcRenderer.invoke('hotkeys:get-all'),
-    saveAll: (profiles) => ipcRenderer.invoke('hotkeys:save-all', profiles),
-    testRun: (profile) => ipcRenderer.invoke('hotkeys:test-run', profile),
-    refreshRegistration: () => ipcRenderer.invoke('hotkeys:refresh-registration')
-  },
   
   // Виджет
   widget: {
@@ -124,9 +112,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: () => ipcRenderer.invoke('widget:close'),
     setAlwaysOnTop: (flag) => ipcRenderer.invoke('widget:setAlwaysOnTop', flag),
     resize: (width, height) => ipcRenderer.invoke('widget:resize', width, height),
-    move: (deltaX, deltaY) => ipcRenderer.invoke('widget:move', deltaX, deltaY),
-    getState: () => ipcRenderer.invoke('widget:get-state'),
-    saveState: (state) => ipcRenderer.invoke('widget:save-state', state)
+    move: (deltaX, deltaY) => ipcRenderer.invoke('widget:move', deltaX, deltaY)
   },
   
   // 🎯 Прямой доступ к хранилищу (для расширенных настроек)
@@ -143,9 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAvailable: (forceRefresh = false) => ipcRenderer.invoke('window:get-available', forceRefresh),
     saveSelection: (windowData) => ipcRenderer.invoke('window:save-selection', windowData),
     getLastSelected: () => ipcRenderer.invoke('window:get-last-selected'),
-    clearCache: () => ipcRenderer.invoke('window:clear-cache'),
-    saveProfile: (executableName, profile) => ipcRenderer.invoke('window:save-profile', executableName, profile),
-    getProfile: (executableName) => ipcRenderer.invoke('window:get-profile', executableName)
+    clearCache: () => ipcRenderer.invoke('window:clear-cache')
   },
 
   // 🎴 Кеш изображений карт
@@ -177,9 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'update-download-progress', // Прогресс скачивания
       'update-info-changed', // Изменение информации об обновлении
       'update-downloaded', // Обновление скачано
-      'update-error', // Ошибка обновления
-      'widget-state',
-      'window-profile-updated'
+      'update-error' // Ошибка обновления
     ];
     
     if (validChannels.includes(channel)) {

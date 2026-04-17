@@ -27,19 +27,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Validate package version
-        shell: bash
-        run: |
-          EXPECTED_VERSION="${{ github.event.inputs.version }}"
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-
-          echo "package.json version: ${PACKAGE_VERSION}"
-          echo "requested version: ${EXPECTED_VERSION}"
-
-          if [ "$PACKAGE_VERSION" != "$EXPECTED_VERSION" ]; then
-            echo "Version mismatch between package.json and workflow input"
-            exit 1
-          fi
+      - name: Update version
+        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
 
       - name: Build Windows installer
         run: npm run build
@@ -99,18 +88,14 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
 
-          ssh ${SERVER_USER}@${SERVER_HOST} "VERSION=${VERSION} bash -s" << 'ENDSSH'
+          ssh ${SERVER_USER}@${SERVER_HOST} << 'ENDSSH'
           cd /home/ubuntu/snipe/data/updates
 
           # Create or update versions.json
-          node <<'EOF'
+          node -e "
           const fs = require('fs');
-          const version = process.env.VERSION;
+          const version = '$VERSION';
           const versionsPath = 'versions.json';
-
-          if (!version) {
-            throw new Error('VERSION env variable is missing');
-          }
 
           let data = {
             latest_version: version,
@@ -135,7 +120,7 @@ jobs:
 
           fs.writeFileSync(versionsPath, JSON.stringify(data, null, 2));
           console.log('✅ versions.json updated to version ' + version);
-          EOF
+          "
           ENDSSH
 
       - name: Upload artifacts

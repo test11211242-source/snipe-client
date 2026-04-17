@@ -12,15 +12,15 @@
         }
 
         :root {
-            --bg-primary: #0f1620;
-            --bg-widget: rgba(18, 25, 35, 0.94);
-            --border-color: rgba(255, 255, 255, 0.08);
-            --text-primary: #edf2f7;
-            --text-secondary: #9ca9bb;
-            --accent-purple: #5b8cff;
-            --accent-pink: #4677f0;
-            --success: #2fb67c;
-            --warning: #f59e0b;
+            --bg-primary: #050511;
+            --bg-widget: rgba(10, 10, 31, 0.9);
+            --border-color: rgba(139, 92, 246, 0.3);
+            --text-primary: #f0f0f5;
+            --text-secondary: #a0a0b8;
+            --accent-purple: #8B5CF6;
+            --accent-pink: #EC4899;
+            --success: #10B981;
+            --warning: #8B5CF6;
         }
 
         body {
@@ -29,19 +29,20 @@
             color: var(--text-primary);
             overflow: hidden;
             user-select: none;
-            -webkit-app-region: no-drag;
+            -webkit-app-region: drag;
         }
 
         /* Контейнер виджета */
         .widget-container {
             background: var(--bg-widget);
-            backdrop-filter: blur(18px);
+            backdrop-filter: blur(20px);
             border: 1px solid var(--border-color);
-            border-radius: 18px;
-            padding: 16px;
+            border-radius: 20px;
+            padding: 15px;
             box-shadow: 
-                0 20px 50px rgba(4, 10, 18, 0.42),
-                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+                0 10px 40px rgba(0, 0, 0, 0.8),
+                0 0 60px rgba(139, 92, 246, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
             overflow: hidden;
@@ -55,8 +56,12 @@
             left: -2px;
             right: -2px;
             bottom: -2px;
-            background: linear-gradient(45deg, var(--accent-purple), var(--accent-pink), var(--accent-purple));
-            border-radius: 18px;
+            background: linear-gradient(45deg, 
+                var(--accent-purple), 
+                var(--accent-pink), 
+                var(--accent-purple)
+            );
+            border-radius: 20px;
             opacity: 0;
             z-index: -1;
             transition: opacity 0.3s ease;
@@ -69,7 +74,7 @@
         }
 
         .widget-container:hover::before {
-            opacity: 0.08;
+            opacity: 0.3;
         }
 
         .widget-container.compact {
@@ -82,12 +87,10 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 10px;
-            -webkit-app-region: drag;
-            cursor: move;
         }
 
         .widget-container.compact .widget-header {
-            margin-bottom: 6px;
+            display: none;
         }
 
         .player-info {
@@ -99,7 +102,9 @@
         .player-name {
             font-size: 16px;
             font-weight: 700;
-            color: var(--text-primary);
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
         .player-rating {
@@ -122,14 +127,13 @@
         .widget-controls {
             display: flex;
             gap: 8px;
-            -webkit-app-region: no-drag;
         }
 
         .control-button {
-            width: 28px;
-            height: 28px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 8px;
             color: var(--text-secondary);
             cursor: pointer;
@@ -142,10 +146,10 @@
         }
 
         .control-button:hover {
-            background: rgba(91, 140, 255, 0.16);
+            background: rgba(139, 92, 246, 0.2);
             border-color: var(--accent-purple);
             color: var(--text-primary);
-            transform: scale(1.05);
+            transform: scale(1.1);
         }
 
         .control-button:active {
@@ -174,34 +178,34 @@
             overflow: hidden;
             cursor: pointer;
             box-shadow: 
-                0 8px 18px rgba(4, 10, 18, 0.28),
+                0 2px 10px rgba(0, 0, 0, 0.5),
                 inset 0 1px 0 rgba(255, 255, 255, 0.05);
         }
 
         .deck-card:hover {
-            transform: translateY(-2px) scale(1.03);
+            transform: translateY(-3px) scale(1.05);
             z-index: 10;
             box-shadow: 
-                0 16px 28px rgba(4, 10, 18, 0.36),
-                0 0 0 1px rgba(91, 140, 255, 0.18);
+                0 8px 25px rgba(139, 92, 246, 0.4),
+                0 0 30px rgba(139, 92, 246, 0.2);
             border-color: var(--accent-purple);
         }
 
         .deck-card.evolution {
             background: linear-gradient(135deg, 
-                rgba(91, 140, 255, 0.16), 
-                rgba(70, 119, 240, 0.08)
+                rgba(236, 72, 153, 0.2), 
+                rgba(139, 92, 246, 0.1)
             );
             box-shadow: 
-                0 8px 18px rgba(70, 119, 240, 0.24),
+                0 2px 15px rgba(236, 72, 153, 0.4),
                 inset 0 1px 0 rgba(255, 255, 255, 0.1);
         }
 
         .deck-card.evolution:hover {
-            transform: translateY(-3px) scale(1.05);
+            transform: translateY(-5px) scale(1.08) rotateZ(3deg);
             box-shadow: 
-                0 16px 28px rgba(70, 119, 240, 0.3),
-                0 0 0 1px rgba(91, 140, 255, 0.2);
+                0 10px 30px rgba(236, 72, 153, 0.6),
+                0 0 40px rgba(236, 72, 153, 0.3);
         }
 
         .deck-card img {
@@ -223,25 +227,25 @@
             top: 3px;
             right: 3px;
             font-size: 10px;
-            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            background: linear-gradient(135deg, var(--accent-pink), var(--accent-purple));
             border-radius: 50%;
             width: 14px;
             height: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 2px 8px rgba(70, 119, 240, 0.35);
+            box-shadow: 0 2px 8px rgba(236, 72, 153, 0.5);
             animation: pulse-badge 2s ease-in-out infinite;
         }
 
         @keyframes pulse-badge {
             0%, 100% {
                 transform: scale(1);
-                box-shadow: 0 2px 8px rgba(70, 119, 240, 0.35);
+                box-shadow: 0 2px 8px rgba(236, 72, 153, 0.5);
             }
             50% {
                 transform: scale(1.2);
-                box-shadow: 0 4px 15px rgba(70, 119, 240, 0.5);
+                box-shadow: 0 4px 15px rgba(236, 72, 153, 0.8);
             }
         }
 
@@ -265,7 +269,7 @@
             justify-content: space-between;
             align-items: center;
             padding-top: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         .widget-container.compact .deck-info {
@@ -418,30 +422,19 @@
     <script>
         let isPinned = false;
         let currentMode = 'expanded'; // compact, expanded, analytical
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let widgetX = 0;
+        let widgetY = 0;
 
         // Получаем данные игрока
         window.electronAPI.on('player-data', (data) => {
             updateWidget(data);
         });
 
-        window.electronAPI.on('widget-state', (state) => {
-            applyWidgetState(state || {});
-        });
-
         function getDeckModeLabel(mode) {
             return mode === 'gt' ? 'GT' : 'Path of Legends';
-        }
-
-        function getWidgetSizeForMode(mode) {
-            if (mode === 'compact') {
-                return { width: 400, height: 130 };
-            }
-
-            if (mode === 'analytical') {
-                return { width: 450, height: 260 };
-            }
-
-            return { width: 450, height: 210 };
         }
 
         // Обновление виджета
@@ -616,10 +609,17 @@
             widget.className = `widget-container ${currentMode}`;
             
             // Изменяем размер окна в зависимости от режима
-            const nextSize = getWidgetSizeForMode(currentMode);
-            window.electronAPI.widget.resize(nextSize.width, nextSize.height);
-
-            window.electronAPI.widget.saveState({ mode: currentMode });
+            switch(currentMode) {
+                case 'compact':
+                    window.electronAPI.widget.resize(400, 100);
+                    break;
+                case 'expanded':
+                    window.electronAPI.widget.resize(450, 200);
+                    break;
+                case 'analytical':
+                    window.electronAPI.widget.resize(450, 250);
+                    break;
+            }
         }
 
         // Закрепление окна (рабочий вариант из старого проекта)
@@ -651,7 +651,12 @@
                     widget.style.boxShadow = '0 10px 40px rgba(0, 0, 0, 0.8), 0 0 60px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)';
                 }
                 
-                window.electronAPI.widget.saveState({ alwaysOnTop: isPinned });
+                if (isPinned) {
+                    // Дополнительная проверка через секунду
+                    setTimeout(() => {
+                        console.log('Дополнительная активация виджета');
+                    }, 1000);
+                }
             }).catch(error => {
                 console.error('Ошибка при изменении AlwaysOnTop:', error);
                 
@@ -663,38 +668,6 @@
                     button.classList.remove('pinned');
                 }
             });
-        }
-
-        function applyWidgetState(state) {
-            if (!state) {
-                return;
-            }
-
-            const widget = document.getElementById('widget');
-            const button = document.getElementById('pin-button');
-
-            if (state.mode && ['compact', 'expanded', 'analytical'].includes(state.mode)) {
-                currentMode = state.mode;
-                widget.className = `widget-container ${currentMode}`;
-
-                if (!state.bounds) {
-                    const nextSize = getWidgetSizeForMode(currentMode);
-                    window.electronAPI.widget.resize(nextSize.width, nextSize.height);
-                }
-            }
-
-            isPinned = !!state.alwaysOnTop;
-            if (isPinned) {
-                button.classList.add('pinned');
-                button.title = 'Открепить от переднего плана';
-                widget.style.borderColor = 'rgba(91, 140, 255, 0.55)';
-                widget.style.boxShadow = '0 18px 36px rgba(4, 10, 18, 0.4), 0 0 0 1px rgba(91, 140, 255, 0.2)';
-            } else {
-                button.classList.remove('pinned');
-                button.title = 'Закрепить поверх окон';
-                widget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-                widget.style.boxShadow = '0 20px 50px rgba(4, 10, 18, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.04)';
-            }
         }
 
 
@@ -715,6 +688,37 @@
             }
         });
 
+        // Перетаскивание окна
+        const widget = document.getElementById('widget');
+        
+        widget.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.control-button') || e.target.closest('.deck-card')) return;
+            
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            widget.classList.add('dragging');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            
+            const deltaX = e.clientX - dragStartX;
+            const deltaY = e.clientY - dragStartY;
+            
+            window.electronAPI.widget.move(deltaX, deltaY);
+            
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                widget.classList.remove('dragging');
+            }
+        });
+
         // Горячие клавиши
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -730,19 +734,8 @@
         
         // Инициализация
         window.addEventListener('load', () => {
-            window.electronAPI.widget.getState().then((result) => {
-                if (result?.success && result.state) {
-                    applyWidgetState(result.state);
-                }
-
-                if (!result?.state?.bounds) {
-                    const initialSize = getWidgetSizeForMode(result?.state?.mode || currentMode);
-                    window.electronAPI.widget.resize(initialSize.width, initialSize.height);
-                }
-            }).catch(() => {
-                const initialSize = getWidgetSizeForMode(currentMode);
-                window.electronAPI.widget.resize(initialSize.width, initialSize.height);
-            });
+            // Устанавливаем начальный размер
+            window.electronAPI.widget.resize(450, 200);
         });
     </script>
 </body>

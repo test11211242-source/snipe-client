@@ -16,7 +16,6 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { resolvePythonScriptPath } = require('../utils/python_script_resolver');
 
 const ConfigManager = require('../core/ConfigManager');
 const StoreManager = require('../core/StoreManager');
@@ -531,9 +530,13 @@ class OcrManager {
             
             console.log(`💾 Временный файл создан: ${tempImagePath}`);
             
+            // Путь к Python анализатору (относительно frontend папки)
             const { app } = require('electron');
 
-            const pythonScript = resolvePythonScriptPath('profile_analyzer.py');
+            // Правильный путь к Python-анализатору
+            const pythonScript = app.isPackaged
+                ? path.join(process.resourcesPath, 'python_scripts', 'profile_analyzer.py')
+                : path.join(__dirname, '..', '..', '..', 'python_scripts', 'profile_analyzer.py');
 
             // Правильный путь к портативному Python
             const pythonExecutable = app.isPackaged
@@ -558,15 +561,11 @@ class OcrManager {
             console.log('✅ Персональный профиль успешно создан');
             console.log(`🎨 Найдено цветов: ${analysisResult.color_palette.length}`);
             console.log(`📏 Размер эталона: ${Math.round(analysisResult.template_base64.length / 1024)}KB`);
-            console.log(`🧠 Версия анализа: ${analysisResult.analysis_version || 1}`);
             
             return {
                 success: true,
                 color_palette: analysisResult.color_palette,
                 template_base64: analysisResult.template_base64,
-                thumb_gray_base64: analysisResult.thumb_gray_base64,
-                dhash64: analysisResult.dhash64,
-                analysis_version: analysisResult.analysis_version || 1,
                 analysis_info: analysisResult.analysis_info || {}
             };
             

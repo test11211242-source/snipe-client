@@ -50,10 +50,10 @@ class AppWindowManager extends WindowManager {
         const screenSize = this.getScreenSize();
         
         const config = {
-            width: Math.min(1440, screenSize.width * 0.88),
-            height: Math.min(900, screenSize.height * 0.88),
-            minWidth: 1180,
-            minHeight: 720,
+            width: Math.min(1200, screenSize.width * 0.8),
+            height: Math.min(800, screenSize.height * 0.8),
+            minWidth: 1000,
+            minHeight: 600,
             autoHideMenuBar: true
         };
 
@@ -63,22 +63,13 @@ class AppWindowManager extends WindowManager {
         window.webContents.on('did-finish-load', () => {
             if (this.appManager) {
                 const appState = this.appManager.getAppState();
-                const regions = this.appManager.getStore().getOcrRegions?.() || null;
-                const server = this.appManager.getServer?.()?.getCurrentServer?.() || null;
-                const serverStatus = this.appManager.getServer?.()?.getServerStatus?.() || {};
                 
                 // Извлекаем данные пользователя из auth состояния для правильной структуры
                 const userData = {
                     user: appState.auth?.user || null,
                     initialized: appState.initialized,
                     searchMode: appState.store?.settings?.searchMode || 'fast',
-                    deckMode: appState.store?.settings?.deckMode || 'pol',
-                    regions,
-                    server: server ? {
-                        mode: server.mode,
-                        url: server.url,
-                        available: !!serverStatus.available
-                    } : null
+                    deckMode: appState.store?.settings?.deckMode || 'pol'
                 };
                 window.webContents.send('user-data', userData);
             }
@@ -129,18 +120,15 @@ class AppWindowManager extends WindowManager {
         }
 
         const screenSize = this.getScreenSize();
-        const store = this.appManager?.getStore?.();
-        const widgetState = store?.getWidgetState?.() || {};
-        const savedBounds = widgetState?.bounds || null;
 
         const config = {
-            width: savedBounds?.width || 450,
-            height: savedBounds?.height || 350,
-            x: Number.isFinite(savedBounds?.x) ? savedBounds.x : screenSize.width - 470,
-            y: Number.isFinite(savedBounds?.y) ? savedBounds.y : 20,
+            width: 450,
+            height: 350,
+            x: screenSize.width - 470,
+            y: 20,
             frame: false,
             transparent: true,
-            alwaysOnTop: !!widgetState?.alwaysOnTop,
+            alwaysOnTop: false,
             skipTaskbar: false,
             resizable: false,
             movable: true,
@@ -155,25 +143,8 @@ class AppWindowManager extends WindowManager {
         if (playerData) {
             window.webContents.on('did-finish-load', () => {
                 window.webContents.send('player-data', playerData);
-                window.webContents.send('widget-state', widgetState);
-            });
-        } else {
-            window.webContents.on('did-finish-load', () => {
-                window.webContents.send('widget-state', widgetState);
             });
         }
-
-        const persistWidgetBounds = () => {
-            const currentStore = this.appManager?.getStore?.();
-            if (!currentStore?.setWidgetState) {
-                return;
-            }
-
-            currentStore.setWidgetState({
-                bounds: window.getBounds(),
-                alwaysOnTop: window.isAlwaysOnTop()
-            });
-        };
 
         // Магнитное прилипание к краям экрана
         window.on('moved', () => {
@@ -208,16 +179,6 @@ class AppWindowManager extends WindowManager {
             if (newX !== bounds.x || newY !== bounds.y) {
                 window.setPosition(newX, newY);
             }
-
-            persistWidgetBounds();
-        });
-
-        window.on('resized', () => {
-            persistWidgetBounds();
-        });
-
-        window.on('close', () => {
-            persistWidgetBounds();
         });
 
         return window;
@@ -230,11 +191,7 @@ class AppWindowManager extends WindowManager {
      */
     toggleWidget(playerData = null) {
         if (this.hasWindow('widget')) {
-            if (playerData) {
-                this.createWidget(playerData);
-            } else {
-                this.closeWindow('widget');
-            }
+            this.closeWindow('widget');
         } else {
             this.createWidget(playerData);
         }

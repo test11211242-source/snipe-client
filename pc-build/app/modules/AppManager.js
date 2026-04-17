@@ -11,7 +11,6 @@ const InviteManager = require('./auth/InviteManager');
 const UpdateManager = require('./features/UpdateManager');
 const OcrManager = require('./features/OcrManager');
 const MonitorManager = require('./features/MonitorManager');
-const HotkeyManager = require('./features/HotkeyManager');
 const AppWindowManager = require('./windows/AppWindowManager');
 const SetupWindow = require('./windows/SetupWindow');
 
@@ -56,12 +55,10 @@ class AppManager {
             // 4. Инициализация функциональных модулей
             this.modules.update = new UpdateManager(this.modules.api);
             this.modules.update.setApiManager(this.modules.api);
-            this.modules.update.setEventBus(this.modules.eventBus);
             this.modules.ocr = new OcrManager(this.modules.api, this.modules.eventBus);
             this.modules.monitor = new MonitorManager(this.modules.eventBus, this.modules.store, this.modules.api);
             this.modules.windowManager = new AppWindowManager(this, this.modules.eventBus);
             this.modules.setupWindow = new SetupWindow(this, this.modules.eventBus);
-            this.modules.hotkeys = new HotkeyManager(this, this.modules.eventBus, this.modules.store);
             
             console.log('✅ Функциональные модули инициализированы');
             
@@ -77,9 +74,7 @@ class AppManager {
             
             // 6. Настройка связей между модулями
             this.setupModuleConnections();
-
-            await this.modules.hotkeys.initialize();
-             
+            
             this.initialized = true;
             console.log('🎉 AppManager полностью инициализирован');
             
@@ -585,11 +580,6 @@ class AppManager {
         console.log('🔄 Перезапуск мониторинга через AppManager...');
         return await this.modules.monitor.restart(reason);
     }
-
-    async runTriggerDiagnostics(triggerId) {
-        console.log(`🧪 Запуск диагностики триггера через AppManager: ${triggerId}`);
-        return await this.modules.monitor.runTriggerDiagnostics(triggerId);
-    }
     
     async updateSearchMode(mode) {
         console.log(`🔄 Изменение режима поиска на '${mode}' через AppManager...`);
@@ -614,10 +604,6 @@ class AppManager {
     
     getCurrentCaptureTarget() {
         return this.modules.monitor?.getCurrentCaptureTarget() || null;
-    }
-
-    async getAvailableWindows(forceRefresh = false) {
-        return await this.modules.ipc?.windowsCache?.getAvailableWindows(forceRefresh) || [];
     }
 
     // === Управление окнами ===
@@ -770,10 +756,6 @@ class AppManager {
         
         try {
             // Останавливаем мониторинг
-            if (this.modules.hotkeys) {
-                this.modules.hotkeys.cleanup();
-            }
-
             if (this.modules.monitor) {
                 this.modules.monitor.cleanup();
             }
@@ -851,10 +833,6 @@ class AppManager {
 
     getMonitor() {
         return this.modules.monitor;
-    }
-
-    getHotkeys() {
-        return this.modules.hotkeys;
     }
 
     getSetupWindow() {

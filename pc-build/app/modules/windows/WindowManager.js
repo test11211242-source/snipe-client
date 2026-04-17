@@ -202,11 +202,7 @@ class WindowManager {
      */
     toggleWidget(playerData) {
         if (this.hasWindow('widget')) {
-            if (playerData) {
-                this.createWidget(playerData);
-            } else {
-                this.closeWindow('widget');
-            }
+            this.closeWindow('widget');
         } else {
             this.createWidget(playerData);
         }

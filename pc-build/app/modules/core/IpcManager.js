@@ -236,7 +236,6 @@ class IpcManager {
         this.registerWidgetHandlers();
         this.registerUpdateHandlers();
         this.registerSettingsHandlers();
-        this.registerHotkeyHandlers();
         this.registerCacheHandlers(); // 🆕 Обработчики для кеша изображений карт
         this.registerAppHandlers();
 
@@ -705,12 +704,7 @@ class IpcManager {
                 
                 const store = this.appManager.getStore();
                 store.setWindowProfile(executableName, profile);
-
-                const mainWindow = this.windowManager?.getWindow?.('main');
-                if (mainWindow?.webContents) {
-                    mainWindow.webContents.send('window-profile-updated', { executableName });
-                }
-                 
+                
                 return { success: true };
                 
             } catch (error) {
@@ -866,16 +860,6 @@ class IpcManager {
             
             const status = this.appManager.getMonitorStatus();
             return { success: true, status };
-        });
-
-        this.registerHandler('monitor:run-diagnostics', async (event, triggerId) => {
-            console.log(`🧪 IPC: Диагностика триггера ${triggerId}`);
-
-            if (!this.appManager.runTriggerDiagnostics) {
-                return { success: false, error: 'MonitorManager не поддерживает диагностику' };
-            }
-
-            return await this.appManager.runTriggerDiagnostics(triggerId);
         });
 
         this.registerHandler('streamer:get-result-config', async () => {
@@ -1061,15 +1045,28 @@ class IpcManager {
                     throw new Error('Окно виджета не найдено');
                 }
                 
-                widgetWindow.setAlwaysOnTop(!!flag, flag ? 'floating' : 'normal');
-
-                if (this.appManager?.getStore?.()) {
-                    this.appManager.getStore().setWidgetState({ alwaysOnTop: !!flag });
+                // 🔧 РАБОЧЕЕ РЕШЕНИЕ ИЗ СТАРОГО ПРОЕКТА
+                if (flag) {
+                    // Устанавливаем alwaysOnTop с уровнем приоритета
+                    widgetWindow.setAlwaysOnTop(true, 'screen-saver');
+                    
+                    // Показываем на всех рабочих столах
+                    widgetWindow.setVisibleOnAllWorkspaces(true);
+                    
+                    // Принудительно показываем и фокусируемся
+                    widgetWindow.show();
+                    widgetWindow.focus();
+                    
+                    console.log('✅ Виджет закреплен поверх всех окон (с screen-saver приоритетом)');
+                } else {
+                    // Отключаем alwaysOnTop
+                    widgetWindow.setAlwaysOnTop(false);
+                    
+                    // Убираем с всех рабочих столов
+                    widgetWindow.setVisibleOnAllWorkspaces(false);
+                    
+                    console.log('✅ Виджет откреплен от переднего плана');
                 }
-
-                console.log(flag
-                    ? '✅ Виджет закреплен поверх окон'
-                    : '✅ Виджет откреплен от переднего плана');
                 
                 return { success: true, alwaysOnTop: flag };
             } catch (error) {
@@ -1093,12 +1090,6 @@ class IpcManager {
                 }
                 
                 widgetWindow.setSize(width, height);
-
-                if (this.appManager?.getStore?.()) {
-                    this.appManager.getStore().setWidgetState({
-                        bounds: widgetWindow.getBounds()
-                    });
-                }
                 
                 return { success: true };
             } catch (error) {
@@ -1136,36 +1127,6 @@ class IpcManager {
             }
         });
 
-        this.registerHandler('widget:get-state', async () => {
-            try {
-                const store = this.appManager?.getStore?.();
-                if (!store) {
-                    throw new Error('StoreManager недоступен');
-                }
-
-                return {
-                    success: true,
-                    state: store.getWidgetState()
-                };
-            } catch (error) {
-                return { success: false, error: error.message, state: null };
-            }
-        });
-
-        this.registerHandler('widget:save-state', async (event, state) => {
-            try {
-                const store = this.appManager?.getStore?.();
-                if (!store) {
-                    throw new Error('StoreManager недоступен');
-                }
-
-                store.setWidgetState(state || {});
-                return { success: true };
-            } catch (error) {
-                return { success: false, error: error.message };
-            }
-        });
-
         console.log('🪟 Обработчики виджета зарегистрированы');
     }
 
@@ -1179,7 +1140,14 @@ class IpcManager {
 
         this.registerHandler('update:download', async (event, downloadType = 'installer') => {
             console.log(`📥 IPC: Скачивание обновления (${downloadType})`);
-
+            
+            // Устанавливаем callback прогресса через EventBus
+            this.appManager.getUpdate().setProgressCallback((progress) => {
+                if (this.eventBus) {
+                    this.eventBus.emit('update:download:progress', { progress });
+                }
+            });
+            
             return await this.appManager.downloadUpdate(downloadType);
         });
 
@@ -1347,67 +1315,6 @@ class IpcManager {
         });
 
         console.log('⚙️ Обработчики настроек зарегистрированы');
-    }
-
-    registerHotkeyHandlers() {
-        this.registerHandler('hotkeys:get-all', async () => {
-            try {
-                const hotkeys = this.appManager.getHotkeys();
-                if (!hotkeys) {
-                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
-                }
-
-                return hotkeys.getProfilesWithStates();
-            } catch (error) {
-                return { success: false, error: error.message, profiles: [] };
-            }
-        });
-
-        this.registerHandler('hotkeys:save-all', async (event, profiles) => {
-            try {
-                const hotkeys = this.appManager.getHotkeys();
-                if (!hotkeys) {
-                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
-                }
-
-                return await hotkeys.saveProfiles(profiles);
-            } catch (error) {
-                return { success: false, error: error.message, profiles: [] };
-            }
-        });
-
-        this.registerHandler('hotkeys:test-run', async (event, profile) => {
-            try {
-                const hotkeys = this.appManager.getHotkeys();
-                if (!hotkeys) {
-                    return { success: false, error: 'HotkeyManager не инициализирован' };
-                }
-
-                const result = await hotkeys.testProfile(profile);
-                return {
-                    success: true,
-                    found: result.found,
-                    playerData: result.playerData
-                };
-            } catch (error) {
-                return { success: false, error: error.message };
-            }
-        });
-
-        this.registerHandler('hotkeys:refresh-registration', async () => {
-            try {
-                const hotkeys = this.appManager.getHotkeys();
-                if (!hotkeys) {
-                    return { success: false, error: 'HotkeyManager не инициализирован', profiles: [] };
-                }
-
-                return await hotkeys.refreshRegistrations();
-            } catch (error) {
-                return { success: false, error: error.message, profiles: [] };
-            }
-        });
-
-        console.log('⌨️ Обработчики hotkeys зарегистрированы');
     }
 
     // === Кеш изображений карт ===

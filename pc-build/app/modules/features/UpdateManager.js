@@ -14,7 +14,6 @@ class UpdateManager {
         this.config = new ConfigManager();
         this.store = new StoreManager();
         this.api = apiManager;
-        this.eventBus = null;
         
         this.downloadInProgress = false;
         this.updateInfo = null;
@@ -38,11 +37,6 @@ class UpdateManager {
     setApiManager(apiManager) {
         this.api = apiManager;
         console.log('🔗 API Manager подключен к UpdateManager');
-    }
-
-    setEventBus(eventBus) {
-        this.eventBus = eventBus;
-        console.log('🔗 EventBus подключен к UpdateManager');
     }
 
     // === Получение текущей версии ===
@@ -200,15 +194,6 @@ class UpdateManager {
                     console.log('✅ Обновление скачано успешно');
                     
                     this.downloadInProgress = false;
-
-                    if (this.eventBus) {
-                        this.eventBus.emit('update:downloaded', {
-                            filePath: downloadPath,
-                            version,
-                            type: downloadType,
-                            fileSize: validation.fileSize
-                        });
-                    }
                     
                     return {
                         success: true,
@@ -229,13 +214,7 @@ class UpdateManager {
         } catch (error) {
             this.downloadInProgress = false;
             console.error('❌ Ошибка скачивания:', error.message);
-
-            if (this.eventBus) {
-                this.eventBus.emit('update:error', {
-                    message: this.formatError(error)
-                });
-            }
-             
+            
             return {
                 success: false,
                 error: this.formatError(error)
@@ -311,17 +290,7 @@ class UpdateManager {
                                 total: progressEvent.total
                             });
                         }
-
-                        if (this.eventBus) {
-                            this.eventBus.emit('update:download:progress', {
-                                progress: {
-                                    percent,
-                                    loaded: progressEvent.loaded,
-                                    total: progressEvent.total
-                                }
-                            });
-                        }
-                         
+                        
                         console.log(`📥 Прогресс: ${percent}%`);
                     }
                 }

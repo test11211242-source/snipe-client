@@ -34,10 +34,7 @@ class ConfigManager {
                 serverMode: { type: 'string', default: 'global' },
                 ocrRegions: { type: 'object' },
                 searchMode: { type: 'string', default: 'fast' },
-                deckMode: { type: 'string', default: 'pol' },
-                manualHotkeys: { type: 'array', default: [] },
-                autoOpenWidget: { type: 'boolean', default: true },
-                widgetState: { type: 'object', default: {} }
+                deckMode: { type: 'string', default: 'pol' }
             }
         };
 
