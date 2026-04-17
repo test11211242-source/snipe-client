@@ -204,7 +204,7 @@ class MonitorManager {
             }
 
             const profilesFilePath = this.createProfilesTempFile(triggerProfiles);
-            const pythonScript = this.getTriggerDiagnosticsScriptPath();
+            const diagnosticLaunchSpec = this.getTriggerDiagnosticsLaunchSpec(triggerId, profilesFilePath);
             const pythonExecutable = this.getPythonExecutable();
             const captureParams = this.getCaptureParameters();
 
@@ -216,13 +216,12 @@ class MonitorManager {
                 let diagnosticReport = null;
 
                 const diagnosticProcess = spawn(pythonExecutable, [
-                    pythonScript,
+                    diagnosticLaunchSpec.scriptPath,
                     '--target_type', captureParams.targetType,
                     '--target_id', captureParams.targetId,
                     '--profiles_file', profilesFilePath,
                     '--fps', '10',
-                    '--trigger_id', triggerId,
-                    '--frames', '10'
+                    ...diagnosticLaunchSpec.args
                 ], {
                     env: {
                         ...process.env,
@@ -517,6 +516,28 @@ class MonitorManager {
 
     getTriggerDiagnosticsScriptPath() {
         return resolvePythonScriptPath('trigger_diagnostics.py');
+    }
+
+    getTriggerDiagnosticsLaunchSpec(triggerId, profilesFilePath) {
+        try {
+            return {
+                scriptPath: this.getTriggerDiagnosticsScriptPath(),
+                args: [
+                    '--trigger_id', triggerId,
+                    '--frames', '10'
+                ]
+            };
+        } catch (error) {
+            console.warn(`⚠️ trigger_diagnostics.py недоступен, fallback на screen_monitor.py: ${error.message}`);
+
+            return {
+                scriptPath: this.getPythonScriptPath(),
+                args: [
+                    '--diagnostic_profile_id', triggerId,
+                    '--diagnostic_frames', '10'
+                ]
+            };
+        }
     }
 
     // === ПРОВЕРКА СЕРВЕРА ===
