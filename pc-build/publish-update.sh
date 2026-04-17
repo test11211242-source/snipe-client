@@ -4,7 +4,9 @@ set -e
 
 # Загрузка переменных окружения из .env файла
 if [ -f .env ]; then
-    export $(cat .env | xargs)
+    set -a
+    . ./.env
+    set +a
 fi
 
 # Цвета для вывода
@@ -18,6 +20,11 @@ NC='\033[0m' # No Color
 GITHUB_USER="test11211242-source"
 GITHUB_REPO="snipe-client"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo -e "${RED}✗ GITHUB_TOKEN не найден в окружении или .env${NC}"
+    exit 1
+fi
 
 echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║   Snipe Client - Публикация обновления    ║${NC}"
@@ -182,7 +189,7 @@ if [ -n "$CHANGED_FILES" ]; then
 $COMMIT_DESC"
     
     # Пушим в main
-    git push https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_REPO}.git main
+    git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_REPO}.git main
     
     echo -e "${GREEN}✓ Изменения загружены на GitHub${NC}"
 else
