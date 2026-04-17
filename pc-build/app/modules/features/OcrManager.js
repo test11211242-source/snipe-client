@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { resolvePythonScriptPath } = require('../utils/python_script_resolver');
 
 const ConfigManager = require('../core/ConfigManager');
 const StoreManager = require('../core/StoreManager');
@@ -530,13 +531,9 @@ class OcrManager {
             
             console.log(`💾 Временный файл создан: ${tempImagePath}`);
             
-            // Путь к Python анализатору (относительно frontend папки)
             const { app } = require('electron');
 
-            // Правильный путь к Python-анализатору
-            const pythonScript = app.isPackaged
-                ? path.join(process.resourcesPath, 'python_scripts', 'profile_analyzer.py')
-                : path.join(__dirname, '..', '..', '..', 'python_scripts', 'profile_analyzer.py');
+            const pythonScript = resolvePythonScriptPath('profile_analyzer.py');
 
             // Правильный путь к портативному Python
             const pythonExecutable = app.isPackaged

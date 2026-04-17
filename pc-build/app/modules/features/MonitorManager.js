@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const { app, Notification, dialog } = require('electron');
 const FormData = require('form-data');
+const { resolvePythonScriptPath } = require('../utils/python_script_resolver');
 
 /**
  * MonitorManager - Управление Python-процессом мониторинга экрана
@@ -511,20 +512,11 @@ class MonitorManager {
     }
 
     getPythonScriptPath() {
-        // 🎯 Используем обновленный скрипт с поддержкой профилей
-        if (app.isPackaged) {
-            return path.join(process.resourcesPath, 'python_scripts', 'screen_monitor.py');
-        } else {
-            return path.join(__dirname, '../../../python_scripts/screen_monitor.py');
-        }
+        return resolvePythonScriptPath('screen_monitor.py');
     }
 
     getTriggerDiagnosticsScriptPath() {
-        if (app.isPackaged) {
-            return path.join(process.resourcesPath, 'python_scripts', 'trigger_diagnostics.py');
-        }
-
-        return path.join(__dirname, '../../../python_scripts/trigger_diagnostics.py');
+        return resolvePythonScriptPath('trigger_diagnostics.py');
     }
 
     // === ПРОВЕРКА СЕРВЕРА ===
