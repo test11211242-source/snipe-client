@@ -20,6 +20,7 @@ const os = require('os');
 const ConfigManager = require('../core/ConfigManager');
 const StoreManager = require('../core/StoreManager');
 
+const ANALYZER_CONTRACT_VERSION = 2;
 const TRIGGER_PROFILE_SCHEMA_VERSION = 2;
 const DEFAULT_SCREEN_TARGET = {
     targetType: 'screen',
@@ -508,6 +509,13 @@ class OcrManager {
             
             // Вызываем Python анализатор
             const analysisResult = await this.executePythonJsonScript(pythonExecutable, pythonScript, analyzerArgs);
+
+            console.log('🧬 Analyzer response metadata:', {
+                contract_version: analysisResult?.contract_version,
+                analyzer_version: analysisResult?.analyzer_version,
+                script_path: analysisResult?.script_path,
+                keys: analysisResult ? Object.keys(analysisResult) : []
+            });
             
             // Удаляем временный файл
             try {
@@ -596,6 +604,13 @@ class OcrManager {
 
         if (!profile || typeof profile !== 'object') {
             throw new Error('Python анализатор вернул пустой trigger profile');
+        }
+
+        if (profile.contract_version !== ANALYZER_CONTRACT_VERSION) {
+            throw new Error(
+                `Python анализатор вернул несовместимый contract_version: ${profile.contract_version}. ` +
+                `Ожидается ${ANALYZER_CONTRACT_VERSION}. Скорее всего, установлен смешанный релиз.`
+            );
         }
 
         if (!isValidRect(profile.inner_bbox)) {

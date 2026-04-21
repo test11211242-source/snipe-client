@@ -149,6 +149,7 @@ cd "$REPO_ROOT"
 # Проверка наличия изменений только в релевантных файлах pc-build/
 CHANGED_FILES=$(git status --porcelain \
     pc-build/app \
+    pc-build/python_scripts \
     pc-build/package.json \
     pc-build/package-lock.json \
     .github/workflows/build-and-publish.yml \
@@ -163,6 +164,7 @@ if [ -n "$CHANGED_FILES" ]; then
     # Добавляем только файлы клиента и публикации
     git add \
         pc-build/app/ \
+        pc-build/python_scripts/ \
         pc-build/package.json \
         pc-build/package-lock.json \
         .github/workflows/build-and-publish.yml \
