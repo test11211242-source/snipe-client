@@ -20,6 +20,13 @@ const os = require('os');
 const ConfigManager = require('../core/ConfigManager');
 const StoreManager = require('../core/StoreManager');
 
+const TRIGGER_PROFILE_SCHEMA_VERSION = 2;
+const DEFAULT_SCREEN_TARGET = {
+    targetType: 'screen',
+    targetId: '0',
+    name: 'Full Screen'
+};
+
 /**
  * OcrManager - Управление OCR функциональностью и областями
  */
@@ -108,6 +115,13 @@ class OcrManager {
             };
         }
 
+        if (!this.hasStructuredTriggerProfile(this.regions.trigger_area)) {
+            return {
+                valid: false,
+                reason: 'Триггер-профиль устарел. Перенастройте область триггера заново.'
+            };
+        }
+
         console.log('✅ OCR области прошли валидацию');
         return { valid: true };
     }
@@ -151,7 +165,7 @@ class OcrManager {
             
             // Отправляем на сервер если API доступен
             if (this.api) {
-                const result = await this.api.post('/api/user/me/ocr-regions', regions);
+                const result = await this.api.post('/api/user/me/ocr-regions', this.buildLegacyRegionsPayload(regions));
                 
                 if (!result.success) {
                     throw new Error(result.userMessage || 'Ошибка сохранения на сервере');
@@ -231,55 +245,8 @@ class OcrManager {
     
     async createSetupScreenshot() {
         try {
-            console.log('📸 Создание скриншота для настройки OCR областей...');
-            
-            // Проверка доступности Electron API
-            if (!screen || !desktopCapturer) {
-                console.log('⚠️ Electron API недоступен, используем заглушку для скриншота');
-                return {
-                    success: true,
-                    screenshot: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                    size: { width: 1920, height: 1080 }
-                };
-            }
-            
-            const display = screen.getPrimaryDisplay();
-            const physicalSize = {
-                width: Math.round(display.size.width * display.scaleFactor),
-                height: Math.round(display.size.height * display.scaleFactor)
-            };
-            
-            console.log(`📊 Параметры скриншота:`);
-            console.log(`  - Scale Factor: ${display.scaleFactor}x`);
-            console.log(`  - Logical Size: ${display.size.width}x${display.size.height}`);
-            console.log(`  - Physical Size: ${physicalSize.width}x${physicalSize.height}`);
-            
-            const sources = await desktopCapturer.getSources({
-                types: ['screen'],
-                thumbnailSize: physicalSize
-            });
-            
-            if (!sources || sources.length === 0) {
-                throw new Error('Не удалось получить источники экрана');
-            }
-            
-            const primarySource = sources[0];
-            const screenshot = primarySource.thumbnail.toDataURL();
-            
-            // Сохраняем последний скриншот
-            this.lastScreenshot = {
-                dataUrl: screenshot,
-                timestamp: new Date().toISOString(),
-                size: physicalSize
-            };
-            
-            console.log('✅ Скриншот создан успешно');
-            
-            return {
-                success: true,
-                screenshot: screenshot,
-                size: physicalSize
-            };
+            console.log('📸 Создание setup-кадра через capture helper...');
+            return await this.captureSetupFrame({ mode: 'screen' });
             
         } catch (error) {
             console.error('❌ Ошибка создания скриншота:', error);
@@ -415,7 +382,7 @@ class OcrManager {
         const exportData = {
             regions: this.regions,
             timestamp: new Date().toISOString(),
-            version: '1.0',
+            version: '2.0',
             screen_resolution: this.regions.screen_resolution
         };
 
@@ -531,20 +498,16 @@ class OcrManager {
             console.log(`💾 Временный файл создан: ${tempImagePath}`);
             
             // Путь к Python анализатору (относительно frontend папки)
-            const { app } = require('electron');
+            const pythonScript = this.getPythonScriptPath('profile_analyzer.py');
+            const pythonExecutable = this.getPythonExecutable();
+            const analyzerArgs = [tempImagePath];
 
-            // Правильный путь к Python-анализатору
-            const pythonScript = app.isPackaged
-                ? path.join(process.resourcesPath, 'python_scripts', 'profile_analyzer.py')
-                : path.join(__dirname, '..', '..', '..', 'python_scripts', 'profile_analyzer.py');
-
-            // Правильный путь к портативному Python
-            const pythonExecutable = app.isPackaged
-                ? path.join(process.resourcesPath, 'python-portable', 'python-3.11.9.amd64', 'python.exe')
-                : (process.platform === 'win32' ? 'python' : 'python3');
+            if (profileData.forceFullInner) {
+                analyzerArgs.push('--force-full-inner');
+            }
             
             // Вызываем Python анализатор
-            const analysisResult = await this.executePythonAnalyzer(pythonExecutable, pythonScript, tempImagePath);
+            const analysisResult = await this.executePythonJsonScript(pythonExecutable, pythonScript, analyzerArgs);
             
             // Удаляем временный файл
             try {
@@ -559,13 +522,19 @@ class OcrManager {
             }
             
             console.log('✅ Персональный профиль успешно создан');
-            console.log(`🎨 Найдено цветов: ${analysisResult.color_palette.length}`);
-            console.log(`📏 Размер эталона: ${Math.round(analysisResult.template_base64.length / 1024)}KB`);
+            console.log(`🎨 Найдено цветов: ${(analysisResult.aux_color_palette || []).length}`);
+            console.log(`🧩 Feature mode: ${analysisResult.feature_mode}`);
             
             return {
                 success: true,
-                color_palette: analysisResult.color_palette,
-                template_base64: analysisResult.template_base64,
+                inner_bbox: analysisResult.inner_bbox,
+                feature_mode: analysisResult.feature_mode,
+                keypoints_count: analysisResult.keypoints_count,
+                normalized_template_size: analysisResult.normalized_template_size,
+                template_gray_base64: analysisResult.template_gray_base64,
+                thumbnail_hash: analysisResult.thumbnail_hash,
+                aux_color_palette: analysisResult.aux_color_palette || analysisResult.color_palette || [],
+                color_palette: analysisResult.aux_color_palette || analysisResult.color_palette || [],
                 analysis_info: analysisResult.analysis_info || {}
             };
             
@@ -578,13 +547,231 @@ class OcrManager {
         }
     }
 
-    // === Вспомогательный метод для выполнения Python анализатора ===
+    hasStructuredTriggerProfile(region) {
+        return !!(
+            region &&
+            region.trigger_profile &&
+            region.trigger_profile.schema_version === TRIGGER_PROFILE_SCHEMA_VERSION &&
+            region.trigger_profile.outer_ratio &&
+            region.trigger_profile.inner_ratio &&
+            typeof region.trigger_profile.template_gray_base64 === 'string' &&
+            region.trigger_profile.template_gray_base64.length > 0 &&
+            typeof region.trigger_profile.thumbnail_hash === 'string' &&
+            region.trigger_profile.thumbnail_hash.length > 0 &&
+            typeof region.trigger_profile.feature_mode === 'string'
+        );
+    }
+
+    buildLegacyRegionsPayload(regions) {
+        if (!regions) {
+            return null;
+        }
+
+        const pickRect = (area) => {
+            if (!area) {
+                return null;
+            }
+
+            return {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height,
+                created_at: area.created_at
+            };
+        };
+
+        return {
+            trigger_area: pickRect(regions.trigger_area),
+            normal_data_area: pickRect(regions.normal_data_area),
+            precise_data_area: pickRect(regions.precise_data_area),
+            screen_resolution: regions.screen_resolution
+        };
+    }
+
+    getPythonExecutable() {
+        const { app } = require('electron');
+        return app.isPackaged
+            ? path.join(process.resourcesPath, 'python-portable', 'python-3.11.9.amd64', 'python.exe')
+            : (process.platform === 'win32' ? 'python' : 'python3');
+    }
+
+    getPythonScriptPath(scriptName) {
+        const { app } = require('electron');
+        return app.isPackaged
+            ? path.join(process.resourcesPath, 'python_scripts', scriptName)
+            : path.join(__dirname, '..', '..', '..', 'python_scripts', scriptName);
+    }
+
+    resolveSetupCaptureTarget(context = null) {
+        if (context?.mode === 'window' && context?.targetWindow) {
+            return {
+                targetType: 'window',
+                targetId: context.targetWindow.name || context.targetWindow.targetId || context.targetWindow.id,
+                targetWindow: context.targetWindow
+            };
+        }
+
+        const selectedTarget = this.store.getSelectedCaptureTarget?.() || DEFAULT_SCREEN_TARGET;
+        if (selectedTarget?.targetType === 'screen') {
+            return {
+                targetType: 'screen',
+                targetId: selectedTarget.targetId || '0',
+                targetWindow: null
+            };
+        }
+
+        return {
+            targetType: 'screen',
+            targetId: '0',
+            targetWindow: null
+        };
+    }
+
+    async captureSetupFrame(context = null) {
+        const target = this.resolveSetupCaptureTarget(context);
+
+        try {
+            const pythonExecutable = this.getPythonExecutable();
+            const pythonScript = this.getPythonScriptPath('capture_frame.py');
+            const args = [
+                '--target_type', target.targetType,
+                '--target_id', String(target.targetId)
+            ];
+
+            if (this.store.get('hideCaptureborder', false)) {
+                args.push('--hide_capture_border');
+            }
+
+            const captureResult = await this.executePythonJsonScript(pythonExecutable, pythonScript, args);
+
+            if (!captureResult.success) {
+                throw new Error(captureResult.error || 'Capture helper вернул ошибку');
+            }
+
+            const screenshot = `data:image/png;base64,${captureResult.image_base64}`;
+            this.lastScreenshot = {
+                dataUrl: screenshot,
+                timestamp: new Date().toISOString(),
+                size: captureResult.frame_size,
+                target
+            };
+
+            return {
+                success: true,
+                screenshot,
+                size: captureResult.frame_size,
+                frameSize: captureResult.frame_size,
+                target
+            };
+        } catch (error) {
+            console.warn('⚠️ Capture helper недоступен, используем fallback:', error.message);
+            return this.captureSetupFrameFallback(target);
+        }
+    }
+
+    async captureSetupFrameFallback(target) {
+        if (!screen || !desktopCapturer) {
+            return {
+                success: true,
+                screenshot: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                size: { width: 1920, height: 1080 },
+                frameSize: { width: 1920, height: 1080 },
+                target
+            };
+        }
+
+        if (target.targetType === 'window') {
+            const sources = await desktopCapturer.getSources({
+                types: ['window'],
+                thumbnailSize: { width: 1920, height: 1080 }
+            });
+
+            const targetSource = sources.find(source =>
+                source.name === target.targetId ||
+                source.id === target.targetId
+            );
+
+            if (!targetSource) {
+                throw new Error(`Окно "${target.targetId}" не найдено`);
+            }
+
+            const size = targetSource.thumbnail.getSize();
+            const screenshot = targetSource.thumbnail.toDataURL();
+            this.lastScreenshot = {
+                dataUrl: screenshot,
+                timestamp: new Date().toISOString(),
+                size,
+                target
+            };
+
+            return {
+                success: true,
+                screenshot,
+                size,
+                frameSize: size,
+                target
+            };
+        }
+
+        const display = screen.getPrimaryDisplay();
+        const physicalSize = {
+            width: Math.round(display.size.width * display.scaleFactor),
+            height: Math.round(display.size.height * display.scaleFactor)
+        };
+
+        const sources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: physicalSize
+        });
+
+        if (!sources || sources.length === 0) {
+            throw new Error('Не удалось получить источники экрана');
+        }
+
+        const screenshot = sources[0].thumbnail.toDataURL();
+        this.lastScreenshot = {
+            dataUrl: screenshot,
+            timestamp: new Date().toISOString(),
+            size: physicalSize,
+            target
+        };
+
+        return {
+            success: true,
+            screenshot,
+            size: physicalSize,
+            frameSize: physicalSize,
+            target
+        };
+    }
+
+    async captureWindowScreenshot(targetWindow) {
+        const result = await this.captureSetupFrame({ mode: 'window', targetWindow });
+        if (!result.success) {
+            return null;
+        }
+
+        return {
+            dataURL: result.screenshot,
+            bounds: {
+                x: 0,
+                y: 0,
+                width: result.frameSize.width,
+                height: result.frameSize.height
+            },
+            windowName: targetWindow?.name || result.target?.targetId || 'Window',
+            frameSize: result.frameSize
+        };
+    }
+
+    // === Вспомогательный метод для выполнения Python JSON-скриптов ===
     
-    executePythonAnalyzer(pythonExecutable, scriptPath, imagePath) {
+    executePythonJsonScript(pythonExecutable, scriptPath, args) {
         return new Promise((resolve, reject) => {
-            console.log(`🐍 Запуск Python анализатора: ${pythonExecutable} ${scriptPath} ${imagePath}`);
+            console.log(`🐍 Запуск Python скрипта: ${pythonExecutable} ${scriptPath} ${args.join(' ')}`);
             
-            const pythonProcess = spawn(pythonExecutable, [scriptPath, imagePath], {
+            const pythonProcess = spawn(pythonExecutable, [scriptPath, ...args], {
                 stdio: ['pipe', 'pipe', 'pipe']
             });
             
@@ -602,14 +789,19 @@ class OcrManager {
             
             pythonProcess.on('close', (code) => {
                 console.log(`🐍 Python анализатор завершен с кодом: ${code}`);
-                
-                if (code !== 0) {
-                    reject(new Error(`Python анализатор завершился с ошибкой (код ${code}): ${stderr}`));
-                    return;
-                }
-                
+
                 try {
                     const result = JSON.parse(stdout);
+                    if (code !== 0 && result?.success === false) {
+                        resolve(result);
+                        return;
+                    }
+
+                    if (code !== 0) {
+                        reject(new Error(`Python анализатор завершился с ошибкой (код ${code}): ${stderr}`));
+                        return;
+                    }
+
                     resolve(result);
                 } catch (parseError) {
                     reject(new Error(`Ошибка парсинга результата Python анализатора: ${parseError.message}`));

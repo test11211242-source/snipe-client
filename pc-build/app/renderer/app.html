@@ -2622,7 +2622,12 @@
         async function startOCRSetup() {
             try {
                 if (selectedMode === 'screen') {
-                    // Классический полноэкранный режим
+                    try {
+                        await window.electronAPI.monitor.setScreenTarget();
+                    } catch (error) {
+                        console.warn('⚠️ Ошибка переключения на экран:', error);
+                    }
+
                     await window.electronAPI.ocr.setupRegions();
                 } else if (selectedMode === 'window' && selectedWindow) {
                     // Оконный режим - передаем контекст

@@ -610,8 +610,12 @@
         <h3 class="preview-title">Предпросмотр настроенных областей</h3>
         <div class="preview-images">
             <div class="preview-item">
-                <div class="preview-label">Область триггера</div>
+                <div class="preview-label">Триггер: outer</div>
                 <img id="trigger-preview" class="preview-image" />
+            </div>
+            <div class="preview-item">
+                <div class="preview-label">Триггер: inner</div>
+                <img id="trigger-inner-preview" class="preview-image" />
             </div>
             <div class="preview-item">
                 <div class="preview-label">Быстрая область</div>
@@ -622,7 +626,9 @@
                 <img id="precise-preview" class="preview-image" />
             </div>
         </div>
+        <div class="error-message" id="trigger-profile-info" style="display: none;"></div>
         <div class="button-group">
+            <button class="button secondary" id="use-outer-button" onclick="useOuterAsInner()" style="display: none;">Использовать полную trigger-зону</button>
             <button class="button primary" onclick="saveRegions()">Сохранить</button>
             <button class="button secondary" onclick="retrySetup()">Настроить заново</button>
         </div>
@@ -633,26 +639,44 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const customCursor = document.getElementById('custom-cursor');
+        const previewModal = document.getElementById('preview-modal');
+        const saveButton = previewModal.querySelector('.button.primary');
+        const useOuterButton = document.getElementById('use-outer-button');
+        const errorMessage = document.getElementById('error-message');
+        const triggerProfileInfo = document.getElementById('trigger-profile-info');
+
         let screenshot = null;
         let isSelecting = false;
         let currentRegion = 'trigger_area';
-        let startX, startY, endX, endY;
+        let startX = 0;
+        let startY = 0;
+        let endX = 0;
+        let endY = 0;
+        let windowBounds = null;
+        let setupMode = 'screen';
+        let scaleFactor = 1;
+        let setupContext = { mode: 'screen' };
+        let activeTriggerProfileKey = null;
+
+        customCursor.style.display = 'none';
+
+        const singleRegionSetupTypes = ['streamer_result_trigger_area', 'streamer_result_data_area'];
+        const analyzedTriggerProfiles = {
+            trigger_area: null,
+            result_trigger_area: null
+        };
+
         let regions = {
+            schema_version: 2,
+            capture_reference: null,
             trigger_area: null,
             normal_data_area: null,
             precise_data_area: null,
             screen_resolution: {
-                width: 0,  // Будет обновлено при загрузке скриншота
-                height: 0  // Будет обновлено при загрузке скриншота
+                width: 0,
+                height: 0
             }
         };
-        
-        // 🆕 ЭТАП 1.1: Переменные для валидации границ окна
-        let windowBounds = null;
-        let setupMode = 'screen';
-        let scaleFactor = 1;
-        let setupContext = null;  // 🆕 Контекст настройки (окно или экран)
-        const singleRegionSetupTypes = ['streamer_result_trigger_area', 'streamer_result_data_area'];
 
         function isSingleRegionSetup() {
             return singleRegionSetupTypes.includes(setupContext?.setupType);
@@ -672,9 +696,8 @@
                     key: 'result_trigger_area',
                     title: 'Настройка триггера результата боя',
                     stepTitle: 'Триггер результата боя',
-                    description: 'Выделите стабильный участок экрана результата. Из этой зоны будет построен trigger profile так же, как в снайпе колод.',
+                    description: 'Выделите область грубо, с запасом. Система сама попытается очистить внутренний trigger-образец и покажет outer/inner preview перед сохранением.',
                     previewTitle: 'Предпросмотр триггера результата боя',
-                    previewLabel: 'Триггер результата',
                     promptText: 'Выделите триггер результата боя'
                 };
             }
@@ -683,11 +706,18 @@
                 key: 'result_data_area',
                 title: 'Настройка области данных результата боя',
                 stepTitle: 'Область данных результата',
-                description: 'Выделите участок, где лучше всего виден итог матча вроде +30 или -30. Эта область будет отправляться на сервер после срабатывания триггера.',
+                description: 'Выделите участок, где лучше всего виден итог матча вроде +30 или -30. Эта область будет захватываться после срабатывания battle_result trigger.',
                 previewTitle: 'Предпросмотр области данных результата',
-                previewLabel: 'Данные результата',
                 promptText: 'Выделите область данных результата'
             };
+        }
+
+        function getTriggerRegionKey() {
+            if (isSingleRegionSetup()) {
+                return isTriggerProfileSetup() ? 'result_trigger_area' : null;
+            }
+
+            return 'trigger_area';
         }
 
         function isSelectionComplete() {
@@ -699,11 +729,7 @@
         }
 
         function getRegionStyleClass(regionKey) {
-            if (regionKey === 'normal_data_area') {
-                return 'normal';
-            }
-
-            if (regionKey === 'result_data_area') {
+            if (regionKey === 'normal_data_area' || regionKey === 'result_data_area') {
                 return 'normal';
             }
 
@@ -778,239 +804,301 @@
             const buttonGroup = instructions.querySelector('.button-group');
             instructions.insertBefore(step, buttonGroup);
 
-            const previewTitle = document.querySelector('.preview-title');
-            if (previewTitle) {
-                previewTitle.textContent = meta.previewTitle;
-            }
-
-            const previewLabels = document.querySelectorAll('.preview-label');
-            if (previewLabels[0]) {
-                previewLabels[0].textContent = meta.previewLabel;
-            }
-
-            const previewItems = document.querySelectorAll('.preview-item');
-            previewItems.forEach((item, index) => {
-                item.style.display = index === 0 ? 'block' : 'none';
-            });
-
+            document.querySelector('.preview-title').textContent = meta.previewTitle;
+            updatePreviewLayout();
             updateCurrentRegionPrompt();
         }
 
-        // Кастомный курсор
-        document.addEventListener('mousemove', (e) => {
-            customCursor.style.left = e.clientX + 'px';
-            customCursor.style.top = e.clientY + 'px';
-        });
+        function updatePreviewLayout() {
+            const previewItems = Array.from(document.querySelectorAll('.preview-item'));
+            const infoVisible = !!getTriggerRegionKey();
 
-        // Получаем скриншот от main процесса
-        window.electronAPI.on('screenshot', (screenshotData) => {
-            screenshot = new Image();
-            screenshot.onload = () => {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
-                ctx.drawImage(screenshot, 0, 0, canvas.width, canvas.height);
-                
-                // Обновляем screen_resolution реальными размерами скриншота
-                regions.screen_resolution = {
-                    width: screenshot.naturalWidth,
-                    height: screenshot.naturalHeight
-                };
-                console.log('Physical screen resolution:', regions.screen_resolution);
-            };
-            screenshot.src = screenshotData;
-        });
-        
-        // 🆕 ЭТАП 2.1: Получение контекста настройки
-        window.electronAPI.on('setup-context', (contextData) => {
-            setupContext = contextData;
+            previewItems.forEach((item, index) => {
+                item.style.display = 'none';
 
-            if (isSingleRegionSetup()) {
-                applySingleRegionSetupMode();
-            }
-            
-            // Обновляем UI для оконного режима
-            if (setupContext && setupContext.mode === 'window') {
-                updateUIForWindowMode(setupContext);
-            }
-        });
-        
-        // 🆕 ЭТАП 1.1: Получение границ окна для валидации
-        window.electronAPI.on('window-bounds', (boundsData) => {
-            windowBounds = boundsData.bounds;
-            setupMode = boundsData.mode;
-            scaleFactor = boundsData.scaleFactor;
-            
-            // Обновляем инструкции для оконного режима
-            if (setupMode === 'window' && windowBounds) {
-                updateInstructionsForWindowMode();
-            }
-        });
-
-        function startSetup() {
-            document.getElementById('instructions').style.display = 'none';
-            document.getElementById('selection-info').classList.add('active');
-            canvas.style.cursor = 'crosshair';
-            customCursor.style.display = 'block';
-        }
-
-        function cancelSetup() {
-            window.close();
-        }
-
-        // Обработка выделения областей
-        canvas.addEventListener('mousedown', (e) => {
-            if (!isSelectionComplete()) {
-                isSelecting = true;
-                startX = e.clientX;
-                startY = e.clientY;
-                
-                // Удаляем предыдущие выделения для текущей области
-                const existingBoxes = document.querySelectorAll(`.selection-box:not(.preview)`);
-                existingBoxes.forEach(box => {
-                    const currentClass = getRegionStyleClass(currentRegion);
-                    if (box.classList.contains(currentClass)) {
-                        box.remove();
-                    }
-                });
-            }
-        });
-
-        canvas.addEventListener('mousemove', (e) => {
-            if (isSelecting) {
-                endX = e.clientX;
-                endY = e.clientY;
-                drawSelectionBox();
-            }
-        });
-
-        canvas.addEventListener('mouseup', (e) => {
-            if (isSelecting) {
-                isSelecting = false;
-                endX = e.clientX;
-                endY = e.clientY;
-                
-                // Сохраняем координаты
-                const x = Math.min(startX, endX);
-                const y = Math.min(startY, endY);
-                const width = Math.abs(endX - startX);
-                const height = Math.abs(endY - startY);
-                
-                if (width > 10 && height > 10) {
-                    // 🆕 ЭТАП 1.1: Валидация границ области перед сохранением
-                    const validationResult = validateRegionBounds({ x, y, width, height });
-                    if (!validationResult.valid) {
-                        showValidationError(validationResult.error);
-                        return; // Прерываем создание области
-                    }
-                    
-                    regions[currentRegion] = { x, y, width, height };
-                    
-                    // Создаём постоянную рамку
-                    const permanentBox = document.createElement('div');
-                    permanentBox.className = 'selection-box permanent';
-
-                    permanentBox.classList.add(getRegionStyleClass(currentRegion));
-
-                    if (isSingleRegionSetup()) {
-                        showPreview();
-                    } else if (currentRegion === 'trigger_area') {
-                        currentRegion = 'normal_data_area';
-                        updateCurrentRegionPrompt();
-                    } else if (currentRegion === 'normal_data_area') {
-                        currentRegion = 'precise_data_area';
-                        updateCurrentRegionPrompt();
-                    } else if (currentRegion === 'precise_data_area') {
-                        showPreview();
-                    }
-                    
-                    permanentBox.style.left = x + 'px';
-                    permanentBox.style.top = y + 'px';
-                    permanentBox.style.width = width + 'px';
-                    permanentBox.style.height = height + 'px';
-                    document.body.appendChild(permanentBox);
+                if (!isSingleRegionSetup()) {
+                    item.style.display = 'block';
+                    return;
                 }
+
+                if (isTriggerProfileSetup()) {
+                    item.style.display = index <= 1 ? 'block' : 'none';
+                    return;
+                }
+
+                item.style.display = index === 0 ? 'block' : 'none';
+            });
+
+            document.getElementById('trigger-inner-preview').parentElement.style.display = infoVisible ? 'block' : 'none';
+            triggerProfileInfo.style.display = infoVisible ? 'block' : 'none';
+            useOuterButton.style.display = infoVisible ? 'inline-flex' : 'none';
+
+            if (isSingleRegionSetup() && !isTriggerProfileSetup()) {
+                document.querySelector('.preview-label').textContent = 'Область данных результата';
             }
-        });
-
-        function drawSelectionBox() {
-            // Удаляем временную рамку
-            const tempBox = document.querySelector('.selection-box.temp');
-            if (tempBox) tempBox.remove();
-            
-            const box = document.createElement('div');
-            box.className = 'selection-box temp';
-
-            box.classList.add(getRegionStyleClass(currentRegion));
-            
-            box.style.left = Math.min(startX, endX) + 'px';
-            box.style.top = Math.min(startY, endY) + 'px';
-            box.style.width = Math.abs(endX - startX) + 'px';
-            box.style.height = Math.abs(endY - startY) + 'px';
-            document.body.appendChild(box);
         }
 
-        function showPreview() {
-            document.getElementById('selection-info').classList.remove('active');
-            customCursor.style.display = 'none';
-            
-            // Создаём превью изображений
-            const createPreview = (region, elementId) => {
-                const previewCanvas = document.createElement('canvas');
-                const previewCtx = previewCanvas.getContext('2d');
-                previewCanvas.width = region.width;
-                previewCanvas.height = region.height;
-                previewCtx.drawImage(
-                    screenshot,
-                    region.x * (screenshot.width / canvas.width),
-                    region.y * (screenshot.height / canvas.height),
-                    region.width * (screenshot.width / canvas.width),
-                    region.height * (screenshot.height / canvas.height),
-                    0, 0,
-                    region.width,
-                    region.height
-                );
-                document.getElementById(elementId).src = previewCanvas.toDataURL();
+        function getCanvasToSourceScale() {
+            if (!screenshot || !screenshot.naturalWidth || !screenshot.naturalHeight) {
+                throw new Error('Source frame еще не загружен');
+            }
+
+            return {
+                x: screenshot.naturalWidth / canvas.width,
+                y: screenshot.naturalHeight / canvas.height
             };
-            
-            createPreview(isSingleRegionSetup() ? regions[getSingleRegionSetupKey()] : regions.trigger_area, 'trigger-preview');
-
-            if (!isSingleRegionSetup()) {
-                createPreview(regions.normal_data_area, 'normal-preview');
-                createPreview(regions.precise_data_area, 'precise-preview');
-            }
-            
-            document.getElementById('preview-modal').classList.add('active');
-            
-            // Показываем области на экране с анимацией
-            showPreviewBoxes();
         }
 
-        function showPreviewBoxes() {
-            // Удаляем все временные рамки
-            document.querySelectorAll('.selection-box.temp').forEach(box => box.remove());
-            
-            // Добавляем класс preview к существующим рамкам
-            document.querySelectorAll('.selection-box.permanent').forEach(box => {
-                box.classList.add('preview');
+        function rectToSource(region) {
+            const scale = getCanvasToSourceScale();
+            return {
+                x: Math.round(region.x * scale.x),
+                y: Math.round(region.y * scale.y),
+                width: Math.max(1, Math.round(region.width * scale.x)),
+                height: Math.max(1, Math.round(region.height * scale.y))
+            };
+        }
+
+        function rectToRatio(rect) {
+            const sourceWidth = regions.screen_resolution.width || 1;
+            const sourceHeight = regions.screen_resolution.height || 1;
+            return {
+                x: Number((rect.x / sourceWidth).toFixed(6)),
+                y: Number((rect.y / sourceHeight).toFixed(6)),
+                width: Number((rect.width / sourceWidth).toFixed(6)),
+                height: Number((rect.height / sourceHeight).toFixed(6))
+            };
+        }
+
+        function buildCaptureReference() {
+            const captureTarget = setupContext?.captureTarget || setupContext?.targetWindow || null;
+            return {
+                target_type: setupMode,
+                target_id: captureTarget?.targetId || captureTarget?.id || (setupMode === 'screen' ? '0' : captureTarget?.name || null),
+                target_name: captureTarget?.name || (setupMode === 'screen' ? 'Full Screen' : null),
+                source_frame_size: { ...regions.screen_resolution },
+                selected_target: captureTarget || null,
+                created_at: new Date().toISOString()
+            };
+        }
+
+        function buildDataAreaPayload(region) {
+            const absoluteRect = rectToSource(region);
+            return {
+                ...absoluteRect,
+                ratio: rectToRatio(absoluteRect),
+                created_at: new Date().toISOString()
+            };
+        }
+
+        function buildTriggerAreaPayload(regionKey, region, profile) {
+            const absoluteRect = rectToSource(region);
+            return {
+                ...absoluteRect,
+                ratio: rectToRatio(absoluteRect),
+                created_at: new Date().toISOString(),
+                trigger_profile: {
+                    schema_version: 2,
+                    outer_ratio: rectToRatio(absoluteRect),
+                    inner_ratio: profile.analysis_info.inner_ratio,
+                    inner_bbox: profile.inner_bbox,
+                    template_gray_base64: profile.template_gray_base64,
+                    thumbnail_hash: profile.thumbnail_hash,
+                    feature_mode: profile.feature_mode,
+                    keypoints_count: profile.keypoints_count,
+                    normalized_template_size: profile.normalized_template_size,
+                    aux_color_palette: profile.aux_color_palette || [],
+                    analysis_info: profile.analysis_info,
+                    keypoint_threshold: profile.analysis_info.keypoint_threshold,
+                    hash_threshold: profile.analysis_info.hash_threshold,
+                    orb_distance_threshold: profile.analysis_info.orb_distance_threshold,
+                    orb_min_good_matches: profile.analysis_info.orb_min_good_matches,
+                    ncc_threshold: profile.analysis_info.ncc_threshold,
+                    trigger_region_key: regionKey,
+                    created_at: new Date().toISOString()
+                }
+            };
+        }
+
+        function setPreviewBusy(isBusy, label = 'Сохранить') {
+            saveButton.disabled = isBusy;
+            saveButton.textContent = label;
+            useOuterButton.disabled = isBusy;
+        }
+
+        function setError(message = '') {
+            errorMessage.textContent = message;
+            errorMessage.style.display = message ? 'block' : 'none';
+        }
+
+        function setTriggerProfileInfo(profile) {
+            if (!profile) {
+                triggerProfileInfo.style.display = 'none';
+                return;
+            }
+
+            const modeText = profile.feature_mode === 'orb' ? 'ORB structural confirm' : 'NCC template matching';
+            const cropText = profile.analysis_info?.used_full_outer
+                ? 'Inner area = полная outer-зона'
+                : `Auto-crop: ${profile.inner_bbox.width}x${profile.inner_bbox.height}`;
+
+            triggerProfileInfo.style.display = 'block';
+            triggerProfileInfo.style.background = 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.12))';
+            triggerProfileInfo.style.borderColor = 'rgba(16, 185, 129, 0.25)';
+            triggerProfileInfo.style.color = 'var(--text-primary)';
+            triggerProfileInfo.innerHTML = `${cropText}<br><span style="color: var(--text-secondary);">Mode: ${modeText}, keypoints: ${profile.keypoints_count}, hash threshold: ${profile.analysis_info.hash_threshold}</span>`;
+        }
+
+        function createPreviewDataUrlFromSourceRect(sourceRect) {
+            const previewCanvas = document.createElement('canvas');
+            const previewCtx = previewCanvas.getContext('2d');
+            previewCanvas.width = Math.max(1, sourceRect.width);
+            previewCanvas.height = Math.max(1, sourceRect.height);
+            previewCtx.drawImage(
+                screenshot,
+                sourceRect.x,
+                sourceRect.y,
+                sourceRect.width,
+                sourceRect.height,
+                0,
+                0,
+                previewCanvas.width,
+                previewCanvas.height
+            );
+            return previewCanvas.toDataURL();
+        }
+
+        function renderRegionPreview(region, elementId) {
+            if (!region) {
+                document.getElementById(elementId).removeAttribute('src');
+                return;
+            }
+
+            document.getElementById(elementId).src = createPreviewDataUrlFromSourceRect(rectToSource(region));
+        }
+
+        function renderInnerPreview(triggerKey) {
+            const previewElement = document.getElementById('trigger-inner-preview');
+            const profile = analyzedTriggerProfiles[triggerKey];
+            const region = regions[triggerKey];
+
+            if (!profile || !region) {
+                previewElement.removeAttribute('src');
+                return;
+            }
+
+            const outerRect = rectToSource(region);
+            const innerBBox = profile.inner_bbox || {
+                x: 0,
+                y: 0,
+                width: outerRect.width,
+                height: outerRect.height
+            };
+
+            previewElement.src = createPreviewDataUrlFromSourceRect({
+                x: outerRect.x + innerBBox.x,
+                y: outerRect.y + innerBBox.y,
+                width: innerBBox.width,
+                height: innerBBox.height
             });
         }
 
+        async function ensureTriggerProfile(triggerKey, forceFullInner = false) {
+            if (!triggerKey || !regions[triggerKey]) {
+                return null;
+            }
+
+            const profile = await createPersonalTriggerProfile(regions[triggerKey], { forceFullInner });
+            if (!profile.success) {
+                throw new Error(profile.error || 'Не удалось подготовить trigger profile');
+            }
+
+            analyzedTriggerProfiles[triggerKey] = profile;
+            activeTriggerProfileKey = triggerKey;
+            return profile;
+        }
+
+        async function preparePreviewProfiles() {
+            const triggerKey = getTriggerRegionKey();
+            if (!triggerKey) {
+                activeTriggerProfileKey = null;
+                return;
+            }
+
+            await ensureTriggerProfile(triggerKey, false);
+        }
+
+        async function showPreview() {
+            document.getElementById('selection-info').classList.remove('active');
+            customCursor.style.display = 'none';
+            updatePreviewLayout();
+            previewModal.classList.add('active');
+            showPreviewBoxes();
+            setError('');
+            setPreviewBusy(true, 'Подготовка preview...');
+
+            try {
+                await preparePreviewProfiles();
+
+                const triggerKey = getTriggerRegionKey();
+                if (isSingleRegionSetup()) {
+                    const selectedRegion = regions[getSingleRegionSetupKey()];
+                    renderRegionPreview(selectedRegion, 'trigger-preview');
+                    if (triggerKey) {
+                        renderInnerPreview(triggerKey);
+                        setTriggerProfileInfo(analyzedTriggerProfiles[triggerKey]);
+                    } else {
+                        document.getElementById('trigger-inner-preview').removeAttribute('src');
+                        setTriggerProfileInfo(null);
+                    }
+                } else {
+                    renderRegionPreview(regions.trigger_area, 'trigger-preview');
+                    renderInnerPreview('trigger_area');
+                    renderRegionPreview(regions.normal_data_area, 'normal-preview');
+                    renderRegionPreview(regions.precise_data_area, 'precise-preview');
+                    setTriggerProfileInfo(analyzedTriggerProfiles.trigger_area);
+                }
+            } catch (error) {
+                setError(error.message || 'Не удалось подготовить preview');
+            } finally {
+                setPreviewBusy(false, 'Сохранить');
+            }
+        }
+
+        function showPreviewBoxes() {
+            document.querySelectorAll('.selection-box.temp').forEach(box => box.remove());
+            document.querySelectorAll('.selection-box.permanent').forEach(box => box.classList.add('preview'));
+        }
+
+        function resetTriggerProfileCache(regionKey = null) {
+            if (regionKey) {
+                analyzedTriggerProfiles[regionKey] = null;
+                if (activeTriggerProfileKey === regionKey) {
+                    activeTriggerProfileKey = null;
+                }
+                return;
+            }
+
+            analyzedTriggerProfiles.trigger_area = null;
+            analyzedTriggerProfiles.result_trigger_area = null;
+            activeTriggerProfileKey = null;
+        }
+
         function retrySetup() {
-            // Сброс настроек
             regions.trigger_area = null;
             regions.normal_data_area = null;
             regions.precise_data_area = null;
             if (isSingleRegionSetup()) {
                 regions[getSingleRegionSetupKey()] = null;
             }
+
+            resetTriggerProfileCache();
             currentRegion = isSingleRegionSetup() ? getSingleRegionSetupKey() : 'trigger_area';
-            
-            document.getElementById('preview-modal').classList.remove('active');
+            previewModal.classList.remove('active');
             document.getElementById('selection-info').classList.add('active');
-            updateCurrentRegionPrompt();
             customCursor.style.display = 'block';
-            
-            // Удаляем все рамки
+            updateCurrentRegionPrompt();
+            setError('');
             document.querySelectorAll('.selection-box').forEach(box => box.remove());
         }
 
@@ -1019,217 +1107,129 @@
                 return saveStreamerSingleRegion();
             }
 
-            const saveButton = event.target;
-            saveButton.disabled = true;
-            saveButton.textContent = 'Анализ профиля...';
-            
+            setPreviewBusy(true, 'Сохранение...');
+            setError('');
+
             try {
-                // Конвертируем координаты в реальные значения экрана
-                const scaleX = screenshot.width / canvas.width;
-                const scaleY = screenshot.height / canvas.height;
-                
-                // 🎯 НОВАЯ ЛОГИКА: Создание персонального профиля триггера
-                console.log('🔍 Создание персонального профиля для области триггера...');
-                
-                // Создаем персональный профиль для trigger_area
-                const triggerProfile = await createPersonalTriggerProfile(
-                    regions.trigger_area, 
-                    scaleX, 
-                    scaleY
-                );
-                
-                if (!triggerProfile.success) {
-                    throw new Error(`Ошибка создания профиля: ${triggerProfile.error}`);
-                }
-                
-                console.log('✅ Персональный профиль создан:', triggerProfile);
-                
-                saveButton.textContent = 'Сохранение...';
-                
+                const triggerProfile = analyzedTriggerProfiles.trigger_area || await ensureTriggerProfile('trigger_area', false);
+
                 const finalRegions = {
-                    trigger_area: {
-                        x: Math.round(regions.trigger_area.x * scaleX),
-                        y: Math.round(regions.trigger_area.y * scaleY),
-                        width: Math.round(regions.trigger_area.width * scaleX),
-                        height: Math.round(regions.trigger_area.height * scaleY),
-                        // 🆕 Персональные данные профиля
-                        color_palette: triggerProfile.color_palette,
-                        template_base64: triggerProfile.template_base64,
-                        created_at: new Date().toISOString()
-                    },
-                    normal_data_area: {
-                        x: Math.round(regions.normal_data_area.x * scaleX),
-                        y: Math.round(regions.normal_data_area.y * scaleY),
-                        width: Math.round(regions.normal_data_area.width * scaleX),
-                        height: Math.round(regions.normal_data_area.height * scaleY)
-                    },
-                    precise_data_area: {
-                        x: Math.round(regions.precise_data_area.x * scaleX),
-                        y: Math.round(regions.precise_data_area.y * scaleY),
-                        width: Math.round(regions.precise_data_area.width * scaleX),
-                        height: Math.round(regions.precise_data_area.height * scaleY)
-                    },
-                    screen_resolution: regions.screen_resolution
+                    schema_version: 2,
+                    capture_reference: buildCaptureReference(),
+                    trigger_area: buildTriggerAreaPayload('trigger_area', regions.trigger_area, triggerProfile),
+                    normal_data_area: buildDataAreaPayload(regions.normal_data_area),
+                    precise_data_area: buildDataAreaPayload(regions.precise_data_area),
+                    screen_resolution: { ...regions.screen_resolution },
+                    updated_at: new Date().toISOString()
                 };
-                
+
                 const result = await window.electronAPI.ocr.saveRegions(finalRegions);
-                
-                if (result.success) {
-                    // Показываем анимацию успеха
-                    const successIcon = document.createElement('div');
-                    successIcon.className = 'success-animation';
-                    successIcon.textContent = '✅';
-                    document.body.appendChild(successIcon);
-                    
-                    setTimeout(() => {
-                        window.close();
-                    }, 1000);
-                } else {
+                if (!result.success) {
                     throw new Error(result.error || 'Ошибка сохранения областей');
                 }
-                
+
+                showSuccessAndClose();
             } catch (error) {
                 console.error('❌ Ошибка сохранения регионов:', error);
-                document.getElementById('error-message').textContent = error.message || 'Неизвестная ошибка';
-                document.getElementById('error-message').style.display = 'block';
-                saveButton.disabled = false;
-                saveButton.textContent = 'Сохранить';
+                setError(error.message || 'Неизвестная ошибка');
+                setPreviewBusy(false, 'Сохранить');
             }
         }
 
         async function saveStreamerSingleRegion() {
-            const saveButton = event.target;
             const meta = getSingleRegionSetupMeta();
-            saveButton.disabled = true;
-            saveButton.textContent = isTriggerProfileSetup() ? 'Анализ профиля...' : 'Сохранение...';
+            const selectedRegion = regions[getSingleRegionSetupKey()];
+            setPreviewBusy(true, 'Сохранение...');
+            setError('');
 
             try {
-                const scaleX = screenshot.width / canvas.width;
-                const scaleY = screenshot.height / canvas.height;
-                const selectedRegion = regions[getSingleRegionSetupKey()];
-                let regionProfile = null;
+                const payload = isTriggerProfileSetup()
+                    ? buildTriggerAreaPayload('result_trigger_area', selectedRegion, analyzedTriggerProfiles.result_trigger_area || await ensureTriggerProfile('result_trigger_area', false))
+                    : buildDataAreaPayload(selectedRegion);
 
-                if (isTriggerProfileSetup()) {
-                    regionProfile = await createPersonalTriggerProfile(
-                        selectedRegion,
-                        scaleX,
-                        scaleY
-                    );
-
-                    if (!regionProfile.success) {
-                        throw new Error(`Ошибка создания профиля: ${regionProfile.error}`);
-                    }
-                }
-
-                saveButton.textContent = 'Сохранение...';
-
-                const finalArea = {
-                    x: Math.round(selectedRegion.x * scaleX),
-                    y: Math.round(selectedRegion.y * scaleY),
-                    width: Math.round(selectedRegion.width * scaleX),
-                    height: Math.round(selectedRegion.height * scaleY),
-                    created_at: new Date().toISOString(),
-                    screen_resolution: regions.screen_resolution
-                };
-
-                if (regionProfile) {
-                    finalArea.color_palette = regionProfile.color_palette;
-                    finalArea.template_base64 = regionProfile.template_base64;
-                }
+                payload.screen_resolution = { ...regions.screen_resolution };
+                payload.capture_reference = buildCaptureReference();
 
                 const result = isTriggerProfileSetup()
-                    ? await window.electronAPI.streamerConfig.saveResultTriggerArea(finalArea)
-                    : await window.electronAPI.streamerConfig.saveResultDataArea(finalArea);
+                    ? await window.electronAPI.streamerConfig.saveResultTriggerArea(payload)
+                    : await window.electronAPI.streamerConfig.saveResultDataArea(payload);
 
                 if (!result.success) {
                     throw new Error(result.error || `Ошибка сохранения: ${meta.stepTitle}`);
                 }
 
-                const successIcon = document.createElement('div');
-                successIcon.className = 'success-animation';
-                successIcon.textContent = '✅';
-                document.body.appendChild(successIcon);
-
-                setTimeout(() => {
-                    window.close();
-                }, 1000);
+                showSuccessAndClose();
             } catch (error) {
                 console.error('❌ Ошибка сохранения streamer single region:', error);
-                document.getElementById('error-message').textContent = error.message || 'Неизвестная ошибка';
-                document.getElementById('error-message').style.display = 'block';
-                saveButton.disabled = false;
-                saveButton.textContent = 'Сохранить';
+                setError(error.message || 'Неизвестная ошибка');
+                setPreviewBusy(false, 'Сохранить');
             }
         }
 
-        /**
-         * Создание персонального профиля триггера из выделенной области
-         * @param {Object} triggerArea - Координаты области триггера (canvas координаты)
-         * @param {number} scaleX - Масштаб по X для конвертации в реальные координаты
-         * @param {number} scaleY - Масштаб по Y для конвертации в реальные координаты
-         * @returns {Object} Результат анализа {success, color_palette, template_base64, error}
-         */
-        async function createPersonalTriggerProfile(triggerArea, scaleX, scaleY) {
+        function showSuccessAndClose() {
+            const successIcon = document.createElement('div');
+            successIcon.className = 'success-animation';
+            successIcon.textContent = '✅';
+            document.body.appendChild(successIcon);
+            setTimeout(() => window.close(), 900);
+        }
+
+        async function useOuterAsInner() {
+            if (!activeTriggerProfileKey || !regions[activeTriggerProfileKey]) {
+                return;
+            }
+
+            setPreviewBusy(true, 'Перестройка trigger...');
+            setError('');
+
             try {
-                // Создаем временный canvas для вырезки области триггера
+                const profile = await ensureTriggerProfile(activeTriggerProfileKey, true);
+                renderInnerPreview(activeTriggerProfileKey);
+                setTriggerProfileInfo(profile);
+            } catch (error) {
+                setError(error.message || 'Не удалось перестроить trigger profile');
+            } finally {
+                setPreviewBusy(false, 'Сохранить');
+            }
+        }
+
+        async function createPersonalTriggerProfile(triggerArea, options = {}) {
+            try {
+                const sourceRect = rectToSource(triggerArea);
                 const tempCanvas = document.createElement('canvas');
                 const tempCtx = tempCanvas.getContext('2d');
-                
-                // Размеры области в реальных координатах экрана
-                const realWidth = Math.round(triggerArea.width * scaleX);
-                const realHeight = Math.round(triggerArea.height * scaleY);
-                const realX = Math.round(triggerArea.x * scaleX);
-                const realY = Math.round(triggerArea.y * scaleY);
-                
-                // Настраиваем размер временного canvas
-                tempCanvas.width = realWidth;
-                tempCanvas.height = realHeight;
-                
-                // Создаем временное изображение из скриншота
-                const img = new Image();
-                const imagePromise = new Promise((resolve, reject) => {
-                    img.onload = () => resolve(img);
-                    img.onerror = () => reject(new Error('Не удалось загрузить скриншот'));
-                });
-                
-                img.src = canvas.toDataURL();
-                await imagePromise;
-                
-                // Вырезаем область триггера из исходного изображения
+                tempCanvas.width = sourceRect.width;
+                tempCanvas.height = sourceRect.height;
                 tempCtx.drawImage(
-                    img,
-                    triggerArea.x, triggerArea.y, triggerArea.width, triggerArea.height, // source
-                    0, 0, realWidth, realHeight // destination
+                    screenshot,
+                    sourceRect.x,
+                    sourceRect.y,
+                    sourceRect.width,
+                    sourceRect.height,
+                    0,
+                    0,
+                    sourceRect.width,
+                    sourceRect.height
                 );
-                
-                // Конвертируем в base64 для передачи в Python
+
                 const triggerImageBase64 = tempCanvas.toDataURL('image/png').split(',')[1];
-                
-                console.log(`📸 Вырезана область триггера: ${realWidth}x${realHeight} пикселей`);
-                
-                // Вызываем Python анализатор через IPC
                 const profileResult = await window.electronAPI.ocr.analyzeProfile({
                     imageData: triggerImageBase64,
                     size: {
-                        width: realWidth,
-                        height: realHeight
-                    }
+                        width: sourceRect.width,
+                        height: sourceRect.height
+                    },
+                    forceFullInner: !!options.forceFullInner
                 });
-                
+
                 if (!profileResult.success) {
                     throw new Error(profileResult.error || 'Ошибка анализа профиля');
                 }
-                
+
                 return {
-                    success: true,
-                    color_palette: profileResult.color_palette,
-                    template_base64: profileResult.template_base64,
-                    analysis_info: {
-                        image_size: `${realWidth}x${realHeight}`,
-                        colors_found: profileResult.color_palette.length
-                    }
+                    ...profileResult,
+                    success: true
                 };
-                
             } catch (error) {
                 console.error('❌ Ошибка создания персонального профиля:', error);
                 return {
@@ -1239,40 +1239,35 @@
             }
         }
 
-        // 🆕 ЭТАП 1.1: Функции валидации границ окна
         function validateRegionBounds(region) {
-            if (!windowBounds || setupMode !== 'window') {
-                return { valid: true }; // Для полноэкранного режима ограничений нет
+            if (region.x < 0 || region.y < 0 || region.x + region.width > canvas.width || region.y + region.height > canvas.height) {
+                return {
+                    valid: false,
+                    error: 'Область должна быть внутри доступного кадра'
+                };
             }
-            
-            // Конвертируем координаты canvas в физические пиксели для сравнения с bounds
-            const scaleX = screenshot.naturalWidth / canvas.width;
-            const scaleY = screenshot.naturalHeight / canvas.height;
-            
-            const physicalRegion = {
-                x: Math.round(region.x * scaleX),
-                y: Math.round(region.y * scaleY),
-                width: Math.round(region.width * scaleX),
-                height: Math.round(region.height * scaleY)
-            };
-            
-            const withinBounds = physicalRegion.x >= windowBounds.x && 
-                                physicalRegion.y >= windowBounds.y &&
-                                physicalRegion.x + physicalRegion.width <= windowBounds.x + windowBounds.width &&
-                                physicalRegion.y + physicalRegion.height <= windowBounds.y + windowBounds.height;
-            
+
+            if (!windowBounds) {
+                return { valid: true };
+            }
+
+            const physicalRegion = rectToSource(region);
+            const withinBounds = physicalRegion.x >= windowBounds.x &&
+                physicalRegion.y >= windowBounds.y &&
+                physicalRegion.x + physicalRegion.width <= windowBounds.x + windowBounds.width &&
+                physicalRegion.y + physicalRegion.height <= windowBounds.y + windowBounds.height;
+
             if (!withinBounds) {
                 return {
                     valid: false,
-                    error: 'Область должна быть внутри выбранного окна'
+                    error: 'Область должна быть внутри выбранного source frame'
                 };
             }
-            
+
             return { valid: true };
         }
-        
-        function showValidationError(errorMessage) {
-            // Показываем временное сообщение об ошибке
+
+        function showValidationError(message) {
             const errorDiv = document.createElement('div');
             errorDiv.className = 'validation-error';
             errorDiv.style.cssText = `
@@ -1289,54 +1284,46 @@
                 z-index: 10000;
                 animation: errorSlide 0.3s ease-out;
             `;
-            errorDiv.textContent = errorMessage;
-            
+            errorDiv.textContent = message;
             document.body.appendChild(errorDiv);
-            
-            // Удаляем через 3 секунды
+
             setTimeout(() => {
                 if (errorDiv.parentNode) {
                     errorDiv.remove();
                 }
             }, 3000);
         }
-        
+
         function updateInstructionsForWindowMode() {
             const instructionsTitle = document.querySelector('.instructions h2');
-            if (instructionsTitle && setupMode === 'window') {
-                if (!isSingleRegionSetup()) {
-                    instructionsTitle.textContent = 'Настройка областей OCR (Оконный режим)';
-                }
-                
-                // Добавляем информацию о том, что области ограничены окном
-                const existingNote = document.getElementById('window-mode-note');
-                if (!existingNote) {
-                    const noteDiv = document.createElement('div');
-                    noteDiv.id = 'window-mode-note';
-                    noteDiv.style.cssText = `
-                        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
-                        border: 1px solid rgba(59, 130, 246, 0.3);
-                        border-radius: 10px;
-                        padding: 15px;
-                        margin-bottom: 20px;
-                        color: var(--accent-blue);
-                        font-size: 14px;
-                        text-align: center;
-                    `;
-                    noteDiv.innerHTML = '📍 Области можно выделять только внутри выбранного окна';
-                    
-                    const instructions = document.getElementById('instructions');
-                    const firstStep = instructions.querySelector('.step');
-                    instructions.insertBefore(noteDiv, firstStep);
-                }
+            if (!instructionsTitle || setupMode !== 'window') {
+                return;
             }
+
+            const existingNote = document.getElementById('window-mode-note');
+            if (existingNote) {
+                return;
+            }
+
+            const noteDiv = document.createElement('div');
+            noteDiv.id = 'window-mode-note';
+            noteDiv.style.cssText = `
+                background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 20px;
+                color: var(--accent-blue);
+                font-size: 14px;
+                text-align: center;
+            `;
+            noteDiv.innerHTML = '📍 Setup и runtime используют один и тот же source frame выбранного окна';
+
+            const instructions = document.getElementById('instructions');
+            instructions.insertBefore(noteDiv, instructions.querySelector('.step'));
         }
-        
-        // 🆕 ЭТАП 2.1: Обновление UI для оконного режима
+
         function updateUIForWindowMode(context) {
-            console.log('🪟 Обновление UI для оконного режима:', context);
-            
-            // Обновляем заголовок
             const instructionsTitle = document.querySelector('.instructions h2');
             if (instructionsTitle) {
                 const titleText = isSingleRegionSetup()
@@ -1344,27 +1331,24 @@
                     : '🪟 Настройка областей OCR';
                 instructionsTitle.innerHTML = `
                     ${titleText}<br>
-                    <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || 'Неизвестно'}</small>
+                    <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || context.captureTarget?.name || 'Неизвестно'}</small>
                 `;
             }
-            
-            // Создаем информационную панель
-            createWindowInfoPanel(context.targetWindow);
-            
-            // Обновляем инструкции
+
+            createWindowInfoPanel(context.targetWindow || context.captureTarget);
             updateInstructionsForWindowMode();
         }
-        
-        // 🆕 ЭТАП 2.1: Создание информационной панели о окне
+
         function createWindowInfoPanel(windowInfo) {
-            if (!windowInfo) return;
-            
-            // Удаляем существующую панель
+            if (!windowInfo) {
+                return;
+            }
+
             const existingPanel = document.getElementById('window-info-panel');
             if (existingPanel) {
                 existingPanel.remove();
             }
-            
+
             const panel = document.createElement('div');
             panel.id = 'window-info-panel';
             panel.style.cssText = `
@@ -1379,67 +1363,188 @@
                 backdrop-filter: blur(10px);
                 z-index: 1000;
                 color: var(--text-primary);
-                font-family: inherit;
-                box-shadow: var(--shadow-glow);
             `;
-            
+
             panel.innerHTML = `
                 <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                    <div style="
-                        width: 40px; 
-                        height: 40px; 
-                        background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
-                        border-radius: 10px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        margin-right: 12px;
-                        font-size: 18px;
-                    ">🪟</div>
+                    <div style="width: 40px; height: 40px; background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue)); border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-size: 18px;">🪟</div>
                     <div>
                         <div style="font-weight: 600; color: var(--text-primary);">Выбранное окно</div>
-                        <div style="font-size: 12px; color: var(--text-secondary);">режим оконного захвата</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">setup source frame parity</div>
                     </div>
                 </div>
-                
                 <div style="margin-bottom: 10px;">
                     <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Название:</div>
-                    <div style="font-size: 14px; font-weight: 500; color: var(--accent-blue);">${windowInfo.name}</div>
+                    <div style="font-size: 14px; font-weight: 500; color: var(--accent-blue);">${windowInfo.name || 'Неизвестно'}</div>
                 </div>
-                
-                ${windowInfo.executableName ? `
-                <div style="margin-bottom: 10px;">
-                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Приложение:</div>
-                    <div style="font-size: 14px; color: var(--text-primary);">${windowInfo.executableName}</div>
-                </div>
-                ` : ''}
-                
-                <div style="
-                    background: rgba(139, 92, 246, 0.1);
-                    border: 1px solid rgba(139, 92, 246, 0.3);
-                    border-radius: 8px;
-                    padding: 12px;
-                    margin-top: 15px;
-                    font-size: 12px;
-                    color: var(--accent-purple);
-                    text-align: center;
-                ">
-                    📍 Области можно выделять только<br>внутри данного окна
+                ${windowInfo.executableName ? `<div style="margin-bottom: 10px;"><div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Приложение:</div><div style="font-size: 14px; color: var(--text-primary);">${windowInfo.executableName}</div></div>` : ''}
+                <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 12px; color: var(--accent-purple); text-align: center;">
+                    Outer region = где искать<br>Inner region = что именно сравнивать
                 </div>
             `;
-            
+
             document.body.appendChild(panel);
-            
-            // Анимация появления
             panel.style.transform = 'translateX(100%)';
             panel.style.transition = 'transform 0.3s ease-out';
-            
             setTimeout(() => {
                 panel.style.transform = 'translateX(0)';
             }, 100);
         }
-        
-        // Добавляем CSS для анимации ошибки
+
+        function startSetup() {
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('selection-info').classList.add('active');
+            canvas.style.cursor = 'crosshair';
+            customCursor.style.display = 'block';
+        }
+
+        function cancelSetup() {
+            window.close();
+        }
+
+        function drawSelectionBox() {
+            const tempBox = document.querySelector('.selection-box.temp');
+            if (tempBox) {
+                tempBox.remove();
+            }
+
+            const box = document.createElement('div');
+            box.className = 'selection-box temp';
+            box.classList.add(getRegionStyleClass(currentRegion));
+            box.style.left = Math.min(startX, endX) + 'px';
+            box.style.top = Math.min(startY, endY) + 'px';
+            box.style.width = Math.abs(endX - startX) + 'px';
+            box.style.height = Math.abs(endY - startY) + 'px';
+            document.body.appendChild(box);
+        }
+
+        function upsertPermanentSelectionBox(regionKey, region) {
+            const boxId = `selection-${regionKey}`;
+            let box = document.getElementById(boxId);
+
+            if (!box) {
+                box = document.createElement('div');
+                box.id = boxId;
+                box.className = 'selection-box permanent';
+                box.classList.add(getRegionStyleClass(regionKey));
+                document.body.appendChild(box);
+            }
+
+            box.style.left = region.x + 'px';
+            box.style.top = region.y + 'px';
+            box.style.width = region.width + 'px';
+            box.style.height = region.height + 'px';
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            customCursor.style.left = e.clientX + 'px';
+            customCursor.style.top = e.clientY + 'px';
+        });
+
+        window.electronAPI.on('screenshot', (screenshotData) => {
+            screenshot = new Image();
+            screenshot.onload = () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                ctx.drawImage(screenshot, 0, 0, canvas.width, canvas.height);
+                regions.screen_resolution = {
+                    width: screenshot.naturalWidth,
+                    height: screenshot.naturalHeight
+                };
+            };
+            screenshot.src = screenshotData;
+        });
+
+        window.electronAPI.on('setup-context', (contextData) => {
+            setupContext = contextData || { mode: 'screen' };
+            setupMode = setupContext.mode || 'screen';
+            regions.capture_reference = buildCaptureReference();
+
+            if (isSingleRegionSetup()) {
+                applySingleRegionSetupMode();
+            }
+
+            if (setupMode === 'window') {
+                updateUIForWindowMode(setupContext);
+            }
+        });
+
+        window.electronAPI.on('window-bounds', (boundsData) => {
+            windowBounds = boundsData.bounds;
+            setupMode = boundsData.mode;
+            scaleFactor = boundsData.scaleFactor;
+
+            if (setupMode === 'window' && windowBounds) {
+                updateInstructionsForWindowMode();
+            }
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (isSelectionComplete()) {
+                return;
+            }
+
+            isSelecting = true;
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isSelecting) {
+                return;
+            }
+
+            endX = e.clientX;
+            endY = e.clientY;
+            drawSelectionBox();
+        });
+
+        canvas.addEventListener('mouseup', async (e) => {
+            if (!isSelecting) {
+                return;
+            }
+
+            isSelecting = false;
+            endX = e.clientX;
+            endY = e.clientY;
+
+            const region = {
+                x: Math.min(startX, endX),
+                y: Math.min(startY, endY),
+                width: Math.abs(endX - startX),
+                height: Math.abs(endY - startY)
+            };
+
+            if (region.width <= 10 || region.height <= 10) {
+                return;
+            }
+
+            const validationResult = validateRegionBounds(region);
+            if (!validationResult.valid) {
+                showValidationError(validationResult.error);
+                return;
+            }
+
+            regions[currentRegion] = region;
+            if (currentRegion === 'trigger_area' || currentRegion === 'result_trigger_area') {
+                resetTriggerProfileCache(currentRegion);
+            }
+
+            upsertPermanentSelectionBox(currentRegion, region);
+
+            if (isSingleRegionSetup()) {
+                await showPreview();
+            } else if (currentRegion === 'trigger_area') {
+                currentRegion = 'normal_data_area';
+                updateCurrentRegionPrompt();
+            } else if (currentRegion === 'normal_data_area') {
+                currentRegion = 'precise_data_area';
+                updateCurrentRegionPrompt();
+            } else if (currentRegion === 'precise_data_area') {
+                await showPreview();
+            }
+        });
+
         const style = document.createElement('style');
         style.textContent = `
             @keyframes errorSlide {
@@ -1455,15 +1560,17 @@
         `;
         document.head.appendChild(style);
 
-        // Закрытие по Escape
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                if (document.getElementById('preview-modal').classList.contains('active')) {
-                    retrySetup();
-                } else {
-                    cancelSetup();
-                }
+            if (e.key !== 'Escape') {
+                return;
             }
+
+            if (previewModal.classList.contains('active')) {
+                retrySetup();
+                return;
+            }
+
+            cancelSetup();
         });
     </script>
 </body>

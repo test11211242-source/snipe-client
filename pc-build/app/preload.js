@@ -144,6 +144,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const validChannels = [
       'user-data',
       'screenshot',
+      'setup-context',
+      'window-bounds',
       'python-status',
       'player-found',
       'ocr_reprocessed', // << --- ДОБАВЛЕН КАНАЛ ДЛЯ ПЕРЕОБРАБОТКИ --- >>

@@ -40,54 +40,72 @@ class SetupWindow extends WindowManager {
             }
         });
 
-        // ОРИГИНАЛЬНАЯ ЛОГИКА ЗАХВАТА ИЗ main.js:850-897
         let screenshot;
-        let setupMode = 'screen';
+        let setupMode = context?.mode === 'window' && context?.targetWindow ? 'window' : 'screen';
         let windowBounds = null;
-        
-        if (context && context.mode === 'window' && context.targetWindow) {
-            // Оконный режим - захватываем конкретное окно
-            console.log('📸 Capturing specific window for setup');
-            setupMode = 'window';
-            
-            try {
-                // ВАЖНО: Вызов функции captureWindowScreenshot (должна быть доступна)
-                const windowScreenshot = await this.captureWindowScreenshot(context.targetWindow);
-                if (windowScreenshot) {
-                    screenshot = windowScreenshot.dataURL;
-                    windowBounds = windowScreenshot.bounds;
-                    console.log(`✅ Window screenshot captured: ${windowBounds.width}x${windowBounds.height}`);
-                } else {
-                    throw new Error('Failed to capture window screenshot');
-                }
-            } catch (error) {
-                console.error('❌ Failed to capture window, falling back to screen:', error);
-                setupMode = 'screen';
+        let frameSize = null;
+
+        const ocrManager = this.appManager?.getOcr?.();
+
+        if (ocrManager?.captureSetupFrame) {
+            const captureResult = await ocrManager.captureSetupFrame(context || { mode: setupMode });
+            if (!captureResult?.success) {
+                throw new Error(captureResult?.error || 'Не удалось получить setup frame');
             }
-        }
-        
-        if (setupMode === 'screen') {
-            // Экранный режим - захватываем весь экран
+
+            screenshot = captureResult.screenshot;
+            frameSize = captureResult.frameSize || captureResult.size;
+            setupMode = captureResult.target?.targetType === 'window' ? 'window' : setupMode;
+            windowBounds = frameSize ? {
+                x: 0,
+                y: 0,
+                width: frameSize.width,
+                height: frameSize.height
+            } : null;
+        } else if (context && context.mode === 'window' && context.targetWindow) {
+            console.log('📸 Capturing specific window for setup');
+            const windowScreenshot = await this.captureWindowScreenshot(context.targetWindow);
+            if (!windowScreenshot) {
+                throw new Error('Failed to capture window screenshot');
+            }
+
+            screenshot = windowScreenshot.dataURL;
+            frameSize = windowScreenshot.frameSize || windowScreenshot.bounds;
+            windowBounds = {
+                x: 0,
+                y: 0,
+                width: frameSize.width,
+                height: frameSize.height
+            };
+        } else {
             console.log('📸 Capturing full screen for setup');
             const display = screen.getPrimaryDisplay();
             const physicalSize = {
                 width: Math.round(display.size.width * display.scaleFactor),
                 height: Math.round(display.size.height * display.scaleFactor)
             };
-            
-            console.log(`📊 DPI Info:`);
-            console.log(`  - Scale Factor: ${display.scaleFactor}x`);
-            console.log(`  - Logical Size: ${display.size.width}x${display.size.height}`);
-            console.log(`  - Physical Size: ${physicalSize.width}x${physicalSize.height}`);
-            
+
             const sources = await desktopCapturer.getSources({
                 types: ['screen'],
                 thumbnailSize: physicalSize
             });
-            
-            const primarySource = sources[0];
-            screenshot = primarySource.thumbnail.toDataURL();
+
+            screenshot = sources[0].thumbnail.toDataURL();
+            frameSize = physicalSize;
+            windowBounds = {
+                x: 0,
+                y: 0,
+                width: frameSize.width,
+                height: frameSize.height
+            };
         }
+
+        const resolvedContext = {
+            ...(context || {}),
+            mode: setupMode,
+            captureTarget: context?.targetWindow || this.appManager?.getStore?.()?.getSelectedCaptureTarget?.() || null,
+            sourceFrameSize: frameSize || null
+        };
 
         setupWindow.loadFile(path.join(__dirname, '../../renderer/setup.html'));
         
@@ -96,41 +114,14 @@ class SetupWindow extends WindowManager {
             setupWindow.webContents.send('screenshot', screenshot);
             
             // 🆕 КРИТИЧНО: Передаем контекст настройки в setup.html
-            console.log('📤 Sending setup-context to setup.html:', JSON.stringify(context));
-            setupWindow.webContents.send('setup-context', context);
+            console.log('📤 Sending setup-context to setup.html:', JSON.stringify(resolvedContext));
+            setupWindow.webContents.send('setup-context', resolvedContext);
             
-            // 🆕 ЭТАП 1.1: Передача границ окна с учетом DPI для валидации областей
-            if (setupMode === 'window' && windowBounds) {
-                const display = screen.getPrimaryDisplay();
-                const scaleFactor = display.scaleFactor;
-                
-                // Конвертируем bounds окна в физические пиксели для соответствия скриншоту
-                const physicalBounds = {
-                    x: Math.round(windowBounds.x * scaleFactor),
-                    y: Math.round(windowBounds.y * scaleFactor), 
-                    width: Math.round(windowBounds.width * scaleFactor),
-                    height: Math.round(windowBounds.height * scaleFactor)
-                };
-                
-                console.log('📏 Sending window bounds for validation:', {
-                    logical: windowBounds,
-                    physical: physicalBounds,
-                    scaleFactor: scaleFactor
-                });
-                
-                setupWindow.webContents.send('window-bounds', {
-                    bounds: physicalBounds,
-                    scaleFactor: scaleFactor,
-                    mode: 'window'
-                });
-            } else {
-                // Для полноэкранного режима отправляем null
-                setupWindow.webContents.send('window-bounds', {
-                    bounds: null,
-                    scaleFactor: 1,
-                    mode: 'screen'
-                });
-            }
+            setupWindow.webContents.send('window-bounds', {
+                bounds: windowBounds,
+                scaleFactor: 1,
+                mode: setupMode
+            });
         });
         
         // ОРИГИНАЛЬНАЯ ЛОГИКА ЗАКРЫТИЯ ИЗ main.js:908-910
@@ -150,16 +141,18 @@ class SetupWindow extends WindowManager {
             this.eventBus.emit('window:created:setup', { 
                 window: setupWindow, 
                 screenshot, 
-                context,
+                context: resolvedContext,
                 setupMode,
-                windowBounds
+                windowBounds,
+                frameSize
             });
         }
 
         console.log('✅ Окно настройки OCR областей создано:', {
             setupMode: setupMode,
             hasWindowBounds: !!windowBounds,
-            context: context
+            context: resolvedContext,
+            frameSize
         });
         return setupWindow;
     }

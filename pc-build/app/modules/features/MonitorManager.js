@@ -5,6 +5,8 @@ const os = require('os');
 const { app, Notification, dialog } = require('electron');
 const FormData = require('form-data');
 
+const TRIGGER_PROFILE_SCHEMA_VERSION = 2;
+
 /**
  * MonitorManager - Управление Python-процессом мониторинга экрана
  */
@@ -19,6 +21,9 @@ class MonitorManager {
         this.isRestarting = false;
         this.messageBuffer = '';
         this.currentProfilesFile = null;
+        this.engineReadyWaiter = null;
+        this.lastDebugByTrigger = {};
+        this.lastEngineReadyPayload = null;
         
         console.log('✅ MonitorManager инициализирован');
     }
@@ -32,6 +37,10 @@ class MonitorManager {
         }
         
         try {
+            this.messageBuffer = '';
+            this.lastDebugByTrigger = {};
+            this.lastEngineReadyPayload = null;
+
             // Проверяем доступность сервера
             const serverCheck = await this.checkServerConnection();
             if (!serverCheck.available) {
@@ -41,7 +50,6 @@ class MonitorManager {
             }
             
             const tokens = this.storeManager.getTokens();
-            const serverUrl = this.storeManager.getServerUrl();
             
             if (!tokens?.access_token) {
                 const error = 'Нет токена авторизации';
@@ -49,10 +57,13 @@ class MonitorManager {
                 return { success: false, error };
             }
             
-            // 🎯 Новая архитектура: создаем профили триггеров вместо простого режима
+            const captureParams = this.getCaptureParameters();
             const triggerProfiles = this.createTriggerProfiles();
+
+            if (!Array.isArray(triggerProfiles) || triggerProfiles.length === 0) {
+                throw new Error('Не удалось создать ни одного trigger profile для мониторинга');
+            }
             
-            // 📝 Создаем временный файл для профилей (избегаем ENAMETOOLONG ошибку)
             const tempDir = os.tmpdir();
             const profilesFilePath = path.join(tempDir, `snipe_profiles_${Date.now()}.json`);
             const profilesJson = JSON.stringify(triggerProfiles, null, 2);
@@ -71,9 +82,6 @@ class MonitorManager {
                 profilesFile: profilesFilePath
             });
 
-            // Получаем параметры захвата (экран или окно)
-            const captureParams = this.getCaptureParameters();
-
             this.pythonProcess = spawn(pythonExecutable, [
                 pythonScript,
                 '--target_type', captureParams.targetType,
@@ -89,15 +97,26 @@ class MonitorManager {
             });
 
             this.setupProcessHandlers();
+            const readyPayload = await this.waitForEngineReady();
+
             this.isRunning = true;
-            
+            this.lastEngineReadyPayload = readyPayload;
             this.eventBus.emit('monitor:started');
-            console.log('✅ Python процесс запущен');
+            console.log('✅ Python процесс запущен и подтвердил готовность');
             
             return { success: true, message: 'Мониторинг запущен' };
             
         } catch (error) {
             console.error('❌ Ошибка запуска Python процесса:', error);
+            if (this.pythonProcess) {
+                try {
+                    this.pythonProcess.kill();
+                } catch (killError) {
+                    console.warn('⚠️ Не удалось остановить процесс после ошибки запуска:', killError.message);
+                }
+            }
+            this.pythonProcess = null;
+            this.isRunning = false;
             this.eventBus.emit('monitor:error', error.message);
             return { success: false, error: error.message };
         }
@@ -114,6 +133,8 @@ class MonitorManager {
             this.pythonProcess.kill();
             this.pythonProcess = null;
             this.isRunning = false;
+            this.engineReadyWaiter = null;
+            this.lastEngineReadyPayload = null;
             
             // 🆕 ЭТАП 1.2: Останавливаем мониторинг окна
             this.stopWindowMonitoring();
@@ -165,13 +186,23 @@ class MonitorManager {
     setupProcessHandlers() {
         if (!this.pythonProcess) return;
 
+        this.engineReadyWaiter = {};
+        this.engineReadyWaiter.promise = new Promise((resolve, reject) => {
+            this.engineReadyWaiter.resolve = resolve;
+            this.engineReadyWaiter.reject = reject;
+            this.engineReadyWaiter.timeout = setTimeout(() => {
+                reject(new Error('Python engine не подтвердил готовность вовремя'));
+            }, 8000);
+        });
+
         this.pythonProcess.stdout.setEncoding('utf-8');
         this.pythonProcess.stderr.setEncoding('utf-8');
         
         // Обработчик stdout - парсинг сообщений от Python
         this.pythonProcess.stdout.on('data', (data) => {
-            const output = data.toString();
-            const lines = output.split('\n');
+            this.messageBuffer += data.toString();
+            const lines = this.messageBuffer.split('\n');
+            this.messageBuffer = lines.pop() || '';
             
             lines.forEach(line => {
                 const message = line.trim();
@@ -201,8 +232,21 @@ class MonitorManager {
         // Обработчик закрытия процесса
         this.pythonProcess.on('close', (code) => {
             console.log(`Python процесс завершен с кодом ${code}`);
+            if (this.messageBuffer.trim()) {
+                try {
+                    this.processMessage(this.messageBuffer.trim());
+                } catch (bufferError) {
+                    console.warn('⚠️ Не удалось обработать хвост stdout буфера:', bufferError.message);
+                }
+            }
+            this.messageBuffer = '';
+            if (this.engineReadyWaiter?.reject) {
+                this.engineReadyWaiter.reject(new Error(code === null ? 'Python процесс был остановлен' : `Python процесс завершился с кодом ${code}`));
+            }
+            this.clearEngineReadyWaiter();
             this.pythonProcess = null;
             this.isRunning = false;
+            this.lastEngineReadyPayload = null;
             
             // 🆕 ЭТАП 1.2: Останавливаем мониторинг окна
             this.stopWindowMonitoring();
@@ -223,9 +267,14 @@ class MonitorManager {
         // Обработчик ошибок процесса
         this.pythonProcess.on('error', (error) => {
             console.error('Python процесс ошибка:', error);
+            if (this.engineReadyWaiter?.reject) {
+                this.engineReadyWaiter.reject(error);
+            }
+            this.clearEngineReadyWaiter();
             this.eventBus.emit('monitor:error', `Ошибка процесса: ${error.message}`);
             this.pythonProcess = null;
             this.isRunning = false;
+            this.lastEngineReadyPayload = null;
             
             // 🆕 ЭТАП 1.2: Останавливаем мониторинг окна
             this.stopWindowMonitoring();
@@ -235,17 +284,52 @@ class MonitorManager {
         });
     }
 
+    clearEngineReadyWaiter() {
+        if (this.engineReadyWaiter?.timeout) {
+            clearTimeout(this.engineReadyWaiter.timeout);
+        }
+
+        this.engineReadyWaiter = null;
+    }
+
+    async waitForEngineReady() {
+        if (!this.engineReadyWaiter?.promise) {
+            throw new Error('Ожидание готовности monitor engine не инициализировано');
+        }
+
+        try {
+            return await this.engineReadyWaiter.promise;
+        } finally {
+            this.clearEngineReadyWaiter();
+        }
+    }
+
     // === ОБРАБОТКА СООБЩЕНИЙ ОТ PYTHON ===
 
     async processMessage(message) {
         try {
-            if (message.startsWith('STATUS:')) {
+            if (message.startsWith('ENGINE_READY:')) {
+                const jsonData = message.substring(13);
+                const readyPayload = JSON.parse(jsonData);
+                this.lastEngineReadyPayload = readyPayload;
+                if (this.engineReadyWaiter?.resolve) {
+                    this.engineReadyWaiter.resolve(readyPayload);
+                }
+            } else if (message.startsWith('DEBUG_JSON:')) {
+                const jsonData = message.substring(11);
+                const debugPayload = JSON.parse(jsonData);
+                if (debugPayload?.id) {
+                    this.lastDebugByTrigger[debugPayload.id] = debugPayload;
+                }
+                console.log('>>> DEBUG_JSON:', debugPayload);
+            } else if (message.startsWith('STATUS:')) {
                 const status = message.substring(7);
                 // Фильтруем - показываем только важные сообщения о действиях, не частые кадры
                 if (status.includes('Выполнение действия') || 
                     status.includes('захвачены и отправлены') ||
                     status.includes('Ожидание') ||
-                    status.includes('Screen capture')) {
+                    status.includes('Screen capture') ||
+                    status.includes('engine ready')) {
                     console.log('>>> STATUS:', status);
                     this.eventBus.emit('monitor:status', status);
                 }
@@ -421,8 +505,7 @@ class MonitorManager {
         const selectedWindow = this.storeManager.getSelectedCaptureTarget();
         
         if (selectedWindow && selectedWindow.targetType === 'window') {
-            // 🔧 Используем имя окна вместо ID для Python скрипта
-            const targetId = selectedWindow.name || selectedWindow.targetId;
+            const targetId = selectedWindow.name || selectedWindow.targetId || selectedWindow.id;
             
             return {
                 targetType: 'window',
@@ -434,7 +517,7 @@ class MonitorManager {
         // По умолчанию - захват экрана
         return {
             targetType: 'screen',
-            targetId: '0',
+            targetId: selectedWindow?.targetType === 'screen' ? (selectedWindow.targetId || '0') : '0',
             windowInfo: null
         };
     }
@@ -544,71 +627,50 @@ class MonitorManager {
             const mode = this.storeManager.getSearchMode(); // 'fast' или 'precise'
             const delays = this.storeManager.getTriggerDelays();
             const triggerSettings = this.storeManager.getTriggerSettings();
+            const captureParams = this.getCaptureParameters();
             
             if (!regions || !regions.trigger_area) {
                 throw new Error('OCR области не настроены');
             }
-            
-            // 🔍 Валидация персональных данных профиля
-            const hasPersonalProfile = regions.trigger_area.color_palette && regions.trigger_area.template_base64;
-            
-            if (!hasPersonalProfile) {
-                console.warn('⚠️ Персональный профиль не создан, используем fallback данные');
-                console.warn('💡 Для создания персонального профиля перенастройте области триггера через setup');
-            } else {
-                console.log('✅ Персональный профиль найден:', {
-                    colors: regions.trigger_area.color_palette.length,
-                    template_size: Math.round(regions.trigger_area.template_base64.length / 1024) + 'KB',
-                    created_at: regions.trigger_area.created_at || 'неизвестно'
-                });
-            }
-            
-            // Создаем профиль для текущего режима
-            const startProfile = {
-                id: `start_battle_${mode}`,
-                
-                // Область триггера (общая для всех режимов)
-                monitor_region: regions.trigger_area,
-                
-                // Область захвата данных (зависит от режима)
-                data_capture_region: mode === 'fast' 
-                    ? regions.normal_data_area 
-                    : regions.precise_data_area,
-                
-                // Параметры действия
-                action_type: "capture_and_send",
-                capture_delay: delays[mode] || 0,
-                
-                // Системные параметры
-                cooldown: triggerSettings.cooldown || 15,
-                confirmations_needed: triggerSettings.confirmations || 2,
-                
-                // 🎨 Персональная цветовая палитра из настроенного профиля
-                color_palette: regions.trigger_area.color_palette || [[128, 128, 128], [64, 64, 64], [192, 192, 192]],
-                
-                // 📸 Персональный эталонный скриншот 
-                template_base64: regions.trigger_area.template_base64 || "",
-                
-                // 🖼️ Настройка скрытия рамки захвата
-                hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
+            const captureReference = regions.capture_reference || {
+                target_type: captureParams.targetType,
+                target_id: captureParams.targetId,
+                target_name: captureParams.windowInfo?.name || 'Full Screen',
+                selected_target: captureParams.windowInfo || null,
+                source_frame_size: regions.screen_resolution || null
             };
+
+            this.assertCaptureReferenceMatches(captureReference, captureParams, 'основного trigger');
+
+            const startProfile = this.buildEngineProfile({
+                id: `start_battle_${mode}`,
+                profileType: 'start_battle',
+                actionType: 'capture_and_send',
+                triggerArea: regions.trigger_area,
+                dataArea: mode === 'fast' ? regions.normal_data_area : regions.precise_data_area,
+                captureReference,
+                cooldown: triggerSettings.cooldown || 15,
+                confirmationsNeeded: triggerSettings.confirmations || 2,
+                captureDelay: delays[mode] || 0
+            });
             
             const profiles = [startProfile];
 
             if (predictionMonitorEnabled) {
                 if (this.hasTriggerProfile(streamerResultTriggerArea) && this.isValidRegion(streamerResultDataArea)) {
-                    const resultProfile = {
+                    const resultCaptureReference = streamerResultTriggerArea.capture_reference || captureReference;
+                    this.assertCaptureReferenceMatches(resultCaptureReference, captureParams, 'battle_result trigger');
+                    const resultProfile = this.buildEngineProfile({
                         id: 'battle_result',
-                        monitor_region: streamerResultTriggerArea,
-                        data_capture_region: streamerResultDataArea,
-                        action_type: 'capture_prediction_result',
-                        capture_delay: 0,
+                        profileType: 'battle_result',
+                        actionType: 'capture_prediction_result',
+                        triggerArea: streamerResultTriggerArea,
+                        dataArea: streamerResultDataArea,
+                        captureReference: resultCaptureReference,
                         cooldown: 60,
-                        confirmations_needed: 1,
-                        color_palette: streamerResultTriggerArea.color_palette || startProfile.color_palette,
-                        template_base64: streamerResultTriggerArea.template_base64 || '',
-                        hideCaptureBorder: this.storeManager.get('hideCaptureborder', false)
-                    };
+                        confirmationsNeeded: 1,
+                        captureDelay: 0
+                    });
 
                     profiles.push(resultProfile);
                 } else {
@@ -625,8 +687,112 @@ class MonitorManager {
             
         } catch (error) {
             console.error('❌ Ошибка создания профилей триггеров:', error);
-            return [];
+            throw error;
         }
+    }
+
+    buildEngineProfile({ id, profileType, actionType, triggerArea, dataArea, captureReference, cooldown, confirmationsNeeded, captureDelay }) {
+        if (!this.hasTriggerProfile(triggerArea)) {
+            throw new Error(`Триггер-профиль ${id} устарел. Выполните re-setup.`);
+        }
+
+        if (!this.isValidRegion(dataArea)) {
+            throw new Error(`Область данных для ${id} не настроена`);
+        }
+
+        const triggerProfile = triggerArea.trigger_profile;
+        const sourceFrameSize = captureReference?.source_frame_size || triggerArea.screen_resolution || this.storeManager.getOcrRegions()?.screen_resolution;
+        const dataCaptureRatio = this.extractAreaRatio(dataArea, sourceFrameSize, `${id}:data_capture_ratio`);
+
+        return {
+            id,
+            schema_version: TRIGGER_PROFILE_SCHEMA_VERSION,
+            profile_type: profileType,
+            action_type: actionType,
+            outer_ratio: triggerProfile.outer_ratio,
+            inner_ratio: triggerProfile.inner_ratio,
+            data_capture_ratio: dataCaptureRatio,
+            template_gray_base64: triggerProfile.template_gray_base64,
+            thumbnail_hash: triggerProfile.thumbnail_hash,
+            feature_mode: triggerProfile.feature_mode,
+            keypoints_count: triggerProfile.keypoints_count || 0,
+            normalized_template_size: triggerProfile.normalized_template_size || { width: 128, height: 128 },
+            hash_max_distance: triggerProfile.hash_threshold || triggerProfile.analysis_info?.hash_threshold || 18,
+            orb_distance_threshold: triggerProfile.orb_distance_threshold || triggerProfile.analysis_info?.orb_distance_threshold || 55,
+            orb_min_good_matches: triggerProfile.orb_min_good_matches || triggerProfile.analysis_info?.orb_min_good_matches || 10,
+            ncc_min_score: triggerProfile.ncc_threshold || triggerProfile.analysis_info?.ncc_threshold || 0.72,
+            cooldown,
+            confirmations_needed: confirmationsNeeded,
+            confirmation_decay: 0.5,
+            capture_delay: captureDelay,
+            hideCaptureBorder: this.storeManager.get('hideCaptureborder', false),
+            source_frame_size: sourceFrameSize,
+            capture_reference: captureReference,
+            debug_outer_rect: {
+                x: triggerArea.x,
+                y: triggerArea.y,
+                width: triggerArea.width,
+                height: triggerArea.height
+            }
+        };
+    }
+
+    assertCaptureReferenceMatches(captureReference, captureParams, label) {
+        if (!captureReference) {
+            throw new Error(`Не найден capture reference для ${label}`);
+        }
+
+        if (captureReference.target_type !== captureParams.targetType) {
+            throw new Error(`Текущий режим захвата не совпадает с setup для ${label}. Нужен re-setup.`);
+        }
+
+        if (captureParams.targetType !== 'window') {
+            return;
+        }
+
+        const expectedName = captureReference.target_name || captureReference.selected_target?.name;
+        const currentName = captureParams.windowInfo?.name || captureParams.targetId;
+        const expectedExecutable = captureReference.selected_target?.executableName;
+        const currentExecutable = captureParams.windowInfo?.executableName;
+
+        if (expectedExecutable && currentExecutable && expectedExecutable === currentExecutable) {
+            return;
+        }
+
+        if (expectedName && currentName && expectedName === currentName) {
+            return;
+        }
+
+        throw new Error(`Выбрано другое окно захвата для ${label}. Выполните re-setup.`);
+    }
+
+    extractAreaRatio(area, sourceFrameSize, areaLabel = 'area') {
+        if (this.isValidRatioRect(area?.ratio)) {
+            return area.ratio;
+        }
+
+        if (!this.isValidRegion(area) || !sourceFrameSize?.width || !sourceFrameSize?.height) {
+            throw new Error(`Не удалось вычислить ratio для ${areaLabel}`);
+        }
+
+        return {
+            x: Number((area.x / sourceFrameSize.width).toFixed(6)),
+            y: Number((area.y / sourceFrameSize.height).toFixed(6)),
+            width: Number((area.width / sourceFrameSize.width).toFixed(6)),
+            height: Number((area.height / sourceFrameSize.height).toFixed(6))
+        };
+    }
+
+    isValidRatioRect(rect) {
+        return !!(
+            rect &&
+            typeof rect.x === 'number' &&
+            typeof rect.y === 'number' &&
+            typeof rect.width === 'number' &&
+            typeof rect.height === 'number' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
     }
 
     isValidRegion(region) {
@@ -643,10 +809,14 @@ class MonitorManager {
 
     hasTriggerProfile(region) {
         return this.isValidRegion(region) &&
-            Array.isArray(region.color_palette) &&
-            region.color_palette.length > 0 &&
-            typeof region.template_base64 === 'string' &&
-            region.template_base64.length > 0;
+            !!region.trigger_profile &&
+            region.trigger_profile.schema_version === TRIGGER_PROFILE_SCHEMA_VERSION &&
+            this.isValidRatioRect(region.trigger_profile.outer_ratio) &&
+            this.isValidRatioRect(region.trigger_profile.inner_ratio) &&
+            typeof region.trigger_profile.template_gray_base64 === 'string' &&
+            region.trigger_profile.template_gray_base64.length > 0 &&
+            typeof region.trigger_profile.thumbnail_hash === 'string' &&
+            region.trigger_profile.thumbnail_hash.length > 0;
     }
 
     isPredictionsBotActive() {
@@ -797,12 +967,20 @@ class MonitorManager {
     // === СОСТОЯНИЕ МОНИТОРА ===
 
     getStatus() {
+        let profilesCount = 0;
+
+        try {
+            profilesCount = this.createTriggerProfiles().length;
+        } catch (error) {
+            profilesCount = 0;
+        }
+
         return {
             isRunning: this.isRunning,
             isRestarting: this.isRestarting,
             hasProcess: !!this.pythonProcess,
             searchMode: this.storeManager.getSearchMode() || 'fast',
-            profilesCount: this.createTriggerProfiles().length
+            profilesCount
         };
     }
 
@@ -820,7 +998,9 @@ class MonitorManager {
             processId: this.pythonProcess?.pid,
             searchMode: this.storeManager.getSearchMode(),
             pythonPath: this.getPythonExecutable(),
-            scriptPath: this.getPythonScriptPath()
+            scriptPath: this.getPythonScriptPath(),
+            engineReady: this.lastEngineReadyPayload,
+            lastDebugByTrigger: this.lastDebugByTrigger
         };
     }
 
