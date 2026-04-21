@@ -520,22 +520,25 @@ class OcrManager {
             if (!analysisResult.success) {
                 throw new Error(analysisResult.error);
             }
+
+            this.validateAnalyzedTriggerProfile(analysisResult);
+            const featureMode = analysisResult.feature_mode;
             
             console.log('✅ Персональный профиль успешно создан');
             console.log(`🎨 Найдено цветов: ${(analysisResult.aux_color_palette || []).length}`);
-            console.log(`🧩 Feature mode: ${analysisResult.feature_mode}`);
+            console.log(`🧩 Feature mode: ${featureMode}`);
             
             return {
                 success: true,
                 inner_bbox: analysisResult.inner_bbox,
-                feature_mode: analysisResult.feature_mode,
+                feature_mode: featureMode,
                 keypoints_count: analysisResult.keypoints_count,
                 normalized_template_size: analysisResult.normalized_template_size,
                 template_gray_base64: analysisResult.template_gray_base64,
                 thumbnail_hash: analysisResult.thumbnail_hash,
                 aux_color_palette: analysisResult.aux_color_palette || analysisResult.color_palette || [],
                 color_palette: analysisResult.aux_color_palette || analysisResult.color_palette || [],
-                analysis_info: analysisResult.analysis_info || {}
+                analysis_info: analysisResult.analysis_info
             };
             
         } catch (error) {
@@ -560,6 +563,80 @@ class OcrManager {
             region.trigger_profile.thumbnail_hash.length > 0 &&
             typeof region.trigger_profile.feature_mode === 'string'
         );
+    }
+
+    validateAnalyzedTriggerProfile(profile) {
+        const isValidRect = (rect) => !!(
+            rect &&
+            typeof rect.x === 'number' &&
+            typeof rect.y === 'number' &&
+            typeof rect.width === 'number' &&
+            typeof rect.height === 'number' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+
+        const isValidSize = (size) => !!(
+            size &&
+            typeof size.width === 'number' &&
+            typeof size.height === 'number' &&
+            size.width > 0 &&
+            size.height > 0
+        );
+
+        const isValidRatioRect = (rect) => !!(
+            rect &&
+            typeof rect.x === 'number' &&
+            typeof rect.y === 'number' &&
+            typeof rect.width === 'number' &&
+            typeof rect.height === 'number' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+
+        if (!profile || typeof profile !== 'object') {
+            throw new Error('Python анализатор вернул пустой trigger profile');
+        }
+
+        if (!isValidRect(profile.inner_bbox)) {
+            throw new Error('Python анализатор не вернул корректный inner_bbox');
+        }
+
+        if (!isValidSize(profile.normalized_template_size)) {
+            throw new Error('Python анализатор не вернул normalized_template_size');
+        }
+
+        if (!profile.template_gray_base64 || typeof profile.template_gray_base64 !== 'string') {
+            throw new Error('Python анализатор не вернул template_gray_base64');
+        }
+
+        if (!profile.thumbnail_hash || typeof profile.thumbnail_hash !== 'string') {
+            throw new Error('Python анализатор не вернул thumbnail_hash');
+        }
+
+        if (!['orb', 'ncc'].includes(profile.feature_mode)) {
+            throw new Error(`Python анализатор вернул неизвестный feature_mode: ${profile.feature_mode}`);
+        }
+
+        if (typeof profile.keypoints_count !== 'number') {
+            throw new Error('Python анализатор не вернул keypoints_count');
+        }
+
+        if (!profile.analysis_info || typeof profile.analysis_info !== 'object') {
+            throw new Error('Python анализатор не вернул analysis_info');
+        }
+
+        if (!isValidSize(profile.analysis_info.outer_size)) {
+            throw new Error('Python анализатор не вернул analysis_info.outer_size');
+        }
+
+        if (!isValidSize(profile.analysis_info.inner_size)) {
+            throw new Error('Python анализатор не вернул analysis_info.inner_size');
+        }
+
+        if (!isValidRatioRect(profile.analysis_info.inner_ratio)) {
+            throw new Error('Python анализатор не вернул analysis_info.inner_ratio');
+        }
     }
 
     buildLegacyRegionsPayload(regions) {

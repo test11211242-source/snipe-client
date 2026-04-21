@@ -893,6 +893,7 @@
 
         function buildTriggerAreaPayload(regionKey, region, profile) {
             const absoluteRect = rectToSource(region);
+            const validatedProfile = requireCompleteProfile(profile, `buildTriggerAreaPayload:${regionKey}`);
             return {
                 ...absoluteRect,
                 ratio: rectToRatio(absoluteRect),
@@ -900,24 +901,82 @@
                 trigger_profile: {
                     schema_version: 2,
                     outer_ratio: rectToRatio(absoluteRect),
-                    inner_ratio: profile.analysis_info.inner_ratio,
-                    inner_bbox: profile.inner_bbox,
-                    template_gray_base64: profile.template_gray_base64,
-                    thumbnail_hash: profile.thumbnail_hash,
-                    feature_mode: profile.feature_mode,
-                    keypoints_count: profile.keypoints_count,
-                    normalized_template_size: profile.normalized_template_size,
-                    aux_color_palette: profile.aux_color_palette || [],
-                    analysis_info: profile.analysis_info,
-                    keypoint_threshold: profile.analysis_info.keypoint_threshold,
-                    hash_threshold: profile.analysis_info.hash_threshold,
-                    orb_distance_threshold: profile.analysis_info.orb_distance_threshold,
-                    orb_min_good_matches: profile.analysis_info.orb_min_good_matches,
-                    ncc_threshold: profile.analysis_info.ncc_threshold,
+                    inner_ratio: validatedProfile.analysis_info.inner_ratio,
+                    inner_bbox: validatedProfile.inner_bbox,
+                    template_gray_base64: validatedProfile.template_gray_base64,
+                    thumbnail_hash: validatedProfile.thumbnail_hash,
+                    feature_mode: validatedProfile.feature_mode,
+                    keypoints_count: validatedProfile.keypoints_count,
+                    normalized_template_size: validatedProfile.normalized_template_size,
+                    aux_color_palette: validatedProfile.aux_color_palette || [],
+                    analysis_info: validatedProfile.analysis_info,
+                    keypoint_threshold: validatedProfile.analysis_info.keypoint_threshold,
+                    hash_threshold: validatedProfile.analysis_info.hash_threshold,
+                    orb_distance_threshold: validatedProfile.analysis_info.orb_distance_threshold,
+                    orb_min_good_matches: validatedProfile.analysis_info.orb_min_good_matches,
+                    ncc_threshold: validatedProfile.analysis_info.ncc_threshold,
                     trigger_region_key: regionKey,
                     created_at: new Date().toISOString()
                 }
             };
+        }
+
+        function requireCompleteProfile(profile, contextLabel = 'profile') {
+            const isValidRect = (rect) => !!(
+                rect &&
+                typeof rect.x === 'number' &&
+                typeof rect.y === 'number' &&
+                typeof rect.width === 'number' &&
+                typeof rect.height === 'number' &&
+                rect.width > 0 &&
+                rect.height > 0
+            );
+
+            const isValidSize = (size) => !!(
+                size &&
+                typeof size.width === 'number' &&
+                typeof size.height === 'number' &&
+                size.width > 0 &&
+                size.height > 0
+            );
+
+            if (!profile || typeof profile !== 'object') {
+                throw new Error(`Неполный trigger profile (${contextLabel}): profile отсутствует`);
+            }
+
+            if (!isValidRect(profile.inner_bbox)) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует inner_bbox`);
+            }
+
+            if (!isValidSize(profile.normalized_template_size)) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует normalized_template_size`);
+            }
+
+            if (typeof profile.template_gray_base64 !== 'string' || !profile.template_gray_base64) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует template_gray_base64`);
+            }
+
+            if (typeof profile.thumbnail_hash !== 'string' || !profile.thumbnail_hash) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует thumbnail_hash`);
+            }
+
+            if (!['orb', 'ncc'].includes(profile.feature_mode)) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): некорректный feature_mode`);
+            }
+
+            if (typeof profile.keypoints_count !== 'number') {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует keypoints_count`);
+            }
+
+            if (!profile.analysis_info || typeof profile.analysis_info !== 'object') {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует analysis_info`);
+            }
+
+            if (!isValidRect(profile.analysis_info.inner_ratio)) {
+                throw new Error(`Неполный trigger profile (${contextLabel}): отсутствует inner_ratio`);
+            }
+
+            return profile;
         }
 
         function setPreviewBusy(isBusy, label = 'Сохранить') {
@@ -937,16 +996,18 @@
                 return;
             }
 
-            const modeText = profile.feature_mode === 'orb' ? 'ORB structural confirm' : 'NCC template matching';
-            const cropText = profile.analysis_info?.used_full_outer
+            const validatedProfile = requireCompleteProfile(profile, 'setTriggerProfileInfo');
+
+            const modeText = validatedProfile.feature_mode === 'orb' ? 'ORB structural confirm' : 'NCC template matching';
+            const cropText = validatedProfile.analysis_info?.used_full_outer
                 ? 'Inner area = полная outer-зона'
-                : `Auto-crop: ${profile.inner_bbox.width}x${profile.inner_bbox.height}`;
+                : `Auto-crop: ${validatedProfile.inner_bbox.width}x${validatedProfile.inner_bbox.height}`;
 
             triggerProfileInfo.style.display = 'block';
             triggerProfileInfo.style.background = 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.12))';
             triggerProfileInfo.style.borderColor = 'rgba(16, 185, 129, 0.25)';
             triggerProfileInfo.style.color = 'var(--text-primary)';
-            triggerProfileInfo.innerHTML = `${cropText}<br><span style="color: var(--text-secondary);">Mode: ${modeText}, keypoints: ${profile.keypoints_count}, hash threshold: ${profile.analysis_info.hash_threshold}</span>`;
+            triggerProfileInfo.innerHTML = `${cropText}<br><span style="color: var(--text-secondary);">Mode: ${modeText}, keypoints: ${validatedProfile.keypoints_count}, hash threshold: ${validatedProfile.analysis_info.hash_threshold}</span>`;
         }
 
         function createPreviewDataUrlFromSourceRect(sourceRect) {
@@ -988,12 +1049,8 @@
             }
 
             const outerRect = rectToSource(region);
-            const innerBBox = profile.inner_bbox || {
-                x: 0,
-                y: 0,
-                width: outerRect.width,
-                height: outerRect.height
-            };
+            const validatedProfile = requireCompleteProfile(profile, `renderInnerPreview:${triggerKey}`);
+            const innerBBox = validatedProfile.inner_bbox;
 
             previewElement.src = createPreviewDataUrlFromSourceRect({
                 x: outerRect.x + innerBBox.x,
@@ -1226,10 +1283,10 @@
                     throw new Error(profileResult.error || 'Ошибка анализа профиля');
                 }
 
-                return {
+                return requireCompleteProfile({
                     ...profileResult,
                     success: true
-                };
+                }, 'createPersonalTriggerProfile');
             } catch (error) {
                 console.error('❌ Ошибка создания персонального профиля:', error);
                 return {
