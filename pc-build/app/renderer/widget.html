@@ -45,6 +45,7 @@
             animation: none;
             overflow: hidden;
             cursor: default;
+            position: relative;
         }
 
         .widget-container.pinned {
@@ -61,13 +62,16 @@
             padding: 10px;
         }
 
+        .widget-container.compact .widget-controls {
+            top: 8px;
+            right: 8px;
+        }
+
         .widget-header,
         .widget-container.compact .widget-header {
             min-width: 0;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            display: flex;
             align-items: center;
-            gap: 10px;
             margin-bottom: 0;
             -webkit-app-region: drag;
             cursor: grab;
@@ -80,6 +84,7 @@
 
         .player-info {
             min-width: 0;
+            width: 100%;
             display: flex;
             align-items: baseline;
             gap: 8px;
@@ -131,10 +136,33 @@
         }
 
         .widget-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 30;
             display: flex;
             align-items: center;
             gap: 6px;
+            padding: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            background: rgba(8, 10, 20, 0.86);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+            backdrop-filter: blur(14px);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 0.14s ease, visibility 0.14s ease, transform 0.14s ease;
             -webkit-app-region: no-drag;
+        }
+
+        .widget-container:hover .widget-controls,
+        .widget-container:focus-within .widget-controls {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            pointer-events: auto;
         }
 
         .control-button,
@@ -236,41 +264,6 @@
             filter: saturate(1.08) brightness(1.02);
         }
 
-        .deck-card.evolution {
-            border-color: rgba(139, 92, 246, 0.54);
-            box-shadow:
-                0 8px 18px rgba(0, 0, 0, 0.28),
-                0 0 18px rgba(139, 92, 246, 0.24);
-        }
-
-        .deck-card.hero {
-            border-color: rgba(245, 158, 11, 0.56);
-            box-shadow:
-                0 8px 18px rgba(0, 0, 0, 0.28),
-                0 0 18px rgba(245, 158, 11, 0.2);
-        }
-
-        .evolution-badge {
-            position: absolute;
-            top: 4px;
-            right: 4px;
-            min-width: 18px;
-            width: auto;
-            height: 16px;
-            padding: 0 4px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 5px;
-            background: rgba(10, 12, 24, 0.86);
-            color: #f4f7fb;
-            font-size: 9px;
-            line-height: 12px;
-            font-weight: 800;
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            animation: none;
-        }
-
         .tooltip {
             position: absolute;
             left: 50%;
@@ -370,6 +363,8 @@
 
             .widget-controls {
                 gap: 4px;
+                top: 8px;
+                right: 8px;
             }
 
             .control-button {
@@ -659,9 +654,6 @@
                 const isEvolution = evolutionLevel === 1 || !!card.is_evolution;
                 const isHero = evolutionLevel >= 2;
 
-                if (isEvolution) cardEl.classList.add('evolution');
-                if (isHero) cardEl.classList.add('hero');
-
                 const fallbackUrl = resolveFallbackImage(card, isEvolution, isHero);
                 const imageSource = await resolveCardImage(card, evolutionLevel, fallbackUrl);
 
@@ -675,13 +667,6 @@
                     }
                 };
                 cardEl.appendChild(img);
-
-                if (isEvolution || isHero) {
-                    const badge = document.createElement('span');
-                    badge.className = 'evolution-badge';
-                    badge.textContent = isHero ? 'CH' : 'EV';
-                    cardEl.appendChild(badge);
-                }
 
                 const tooltip = document.createElement('div');
                 tooltip.className = 'tooltip';
