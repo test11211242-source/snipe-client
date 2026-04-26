@@ -1096,9 +1096,10 @@ class IpcManager {
                 if (!widgetWindow) {
                     throw new Error('Окно виджета не найдено');
                 }
-                
-                if (flag) {
-                    widgetWindow.setAlwaysOnTop(true);
+
+                const bounds = widgetWindow.getBounds();
+                const keepWidgetVisible = () => {
+                    if (widgetWindow.isDestroyed()) return;
 
                     if (widgetWindow.isMinimized()) {
                         widgetWindow.restore();
@@ -1107,10 +1108,23 @@ class IpcManager {
                     if (!widgetWindow.isVisible()) {
                         widgetWindow.show();
                     }
+
+                    widgetWindow.setBounds(bounds);
+                    widgetWindow.moveTop();
+                };
+
+                if (flag) {
+                    widgetWindow.setSkipTaskbar(false);
+                    widgetWindow.setAlwaysOnTop(true, 'normal');
+                    keepWidgetVisible();
+                    setTimeout(keepWidgetVisible, 80);
+                    setTimeout(keepWidgetVisible, 300);
+                    setTimeout(keepWidgetVisible, 900);
                     
                     console.log('✅ Виджет закреплен поверх окон');
                 } else {
                     widgetWindow.setAlwaysOnTop(false);
+                    keepWidgetVisible();
                     
                     console.log('✅ Виджет откреплен от переднего плана');
                 }

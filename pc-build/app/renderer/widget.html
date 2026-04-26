@@ -73,13 +73,11 @@
             display: flex;
             align-items: center;
             margin-bottom: 0;
-            -webkit-app-region: drag;
-            cursor: grab;
+            -webkit-app-region: no-drag;
         }
 
         .widget-container.locked .widget-header {
             -webkit-app-region: no-drag;
-            cursor: default;
         }
 
         .player-info {
@@ -91,8 +89,7 @@
             overflow: hidden;
         }
 
-        .player-info::before {
-            content: "";
+        .drag-handle {
             width: 15px;
             height: 18px;
             flex: 0 0 auto;
@@ -100,10 +97,14 @@
             background-image: radial-gradient(circle, #9ca8ba 2px, transparent 2px);
             background-size: 7px 7px;
             background-position: 0 0;
+            cursor: grab;
+            -webkit-app-region: drag;
         }
 
-        .widget-container.locked .player-info::before {
+        .widget-container.locked .drag-handle {
             opacity: 0.25;
+            cursor: default;
+            -webkit-app-region: no-drag;
         }
 
         .player-name {
@@ -158,6 +159,7 @@
         }
 
         .widget-container:hover .widget-controls,
+        body:hover .widget-controls,
         .widget-container:focus-within .widget-controls {
             opacity: 1;
             visibility: visible;
@@ -222,9 +224,13 @@
             min-height: 0;
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            grid-auto-rows: minmax(0, 1fr);
             gap: 7px;
             align-items: center;
+            justify-items: center;
             margin-bottom: 0;
+            overflow: hidden;
         }
 
         .widget-container.compact .deck-container {
@@ -234,7 +240,8 @@
         .deck-card {
             position: relative;
             min-width: 0;
-            aspect-ratio: 0.78;
+            width: 100%;
+            height: 100%;
             overflow: hidden;
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 8px;
@@ -254,7 +261,7 @@
             width: 100%;
             height: 100%;
             display: block;
-            object-fit: cover;
+            object-fit: contain;
             border-radius: 7px;
             filter: saturate(1.04) brightness(0.96);
         }
@@ -378,6 +385,7 @@
     <div class="widget-container full" id="widget">
         <div class="widget-header">
             <div class="player-info">
+                <span class="drag-handle" title="Перетащить виджет"></span>
                 <span class="player-name" id="player-name">Ожидание соперника</span>
                 <span class="player-rating">
                     <img src="./assets/rating.png" class="rating-icon" alt="">

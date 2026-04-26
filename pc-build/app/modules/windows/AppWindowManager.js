@@ -151,7 +151,7 @@ class AppWindowManager extends WindowManager {
             y,
             frame: false,
             transparent: true,
-            alwaysOnTop: !!savedState.alwaysOnTop,
+            alwaysOnTop: false,
             skipTaskbar: false,
             resizable: true,
             minWidth,
