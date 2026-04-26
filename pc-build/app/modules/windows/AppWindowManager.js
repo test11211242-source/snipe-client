@@ -119,18 +119,45 @@ class AppWindowManager extends WindowManager {
             return this.getWindow('widget');
         }
 
-        const screenSize = this.getScreenSize();
+        const display = screen.getPrimaryDisplay();
+        const workArea = display.workArea;
+        const defaultBounds = {
+            width: 540,
+            height: 190,
+            x: workArea.x + workArea.width - 560,
+            y: workArea.y + 24
+        };
+        const savedState = this.appManager?.getStore?.().get('widgetState', {}) || {};
+        const savedBounds = {
+            width: Number(savedState.width) || defaultBounds.width,
+            height: Number(savedState.height) || defaultBounds.height,
+            x: Number.isFinite(Number(savedState.x)) ? Number(savedState.x) : defaultBounds.x,
+            y: Number.isFinite(Number(savedState.y)) ? Number(savedState.y) : defaultBounds.y
+        };
+        const maxWidth = Math.min(920, workArea.width);
+        const maxHeight = Math.min(520, workArea.height);
+        const minWidth = Math.min(380, maxWidth);
+        const minHeight = Math.min(108, maxHeight);
+        const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+        const width = clamp(savedBounds.width, minWidth, maxWidth);
+        const height = clamp(savedBounds.height, minHeight, maxHeight);
+        const x = clamp(savedBounds.x, workArea.x, workArea.x + workArea.width - width);
+        const y = clamp(savedBounds.y, workArea.y, workArea.y + workArea.height - height);
 
         const config = {
-            width: 450,
-            height: 350,
-            x: screenSize.width - 470,
-            y: 20,
+            width,
+            height,
+            x,
+            y,
             frame: false,
             transparent: true,
-            alwaysOnTop: false,
+            alwaysOnTop: !!savedState.alwaysOnTop,
             skipTaskbar: false,
-            resizable: false,
+            resizable: true,
+            minWidth,
+            minHeight,
+            maxWidth,
+            maxHeight,
             movable: true,
             hasShadow: true,
             focusable: true,
@@ -146,42 +173,76 @@ class AppWindowManager extends WindowManager {
             });
         }
 
+        const saveWindowState = this.createDebouncedWidgetStateSaver(window);
+
         // Магнитное прилипание к краям экрана
         window.on('moved', () => {
             if (!window || window.isDestroyed()) return;
             
             const bounds = window.getBounds();
             const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
-            const { width: screenWidth, height: screenHeight } = display.workAreaSize;
+            const area = display.workArea;
             
             const magnetDistance = 20;
             let newX = bounds.x;
             let newY = bounds.y;
             
             // Прилипание к левому краю
-            if (bounds.x < magnetDistance) {
-                newX = 0;
+            if (bounds.x < area.x + magnetDistance) {
+                newX = area.x;
             }
             // Прилипание к правому краю
-            else if (bounds.x + bounds.width > screenWidth - magnetDistance) {
-                newX = screenWidth - bounds.width;
+            else if (bounds.x + bounds.width > area.x + area.width - magnetDistance) {
+                newX = area.x + area.width - bounds.width;
             }
             
             // Прилипание к верхнему краю
-            if (bounds.y < magnetDistance) {
-                newY = 0;
+            if (bounds.y < area.y + magnetDistance) {
+                newY = area.y;
             }
             // Прилипание к нижнему краю
-            else if (bounds.y + bounds.height > screenHeight - magnetDistance) {
-                newY = screenHeight - bounds.height;
+            else if (bounds.y + bounds.height > area.y + area.height - magnetDistance) {
+                newY = area.y + area.height - bounds.height;
             }
             
             if (newX !== bounds.x || newY !== bounds.y) {
                 window.setPosition(newX, newY);
             }
+
+            saveWindowState();
         });
 
+        window.on('resized', saveWindowState);
+        window.on('resize', saveWindowState);
+
         return window;
+    }
+
+    createDebouncedWidgetStateSaver(window) {
+        let saveTimer = null;
+
+        return () => {
+            if (!window || window.isDestroyed()) return;
+
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => {
+                if (!window || window.isDestroyed()) return;
+
+                const bounds = window.getBounds();
+                const store = this.appManager?.getStore?.();
+
+                if (!store) return;
+
+                const previousState = store.get('widgetState', {}) || {};
+                store.set('widgetState', {
+                    ...previousState,
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height
+                });
+            }, 250);
+        };
     }
 
     // === ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ===

@@ -52,13 +52,13 @@ class ConfigManager {
                 autoHideMenuBar: true
             },
             widget: {
-                width: 450,
-                height: 350,
+                width: 540,
+                height: 190,
                 frame: false,
                 transparent: true,
                 alwaysOnTop: false,
                 skipTaskbar: false,
-                resizable: false,
+                resizable: true,
                 movable: true,
                 hasShadow: true,
                 focusable: true

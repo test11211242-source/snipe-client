@@ -1028,34 +1028,59 @@ class IpcManager {
         this.registerHandler('widget:toggle', async (event, playerData) => {
             console.log('🪟 IPC: Переключение виджета');
             
-            // Эмитируем событие для WindowManager
-            if (this.eventBus) {
-                this.eventBus.emit('widget:toggle', { playerData });
+            try {
+                if (this.windowManager?.hasWindow?.('widget')) {
+                    this.windowManager.closeWindow('widget');
+                    return { success: true, visible: false };
+                }
+
+                if (!this.windowManager?.createWidget) {
+                    throw new Error('WindowManager недоступен');
+                }
+
+                this.windowManager.createWidget(playerData);
+                return { success: true, visible: true };
+            } catch (error) {
+                console.error('❌ Ошибка переключения виджета:', error);
+                return { success: false, error: error.message };
             }
-            
-            return { success: true };
         });
 
         this.registerHandler('widget:close', async () => {
             console.log('🪟 IPC: Закрытие виджета');
             
-            // Эмитируем событие для WindowManager
-            if (this.eventBus) {
-                this.eventBus.emit('widget:close');
+            try {
+                if (!this.windowManager?.closeWindow) {
+                    throw new Error('WindowManager недоступен');
+                }
+
+                const closed = this.windowManager.closeWindow('widget');
+                return { success: true, closed };
+            } catch (error) {
+                console.error('❌ Ошибка закрытия виджета:', error);
+                return { success: false, error: error.message };
             }
-            
-            return { success: true };
         });
 
         this.registerHandler('widget:update-data', async (event, playerData) => {
             console.log('🔄 IPC: Обновление данных виджета');
             
-            // Эмитируем событие для WindowManager
-            if (this.eventBus) {
-                this.eventBus.emit('widget:update', { playerData });
+            try {
+                if (this.windowManager?.updateWidget) {
+                    this.windowManager.updateWidget(playerData);
+                    return { success: true };
+                }
+
+                if (!this.windowManager?.createWidget) {
+                    throw new Error('WindowManager недоступен');
+                }
+
+                this.windowManager.createWidget(playerData);
+                return { success: true };
+            } catch (error) {
+                console.error('❌ Ошибка обновления виджета:', error);
+                return { success: false, error: error.message };
             }
-            
-            return { success: true };
         });
 
         this.registerHandler('widget:setAlwaysOnTop', async (event, flag) => {
@@ -1072,19 +1097,12 @@ class IpcManager {
                     throw new Error('Окно виджета не найдено');
                 }
                 
-                // 🔧 РАБОЧЕЕ РЕШЕНИЕ ИЗ СТАРОГО ПРОЕКТА
                 if (flag) {
-                    // Устанавливаем alwaysOnTop с уровнем приоритета
-                    widgetWindow.setAlwaysOnTop(true, 'screen-saver');
+                    // Держим виджет поверх обычных окон, без агрессивного перехвата фокуса.
+                    widgetWindow.setAlwaysOnTop(true, 'floating');
+                    widgetWindow.showInactive();
                     
-                    // Показываем на всех рабочих столах
-                    widgetWindow.setVisibleOnAllWorkspaces(true);
-                    
-                    // Принудительно показываем и фокусируемся
-                    widgetWindow.show();
-                    widgetWindow.focus();
-                    
-                    console.log('✅ Виджет закреплен поверх всех окон (с screen-saver приоритетом)');
+                    console.log('✅ Виджет закреплен поверх окон');
                 } else {
                     // Отключаем alwaysOnTop
                     widgetWindow.setAlwaysOnTop(false);
@@ -1093,6 +1111,15 @@ class IpcManager {
                     widgetWindow.setVisibleOnAllWorkspaces(false);
                     
                     console.log('✅ Виджет откреплен от переднего плана');
+                }
+
+                const store = this.appManager?.getStore?.();
+                if (store) {
+                    const previousState = store.get('widgetState', {}) || {};
+                    store.set('widgetState', {
+                        ...previousState,
+                        alwaysOnTop: !!flag
+                    });
                 }
                 
                 return { success: true, alwaysOnTop: flag };
@@ -1116,7 +1143,9 @@ class IpcManager {
                     throw new Error('Окно виджета не найдено');
                 }
                 
-                widgetWindow.setSize(width, height);
+                const nextWidth = Math.max(380, Math.min(920, Number(width) || 540));
+                const nextHeight = Math.max(108, Math.min(520, Number(height) || 190));
+                widgetWindow.setSize(nextWidth, nextHeight);
                 
                 return { success: true };
             } catch (error) {

@@ -163,7 +163,7 @@
             gap: 6px;
         }
 
-        .widget-container.expanded .deck-container {
+        .widget-container.full .deck-container {
             gap: 8px;
             margin-bottom: 10px;
         }
@@ -297,7 +297,7 @@
         }
 
         /* Режимы отображения */
-        .widget-container.analytical .deck-weakness {
+        .widget-container.full .deck-weakness {
             display: block;
         }
 
@@ -381,9 +381,339 @@
             }
         }
     </style>
+    <style>
+        /* Professional overlay refresh */
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+        }
+
+        body {
+            -webkit-app-region: no-drag;
+        }
+
+        .widget-container {
+            width: 100vw;
+            height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 10px;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.11);
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015)),
+                rgba(8, 10, 20, 0.9);
+            box-shadow:
+                0 18px 42px rgba(0, 0, 0, 0.48),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(18px);
+            animation: none;
+            overflow: hidden;
+            cursor: default;
+        }
+
+        .widget-container.pinned {
+            border-color: rgba(99, 179, 237, 0.35);
+            box-shadow:
+                0 18px 42px rgba(0, 0, 0, 0.48),
+                0 0 0 1px rgba(99, 179, 237, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .widget-container.compact {
+            grid-template-rows: auto 1fr;
+            gap: 7px;
+            padding: 10px;
+        }
+
+        .widget-header,
+        .widget-container.compact .widget-header {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 0;
+            -webkit-app-region: drag;
+            cursor: grab;
+        }
+
+        .widget-container.locked .widget-header {
+            -webkit-app-region: no-drag;
+            cursor: default;
+        }
+
+        .player-info {
+            min-width: 0;
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            overflow: hidden;
+        }
+
+        .player-info::before {
+            content: "";
+            width: 15px;
+            height: 18px;
+            flex: 0 0 auto;
+            opacity: 0.65;
+            background-image: radial-gradient(circle, #9ca8ba 2px, transparent 2px);
+            background-size: 7px 7px;
+            background-position: 0 0;
+        }
+
+        .widget-container.locked .player-info::before {
+            opacity: 0.25;
+        }
+
+        .player-name {
+            min-width: 0;
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 15px;
+            line-height: 20px;
+            font-weight: 700;
+            letter-spacing: 0;
+            background: none;
+            -webkit-text-fill-color: currentColor;
+        }
+
+        .player-rating {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #c8d2df;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .rating-icon {
+            width: 14px;
+            height: 14px;
+        }
+
+        .widget-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            -webkit-app-region: no-drag;
+        }
+
+        .control-button,
+        .pin-button {
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 7px;
+            background: rgba(255, 255, 255, 0.045);
+            color: #9ca8ba;
+            cursor: pointer;
+            font-size: 0;
+            transform: none;
+            transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+        }
+
+        .control-button svg {
+            width: 15px;
+            height: 15px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.9;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .control-button:hover {
+            color: #f4f7fb;
+            border-color: rgba(99, 179, 237, 0.34);
+            background: rgba(99, 179, 237, 0.14);
+            transform: none;
+        }
+
+        .control-button:active {
+            transform: translateY(1px);
+        }
+
+        .control-button.active,
+        .pin-button.pinned {
+            color: #63b3ed;
+            border-color: rgba(99, 179, 237, 0.42);
+            background: rgba(99, 179, 237, 0.16);
+            transform: none;
+        }
+
+        .control-button.close-button:hover {
+            color: #fecaca;
+            border-color: rgba(239, 68, 68, 0.4);
+            background: rgba(239, 68, 68, 0.16);
+        }
+
+        .deck-container {
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: repeat(8, minmax(0, 1fr));
+            gap: 7px;
+            align-items: center;
+            margin-bottom: 0;
+        }
+
+        .widget-container.compact .deck-container {
+            gap: 6px;
+        }
+
+        .deck-card {
+            min-width: 0;
+            aspect-ratio: 0.78;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            background: rgba(13, 16, 30, 0.96);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+            cursor: default;
+            -webkit-app-region: no-drag;
+        }
+
+        .deck-card:hover {
+            transform: none;
+            border-color: rgba(99, 179, 237, 0.45);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+        }
+
+        .deck-card img {
+            filter: saturate(1.04) brightness(0.96);
+        }
+
+        .deck-card:hover img {
+            transform: none;
+            filter: saturate(1.08) brightness(1.02);
+        }
+
+        .deck-card.evolution {
+            border-color: rgba(139, 92, 246, 0.54);
+            box-shadow:
+                0 8px 18px rgba(0, 0, 0, 0.28),
+                0 0 18px rgba(139, 92, 246, 0.24);
+        }
+
+        .deck-card.hero {
+            border-color: rgba(245, 158, 11, 0.56);
+            box-shadow:
+                0 8px 18px rgba(0, 0, 0, 0.28),
+                0 0 18px rgba(245, 158, 11, 0.2);
+        }
+
+        .evolution-badge {
+            top: 4px;
+            right: 4px;
+            min-width: 18px;
+            width: auto;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 5px;
+            background: rgba(10, 12, 24, 0.86);
+            color: #f4f7fb;
+            font-size: 9px;
+            line-height: 12px;
+            font-weight: 800;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            animation: none;
+        }
+
+        .tooltip {
+            border-color: rgba(255, 255, 255, 0.12);
+            border-radius: 7px;
+            background: rgba(9, 11, 22, 0.96);
+            box-shadow: 0 12px 26px rgba(0, 0, 0, 0.36);
+        }
+
+        .deck-info {
+            min-width: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding-top: 0;
+            border-top: none;
+        }
+
+        .widget-container.compact .deck-info {
+            display: none;
+        }
+
+        .average-elixir,
+        .deck-weakness {
+            min-width: 0;
+            justify-content: flex-start;
+            padding: 8px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.075);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.035);
+            color: #9ca8ba;
+            font-size: 11px;
+            line-height: 15px;
+            text-align: left;
+        }
+
+        .average-elixir-value,
+        .deck-weakness strong {
+            color: #63b3ed;
+            font-size: 13px;
+            line-height: 16px;
+            font-weight: 800;
+        }
+
+        .empty-state {
+            grid-column: 1 / -1;
+            min-height: 58px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 3px;
+            padding: 10px;
+            border: 1px dashed rgba(255, 255, 255, 0.14);
+            border-radius: 9px;
+            background: rgba(255, 255, 255, 0.03);
+            text-align: center;
+        }
+
+        .empty-title {
+            font-size: 13px;
+            line-height: 18px;
+            font-weight: 800;
+        }
+
+        .empty-subtitle {
+            color: #9ca8ba;
+            font-size: 11px;
+            line-height: 15px;
+        }
+
+        @media (max-width: 450px) {
+            .player-name {
+                max-width: 150px;
+            }
+
+            .widget-controls {
+                gap: 4px;
+            }
+
+            .control-button {
+                width: 26px;
+                height: 26px;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="widget-container expanded" id="widget">
+    <div class="widget-container full" id="widget">
         <div class="widget-header">
             <div class="player-info">
                 <span class="player-name" id="player-name">Загрузка...</span>
@@ -421,12 +751,7 @@
 
     <script>
         let isPinned = false;
-        let currentMode = 'expanded'; // compact, expanded, analytical
-        let isDragging = false;
-        let dragStartX = 0;
-        let dragStartY = 0;
-        let widgetX = 0;
-        let widgetY = 0;
+        let currentMode = 'full'; // compact, full
 
         // Получаем данные игрока
         window.electronAPI.on('player-data', (data) => {
@@ -602,7 +927,7 @@
         // Переключение режима
         function toggleMode() {
             const widget = document.getElementById('widget');
-            const modes = ['compact', 'expanded', 'analytical'];
+            const modes = ['compact', 'full'];
             const currentIndex = modes.indexOf(currentMode);
             currentMode = modes[(currentIndex + 1) % modes.length];
             
@@ -611,13 +936,10 @@
             // Изменяем размер окна в зависимости от режима
             switch(currentMode) {
                 case 'compact':
-                    window.electronAPI.widget.resize(400, 100);
+                    window.electronAPI.widget.resize(520, 118);
                     break;
-                case 'expanded':
-                    window.electronAPI.widget.resize(450, 200);
-                    break;
-                case 'analytical':
-                    window.electronAPI.widget.resize(450, 250);
+                case 'full':
+                    window.electronAPI.widget.resize(540, 190);
                     break;
             }
         }
@@ -677,66 +999,400 @@
             window.electronAPI.widget.close();
         }
 
-        // Изменение прозрачности колесиком мыши
-        document.addEventListener('wheel', (e) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                const widget = document.getElementById('widget');
-                const currentOpacity = parseFloat(getComputedStyle(widget).getPropertyValue('--widget-opacity') || 1);
-                const newOpacity = Math.max(0.3, Math.min(1, currentOpacity - e.deltaY * 0.001));
-                widget.style.setProperty('--widget-opacity', newOpacity);
-            }
-        });
-
-        // Перетаскивание окна
-        const widget = document.getElementById('widget');
-        
-        widget.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.control-button') || e.target.closest('.deck-card')) return;
-            
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            widget.classList.add('dragging');
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            
-            const deltaX = e.clientX - dragStartX;
-            const deltaY = e.clientY - dragStartY;
-            
-            window.electronAPI.widget.move(deltaX, deltaY);
-            
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                widget.classList.remove('dragging');
-            }
-        });
-
-        // Горячие клавиши
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                closeWidget();
-            } else if (e.key === 'p' && e.ctrlKey) {
-                togglePin();
-            } else if (e.key === 'm' && e.ctrlKey) {
-                toggleMode();
-            }
-        });
+        // Обработчики прозрачности, drag и горячих клавиш перенесены в обновленный контроллер ниже.
 
         // Магнитное прилипание к краям (реализуется в main.js)
         
         // Инициализация
         window.addEventListener('load', () => {
-            // Устанавливаем начальный размер
-            window.electronAPI.widget.resize(450, 200);
+            // Размером теперь управляет Electron-окно и сохраненное состояние widgetState.
         });
+    </script>
+    <script>
+        window.__snipeWidget = (() => {
+            const DEFAULT_STATE = {
+                mode: 'full',
+                opacity: 1,
+                locked: false,
+                alwaysOnTop: false
+            };
+            const MODE_SIZES = {
+                full: { width: 540, height: 190 },
+                compact: { width: 520, height: 118 }
+            };
+            const ICONS = {
+                pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6"></path><path d="M10 4l1 7-4 4v2h10v-2l-4-4 1-7"></path><path d="M12 17v4"></path></svg>',
+                lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>',
+                mode: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="5" rx="1.5"></rect><rect x="4" y="14" width="7" height="5" rx="1.5"></rect><rect x="13" y="14" width="7" height="5" rx="1.5"></rect></svg>',
+                close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>'
+            };
+
+            let state = { ...DEFAULT_STATE };
+            let opacitySaveTimer = null;
+            let initialized = false;
+
+            const widgetEl = document.getElementById('widget');
+            const headerEl = widgetEl.querySelector('.widget-header');
+            const controlsEl = widgetEl.querySelector('.widget-controls');
+            const pinButton = document.getElementById('pin-button');
+            const modeButton = controlsEl.querySelector('button[onclick="toggleMode()"]');
+            const closeButton = controlsEl.querySelector('button[onclick="closeWidget()"]');
+            const deckContainer = document.getElementById('deck-container');
+            const playerNameEl = document.getElementById('player-name');
+            const playerRatingEl = document.getElementById('player-rating');
+            const averageLabelEl = document.querySelector('.average-elixir > span:first-child');
+            const averageElixirEl = document.getElementById('average-elixir');
+            const deckMetaEl = document.getElementById('deck-weakness');
+
+            const lockButton = document.createElement('button');
+            lockButton.className = 'control-button lock-button';
+            lockButton.type = 'button';
+            lockButton.title = 'Заблокировать позицию';
+            lockButton.innerHTML = ICONS.lock;
+            lockButton.addEventListener('click', () => toggleLock());
+            controlsEl.insertBefore(lockButton, modeButton);
+
+            pinButton.innerHTML = ICONS.pin;
+            modeButton.innerHTML = ICONS.mode;
+            closeButton.innerHTML = ICONS.close;
+            closeButton.classList.add('close-button');
+
+            if (averageLabelEl) {
+                averageLabelEl.textContent = 'Эликсир';
+            }
+
+            // Stop the old JavaScript drag handler. Native Electron drag is handled by CSS.
+            widgetEl.addEventListener('mousedown', (event) => {
+                if (event.target.closest('.control-button') || event.target.closest('.deck-card')) {
+                    return;
+                }
+
+                event.stopImmediatePropagation();
+            }, true);
+
+            async function initialize() {
+                if (initialized) return;
+                initialized = true;
+
+                state = sanitizeState(await readState());
+                applyState();
+
+                if (state.alwaysOnTop) {
+                    await window.electronAPI.widget.setAlwaysOnTop(true);
+                }
+            }
+
+            async function readState() {
+                try {
+                    return await window.electronAPI.store.get('widgetState', {});
+                } catch (error) {
+                    console.warn('Не удалось прочитать настройки виджета:', error);
+                    return {};
+                }
+            }
+
+            function sanitizeState(value) {
+                const next = {
+                    ...DEFAULT_STATE,
+                    ...(value || {})
+                };
+
+                next.mode = next.mode === 'compact' ? 'compact' : 'full';
+                next.opacity = Number.isFinite(Number(next.opacity))
+                    ? Math.max(0.35, Math.min(1, Number(next.opacity)))
+                    : DEFAULT_STATE.opacity;
+                next.locked = !!next.locked;
+                next.alwaysOnTop = !!next.alwaysOnTop;
+
+                return next;
+            }
+
+            async function saveState(patch = {}) {
+                try {
+                    const previous = await readState();
+                    state = sanitizeState({
+                        ...previous,
+                        ...state,
+                        ...patch
+                    });
+                    await window.electronAPI.store.set('widgetState', state);
+                } catch (error) {
+                    console.warn('Не удалось сохранить настройки виджета:', error);
+                }
+            }
+
+            function applyState() {
+                widgetEl.className = [
+                    'widget-container',
+                    state.mode,
+                    state.locked ? 'locked' : '',
+                    state.alwaysOnTop ? 'pinned' : ''
+                ].filter(Boolean).join(' ');
+
+                widgetEl.style.setProperty('--widget-opacity', String(state.opacity));
+                widgetEl.style.opacity = String(state.opacity);
+
+                pinButton.classList.toggle('pinned', state.alwaysOnTop);
+                pinButton.classList.toggle('active', state.alwaysOnTop);
+                lockButton.classList.toggle('active', state.locked);
+                modeButton.classList.toggle('active', state.mode === 'compact');
+
+                headerEl.title = state.locked ? 'Позиция заблокирована' : 'Перетащить виджет';
+                pinButton.title = state.alwaysOnTop ? 'Открепить от переднего плана' : 'Закрепить поверх окон';
+                lockButton.title = state.locked ? 'Разблокировать позицию' : 'Заблокировать позицию';
+                modeButton.title = state.mode === 'compact' ? 'Полный вид' : 'Компактный вид';
+            }
+
+            async function resizeToMode(mode) {
+                const size = MODE_SIZES[mode] || MODE_SIZES.full;
+                await window.electronAPI.widget.resize(size.width, size.height);
+                await saveState({ mode, width: size.width, height: size.height });
+            }
+
+            async function toggleMode() {
+                state.mode = state.mode === 'compact' ? 'full' : 'compact';
+                applyState();
+                await resizeToMode(state.mode);
+            }
+
+            async function togglePin() {
+                const previous = state.alwaysOnTop;
+                const next = !previous;
+
+                state.alwaysOnTop = next;
+                applyState();
+
+                const result = await window.electronAPI.widget.setAlwaysOnTop(next);
+                if (!result || !result.success) {
+                    state.alwaysOnTop = previous;
+                    applyState();
+                    return;
+                }
+
+                await saveState({ alwaysOnTop: next });
+            }
+
+            async function toggleLock() {
+                state.locked = !state.locked;
+                applyState();
+                await saveState({ locked: state.locked });
+            }
+
+            async function closeWidget() {
+                const result = await window.electronAPI.widget.close();
+                if (!result || !result.success) {
+                    window.close();
+                }
+            }
+
+            function getDeckModeLabel(mode) {
+                return mode === 'gt' ? 'GT' : 'POL';
+            }
+
+            function updateWidget(playerData) {
+                if (!playerData || playerData.player_not_found || playerData.success === false) {
+                    const nickname = playerData?.searched_nickname || playerData?.ocr_result?.nickname || 'Неизвестный игрок';
+                    playerNameEl.textContent = nickname;
+                    playerRatingEl.textContent = '-';
+                    averageElixirEl.textContent = '-';
+                    deckMetaEl.innerHTML = '<strong>0 / 8</strong> карт';
+                    showEmptyState(`Игрок ${nickname} не найден`, 'Проверьте ник или дождитесь нового поиска.');
+                    return;
+                }
+
+                const player = playerData.player || {};
+                const decks = Array.isArray(playerData.decks) ? playerData.decks : [];
+                const deckMode = playerData.deck_mode || 'pol';
+
+                playerNameEl.textContent = player.name || 'Неизвестный игрок';
+                playerRatingEl.textContent = Number(player.rating || 0).toLocaleString('ru-RU');
+
+                if (decks.length === 0) {
+                    averageElixirEl.textContent = '-';
+                    deckMetaEl.innerHTML = `<strong>${getDeckModeLabel(deckMode)}</strong> · 0 / 8`;
+                    showEmptyState(`Нет колоды в ${getDeckModeLabel(deckMode)}`, 'Виджет обновится, когда появятся данные.');
+                    return;
+                }
+
+                displayDeck(decks[0], deckMode);
+            }
+
+            function showEmptyState(title, subtitle) {
+                deckContainer.innerHTML = '';
+
+                const box = document.createElement('div');
+                box.className = 'empty-state';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'empty-title';
+                titleEl.textContent = title;
+
+                const subtitleEl = document.createElement('div');
+                subtitleEl.className = 'empty-subtitle';
+                subtitleEl.textContent = subtitle;
+
+                box.appendChild(titleEl);
+                box.appendChild(subtitleEl);
+                deckContainer.appendChild(box);
+            }
+
+            async function displayDeck(deck, deckMode) {
+                const cards = Array.isArray(deck.cards) ? deck.cards.slice(0, 8) : [];
+                deckContainer.innerHTML = '';
+
+                if (cards.length === 0) {
+                    averageElixirEl.textContent = '-';
+                    deckMetaEl.innerHTML = `<strong>${getDeckModeLabel(deckMode)}</strong> · 0 / 8`;
+                    showEmptyState('В колоде нет карт', 'Дождитесь следующего результата поиска.');
+                    return;
+                }
+
+                for (const card of cards) {
+                    deckContainer.appendChild(await createCardElement(card));
+                }
+
+                const averageElixir = Number(deck.average_elixir || calculateAverageElixir(cards));
+                averageElixirEl.textContent = Number.isFinite(averageElixir) ? averageElixir.toFixed(1) : '-';
+                deckMetaEl.innerHTML = `<strong>${getDeckModeLabel(deckMode)}</strong> · ${cards.length} / 8 карт`;
+            }
+
+            async function createCardElement(card) {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'deck-card';
+
+                const evolutionLevel = Number(card.evolution_level || 0);
+                const isEvolution = evolutionLevel === 1 || !!card.is_evolution;
+                const isHero = evolutionLevel >= 2;
+
+                if (isEvolution) cardEl.classList.add('evolution');
+                if (isHero) cardEl.classList.add('hero');
+
+                const fallbackUrl = resolveFallbackImage(card, isEvolution, isHero);
+                const imageSource = await resolveCardImage(card, evolutionLevel, fallbackUrl);
+
+                const img = document.createElement('img');
+                img.src = imageSource || fallbackUrl || '';
+                img.alt = card.name || 'card';
+                img.loading = 'lazy';
+                img.onerror = () => {
+                    if (fallbackUrl && img.src !== fallbackUrl) {
+                        img.src = fallbackUrl;
+                    }
+                };
+                cardEl.appendChild(img);
+
+                if (isEvolution || isHero) {
+                    const badge = document.createElement('span');
+                    badge.className = 'evolution-badge';
+                    badge.textContent = isHero ? 'CH' : 'EV';
+                    cardEl.appendChild(badge);
+                }
+
+                const tooltip = document.createElement('div');
+                tooltip.className = 'tooltip';
+                tooltip.textContent = card.name || 'Неизвестная карта';
+                cardEl.appendChild(tooltip);
+
+                return cardEl;
+            }
+
+            function resolveFallbackImage(card, isEvolution, isHero) {
+                if (card.display_icon_url) return card.display_icon_url;
+                if (isHero && card.hero_icon_url) return card.hero_icon_url;
+                if (isEvolution && card.evolution_icon_url) return card.evolution_icon_url;
+                return card.icon_url || '';
+            }
+
+            async function resolveCardImage(card, level, fallbackUrl) {
+                try {
+                    const cachedPath = await window.electronAPI.cache.getCardImage(card.name, level);
+                    return cachedPath || fallbackUrl;
+                } catch (error) {
+                    console.warn(`Не удалось получить кеш для ${card.name}:`, error);
+                    return fallbackUrl;
+                }
+            }
+
+            function calculateAverageElixir(cards) {
+                const costs = cards
+                    .map(card => Number(card.elixir_cost))
+                    .filter(cost => Number.isFinite(cost));
+
+                if (costs.length === 0) return 0;
+
+                return costs.reduce((sum, cost) => sum + cost, 0) / costs.length;
+            }
+
+            document.addEventListener('wheel', (event) => {
+                if (!event.ctrlKey) return;
+
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                state.opacity = Math.max(0.35, Math.min(1, state.opacity - event.deltaY * 0.001));
+                applyState();
+
+                clearTimeout(opacitySaveTimer);
+                opacitySaveTimer = setTimeout(() => {
+                    saveState({ opacity: state.opacity });
+                }, 250);
+            }, { passive: false, capture: true });
+
+            document.addEventListener('keydown', (event) => {
+                let handled = false;
+
+                if (event.key === 'Escape') {
+                    closeWidget();
+                    handled = true;
+                } else if (event.ctrlKey) {
+                    const key = event.key.toLowerCase();
+                    if (key === 'p') {
+                        togglePin();
+                        handled = true;
+                    } else if (key === 'l') {
+                        toggleLock();
+                        handled = true;
+                    } else if (key === 'm') {
+                        toggleMode();
+                        handled = true;
+                    }
+                }
+
+                if (handled) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                }
+            }, true);
+
+            initialize();
+
+            return {
+                updateWidget,
+                toggleMode,
+                togglePin,
+                toggleLock,
+                closeWidget
+            };
+        })();
+
+        function updateWidget(data) {
+            return window.__snipeWidget.updateWidget(data);
+        }
+
+        function toggleMode() {
+            return window.__snipeWidget.toggleMode();
+        }
+
+        function togglePin() {
+            return window.__snipeWidget.togglePin();
+        }
+
+        function toggleLock() {
+            return window.__snipeWidget.toggleLock();
+        }
+
+        function closeWidget() {
+            return window.__snipeWidget.closeWidget();
+        }
     </script>
 </body>
 </html>
