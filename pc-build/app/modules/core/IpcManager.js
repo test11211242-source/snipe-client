@@ -1098,17 +1098,19 @@ class IpcManager {
                 }
                 
                 if (flag) {
-                    // Держим виджет поверх обычных окон, без агрессивного перехвата фокуса.
-                    widgetWindow.setAlwaysOnTop(true, 'floating');
-                    widgetWindow.showInactive();
+                    widgetWindow.setAlwaysOnTop(true);
+
+                    if (widgetWindow.isMinimized()) {
+                        widgetWindow.restore();
+                    }
+
+                    if (!widgetWindow.isVisible()) {
+                        widgetWindow.show();
+                    }
                     
                     console.log('✅ Виджет закреплен поверх окон');
                 } else {
-                    // Отключаем alwaysOnTop
                     widgetWindow.setAlwaysOnTop(false);
-                    
-                    // Убираем с всех рабочих столов
-                    widgetWindow.setVisibleOnAllWorkspaces(false);
                     
                     console.log('✅ Виджет откреплен от переднего плана');
                 }
@@ -1143,8 +1145,8 @@ class IpcManager {
                     throw new Error('Окно виджета не найдено');
                 }
                 
-                const nextWidth = Math.max(380, Math.min(920, Number(width) || 540));
-                const nextHeight = Math.max(108, Math.min(520, Number(height) || 190));
+                const nextWidth = Math.max(300, Math.min(720, Number(width) || 420));
+                const nextHeight = Math.max(280, Math.min(720, Number(height) || 360));
                 widgetWindow.setSize(nextWidth, nextHeight);
                 
                 return { success: true };

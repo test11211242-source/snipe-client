@@ -52,8 +52,8 @@ class ConfigManager {
                 autoHideMenuBar: true
             },
             widget: {
-                width: 540,
-                height: 190,
+                width: 420,
+                height: 360,
                 frame: false,
                 transparent: true,
                 alwaysOnTop: false,
