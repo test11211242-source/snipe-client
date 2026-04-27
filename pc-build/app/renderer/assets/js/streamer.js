@@ -60,6 +60,17 @@ class StreamerPanel {
             loading: true
         };
 
+        this.streamTitleState = {
+            loading: true,
+            settings: null,
+            accounts: [],
+            session: null,
+            twitch: null,
+            recentResults: [],
+            previewTitle: '#134·972🏅|8W-7L|Δ-32|Название стрима',
+            error: null
+        };
+
         console.log('[Streamer] StreamerPanel создан');
         this.init();
     }
@@ -105,6 +116,9 @@ class StreamerPanel {
              
             // Инициализируем deck sharing
             await this.initializeDeckSharing();
+
+            // Инициализируем серверное автоназвание
+            await this.initializeStreamTitle();
             
             // Обновляем статус бота
             await this.updateBotStatus();
@@ -170,7 +184,41 @@ class StreamerPanel {
             deckSharingToggle.addEventListener('change', (e) => this.toggleDeckSharing(e.target.checked));
         }
 
+        this.setupStreamTitleControls();
+
         console.log('[Streamer] Event listeners настроены');
+    }
+
+    setupStreamTitleControls() {
+        const enabledToggle = document.getElementById('streamTitleEnabled');
+        const addAccountBtn = document.getElementById('stream-title-add-account-btn');
+        const saveSettingsBtn = document.getElementById('stream-title-save-settings-btn');
+        const resetBtn = document.getElementById('stream-title-reset-btn');
+        const pauseBtn = document.getElementById('stream-title-pause-btn');
+        const undoBtn = document.getElementById('stream-title-undo-btn');
+        const restoreBtn = document.getElementById('stream-title-restore-btn');
+
+        if (enabledToggle) {
+            enabledToggle.addEventListener('change', (event) => this.toggleStreamTitle(event.target.checked));
+        }
+        if (addAccountBtn) {
+            addAccountBtn.addEventListener('click', () => this.addStreamTitleAccount());
+        }
+        if (saveSettingsBtn) {
+            saveSettingsBtn.addEventListener('click', () => this.saveStreamTitleSettings());
+        }
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => this.resetStreamTitleSession());
+        }
+        if (pauseBtn) {
+            pauseBtn.addEventListener('click', () => this.toggleStreamTitlePause());
+        }
+        if (undoBtn) {
+            undoBtn.addEventListener('click', () => this.undoStreamTitleResult());
+        }
+        if (restoreBtn) {
+            restoreBtn.addEventListener('click', () => this.restoreOriginalStreamTitle());
+        }
     }
 
     setupTabs() {
@@ -545,6 +593,9 @@ class StreamerPanel {
             case 'twitch':
                 this.updateTwitchTab();
                 break;
+            case 'stream-title':
+                this.updateStreamTitleUI();
+                break;
             // Добавим обработчики для других вкладок позже
         }
     }
@@ -912,12 +963,299 @@ class StreamerPanel {
         console.log('[Streamer] Обновлена вкладка Twitch');
     }
 
+    // === STREAM TITLE METHODS ===
+
+    async initializeStreamTitle() {
+        try {
+            await this.loadStreamTitleStatus();
+        } catch (error) {
+            console.error('[Streamer] Ошибка инициализации stream title:', error);
+        }
+    }
+
+    async loadStreamTitleStatus() {
+        try {
+            const response = await this.apiCall('/api/streamer/title/status');
+            if (!response.success) {
+                throw new Error(response.error || 'Не удалось получить статус автоназвания');
+            }
+
+            this.streamTitleState.loading = false;
+            this.streamTitleState.settings = response.settings || {};
+            this.streamTitleState.accounts = response.accounts || [];
+            this.streamTitleState.session = response.session || null;
+            this.streamTitleState.twitch = response.twitch || {};
+            this.streamTitleState.recentResults = response.recent_results || [];
+            this.streamTitleState.previewTitle = response.preview_title || response.default_template || '';
+            this.streamTitleState.error = null;
+            this.updateStreamTitleUI();
+        } catch (error) {
+            this.streamTitleState.loading = false;
+            this.streamTitleState.error = error.message;
+            this.updateStreamTitleUI();
+        }
+    }
+
+    updateStreamTitleUI() {
+        const state = this.streamTitleState;
+        const settings = state.settings || {};
+        const session = state.session;
+        const twitch = state.twitch || {};
+
+        const enabledToggle = document.getElementById('streamTitleEnabled');
+        if (enabledToggle) {
+            enabledToggle.checked = !!settings.enabled;
+            enabledToggle.disabled = state.loading;
+        }
+
+        const badge = document.getElementById('stream-title-badge');
+        if (badge) {
+            badge.textContent = settings.enabled ? 'ON' : 'OFF';
+            badge.style.background = settings.enabled ? 'var(--success)' : 'var(--accent-purple)';
+        }
+
+        this.setText('stream-title-twitch-status', twitch.connected ? `@${twitch.username || 'connected'}` : 'Не подключен');
+        this.setText('stream-title-live-status', twitch.online ? 'Online' : 'Offline');
+        this.setText('stream-title-session-status', session ? 'Активна' : 'Ожидание стрима');
+        this.setText('stream-title-preview', state.previewTitle || '#134·972🏅|8W-7L|Δ-32|Название стрима');
+
+        const templateInput = document.getElementById('stream-title-template');
+        if (templateInput && document.activeElement !== templateInput) {
+            templateInput.value = settings.prefix_template || '#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|';
+        }
+
+        this.setValue('stream-title-wl-mode', settings.wl_mode || 'total');
+        this.setValue('stream-title-account-mode', settings.account_display_mode || 'last_active');
+        this.setChecked('stream-title-include-rank', settings.include_rank !== false);
+        this.setChecked('stream-title-include-elo', settings.include_elo !== false);
+        this.setChecked('stream-title-include-wl', settings.include_wl !== false);
+        this.setChecked('stream-title-include-delta', settings.include_delta !== false);
+
+        const pauseBtn = document.getElementById('stream-title-pause-btn');
+        if (pauseBtn) {
+            pauseBtn.textContent = settings.paused ? 'Продолжить' : 'Пауза';
+        }
+
+        const totalWins = session?.total_wins || 0;
+        const totalLosses = session?.total_losses || 0;
+        this.setText('stream-title-session-wl', `${totalWins}W-${totalLosses}L`);
+        this.setText('stream-title-active-account', this.getActiveAccountLabel(session));
+        this.setText('stream-title-last-result', this.getLastStreamTitleResult());
+        this.renderStreamTitleAccounts();
+    }
+
+    renderStreamTitleAccounts() {
+        const container = document.getElementById('stream-title-accounts-list');
+        if (!container) return;
+
+        const accounts = this.streamTitleState.accounts || [];
+        if (!accounts.length) {
+            container.innerHTML = '<div style="color: var(--text-secondary); font-size: 14px;">Аккаунты еще не добавлены</div>';
+            return;
+        }
+
+        container.innerHTML = accounts.map((account) => {
+            const name = this.escapeHtml(account.alias || account.name || account.tag);
+            const tag = this.escapeHtml(account.tag || '');
+            const rank = account.current_rank ? `#${account.current_rank}` : '#?';
+            const elo = account.current_elo ? `${account.current_elo}🏅` : '?🏅';
+            return `
+                <div class="account-row">
+                    <div class="account-main">
+                        <div class="account-name">${name}</div>
+                        <div class="account-meta">${rank}·${elo} · ${tag}</div>
+                    </div>
+                    <div class="status-dot ${account.enabled ? 'success' : ''}"></div>
+                    <button class="btn btn-secondary" data-remove-stream-title-account="${tag}">Удалить</button>
+                </div>
+            `;
+        }).join('');
+
+        container.querySelectorAll('[data-remove-stream-title-account]').forEach((button) => {
+            button.addEventListener('click', () => this.removeStreamTitleAccount(button.dataset.removeStreamTitleAccount));
+        });
+    }
+
+    async toggleStreamTitle(enabled) {
+        if (enabled && !this.streamTitleState.twitch?.connected) {
+            this.showStreamTitleMessage('Сначала подключите Twitch', 'warning');
+            const toggle = document.getElementById('streamTitleEnabled');
+            if (toggle) toggle.checked = false;
+            return;
+        }
+
+        try {
+            await this.apiCall('/api/streamer/title/enabled', 'POST', { enabled });
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage(enabled ? 'Автоназвание включено' : 'Автоназвание выключено', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+            await this.loadStreamTitleStatus();
+        }
+    }
+
+    async saveStreamTitleSettings() {
+        const payload = {
+            prefix_template: document.getElementById('stream-title-template')?.value || '#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|',
+            wl_mode: document.getElementById('stream-title-wl-mode')?.value || 'total',
+            account_display_mode: document.getElementById('stream-title-account-mode')?.value || 'last_active',
+            include_rank: document.getElementById('stream-title-include-rank')?.checked !== false,
+            include_elo: document.getElementById('stream-title-include-elo')?.checked !== false,
+            include_wl: document.getElementById('stream-title-include-wl')?.checked !== false,
+            include_delta: document.getElementById('stream-title-include-delta')?.checked !== false
+        };
+
+        try {
+            this.setButtonLoading('stream-title-save-settings-btn', true);
+            await this.apiCall('/api/streamer/title/settings', 'POST', payload);
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage('Настройки сохранены', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        } finally {
+            this.setButtonLoading('stream-title-save-settings-btn', false);
+        }
+    }
+
+    async addStreamTitleAccount() {
+        const tagInput = document.getElementById('stream-title-account-tag');
+        const aliasInput = document.getElementById('stream-title-account-alias');
+        const tag = tagInput?.value?.trim();
+        const alias = aliasInput?.value?.trim() || '';
+
+        if (!tag) {
+            this.showStreamTitleMessage('Введите тег аккаунта', 'warning');
+            return;
+        }
+
+        try {
+            this.setButtonLoading('stream-title-add-account-btn', true);
+            await this.apiCall('/api/streamer/title/accounts', 'POST', { tag, alias });
+            if (tagInput) tagInput.value = '';
+            if (aliasInput) aliasInput.value = '';
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage('Аккаунт добавлен', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        } finally {
+            this.setButtonLoading('stream-title-add-account-btn', false);
+        }
+    }
+
+    async removeStreamTitleAccount(tag) {
+        try {
+            await this.apiCall(`/api/streamer/title/accounts/${encodeURIComponent(tag)}`, 'DELETE');
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage('Аккаунт удален', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        }
+    }
+
+    async resetStreamTitleSession() {
+        try {
+            await this.apiCall('/api/streamer/title/reset', 'POST');
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage('W/L сброшен', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        }
+    }
+
+    async toggleStreamTitlePause() {
+        const paused = !(this.streamTitleState.settings?.paused);
+        try {
+            await this.apiCall('/api/streamer/title/pause', 'POST', { paused });
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage(paused ? 'Пауза включена' : 'Пауза снята', 'success');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        }
+    }
+
+    async undoStreamTitleResult() {
+        try {
+            const response = await this.apiCall('/api/streamer/title/undo', 'POST');
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage(response.message || 'Последний результат отменен', response.success ? 'success' : 'warning');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        }
+    }
+
+    async restoreOriginalStreamTitle() {
+        try {
+            const response = await this.apiCall('/api/streamer/title/restore-title', 'POST');
+            await this.loadStreamTitleStatus();
+            this.showStreamTitleMessage(response.success ? 'Оригинальное название возвращено' : (response.message || 'Название не изменено'), response.success ? 'success' : 'warning');
+        } catch (error) {
+            this.showStreamTitleMessage(error.message, 'error');
+        }
+    }
+
+    getActiveAccountLabel(session) {
+        const tag = session?.active_account_tag;
+        if (!tag) return '—';
+        const account = (this.streamTitleState.accounts || []).find((item) => item.tag === tag);
+        return account?.alias || account?.name || tag;
+    }
+
+    getLastStreamTitleResult() {
+        const result = this.streamTitleState.recentResults?.[0];
+        if (!result) return '—';
+        const label = result.result === 'win' ? 'Win' : result.result === 'loss' ? 'Loss' : 'Draw';
+        return `${label} · ${result.account_tag}`;
+    }
+
+    showStreamTitleMessage(text, type = 'info') {
+        const container = document.getElementById('stream-title-messages');
+        if (!container) {
+            this.showMessage(text, type);
+            return;
+        }
+        container.innerHTML = '';
+        const message = document.createElement('div');
+        message.className = `message ${type} show`;
+        message.innerHTML = `<span>${this.getMessageIcon(type)}</span><span>${this.escapeHtml(text)}</span>`;
+        container.appendChild(message);
+        setTimeout(() => {
+            if (message.parentNode) {
+                message.remove();
+            }
+        }, 4000);
+    }
+
+    setText(id, value) {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    }
+
+    setValue(id, value) {
+        const element = document.getElementById(id);
+        if (element && document.activeElement !== element) element.value = value;
+    }
+
+    setChecked(id, value) {
+        const element = document.getElementById(id);
+        if (element) element.checked = !!value;
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     startPeriodicUpdates() {
         // Обновляем статус каждые 5 секунд
         this.updateInterval = setInterval(() => {
             Promise.allSettled([
                 this.refreshPredictionEnvironment(),
-                this.updateBotStatus()
+                this.updateBotStatus(),
+                this.loadStreamTitleStatus()
             ]);
         }, 5000);
         

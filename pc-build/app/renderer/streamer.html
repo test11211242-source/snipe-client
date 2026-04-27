@@ -291,6 +291,104 @@
             gap: 20px;
         }
 
+        .form-control {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--glass);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--accent-purple);
+        }
+
+        .field-label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .compact-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+        }
+
+        .metric-box {
+            padding: 14px;
+            background: var(--glass);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .title-preview {
+            padding: 14px;
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        .account-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            background: var(--glass);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .account-main {
+            min-width: 0;
+        }
+
+        .account-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .account-meta {
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
         /* Buttons */
         .btn {
             padding: 12px 20px;
@@ -569,6 +667,10 @@
                     <span class="tab-label">Автопрогнозы</span>
                     <span class="tab-badge" id="predictions-badge">0</span>
                 </div>
+                <div class="tab-item" data-tab="stream-title">
+                    <span class="tab-label">Название стрима</span>
+                    <span class="tab-badge" id="stream-title-badge">OFF</span>
+                </div>
                 <div class="tab-item" data-tab="overlay">
                     <span class="tab-label">Оверлей</span>
                     <span class="tab-badge">Скоро</span>
@@ -792,6 +894,149 @@
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <input type="checkbox" id="smart-predictions" style="width: 16px; height: 16px;">
                             <label for="smart-predictions" style="font-size: 14px; color: var(--text-primary); cursor: pointer;">Умные прогнозы (учитывать статистику)</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stream Title Tab -->
+            <div class="content-panel" data-panel="stream-title">
+                <div class="content-header">
+                    <h2 class="content-title">Название стрима</h2>
+                    <p class="content-description">
+                        Серверное автоназвание Twitch по Clash API: аккаунты, W/L, ELO и локальный мировой топ
+                    </p>
+                </div>
+
+                <div id="stream-title-messages"></div>
+
+                <div class="card-grid">
+                    <div class="card">
+                        <div class="card-title" style="justify-content: space-between;">
+                            <span>Автоназвание</span>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="streamTitleEnabled" class="toggle">
+                                <label for="streamTitleEnabled" class="toggle-label">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="compact-grid">
+                            <div class="metric-box">
+                                <div class="metric-label">Twitch</div>
+                                <div class="metric-value" id="stream-title-twitch-status">Проверяем...</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-label">Стрим</div>
+                                <div class="metric-value" id="stream-title-live-status">—</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-label">Сессия</div>
+                                <div class="metric-value" id="stream-title-session-status">—</div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 16px;">
+                            <div class="field-label">Предпросмотр</div>
+                            <div class="title-preview" id="stream-title-preview">#134·972🏅|8W-7L|Δ-32|Название стрима</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Clash аккаунты</span>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 16px;">
+                            <div>
+                                <label class="field-label" for="stream-title-account-tag">Тег</label>
+                                <input class="form-control" id="stream-title-account-tag" placeholder="#ABC123">
+                            </div>
+                            <div>
+                                <label class="field-label" for="stream-title-account-alias">Название</label>
+                                <input class="form-control" id="stream-title-account-alias" placeholder="Main">
+                            </div>
+                            <button class="btn btn-primary" id="stream-title-add-account-btn">Добавить</button>
+                        </div>
+
+                        <div id="stream-title-accounts-list"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>Формат и логика</span>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 18px;">
+                        <div>
+                            <label class="field-label" for="stream-title-template">Шаблон префикса</label>
+                            <input class="form-control" id="stream-title-template" value="#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|">
+                        </div>
+                        <div>
+                            <label class="field-label" for="stream-title-wl-mode">W/L счетчик</label>
+                            <select class="form-control" id="stream-title-wl-mode">
+                                <option value="total">Общий за стрим</option>
+                                <option value="active">По активному аккаунту</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="field-label" for="stream-title-account-mode">Что показывать</label>
+                            <select class="form-control" id="stream-title-account-mode">
+                                <option value="last_active">Последний активный</option>
+                                <option value="manual">Выбранный вручную</option>
+                                <option value="best_elo">Лучший по ELO</option>
+                                <option value="multiple">Несколько аккаунтов</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="compact-grid" style="margin-bottom: 18px;">
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="stream-title-include-rank" checked>
+                            <span>Показывать место</span>
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="stream-title-include-elo" checked>
+                            <span>Показывать ELO</span>
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="stream-title-include-wl" checked>
+                            <span>Показывать W/L</span>
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="stream-title-include-delta" checked>
+                            <span>Показывать Δ</span>
+                        </label>
+                    </div>
+
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" id="stream-title-save-settings-btn">Сохранить</button>
+                        <button class="btn btn-secondary" id="stream-title-reset-btn">Сбросить W/L</button>
+                        <button class="btn btn-secondary" id="stream-title-pause-btn">Пауза</button>
+                        <button class="btn btn-secondary" id="stream-title-undo-btn">Undo</button>
+                        <button class="btn btn-secondary" id="stream-title-restore-btn">Вернуть название</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>Текущая сессия</span>
+                    </div>
+
+                    <div class="compact-grid">
+                        <div class="metric-box">
+                            <div class="metric-label">Активный аккаунт</div>
+                            <div class="metric-value" id="stream-title-active-account">—</div>
+                        </div>
+                        <div class="metric-box">
+                            <div class="metric-label">W/L</div>
+                            <div class="metric-value" id="stream-title-session-wl">0W-0L</div>
+                        </div>
+                        <div class="metric-box">
+                            <div class="metric-label">Последний результат</div>
+                            <div class="metric-value" id="stream-title-last-result">—</div>
                         </div>
                     </div>
                 </div>
