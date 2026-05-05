@@ -67,7 +67,18 @@ class StreamerPanel {
             session: null,
             twitch: null,
             recentResults: [],
-            previewTitle: '#134·972🏅|8W-7L|Δ-32|Название стрима',
+            previewTitle: '[#134 & 972🏅(↓32) • 8W-7L] Название стрима',
+            error: null
+        };
+
+        this.overlayWidgetState = {
+            loading: true,
+            settings: null,
+            state: null,
+            widgetUrl: '',
+            stateUrl: '',
+            opponentWidgetPageUrl: '',
+            streamerStatsWidgetPageUrl: '',
             error: null
         };
 
@@ -119,6 +130,9 @@ class StreamerPanel {
 
             // Инициализируем серверное автоназвание
             await this.initializeStreamTitle();
+
+            // Инициализируем OBS widgets settings
+            await this.initializeOverlayWidgets();
             
             // Обновляем статус бота
             await this.updateBotStatus();
@@ -165,14 +179,9 @@ class StreamerPanel {
             stopBotBtn.addEventListener('click', () => this.stopBot());
         }
 
-        const configureResultTriggerAreaBtn = document.getElementById('configure-result-trigger-area-btn');
-        if (configureResultTriggerAreaBtn) {
-            configureResultTriggerAreaBtn.addEventListener('click', () => this.configureResultTriggerArea());
-        }
-
-        const configureResultDataAreaBtn = document.getElementById('configure-result-data-area-btn');
-        if (configureResultDataAreaBtn) {
-            configureResultDataAreaBtn.addEventListener('click', () => this.configureResultDataArea());
+        const configureResultAreasBtn = document.getElementById('configure-result-areas-btn');
+        if (configureResultAreasBtn) {
+            configureResultAreasBtn.addEventListener('click', () => this.configureResultAreas());
         }
 
         // Настройки прогнозов
@@ -185,6 +194,7 @@ class StreamerPanel {
         }
 
         this.setupStreamTitleControls();
+        this.setupOverlayWidgetControls();
 
         console.log('[Streamer] Event listeners настроены');
     }
@@ -218,6 +228,30 @@ class StreamerPanel {
         }
         if (restoreBtn) {
             restoreBtn.addEventListener('click', () => this.restoreOriginalStreamTitle());
+        }
+    }
+
+    setupOverlayWidgetControls() {
+        const saveBtn = document.getElementById('overlay-save-settings-btn');
+        const refreshBtn = document.getElementById('overlay-refresh-btn');
+        const resetTokenBtn = document.getElementById('overlay-reset-token-btn');
+        const copyStatsBtn = document.getElementById('overlay-copy-stats-url-btn');
+        const copyOpponentBtn = document.getElementById('overlay-copy-opponent-url-btn');
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.saveOverlayWidgetSettings());
+        }
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.loadOverlayWidgetStatus());
+        }
+        if (resetTokenBtn) {
+            resetTokenBtn.addEventListener('click', () => this.resetOverlayWidgetToken());
+        }
+        if (copyStatsBtn) {
+            copyStatsBtn.addEventListener('click', () => this.copyOverlayUrl('stats'));
+        }
+        if (copyOpponentBtn) {
+            copyOpponentBtn.addEventListener('click', () => this.copyOverlayUrl('opponent'));
         }
     }
 
@@ -396,9 +430,9 @@ class StreamerPanel {
             const config = result?.config || {};
 
             this.predictionAreasState.triggerArea = config.result_trigger_area || null;
-            this.predictionAreasState.triggerConfigured = !!config.result_trigger_area;
+            this.predictionAreasState.triggerConfigured = this.hasResultTriggerProfile(config.result_trigger_area);
             this.predictionAreasState.dataArea = config.result_data_area || null;
-            this.predictionAreasState.dataConfigured = !!config.result_data_area;
+            this.predictionAreasState.dataConfigured = this.hasResultDataArea(config.result_data_area);
         } catch (error) {
             console.error('❌ [Streamer] Ошибка получения зон результата:', error);
             this.predictionAreasState.triggerConfigured = false;
@@ -408,6 +442,41 @@ class StreamerPanel {
         } finally {
             this.predictionAreasState.loading = false;
         }
+    }
+
+    isPositiveNumber(value) {
+        return typeof value === 'number' && Number.isFinite(value) && value > 0;
+    }
+
+    isValidRegionRect(area) {
+        return !!(
+            area &&
+            typeof area.x === 'number' &&
+            Number.isFinite(area.x) &&
+            typeof area.y === 'number' &&
+            Number.isFinite(area.y) &&
+            this.isPositiveNumber(area.width) &&
+            this.isPositiveNumber(area.height)
+        );
+    }
+
+    hasResultDataArea(area) {
+        return this.isValidRegionRect(area) && this.isValidRegionRect(area.ratio);
+    }
+
+    hasResultTriggerProfile(area) {
+        const profile = area?.trigger_profile;
+        return this.hasResultDataArea(area) && !!(
+            profile &&
+            profile.schema_version === 2 &&
+            this.isValidRegionRect(profile.outer_ratio) &&
+            this.isValidRegionRect(profile.inner_ratio) &&
+            typeof profile.template_gray_base64 === 'string' &&
+            profile.template_gray_base64.length > 0 &&
+            typeof profile.thumbnail_hash === 'string' &&
+            profile.thumbnail_hash.length > 0 &&
+            ['orb', 'ncc'].includes(profile.feature_mode)
+        );
     }
 
     updatePredictionRequirementsUI() {
@@ -436,6 +505,9 @@ class StreamerPanel {
                 const area = this.predictionAreasState.triggerArea;
                 resultTriggerAreaStatus.textContent = `Настроена: ${area.width}x${area.height}`;
                 resultTriggerAreaStatus.style.color = 'var(--success)';
+            } else if (this.predictionAreasState.triggerArea) {
+                resultTriggerAreaStatus.textContent = 'Устарела: перенастройте';
+                resultTriggerAreaStatus.style.color = 'var(--error)';
             } else {
                 resultTriggerAreaStatus.textContent = 'Не настроена';
                 resultTriggerAreaStatus.style.color = 'var(--warning)';
@@ -450,6 +522,9 @@ class StreamerPanel {
                 const area = this.predictionAreasState.dataArea;
                 resultDataAreaStatus.textContent = `Настроена: ${area.width}x${area.height}`;
                 resultDataAreaStatus.style.color = 'var(--success)';
+            } else if (this.predictionAreasState.dataArea) {
+                resultDataAreaStatus.textContent = 'Устарела: перенастройте';
+                resultDataAreaStatus.style.color = 'var(--error)';
             } else {
                 resultDataAreaStatus.textContent = 'Не настроена';
                 resultDataAreaStatus.style.color = 'var(--warning)';
@@ -554,6 +629,13 @@ class StreamerPanel {
         );
     }
 
+    async configureResultAreas() {
+        return this.openPredictionAreaSetup(
+            'streamer_result_areas',
+            'Окно настройки зон результата открыто'
+        );
+    }
+
     switchTab(tabName) {
         console.log(`[Streamer] Переключение на вкладку: ${tabName}`);
 
@@ -595,6 +677,9 @@ class StreamerPanel {
                 break;
             case 'stream-title':
                 this.updateStreamTitleUI();
+                break;
+            case 'overlay':
+                this.loadOverlayWidgetStatus();
                 break;
             // Добавим обработчики для других вкладок позже
         }
@@ -1017,11 +1102,11 @@ class StreamerPanel {
         this.setText('stream-title-twitch-status', twitch.connected ? `@${twitch.username || 'connected'}` : 'Не подключен');
         this.setText('stream-title-live-status', twitch.online ? 'Online' : 'Offline');
         this.setText('stream-title-session-status', session ? 'Активна' : 'Ожидание стрима');
-        this.setText('stream-title-preview', state.previewTitle || '#134·972🏅|8W-7L|Δ-32|Название стрима');
+        this.setText('stream-title-preview', state.previewTitle || '[#134 & 972🏅(↓32) • 8W-7L] Название стрима');
 
         const templateInput = document.getElementById('stream-title-template');
         if (templateInput && document.activeElement !== templateInput) {
-            templateInput.value = settings.prefix_template || '#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|';
+            templateInput.value = settings.prefix_template || '[#{rank} & {elo}🏅({delta}) • {wins}W-{losses}L]';
         }
 
         this.setValue('stream-title-wl-mode', settings.wl_mode || 'total');
@@ -1063,7 +1148,7 @@ class StreamerPanel {
                 <div class="account-row">
                     <div class="account-main">
                         <div class="account-name">${name}</div>
-                        <div class="account-meta">${rank}·${elo} · ${tag}</div>
+                        <div class="account-meta">${rank} & ${elo} · ${tag}</div>
                     </div>
                     <div class="status-dot ${account.enabled ? 'success' : ''}"></div>
                     <button class="btn btn-secondary" data-remove-stream-title-account="${tag}">Удалить</button>
@@ -1096,7 +1181,7 @@ class StreamerPanel {
 
     async saveStreamTitleSettings() {
         const payload = {
-            prefix_template: document.getElementById('stream-title-template')?.value || '#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|',
+            prefix_template: document.getElementById('stream-title-template')?.value || '[#{rank} & {elo}🏅({delta}) • {wins}W-{losses}L]',
             wl_mode: document.getElementById('stream-title-wl-mode')?.value || 'total',
             account_display_mode: document.getElementById('stream-title-account-mode')?.value || 'last_active',
             include_rank: document.getElementById('stream-title-include-rank')?.checked !== false,
@@ -1193,6 +1278,210 @@ class StreamerPanel {
         }
     }
 
+    // === OVERLAY / OBS WIDGET METHODS ===
+
+    async initializeOverlayWidgets() {
+        try {
+            await this.loadOverlayWidgetStatus();
+        } catch (error) {
+            console.error('[Streamer] Ошибка инициализации overlay widgets:', error);
+        }
+    }
+
+    async loadOverlayWidgetStatus() {
+        try {
+            const response = await this.apiCall('/api/streamer/opponent-widget/status');
+            if (!response.success) {
+                throw new Error(response.error || 'Не удалось получить настройки виджетов');
+            }
+
+            this.overlayWidgetState.loading = false;
+            this.overlayWidgetState.settings = response.settings || {};
+            this.overlayWidgetState.state = response.state || null;
+            this.overlayWidgetState.widgetUrl = response.widget_url || '';
+            this.overlayWidgetState.stateUrl = response.state_url || '';
+            this.overlayWidgetState.opponentWidgetPageUrl = response.opponent_widget_page_url || '';
+            this.overlayWidgetState.streamerStatsWidgetPageUrl = response.streamer_stats_widget_page_url || '';
+            this.overlayWidgetState.error = null;
+            this.updateOverlayWidgetUI();
+        } catch (error) {
+            this.overlayWidgetState.loading = false;
+            this.overlayWidgetState.error = error.message;
+            this.updateOverlayWidgetUI();
+            this.showOverlayWidgetMessage(error.message, 'error');
+        }
+    }
+
+    updateOverlayWidgetUI() {
+        const settings = this.overlayWidgetState.settings || {};
+        const state = this.overlayWidgetState.state || {};
+
+        this.setChecked('overlay-widgets-enabled', !!settings.enabled);
+        this.setChecked('overlay-stats-enabled', settings.streamer_stats_enabled !== false);
+        this.setChecked('overlay-opponent-enabled', settings.opponent_enabled !== false);
+        this.setChecked('overlay-preview-mode', !!settings.preview_mode);
+        this.setChecked('overlay-matchup-enabled', settings.matchup_enabled !== false);
+
+        this.setValue('overlay-preview-target', settings.preview_target || 'both');
+        this.setValue('overlay-widget-corner-style', settings.widget_corner_style || 'rounded');
+        this.setValue('overlay-streamer-account-mode', settings.streamer_account_mode || 'stream_title');
+        this.setValue('overlay-manual-streamer-tag', settings.manual_streamer_tag || '');
+        this.setValue('overlay-recent-limit', settings.recent_limit || 10);
+        const matchupRankLimits = Array.isArray(settings.matchup_rank_limits)
+            ? settings.matchup_rank_limits.map(Number)
+            : [200, 500, 1000];
+        [100, 200, 500, 1000].forEach(limit => {
+            this.setChecked(`overlay-matchup-top-${limit}`, matchupRankLimits.includes(limit));
+        });
+        this.setValue('overlay-matchup-min-games', settings.matchup_min_games || 5);
+        this.setValue('overlay-opponent-display-seconds', settings.opponent_display_seconds || 30);
+        this.setValue('overlay-opponent-slide-seconds', settings.opponent_slide_seconds || 15);
+        this.setValue('overlay-opponent-transition-ms', settings.opponent_transition_ms || 550);
+        this.setValue('overlay-stats-main-seconds', settings.stats_main_seconds || 15);
+        this.setValue('overlay-stats-delta-seconds', settings.stats_delta_seconds || 5);
+        this.setValue('overlay-stats-between-seconds', settings.stats_between_seconds || 4);
+        this.setValue('overlay-stats-poll-ms', settings.stats_poll_ms || 1000);
+        this.setValue('overlay-stats-transition-ms', settings.stats_transition_ms || 500);
+
+        this.setValue('overlay-stats-url', this.overlayWidgetState.streamerStatsWidgetPageUrl || '');
+        this.setValue('overlay-opponent-url', this.overlayWidgetState.opponentWidgetPageUrl || '');
+
+        const badge = document.getElementById('overlay-widget-badge');
+        if (badge) {
+            badge.textContent = settings.enabled ? (settings.preview_mode ? 'PREVIEW' : 'ON') : 'OFF';
+            badge.style.background = settings.enabled
+                ? (settings.preview_mode ? 'var(--warning)' : 'var(--success)')
+                : 'var(--accent-purple)';
+        }
+
+        const previewCheckbox = document.getElementById('overlay-preview-mode');
+        if (previewCheckbox) {
+            previewCheckbox.title = state?.display?.preview_mode
+                ? 'Preview включен: виджеты принудительно видимы для настройки OBS'
+                : 'Preview выключен: виджеты работают по live-логике';
+        }
+    }
+
+    collectOverlayWidgetSettings() {
+        return {
+            enabled: document.getElementById('overlay-widgets-enabled')?.checked === true,
+            streamer_stats_enabled: document.getElementById('overlay-stats-enabled')?.checked !== false,
+            opponent_enabled: document.getElementById('overlay-opponent-enabled')?.checked !== false,
+            preview_mode: document.getElementById('overlay-preview-mode')?.checked === true,
+            preview_target: document.getElementById('overlay-preview-target')?.value || 'both',
+            widget_corner_style: document.getElementById('overlay-widget-corner-style')?.value || 'rounded',
+            streamer_account_mode: document.getElementById('overlay-streamer-account-mode')?.value || 'stream_title',
+            manual_streamer_tag: document.getElementById('overlay-manual-streamer-tag')?.value || '',
+            recent_limit: this.getNumberInputValue('overlay-recent-limit', 10),
+            matchup_enabled: document.getElementById('overlay-matchup-enabled')?.checked !== false,
+            matchup_rank_limits: [100, 200, 500, 1000].filter(limit => document.getElementById(`overlay-matchup-top-${limit}`)?.checked === true),
+            matchup_min_games: this.getNumberInputValue('overlay-matchup-min-games', 5),
+            opponent_display_seconds: this.getNumberInputValue('overlay-opponent-display-seconds', 30),
+            opponent_slide_seconds: this.getNumberInputValue('overlay-opponent-slide-seconds', 15),
+            opponent_transition_ms: this.getNumberInputValue('overlay-opponent-transition-ms', 550),
+            stats_main_seconds: this.getNumberInputValue('overlay-stats-main-seconds', 15),
+            stats_delta_seconds: this.getNumberInputValue('overlay-stats-delta-seconds', 5),
+            stats_between_seconds: this.getNumberInputValue('overlay-stats-between-seconds', 4),
+            stats_poll_ms: this.getNumberInputValue('overlay-stats-poll-ms', 1000),
+            stats_transition_ms: this.getNumberInputValue('overlay-stats-transition-ms', 500)
+        };
+    }
+
+    async saveOverlayWidgetSettings() {
+        try {
+            this.setButtonLoading('overlay-save-settings-btn', true);
+            const payload = this.collectOverlayWidgetSettings();
+            const response = await this.apiCall('/api/streamer/opponent-widget/settings', 'PUT', payload);
+            this.overlayWidgetState.settings = response.settings || {};
+            this.overlayWidgetState.widgetUrl = response.widget_url || this.overlayWidgetState.widgetUrl;
+            this.overlayWidgetState.stateUrl = response.state_url || this.overlayWidgetState.stateUrl;
+            this.overlayWidgetState.opponentWidgetPageUrl = response.opponent_widget_page_url || this.overlayWidgetState.opponentWidgetPageUrl;
+            this.overlayWidgetState.streamerStatsWidgetPageUrl = response.streamer_stats_widget_page_url || this.overlayWidgetState.streamerStatsWidgetPageUrl;
+            await this.loadOverlayWidgetStatus();
+            this.showOverlayWidgetMessage('Настройки виджетов сохранены', 'success');
+        } catch (error) {
+            this.showOverlayWidgetMessage(error.message, 'error');
+        } finally {
+            this.setButtonLoading('overlay-save-settings-btn', false);
+        }
+    }
+
+    async resetOverlayWidgetToken() {
+        const confirmed = confirm('Сбросить OBS token? Старые ссылки в OBS перестанут работать.');
+        if (!confirmed) return;
+
+        try {
+            this.setButtonLoading('overlay-reset-token-btn', true);
+            const response = await this.apiCall('/api/streamer/opponent-widget/reset-token', 'POST');
+            this.overlayWidgetState.settings = response.settings || {};
+            this.overlayWidgetState.widgetUrl = response.widget_url || '';
+            this.overlayWidgetState.stateUrl = response.state_url || '';
+            this.overlayWidgetState.opponentWidgetPageUrl = response.opponent_widget_page_url || '';
+            this.overlayWidgetState.streamerStatsWidgetPageUrl = response.streamer_stats_widget_page_url || '';
+            await this.loadOverlayWidgetStatus();
+            this.showOverlayWidgetMessage('Token сброшен. Обнови ссылки в OBS.', 'success');
+        } catch (error) {
+            this.showOverlayWidgetMessage(error.message, 'error');
+        } finally {
+            this.setButtonLoading('overlay-reset-token-btn', false);
+        }
+    }
+
+    async copyOverlayUrl(type) {
+        const url = type === 'stats'
+            ? this.overlayWidgetState.streamerStatsWidgetPageUrl
+            : this.overlayWidgetState.opponentWidgetPageUrl;
+        if (!url) {
+            this.showOverlayWidgetMessage('Ссылка пока недоступна. Обнови настройки.', 'warning');
+            return;
+        }
+
+        try {
+            await this.copyTextToClipboard(url);
+            this.showOverlayWidgetMessage(type === 'stats' ? 'Stats widget URL скопирован' : 'Opponent widget URL скопирован', 'success');
+        } catch (error) {
+            this.showOverlayWidgetMessage('Не удалось скопировать ссылку: ' + error.message, 'error');
+        }
+    }
+
+    async copyTextToClipboard(text) {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+    }
+
+    getNumberInputValue(id, fallback) {
+        const value = Number(document.getElementById(id)?.value);
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    showOverlayWidgetMessage(text, type = 'info') {
+        const container = document.getElementById('overlay-widget-messages');
+        if (!container) {
+            this.showMessage(text, type);
+            return;
+        }
+        container.innerHTML = '';
+        const message = document.createElement('div');
+        message.className = `message ${type} show`;
+        message.innerHTML = `<span>${this.getMessageIcon(type)}</span><span>${this.escapeHtml(text)}</span>`;
+        container.appendChild(message);
+        setTimeout(() => {
+            if (message.parentNode) {
+                message.remove();
+            }
+        }, 4000);
+    }
+
     getActiveAccountLabel(session) {
         const tag = session?.active_account_tag;
         if (!tag) return '—';
@@ -1252,11 +1541,15 @@ class StreamerPanel {
     startPeriodicUpdates() {
         // Обновляем статус каждые 5 секунд
         this.updateInterval = setInterval(() => {
-            Promise.allSettled([
+            const tasks = [
                 this.refreshPredictionEnvironment(),
                 this.updateBotStatus(),
                 this.loadStreamTitleStatus()
-            ]);
+            ];
+            if (this.currentTab === 'overlay') {
+                tasks.push(this.loadOverlayWidgetStatus());
+            }
+            Promise.allSettled(tasks);
         }, 5000);
         
         console.log('[Streamer] Периодические обновления запущены');

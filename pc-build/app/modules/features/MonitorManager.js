@@ -657,7 +657,7 @@ class MonitorManager {
             const profiles = [startProfile];
 
             if (predictionMonitorEnabled) {
-                if (this.hasTriggerProfile(streamerResultTriggerArea) && this.isValidRegion(streamerResultDataArea)) {
+                if (this.hasTriggerProfile(streamerResultTriggerArea) && this.hasDataCaptureRegion(streamerResultDataArea)) {
                     const resultCaptureReference = streamerResultTriggerArea.capture_reference || captureReference;
                     this.assertCaptureReferenceMatches(resultCaptureReference, captureParams, 'battle_result trigger');
                     const resultProfile = this.buildEngineProfile({
@@ -787,9 +787,13 @@ class MonitorManager {
         return !!(
             rect &&
             typeof rect.x === 'number' &&
+            Number.isFinite(rect.x) &&
             typeof rect.y === 'number' &&
+            Number.isFinite(rect.y) &&
             typeof rect.width === 'number' &&
+            Number.isFinite(rect.width) &&
             typeof rect.height === 'number' &&
+            Number.isFinite(rect.height) &&
             rect.width > 0 &&
             rect.height > 0
         );
@@ -799,12 +803,20 @@ class MonitorManager {
         return !!(
             region &&
             typeof region.x === 'number' &&
+            Number.isFinite(region.x) &&
             typeof region.y === 'number' &&
+            Number.isFinite(region.y) &&
             typeof region.width === 'number' &&
+            Number.isFinite(region.width) &&
             typeof region.height === 'number' &&
+            Number.isFinite(region.height) &&
             region.width > 0 &&
             region.height > 0
         );
+    }
+
+    hasDataCaptureRegion(region) {
+        return this.isValidRegion(region) && this.isValidRatioRect(region.ratio);
     }
 
     hasTriggerProfile(region) {

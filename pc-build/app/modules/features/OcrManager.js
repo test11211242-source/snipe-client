@@ -166,7 +166,7 @@ class OcrManager {
             
             // Отправляем на сервер если API доступен
             if (this.api) {
-                const result = await this.api.post('/api/user/me/ocr-regions', this.buildLegacyRegionsPayload(regions));
+                const result = await this.api.post('/api/user/me/ocr-regions', regions);
                 
                 if (!result.success) {
                     throw new Error(result.userMessage || 'Ошибка сохранения на сервере');
@@ -652,33 +652,6 @@ class OcrManager {
         if (!isValidRatioRect(profile.analysis_info.inner_ratio)) {
             throw new Error('Python анализатор не вернул analysis_info.inner_ratio');
         }
-    }
-
-    buildLegacyRegionsPayload(regions) {
-        if (!regions) {
-            return null;
-        }
-
-        const pickRect = (area) => {
-            if (!area) {
-                return null;
-            }
-
-            return {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: area.height,
-                created_at: area.created_at
-            };
-        };
-
-        return {
-            trigger_area: pickRect(regions.trigger_area),
-            normal_data_area: pickRect(regions.normal_data_area),
-            precise_data_area: pickRect(regions.precise_data_area),
-            screen_resolution: regions.screen_resolution
-        };
     }
 
     getPythonExecutable() {

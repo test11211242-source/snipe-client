@@ -294,16 +294,30 @@
         .form-control {
             width: 100%;
             padding: 10px 12px;
-            background: var(--glass);
+            background: rgba(15, 15, 35, 0.92);
             border: 1px solid var(--border-color);
             border-radius: 6px;
             color: var(--text-primary);
             font-size: 14px;
+            color-scheme: dark;
         }
 
         .form-control:focus {
             outline: none;
             border-color: var(--accent-purple);
+        }
+
+        select,
+        select.form-control,
+        option {
+            background: #111127;
+            color: var(--text-primary);
+        }
+
+        select option:checked,
+        select option:hover {
+            background: var(--accent-purple);
+            color: #fff;
         }
 
         .field-label {
@@ -349,6 +363,31 @@
             font-size: 14px;
             line-height: 1.4;
             word-break: break-word;
+        }
+
+        .url-box {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .url-box input {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+        }
+
+        .section-note {
+            color: var(--text-secondary);
+            font-size: 13px;
+            line-height: 1.45;
+            margin-top: -6px;
+            margin-bottom: 16px;
         }
 
         .account-row {
@@ -673,7 +712,7 @@
                 </div>
                 <div class="tab-item" data-tab="overlay">
                     <span class="tab-label">Оверлей</span>
-                    <span class="tab-badge">Скоро</span>
+                    <span class="tab-badge" id="overlay-widget-badge">OFF</span>
                 </div>
                 <div class="tab-item" data-tab="alerts">
                     <span class="tab-label">Алерты</span>
@@ -794,16 +833,13 @@
                             </div>
 
                             <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                                <button class="btn btn-secondary" id="configure-result-trigger-area-btn">
-                                    <span>Настроить trigger area</span>
-                                </button>
-                                <button class="btn btn-secondary" id="configure-result-data-area-btn">
-                                    <span>Настроить data area</span>
+                                <button class="btn btn-secondary" id="configure-result-areas-btn">
+                                    <span>Настроить зоны результата</span>
                                 </button>
                             </div>
 
                             <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                                Trigger area работает как профиль в снайпе колод. Data area используется только для скриншота и отправки результата на сервер.
+                                Trigger area работает как профиль в снайпе колод. Data area используется для скриншота результата и отправки на сервер.
                             </div>
                         </div>
                     </div>
@@ -845,7 +881,7 @@
                         <!-- Тип прогноза -->
                         <div style="display: flex; flex-direction: column; gap: 8px;">
                             <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Тип прогноза</label>
-                            <select id="prediction-type" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                            <select id="prediction-type" class="form-control">
                                 <option value="win_lose">Выиграю этот бой?</option>
                                 <option value="win_streak">Выиграю N боев подряд?</option>
                                 <option value="mix">Случайный тип</option>
@@ -855,7 +891,7 @@
                         <!-- Время участия -->
                         <div style="display: flex; flex-direction: column; gap: 8px;">
                             <label style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">Время участия</label>
-                            <select id="prediction-window" style="padding: 10px 12px; background: var(--glass); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                            <select id="prediction-window" class="form-control">
                                 <option value="30">30 секунд</option>
                                 <option value="60" selected>1 минута</option>
                                 <option value="120">2 минуты</option>
@@ -939,7 +975,7 @@
 
                         <div style="margin-top: 16px;">
                             <div class="field-label">Предпросмотр</div>
-                            <div class="title-preview" id="stream-title-preview">#134·972🏅|8W-7L|Δ-32|Название стрима</div>
+                            <div class="title-preview" id="stream-title-preview">[#134 & 972🏅(↓32) • 8W-7L] Название стрима</div>
                         </div>
                     </div>
 
@@ -972,7 +1008,7 @@
                     <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 18px;">
                         <div>
                             <label class="field-label" for="stream-title-template">Шаблон префикса</label>
-                            <input class="form-control" id="stream-title-template" value="#{rank}·{elo}🏅|{wins}W-{losses}L|Δ{delta}|">
+                            <input class="form-control" id="stream-title-template" value="[#{rank} & {elo}🏅({delta}) • {wins}W-{losses}L]">
                         </div>
                         <div>
                             <label class="field-label" for="stream-title-wl-mode">W/L счетчик</label>
@@ -1047,15 +1083,188 @@
                 <div class="content-header">
                     <h2 class="content-title">Оверлей для стрима</h2>
                     <p class="content-description">
-                        Настройка визуальных элементов для отображения на стриме
+                        OBS-ссылки и поведение двух виджетов: статистика стримера и карточка найденного соперника
                     </p>
+                </div>
+
+                <div id="overlay-widget-messages"></div>
+
+                <div class="card-grid">
+                    <div class="card">
+                        <div class="card-title" style="justify-content: space-between;">
+                            <span>Виджеты</span>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="overlay-widgets-enabled" class="toggle">
+                                <label for="overlay-widgets-enabled" class="toggle-label">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <p class="section-note">Главный тумблер всей системы. Если выключен, оба OBS-виджета скрыты.</p>
+
+                        <div class="compact-grid">
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="overlay-stats-enabled" checked>
+                                <span>Streamer stats widget</span>
+                            </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="overlay-opponent-enabled" checked>
+                                <span>Opponent widget</span>
+                            </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="overlay-preview-mode">
+                                <span>Preview mode</span>
+                            </label>
+                        </div>
+
+                        <div style="margin-top: 16px;">
+                            <label class="field-label" for="overlay-preview-target">Что показывать в preview</label>
+                            <select class="form-control" id="overlay-preview-target">
+                                <option value="both">Оба виджета</option>
+                                <option value="stats">Только stats widget</option>
+                                <option value="opponent">Только opponent widget</option>
+                            </select>
+                        </div>
+
+                        <div style="margin-top: 16px;">
+                            <label class="field-label" for="overlay-widget-corner-style">Форма виджетов</label>
+                            <select class="form-control" id="overlay-widget-corner-style">
+                                <option value="rounded">Закругленный</option>
+                                <option value="square">Квадратный</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Аккаунт и данные</span>
+                        </div>
+                        <div class="settings-grid">
+                            <div>
+                                <label class="field-label" for="overlay-streamer-account-mode">Аккаунт стримера</label>
+                                <select class="form-control" id="overlay-streamer-account-mode">
+                                    <option value="stream_title">Из автоназвания</option>
+                                    <option value="manual">Вручную</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-manual-streamer-tag">Manual tag</label>
+                                <input class="form-control" id="overlay-manual-streamer-tag" placeholder="#ABC123">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-recent-limit">H2H recent</label>
+                                <input class="form-control" id="overlay-recent-limit" type="number" min="1" max="10" value="10">
+                            </div>
+                            <label class="checkbox-row" style="align-self: end; min-height: 42px;">
+                                <input type="checkbox" id="overlay-matchup-enabled" checked>
+                                <span>Matchup bar</span>
+                            </label>
+                            <div>
+                                <label class="field-label">Matchup sample</label>
+                                <div class="compact-grid" style="gap: 8px;">
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" id="overlay-matchup-top-100">
+                                        <span>Top 100</span>
+                                    </label>
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" id="overlay-matchup-top-200" checked>
+                                        <span>Top 200</span>
+                                    </label>
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" id="overlay-matchup-top-500" checked>
+                                        <span>Top 500</span>
+                                    </label>
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" id="overlay-matchup-top-1000" checked>
+                                        <span>Top 1000</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-matchup-min-games">Мин. боев для matchup</label>
+                                <input class="form-control" id="overlay-matchup-min-games" type="number" min="1" max="100" value="5">
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card">
                     <div class="card-title">
-                        <span>В разработке</span>
+                        <span>OBS ссылки</span>
                     </div>
-                    <p>Эта функция будет добавлена в следующих обновлениях.</p>
+                    <div style="display: grid; gap: 12px;">
+                        <div>
+                            <label class="field-label" for="overlay-stats-url">Streamer stats widget URL</label>
+                            <div class="url-box">
+                                <input class="form-control" id="overlay-stats-url" readonly>
+                                <button class="btn btn-secondary" id="overlay-copy-stats-url-btn">Копировать</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="field-label" for="overlay-opponent-url">Opponent widget URL</label>
+                            <div class="url-box">
+                                <input class="form-control" id="overlay-opponent-url" readonly>
+                                <button class="btn btn-secondary" id="overlay-copy-opponent-url-btn">Копировать</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px;">
+                        <button class="btn btn-primary" id="overlay-save-settings-btn">Сохранить настройки</button>
+                        <button class="btn btn-secondary" id="overlay-refresh-btn">Обновить</button>
+                        <button class="btn btn-danger" id="overlay-reset-token-btn">Сбросить token</button>
+                    </div>
+                </div>
+
+                <div class="card-grid">
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Opponent widget</span>
+                        </div>
+                        <p class="section-note">Карточка соперника после найденного боя: H2H, последние игры, колоды и matchup.</p>
+                        <div class="settings-grid">
+                            <div>
+                                <label class="field-label" for="overlay-opponent-display-seconds">Показывать всего, сек</label>
+                                <input class="form-control" id="overlay-opponent-display-seconds" type="number" min="5" max="120" value="30">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-opponent-slide-seconds">Первый слайд, сек</label>
+                                <input class="form-control" id="overlay-opponent-slide-seconds" type="number" min="3" max="60" value="15">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-opponent-transition-ms">Появление, ms</label>
+                                <input class="form-control" id="overlay-opponent-transition-ms" type="number" min="100" max="3000" step="50" value="550">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">
+                            <span>Streamer stats widget</span>
+                        </div>
+                        <p class="section-note">Длинная строка статистики стримера: rank, medals, W/L, WR и последние 5 боев.</p>
+                        <div class="settings-grid">
+                            <div>
+                                <label class="field-label" for="overlay-stats-main-seconds">Основное значение, сек</label>
+                                <input class="form-control" id="overlay-stats-main-seconds" type="number" min="5" max="120" value="15">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-stats-delta-seconds">Delta/WR/recent, сек</label>
+                                <input class="form-control" id="overlay-stats-delta-seconds" type="number" min="2" max="30" value="5">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-stats-between-seconds">Пауза между, сек</label>
+                                <input class="form-control" id="overlay-stats-between-seconds" type="number" min="0" max="30" value="4">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-stats-poll-ms">Обновление, ms</label>
+                                <input class="form-control" id="overlay-stats-poll-ms" type="number" min="500" max="5000" step="100" value="1000">
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-stats-transition-ms">Появление, ms</label>
+                                <input class="form-control" id="overlay-stats-transition-ms" type="number" min="100" max="3000" step="50" value="500">
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

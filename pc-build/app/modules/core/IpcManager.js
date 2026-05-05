@@ -872,12 +872,25 @@ class IpcManager {
                 const response = await api.get('/api/streamer/result-config');
 
                 if (response.success && response.data?.success) {
-                    const keepLocalArea = (localArea, remoteArea) => {
+                    const hasTriggerProfile = (area) => !!(area?.trigger_profile?.schema_version === 2);
+                    const hasRatio = (area) => !!area?.ratio;
+                    const keepLocalTriggerArea = (localArea, remoteArea) => {
                         if (!remoteArea) {
                             return localArea || null;
                         }
 
-                        if (localArea?.trigger_profile?.schema_version === 2 || localArea?.ratio) {
+                        if (hasTriggerProfile(localArea)) {
+                            return localArea;
+                        }
+
+                        return remoteArea;
+                    };
+                    const keepLocalDataArea = (localArea, remoteArea) => {
+                        if (!remoteArea) {
+                            return localArea || null;
+                        }
+
+                        if (hasRatio(localArea)) {
                             return localArea;
                         }
 
@@ -885,8 +898,8 @@ class IpcManager {
                     };
 
                     const config = {
-                        result_trigger_area: keepLocalArea(localConfig.result_trigger_area, response.data.trigger_area || null),
-                        result_data_area: keepLocalArea(localConfig.result_data_area, response.data.data_area || null)
+                        result_trigger_area: keepLocalTriggerArea(localConfig.result_trigger_area, response.data.trigger_area || null),
+                        result_data_area: keepLocalDataArea(localConfig.result_data_area, response.data.data_area || null)
                     };
                     store.setStreamerPredictionConfig(config);
 
@@ -917,15 +930,7 @@ class IpcManager {
             try {
                 const api = this.appManager.getApi();
                 const store = this.appManager.getStore();
-                const legacyArea = {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height,
-                    created_at: area.created_at,
-                    screen_resolution: area.screen_resolution
-                };
-                const response = await api.post('/api/streamer/result-trigger-area', legacyArea);
+                const response = await api.post('/api/streamer/result-trigger-area', area);
 
                 if (!response.success || !response.data?.success) {
                     return {
@@ -955,15 +960,7 @@ class IpcManager {
             try {
                 const api = this.appManager.getApi();
                 const store = this.appManager.getStore();
-                const legacyArea = {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height,
-                    created_at: area.created_at,
-                    screen_resolution: area.screen_resolution
-                };
-                const response = await api.post('/api/streamer/result-data-area', legacyArea);
+                const response = await api.post('/api/streamer/result-data-area', area);
 
                 if (!response.success || !response.data?.success) {
                     return {

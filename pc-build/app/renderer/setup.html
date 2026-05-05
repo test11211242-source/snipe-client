@@ -660,6 +660,7 @@
 
         customCursor.style.display = 'none';
 
+        const STREAMER_RESULT_AREAS_SETUP_TYPE = 'streamer_result_areas';
         const singleRegionSetupTypes = ['streamer_result_trigger_area', 'streamer_result_data_area'];
         const analyzedTriggerProfiles = {
             trigger_area: null,
@@ -680,6 +681,10 @@
 
         function isSingleRegionSetup() {
             return singleRegionSetupTypes.includes(setupContext?.setupType);
+        }
+
+        function isStreamerResultAreasSetup() {
+            return setupContext?.setupType === STREAMER_RESULT_AREAS_SETUP_TYPE;
         }
 
         function isTriggerProfileSetup() {
@@ -713,6 +718,10 @@
         }
 
         function getTriggerRegionKey() {
+            if (isStreamerResultAreasSetup()) {
+                return 'result_trigger_area';
+            }
+
             if (isSingleRegionSetup()) {
                 return isTriggerProfileSetup() ? 'result_trigger_area' : null;
             }
@@ -721,6 +730,10 @@
         }
 
         function isSelectionComplete() {
+            if (isStreamerResultAreasSetup()) {
+                return !!(regions.result_trigger_area && regions.result_data_area);
+            }
+
             if (isSingleRegionSetup()) {
                 return !!regions[getSingleRegionSetupKey()];
             }
@@ -741,6 +754,20 @@
         }
 
         function getRegionPrompt(regionKey) {
+            if (isStreamerResultAreasSetup()) {
+                if (regionKey === 'result_data_area') {
+                    return {
+                        text: 'Выделите data area результата боя',
+                        className: 'region-label normal'
+                    };
+                }
+
+                return {
+                    text: 'Выделите trigger area результата боя',
+                    className: 'region-label trigger'
+                };
+            }
+
             if (isSingleRegionSetup()) {
                 const meta = getSingleRegionSetupMeta();
                 return {
@@ -809,12 +836,78 @@
             updateCurrentRegionPrompt();
         }
 
+        function applyStreamerResultAreasSetupMode() {
+            currentRegion = 'result_trigger_area';
+            regions.result_trigger_area = null;
+            regions.result_data_area = null;
+
+            const instructionsTitle = document.querySelector('.instructions h2');
+            if (instructionsTitle) {
+                instructionsTitle.textContent = 'Настройка зон результата боя';
+            }
+
+            const instructions = document.getElementById('instructions');
+            instructions.querySelectorAll('.step').forEach(step => step.remove());
+
+            const steps = [
+                {
+                    number: 1,
+                    title: 'Trigger area результата',
+                    badge: 'Стримеры',
+                    description: 'Выделите область, по которой мониторинг поймет, что появился экран результата боя.'
+                },
+                {
+                    number: 2,
+                    title: 'Data area результата',
+                    badge: 'Автопрогнозы',
+                    description: 'Выделите участок, где виден итог матча. Этот скриншот уйдет на сервер для определения победы или поражения.'
+                }
+            ];
+
+            const buttonGroup = instructions.querySelector('.button-group');
+            steps.forEach(stepData => {
+                const step = document.createElement('div');
+                step.className = 'step';
+                step.innerHTML = `
+                    <div class="step-title">
+                        <span class="step-number">${stepData.number}</span>
+                        ${stepData.title} <span class="mode-badge both">${stepData.badge}</span>
+                    </div>
+                    <div class="step-description">
+                        ${stepData.description}
+                    </div>
+                `;
+                instructions.insertBefore(step, buttonGroup);
+            });
+
+            document.querySelector('.preview-title').textContent = 'Предпросмотр зон результата боя';
+            updatePreviewLayout();
+            updateCurrentRegionPrompt();
+        }
+
         function updatePreviewLayout() {
             const previewItems = Array.from(document.querySelectorAll('.preview-item'));
+            const previewLabels = Array.from(document.querySelectorAll('.preview-label'));
             const infoVisible = !!getTriggerRegionKey();
+
+            const defaultLabels = ['Триггер: outer', 'Триггер: inner', 'Быстрая область', 'Точная область'];
+            previewLabels.forEach((label, index) => {
+                label.textContent = defaultLabels[index] || label.textContent;
+            });
+
+            if (isStreamerResultAreasSetup()) {
+                previewLabels[0].textContent = 'Триггер результата: outer';
+                previewLabels[1].textContent = 'Триггер результата: inner';
+                previewLabels[2].textContent = 'Data area результата';
+            }
 
             previewItems.forEach((item, index) => {
                 item.style.display = 'none';
+
+                if (isStreamerResultAreasSetup()) {
+                    item.style.display = index <= 2 ? 'block' : 'none';
+                    return;
+                }
 
                 if (!isSingleRegionSetup()) {
                     item.style.display = 'block';
@@ -835,6 +928,9 @@
 
             if (isSingleRegionSetup() && !isTriggerProfileSetup()) {
                 document.querySelector('.preview-label').textContent = 'Область данных результата';
+            } else if (isSingleRegionSetup() && isTriggerProfileSetup()) {
+                previewLabels[0].textContent = 'Триггер результата: outer';
+                previewLabels[1].textContent = 'Триггер результата: inner';
             }
         }
 
@@ -1108,6 +1204,11 @@
                         document.getElementById('trigger-inner-preview').removeAttribute('src');
                         setTriggerProfileInfo(null);
                     }
+                } else if (isStreamerResultAreasSetup()) {
+                    renderRegionPreview(regions.result_trigger_area, 'trigger-preview');
+                    renderInnerPreview('result_trigger_area');
+                    renderRegionPreview(regions.result_data_area, 'normal-preview');
+                    setTriggerProfileInfo(analyzedTriggerProfiles.result_trigger_area);
                 } else {
                     renderRegionPreview(regions.trigger_area, 'trigger-preview');
                     renderInnerPreview('trigger_area');
@@ -1149,8 +1250,15 @@
                 regions[getSingleRegionSetupKey()] = null;
             }
 
+            if (isStreamerResultAreasSetup()) {
+                regions.result_trigger_area = null;
+                regions.result_data_area = null;
+            }
+
             resetTriggerProfileCache();
-            currentRegion = isSingleRegionSetup() ? getSingleRegionSetupKey() : 'trigger_area';
+            currentRegion = isSingleRegionSetup()
+                ? getSingleRegionSetupKey()
+                : (isStreamerResultAreasSetup() ? 'result_trigger_area' : 'trigger_area');
             previewModal.classList.remove('active');
             document.getElementById('selection-info').classList.add('active');
             customCursor.style.display = 'block';
@@ -1162,6 +1270,10 @@
         async function saveRegions() {
             if (isSingleRegionSetup()) {
                 return saveStreamerSingleRegion();
+            }
+
+            if (isStreamerResultAreasSetup()) {
+                return saveStreamerResultAreas();
             }
 
             setPreviewBusy(true, 'Сохранение...');
@@ -1218,6 +1330,39 @@
                 showSuccessAndClose();
             } catch (error) {
                 console.error('❌ Ошибка сохранения streamer single region:', error);
+                setError(error.message || 'Неизвестная ошибка');
+                setPreviewBusy(false, 'Сохранить');
+            }
+        }
+
+        async function saveStreamerResultAreas() {
+            setPreviewBusy(true, 'Сохранение...');
+            setError('');
+
+            try {
+                const triggerProfile = analyzedTriggerProfiles.result_trigger_area || await ensureTriggerProfile('result_trigger_area', false);
+                const triggerPayload = buildTriggerAreaPayload('result_trigger_area', regions.result_trigger_area, triggerProfile);
+                const dataPayload = buildDataAreaPayload(regions.result_data_area);
+                const captureReference = buildCaptureReference();
+
+                triggerPayload.screen_resolution = { ...regions.screen_resolution };
+                triggerPayload.capture_reference = captureReference;
+                dataPayload.screen_resolution = { ...regions.screen_resolution };
+                dataPayload.capture_reference = captureReference;
+
+                const triggerResult = await window.electronAPI.streamerConfig.saveResultTriggerArea(triggerPayload);
+                if (!triggerResult.success) {
+                    throw new Error(triggerResult.error || 'Ошибка сохранения trigger area результата');
+                }
+
+                const dataResult = await window.electronAPI.streamerConfig.saveResultDataArea(dataPayload);
+                if (!dataResult.success) {
+                    throw new Error(dataResult.error || 'Ошибка сохранения data area результата');
+                }
+
+                showSuccessAndClose();
+            } catch (error) {
+                console.error('❌ Ошибка сохранения streamer result areas:', error);
                 setError(error.message || 'Неизвестная ошибка');
                 setPreviewBusy(false, 'Сохранить');
             }
@@ -1385,7 +1530,7 @@
             if (instructionsTitle) {
                 const titleText = isSingleRegionSetup()
                     ? `🪟 ${getSingleRegionSetupMeta().title}`
-                    : '🪟 Настройка областей OCR';
+                    : (isStreamerResultAreasSetup() ? '🪟 Настройка зон результата боя' : '🪟 Настройка областей OCR');
                 instructionsTitle.innerHTML = `
                     ${titleText}<br>
                     <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || context.captureTarget?.name || 'Неизвестно'}</small>
@@ -1521,6 +1666,10 @@
                 applySingleRegionSetupMode();
             }
 
+            if (isStreamerResultAreasSetup()) {
+                applyStreamerResultAreasSetupMode();
+            }
+
             if (setupMode === 'window') {
                 updateUIForWindowMode(setupContext);
             }
@@ -1591,6 +1740,13 @@
 
             if (isSingleRegionSetup()) {
                 await showPreview();
+            } else if (isStreamerResultAreasSetup()) {
+                if (currentRegion === 'result_trigger_area') {
+                    currentRegion = 'result_data_area';
+                    updateCurrentRegionPrompt();
+                } else if (currentRegion === 'result_data_area') {
+                    await showPreview();
+                }
             } else if (currentRegion === 'trigger_area') {
                 currentRegion = 'normal_data_area';
                 updateCurrentRegionPrompt();
