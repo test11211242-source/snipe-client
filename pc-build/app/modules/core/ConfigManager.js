@@ -10,11 +10,11 @@ class ConfigManager {
         // 🌐 Конфигурация серверов
         this.SERVER_CONFIG = {
             global: {
-                primary: 'http://130.61.118.215:8080',
-                backup: 'http://144.24.182.207:8000'
+                primary: 'https://api.artcsworld.xyz',
+                backup: 'https://api.artcsworld.xyz'
             },
             test: {
-                primary: 'http://46.173.132.37:8000'
+                primary: 'https://api.artcsworld.xyz'
             }
         };
 
@@ -30,7 +30,7 @@ class ConfigManager {
                     }
                 },
                 user: { type: 'object' },
-                serverUrl: { type: 'string', default: 'http://130.61.118.215:8080' },
+                serverUrl: { type: 'string', default: 'https://api.artcsworld.xyz' },
                 serverMode: { type: 'string', default: 'global' },
                 ocrRegions: { type: 'object' },
                 searchMode: { type: 'string', default: 'fast' },

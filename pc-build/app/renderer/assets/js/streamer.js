@@ -1109,7 +1109,7 @@ class StreamerPanel {
             templateInput.value = settings.prefix_template || '[#{rank} & {elo}🏅({delta}) • {wins}W-{losses}L]';
         }
 
-        this.setValue('stream-title-wl-mode', settings.wl_mode || 'total');
+        this.setValue('stream-title-wl-mode', settings.wl_mode || 'active');
         this.setValue('stream-title-account-mode', settings.account_display_mode || 'last_active');
         this.setChecked('stream-title-include-rank', settings.include_rank !== false);
         this.setChecked('stream-title-include-elo', settings.include_elo !== false);
@@ -1182,7 +1182,7 @@ class StreamerPanel {
     async saveStreamTitleSettings() {
         const payload = {
             prefix_template: document.getElementById('stream-title-template')?.value || '[#{rank} & {elo}🏅({delta}) • {wins}W-{losses}L]',
-            wl_mode: document.getElementById('stream-title-wl-mode')?.value || 'total',
+            wl_mode: document.getElementById('stream-title-wl-mode')?.value || 'active',
             account_display_mode: document.getElementById('stream-title-account-mode')?.value || 'last_active',
             include_rank: document.getElementById('stream-title-include-rank')?.checked !== false,
             include_elo: document.getElementById('stream-title-include-elo')?.checked !== false,
@@ -1670,12 +1670,12 @@ class StreamerPanel {
         try {
             if (window.electronAPI && window.electronAPI.store) {
                 const result = await window.electronAPI.store.getServerUrl();
-                return result || 'http://localhost:8080';
+                return result || 'https://api.artcsworld.xyz';
             }
         } catch (error) {
             console.error('❌ [Streamer] Ошибка получения URL сервера:', error);
         }
-        return 'http://localhost:8080';
+        return 'https://api.artcsworld.xyz';
     }
 
     setButtonLoading(buttonId, loading) {

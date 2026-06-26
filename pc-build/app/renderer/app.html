@@ -3323,7 +3323,7 @@
             let openUrl = updateInfo.downloadUrl;
             if (!openUrl) {
                 // Пытаемся создать URL из доступных данных
-                const serverUrl = 'http://130.61.118.215:8080';
+                const serverUrl = 'https://api.artcsworld.xyz';
                 if (updateInfo.latestVersion) {
                     openUrl = `${serverUrl}/api/app/download/${updateInfo.latestVersion}/installer`;
                 } else {
@@ -3331,7 +3331,7 @@
                 }
             } else if (openUrl.startsWith('/')) {
                 // ИСПРАВЛЕНИЕ: Если URL начинается с /, добавляем serverUrl
-                const serverUrl = 'http://130.61.118.215:8080';
+                const serverUrl = 'https://api.artcsworld.xyz';
                 openUrl = serverUrl + openUrl;
             }
             
@@ -3425,13 +3425,13 @@
                         url = currentUpdateInfo.downloadUrl;
                         // ИСПРАВЛЕНИЕ: Проверяем что URL полный
                         if (url.startsWith('/')) {
-                            const serverUrl = 'http://130.61.118.215:8080';
+                            const serverUrl = 'https://api.artcsworld.xyz';
                             url = serverUrl + url;
                         }
                         console.log('🔄 Используем downloadUrl из currentUpdateInfo:', url);
                     } else {
                         // Пытаемся построить URL вручную
-                        const serverUrl = 'http://130.61.118.215:8080'; // Фолбэк URL
+                        const serverUrl = 'https://api.artcsworld.xyz'; // Фолбэк URL
                         url = `${serverUrl}/admin`;
                         console.log('🔄 Используем фолбэк URL:', url);
                     }
@@ -3560,7 +3560,7 @@
             // Определяем URL для открытия
             let browserUrl = updateInfo.downloadUrl;
             if (!browserUrl) {
-                const serverUrl = 'http://130.61.118.215:8080';
+                const serverUrl = 'https://api.artcsworld.xyz';
                 if (updateInfo.latestVersion) {
                     browserUrl = `${serverUrl}/api/app/download/${updateInfo.latestVersion}/installer`;
                 } else {
@@ -3568,7 +3568,7 @@
                 }
             } else if (browserUrl.startsWith('/')) {
                 // ИСПРАВЛЕНИЕ: Если URL начинается с /, добавляем serverUrl
-                const serverUrl = 'http://130.61.118.215:8080';
+                const serverUrl = 'https://api.artcsworld.xyz';
                 browserUrl = serverUrl + browserUrl;
             }
             

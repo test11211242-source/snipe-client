@@ -18,6 +18,11 @@ try {
 const path = require('path');
 const { exec } = require('child_process');
 
+function formatStoreLogValue(key, value) {
+    const sensitiveKey = /(token|secret|password|credential|authorization|invite)/i.test(String(key || ''));
+    return sensitiveKey ? '[REDACTED]' : value;
+}
+
 /**
  * 🆕 ЭТАП 2.1: Класс кэширования списка окон для производительности
  */
@@ -334,6 +339,10 @@ class IpcManager {
 
         this.registerHandler('invite:get-key-info', async () => {
             return await this.appManager.getInvite().getKeyInfo();
+        });
+
+        this.registerHandler('invite:clear-key', async () => {
+            return await this.appManager.getInvite().clearKey();
         });
 
         console.log('🎫 Обработчики инвайт-ключей зарегистрированы');
@@ -1202,6 +1211,11 @@ class IpcManager {
     // === Обновления ===
 
     registerUpdateHandlers() {
+        this.registerHandler('update:check', async () => {
+            console.log('🔍 IPC: Проверка обновлений');
+            return await this.appManager.checkForUpdates();
+        });
+
         this.registerHandler('update:check-simple', async () => {
             console.log('🔍 IPC: Проверка обновлений');
             return await this.appManager.checkForUpdates();
@@ -1231,6 +1245,14 @@ class IpcManager {
 
         this.registerHandler('update:open-release', async (event, url) => {
             return await this.appManager.getUpdate().openReleasePage(url);
+        });
+
+        this.registerHandler('update:cancel-download', async () => {
+            return this.appManager.getUpdate().cancelDownload();
+        });
+
+        this.registerHandler('update:get-status', async () => {
+            return this.appManager.getUpdate().getStatus();
         });
 
         console.log('🔄 Обработчики обновлений зарегистрированы');
@@ -1339,7 +1361,7 @@ class IpcManager {
             try {
                 const store = this.appManager.getStore();
                 const result = store.get(key, defaultValue);
-                console.log(`📥 IPC[store:get]: ${key} =`, result);
+                console.log(`📥 IPC[store:get]: ${key} =`, formatStoreLogValue(key, result));
                 return result;
             } catch (error) {
                 console.error(`❌ Ошибка получения ${key}:`, error);
@@ -1351,7 +1373,7 @@ class IpcManager {
             try {
                 const store = this.appManager.getStore();
                 store.set(key, value);
-                console.log(`💾 IPC[store:set]: ${key} =`, value);
+                console.log(`💾 IPC[store:set]: ${key} =`, formatStoreLogValue(key, value));
                 return { success: true };
             } catch (error) {
                 console.error(`❌ Ошибка сохранения ${key}:`, error);

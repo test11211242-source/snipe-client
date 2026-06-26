@@ -300,12 +300,12 @@ class TokenManager {
         try {
             if (window.electronAPI && window.electronAPI.store) {
                 const result = await window.electronAPI.store.getServerUrl();
-                return result || 'http://localhost:8080';
+                return result || 'https://api.artcsworld.xyz';
             }
         } catch (error) {
             console.error('❌ [TokenManager] Ошибка получения URL сервера:', error);
         }
-        return 'http://localhost:8080';
+        return 'https://api.artcsworld.xyz';
     }
 
     /**

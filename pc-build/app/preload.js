@@ -9,12 +9,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'window:get-available', 'window:save-selection', 'window:get-last-selected', 'window:clear-cache',
       'auth:login', 'auth:register', 'auth:logout', 'auth:success',
       'tokens:getUser',
-      'invite:get-hwid', 'invite:check-access', 'invite:validate-key', 'invite:get-key-info',
+      'invite:get-hwid', 'invite:check-access', 'invite:validate-key', 'invite:get-key-info', 'invite:clear-key',
       'ocr:setup', 'ocr:save-regions', 'ocr:get-regions', 'ocr:analyze-profile',
       'monitor:start', 'monitor:stop', 'monitor:restart', 'monitor:get-status',
       'monitor:set-window-target', 'monitor:set-screen-target', 'monitor:get-capture-target',
       'streamer:get-result-config', 'streamer:save-result-trigger-area', 'streamer:save-result-data-area',
-      'app:get-version', 'update:check-simple', 'server:get-current', 'server:switch',
+      'app:get-version', 'update:check', 'update:install', 'update:check-simple', 'update:open-release',
+      'update:download', 'update:cancel-download', 'update:open-downloads', 'update:get-status',
+      'server:get-current', 'server:switch', 'server:check',
       'store:get', 'store:set', 'store:has', 'store:delete',
       'cache:get-card-image', 'cache:force-update', 'cache:get-status'
     ];
@@ -121,7 +123,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (key, value) => ipcRenderer.invoke('store:set', key, value),
     has: (key) => ipcRenderer.invoke('store:has', key),
     delete: (key) => ipcRenderer.invoke('store:delete', key),
-    getServerUrl: () => ipcRenderer.invoke('store:get', 'serverUrl')
+    setTokens: (tokens) => ipcRenderer.invoke('store:set', 'tokens', tokens),
+    clearTokens: () => ipcRenderer.invoke('store:delete', 'tokens'),
+    getServerUrl: () => ipcRenderer.invoke('store:get', 'serverUrl', 'https://api.artcsworld.xyz')
   },
   
   // 🪟 Работа с окнами

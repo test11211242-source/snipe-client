@@ -40,7 +40,8 @@ class MainWindow extends WindowManager {
             webPreferences: {
                 preload: path.join(__dirname, '../../preload.js'),
                 nodeIntegration: false,
-                contextIsolation: true
+                contextIsolation: true,
+                sandbox: true
             }
         });
 
