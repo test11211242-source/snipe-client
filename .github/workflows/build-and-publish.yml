@@ -1,4 +1,4 @@
-name: Build and Publish Snipe Client
+name: Build and Publish CR Tools
 
 on:
   workflow_dispatch:
@@ -56,19 +56,19 @@ jobs:
       - name: Create latest.yml
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          EXE_FILE="dist/Snipe_Client_Setup_${VERSION}.exe"
+          EXE_FILE="dist/CR_Tools_Setup_${VERSION}.exe"
 
-          SHA512=$(sha512sum "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64)
+          SHA512=$(sha512sum "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64 -w0)
           FILE_SIZE=$(stat -c%s "$EXE_FILE")
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
 
           cat > dist/latest.yml << EOF
           version: ${VERSION}
           files:
-            - url: Snipe_Client_Setup_${VERSION}.exe
+            - url: CR_Tools_Setup_${VERSION}.exe
               sha512: ${SHA512}
               size: ${FILE_SIZE}
-          path: Snipe_Client_Setup_${VERSION}.exe
+          path: CR_Tools_Setup_${VERSION}.exe
           sha512: ${SHA512}
           releaseDate: '${RELEASE_DATE}'
           EOF
@@ -89,7 +89,7 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
 
           # Upload installer
-          scp dist/Snipe_Client_Setup_${VERSION}.exe ${SERVER_USER}@${SERVER_HOST}:/home/ubuntu/snipe/data/updates/downloads/
+          scp dist/CR_Tools_Setup_${VERSION}.exe ${SERVER_USER}@${SERVER_HOST}:/home/ubuntu/snipe/data/updates/downloads/
 
           # Upload latest.yml
           scp dist/latest.yml ${SERVER_USER}@${SERVER_HOST}:/home/ubuntu/snipe/data/updates/downloads/
@@ -131,7 +131,7 @@ jobs:
             release_notes: 'Обновление версии ' + version,
             is_critical: false,
             changelog: ['Обновление до версии ' + version],
-            installer_filename: 'Snipe_Client_Setup_' + version + '.exe',
+            installer_filename: 'CR_Tools_Setup_' + version + '.exe',
             uploaded_by: 'github-actions'
           };
           data.last_updated = new Date().toISOString();
@@ -146,5 +146,5 @@ jobs:
         with:
           name: windows-installer-${{ github.event.inputs.version }}
           path: |
-            dist/Snipe_Client_Setup_*.exe
+            dist/CR_Tools_Setup_*.exe
             dist/latest.yml

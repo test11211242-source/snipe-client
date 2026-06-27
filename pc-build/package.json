@@ -1,7 +1,7 @@
 {
-  "name": "snipe-client",
-  "version": "5.3.0",
-  "description": "Snipe CR",
+  "name": "cr-tools",
+  "version": "5.3.1",
+  "description": "Clash Royale tools",
   "main": "app/main.js",
   "author": "ArtCS",
   "license": "MIT",
@@ -24,7 +24,7 @@
   },
   "build": {
     "appId": "com.snipe.client",
-    "productName": "Snipe Client",
+    "productName": "CR Tools",
     "directories": {
       "output": "dist"
     },
@@ -62,7 +62,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "Snipe_Client_Setup_${version}.exe",
+      "artifactName": "CR_Tools_Setup_${version}.exe",
       "differentialPackage": false
     },
     "publish": {

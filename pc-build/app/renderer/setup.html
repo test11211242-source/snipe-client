@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Настройка областей OCR</title>
+    <title>Настройка областей захвата</title>
     <style>
         * {
             margin: 0;
@@ -560,7 +560,7 @@
     <div class="custom-cursor" id="custom-cursor"></div>
 
     <div class="instructions" id="instructions">
-        <h2>Настройка областей OCR</h2>
+        <h2>Настройка областей захвата</h2>
         
         <div class="step">
             <div class="step-title">
@@ -1530,7 +1530,7 @@
             if (instructionsTitle) {
                 const titleText = isSingleRegionSetup()
                     ? `🪟 ${getSingleRegionSetupMeta().title}`
-                    : (isStreamerResultAreasSetup() ? '🪟 Настройка зон результата боя' : '🪟 Настройка областей OCR');
+                    : (isStreamerResultAreasSetup() ? '🪟 Настройка зон результата боя' : '🪟 Настройка областей захвата');
                 instructionsTitle.innerHTML = `
                     ${titleText}<br>
                     <small style="color: var(--accent-blue); font-size: 0.8em;">Окно: ${context.targetWindow?.name || context.captureTarget?.name || 'Неизвестно'}</small>

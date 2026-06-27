@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clash Royale OCR</title>
+    <title>CR Tools</title>
     <style>
         * {
             margin: 0;
@@ -1914,7 +1914,7 @@
 
     <header class="header">
         <div class="header-title">
-            <h1>Clash Royale OCR</h1>
+            <h1>CR Tools</h1>
             <span class="status-indicator" id="status-indicator"></span>
         </div>
         <div class="user-info">
@@ -1958,9 +1958,9 @@
             </div>
 
             <div class="control-section">
-                <h3 class="section-title">OCR режим</h3>
+                <h3 class="section-title">Режим поиска</h3>
                 <div class="mode-toggle-container">
-                    <div class="mode-indicator" id="mode-indicator">Быстрый OCR</div>
+                    <div class="mode-indicator" id="mode-indicator">Быстрый режим</div>
                     <label class="mode-toggle">
                         <input type="checkbox" id="search-mode-toggle" onchange="toggleSearchMode()">
                         <span class="mode-slider"></span>
@@ -1994,7 +1994,7 @@
             <div class="control-section">
                 <h3 class="section-title">Настройки</h3>
                 <button class="button secondary" onclick="showWindowSelectionDialog()">
-                    ⚙️ Настроить области OCR
+                    ⚙️ Настроить области захвата
                 </button>
                 
                 <!-- 🎯 Расширенные настройки триггеров -->
@@ -2286,9 +2286,9 @@
             }
             
             if (data.regions && data.regions.trigger_area && data.regions.normal_data_area) {
-                showStatus('Области OCR настроены', 'success');
+                showStatus('Области захвата настроены', 'success');
             } else {
-                showStatus('Необходимо настроить области OCR', 'error');
+                showStatus('Необходимо настроить области захвата', 'error');
             }
         });
 
@@ -2328,7 +2328,7 @@
         });
 
         window.electronAPI.on('regions-updated', (regions) => {
-            showStatus('Области OCR обновлены', 'success');
+            showStatus('Области захвата обновлены', 'success');
         });
         
         // Слушатели событий сервера
@@ -2871,7 +2871,7 @@
             await window.electronAPI.settings.saveSearchMode(searchMode);
             
             updateModeUI();
-            showStatus(`OCR режим: ${searchMode === 'fast' ? 'быстрый' : 'точный'}`, 'success');
+            showStatus(`Режим поиска: ${searchMode === 'fast' ? 'быстрый' : 'точный'}`, 'success');
         }
 
         function updateModeUI() {
@@ -2881,11 +2881,11 @@
             
             if (searchMode === 'precise') {
                 toggle.checked = true;
-                indicator.textContent = 'Точный OCR';
+                indicator.textContent = 'Точный режим';
                 description.textContent = 'Поиск игрока по нику, рейтингу и клану';
             } else {
                 toggle.checked = false;
-                indicator.textContent = 'Быстрый OCR';
+                indicator.textContent = 'Быстрый режим';
                 description.textContent = 'Поиск игрока по нику и рейтингу';
             }
         }
@@ -3133,7 +3133,7 @@
             }
             
             const searchStatus = playerData.success ? '✅ Найден' : '❌ Не найден';
-            const searchMethod = searchResult.search_method || 'OCR';
+            const searchMethod = searchResult.search_method || 'Распознавание';
             
             const card = document.createElement('div');
             card.className = 'result-card';
@@ -3365,7 +3365,7 @@
                     <h2 class="modal-title">🎆 Новое обновление!</h2>
                     <div class="modal-version">Версия ${updateInfo.latestVersion}</div>
                     <div class="modal-description">
-                        Доступна новая версия Snipe Client! 
+                        Доступна новая версия CR Tools!
                         Нажмите "Скачать", чтобы перейти на страницу обновления и установить последнюю версию.
                         <br><br>
                         <strong>Размер:</strong> ${updateInfo.fileSize || 'Около 150MB'}<br>
@@ -3581,7 +3581,7 @@
                     <h2 class="modal-title">🎆 Новое обновление!</h2>
                     <div class="modal-version">Версия ${updateInfo.latestVersion}</div>
                     <div class="modal-description">
-                        Доступна новая версия Snipe Client! 
+                        Доступна новая версия CR Tools!
                         Вы можете скачать и установить её в несколько кликов.
                         <br><br>
                         <strong>Размер:</strong> ${updateInfo.fileSize ? (parseInt(updateInfo.fileSize) / 1024 / 1024).toFixed(1) + ' MB' : 'Около 150MB'}<br>
@@ -3747,7 +3747,7 @@
             try {
                 const version = await window.electronAPI.app.getVersion();
                 document.getElementById('version-display').textContent = `v${version}`;
-                console.log(`🚀 Clash Royale OCR v${version} - Система обновлений активна`);
+                console.log(`🚀 CR Tools v${version} - Система обновлений активна`);
             } catch (error) {
                 console.error('Ошибка получения версии:', error);
                 document.getElementById('version-display').textContent = 'Ошибка';
@@ -3821,7 +3821,7 @@
         }, 1000);
     </script>
 
-    <!-- 🆕 ЭТАП 3.1: Диалог выбора окна для настройки OCR областей -->
+    <!-- Диалог выбора окна для настройки областей захвата -->
     <div id="window-selection-dialog" class="window-dialog-overlay" style="display: none;">
         <div class="window-dialog">
             <div class="window-dialog-header">

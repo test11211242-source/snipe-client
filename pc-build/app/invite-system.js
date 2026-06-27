@@ -130,7 +130,7 @@ class InviteSystemClient {
                     <div class="invite-form">
                         <input type="text" 
                                id="invite-input" 
-                               placeholder="SNIPE-XXXX-XXXX-XXXX"
+                               placeholder="CRTLS-XXXX-XXXX-XXXX"
                                class="invite-input"
                                maxlength="25">
                         

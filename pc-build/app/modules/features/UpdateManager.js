@@ -249,8 +249,8 @@ class UpdateManager {
         const downloadsPath = app.getPath('downloads');
         
         const fileName = downloadType === 'installer' 
-            ? `Snipe_Client_Setup_${version}.exe`
-            : `Snipe_Client_Portable_${version}.exe`;
+            ? `CR_Tools_Setup_${version}.exe`
+            : `CR_Tools_Portable_${version}.exe`;
             
         return path.join(downloadsPath, fileName);
     }
