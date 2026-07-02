@@ -80,12 +80,12 @@ class WebSocketManager {
             
             // Преобразуем http:// в ws://
             const wsUrl = serverUrl.replace(/^http/, 'ws');
-            const fullWsUrl = `${wsUrl}/ws/${tokens.access_token}`;
+            const fullWsUrl = `${wsUrl}/ws`;
             
-            console.log(`🔌 Подключение к WebSocket: ${wsUrl}/ws/***`);
+            console.log(`🔌 Подключение к WebSocket: ${wsUrl}/ws`);
             
             this.ws = new WebSocket(fullWsUrl);
-            this.setupEventHandlers();
+            this.setupEventHandlers(tokens.access_token);
             
             // Ждем подключения или ошибки
             return new Promise((resolve) => {
@@ -122,12 +122,13 @@ class WebSocketManager {
 
     // === Настройка обработчиков событий WebSocket ===
     
-    setupEventHandlers() {
+    setupEventHandlers(accessToken) {
         if (!this.ws) return;
 
         this.ws.on('open', () => {
             this.isConnecting = false;
-            console.log('✅ WebSocket соединение установлено');
+            console.log('✅ WebSocket transport соединение установлено, отправляем auth');
+            this.ws.send(JSON.stringify({ type: 'auth', token: accessToken }));
             
             // Сбрасываем таймер переподключения
             this.clearReconnectTimeout();

@@ -2983,15 +2983,44 @@
             }
         }
 
+        function preloadImageSource(src, timeoutMs = 1200) {
+            return new Promise((resolve) => {
+                if (!src) {
+                    resolve(false);
+                    return;
+                }
+
+                const img = new Image();
+                let finished = false;
+                const timeout = setTimeout(() => finish(false), timeoutMs);
+                const finish = (loaded) => {
+                    if (finished) return;
+                    finished = true;
+                    clearTimeout(timeout);
+                    resolve(loaded);
+                };
+
+                img.onload = async () => {
+                    try {
+                        if (img.decode) {
+                            await img.decode();
+                        }
+                    } catch (error) {
+                        // decode can reject even after load; the browser cache is still warmed.
+                    }
+                    finish(true);
+                };
+                img.onerror = () => finish(false);
+                img.src = src;
+            });
+        }
+
         async function generateDeckHtml(deck, requestedDeckMode = 'pol') {
             if (!deck || !deck.cards || deck.cards.length === 0) {
                 return '<div class="detail-item"><div class="detail-label">Колода не найдена</div></div>';
             }
 
-            const cardsHtmlArray = [];
-
-            for (let index = 0; index < deck.cards.length; index++) {
-                const card = deck.cards[index];
+            const cardEntries = await Promise.all(deck.cards.map(async (card, index) => {
                 const cardName = card.name || 'Карта';
 
                 // evolution_level: 0=обычная, 1=эволюция, 2+=чемпион
@@ -3034,7 +3063,20 @@
                 const typeLabel = isHero ? ' (Hero)' : (isEvolution ? ' (Evolution)' : '');
                 const debugTitle = `${cardName}${typeLabel} [Pos: ${index}]`;
 
-                cardsHtmlArray.push(`
+                return {
+                    cardName,
+                    evolutionLevel,
+                    imageSource,
+                    fallbackUrl,
+                    classes,
+                    debugTitle,
+                    index
+                };
+            }));
+
+            await Promise.all(cardEntries.map(entry => preloadImageSource(entry.imageSource)));
+
+            const cardsHtml = cardEntries.map(({ cardName, evolutionLevel, imageSource, fallbackUrl, classes, debugTitle, index }) => `
                     <div class="deck-card-item ${classes}"
                         title="${debugTitle}"
                         data-evolution-level="${evolutionLevel}"
@@ -3042,12 +3084,11 @@
                         <img src="${imageSource}"
                             alt="${cardName}"
                             onerror="this.src='${fallbackUrl}'"
-                            loading="lazy">
+                            loading="eager"
+                            decoding="sync"
+                            fetchpriority="high">
                     </div>
-                `);
-            }
-
-            const cardsHtml = cardsHtmlArray.join('');
+                `).join('');
 
             const averageElixir = deck.average_elixir ? deck.average_elixir.toFixed(1) : 'N/A';
             const battleTypeLabel = getBattleTypeLabel(deck, requestedDeckMode);

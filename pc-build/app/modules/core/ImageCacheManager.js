@@ -77,7 +77,7 @@ class ImageCacheManager {
             // Загружаем манифест с сервера
             const manifest = await this.downloadManifest();
 
-            if (!manifest || !manifest.cards || manifest.cards.length === 0) {
+            if (!manifest || !Array.isArray(manifest.cards) || manifest.cards.length === 0) {
                 console.error('❌ Пустой манифест получен от сервера');
                 return { success: false, updated: false, message: 'Empty manifest' };
             }
@@ -175,7 +175,7 @@ class ImageCacheManager {
      */
     async _getServerVersion() {
         try {
-            const response = await this.api.get('/api/admin/cards/version');
+            const response = await this.api.get('/api/cards/version');
 
             if (response.success && response.data) {
                 return {
@@ -199,20 +199,41 @@ class ImageCacheManager {
         try {
             console.log('📡 Загрузка манифеста карт с сервера...');
 
-            const response = await this.api.get('/api/admin/cards/manifest');
+            const response = await this.api.get('/api/cards/manifest');
 
             if (!response.success || !response.data) {
                 throw new Error('Failed to download manifest');
             }
 
-            console.log(`✅ Манифест загружен: ${response.data.cards?.length || 0} карт`);
+            const cards = this.normalizeManifestCards(response.data.cards);
+            console.log(`✅ Манифест загружен: ${cards.length} карт`);
 
-            return response.data;
+            return {
+                ...response.data,
+                cards
+            };
 
         } catch (error) {
             console.error('❌ Ошибка загрузки манифеста:', error);
             throw error;
         }
+    }
+
+    normalizeManifestCards(cards) {
+        if (Array.isArray(cards)) {
+            return cards.filter(card => card && card.name);
+        }
+
+        if (!cards || typeof cards !== 'object') {
+            return [];
+        }
+
+        return Object.entries(cards)
+            .map(([cardName, cardData]) => ({
+                ...(cardData || {}),
+                name: cardData?.name || cardName
+            }))
+            .filter(card => card.name);
     }
 
     /**
@@ -222,13 +243,14 @@ class ImageCacheManager {
      */
     async downloadImages(cards) {
         try {
-            console.log(`🚀 Начинаем загрузку изображений: ${cards.length} карт...`);
+            const normalizedCards = this.normalizeManifestCards(cards);
+            console.log(`🚀 Начинаем загрузку изображений: ${normalizedCards.length} карт...`);
 
             let downloaded = 0;
             let skipped = 0;
             let failed = 0;
 
-            for (const card of cards) {
+            for (const card of normalizedCards) {
                 const cardName = card.name;
 
                 // Загружаем 3 варианта изображения для каждой карты
