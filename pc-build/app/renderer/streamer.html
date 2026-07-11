@@ -390,6 +390,51 @@
             margin-bottom: 16px;
         }
 
+        .overlay-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+        }
+
+        .overlay-preview-pane {
+            min-width: 0;
+            padding: 14px;
+            background:
+                linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+                #090914;
+            background-size: 20px 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .overlay-preview-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .overlay-preview-size {
+            color: var(--text-secondary);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px;
+        }
+
+        .overlay-preview-frame {
+            display: block;
+            width: 100%;
+            border: 0;
+            background: transparent;
+        }
+
+        #overlay-stats-preview { height: 125px; }
+        #overlay-opponent-preview { height: 390px; }
+
         .account-row {
             display: grid;
             grid-template-columns: 1fr auto auto;
@@ -1131,7 +1176,35 @@
                             <select class="form-control" id="overlay-widget-corner-style">
                                 <option value="rounded">Закругленный</option>
                                 <option value="square">Квадратный</option>
+                                <option value="pill">Сильное скругление</option>
                             </select>
+                        </div>
+
+                        <div class="settings-grid" style="margin-top: 16px;">
+                            <div>
+                                <label class="field-label" for="overlay-stats-layout">Размер Stats</label>
+                                <select class="form-control" id="overlay-stats-layout">
+                                    <option value="compact">Компактный</option>
+                                    <option value="standard">Стандартный</option>
+                                    <option value="detailed">Подробный</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-opponent-layout">Размер Opponent</label>
+                                <select class="form-control" id="overlay-opponent-layout">
+                                    <option value="compact">Компактный</option>
+                                    <option value="standard">Стандартный</option>
+                                    <option value="detailed">Подробный</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="field-label" for="overlay-widget-font-style">Шрифт</label>
+                                <select class="form-control" id="overlay-widget-font-style">
+                                    <option value="gaming">Игровой</option>
+                                    <option value="clean">Нейтральный</option>
+                                    <option value="condensed">Узкий</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
 
@@ -1190,6 +1263,29 @@
 
                 <div class="card">
                     <div class="card-title">
+                        <span>Предпросмотр оформления</span>
+                    </div>
+                    <p class="section-note">Тестовые данные не влияют на эфир. Если область OBS будет меньше рекомендуемой, виджет автоматически уменьшится без обрезки.</p>
+                    <div class="overlay-preview-grid">
+                        <div class="overlay-preview-pane">
+                            <div class="overlay-preview-title">
+                                <span>Streamer stats</span>
+                                <span class="overlay-preview-size" id="overlay-stats-recommended-size">720 × 96</span>
+                            </div>
+                            <iframe class="overlay-preview-frame" id="overlay-stats-preview" title="Предпросмотр статистики стримера"></iframe>
+                        </div>
+                        <div class="overlay-preview-pane">
+                            <div class="overlay-preview-title">
+                                <span>Opponent</span>
+                                <span class="overlay-preview-size" id="overlay-opponent-recommended-size">760 × 500</span>
+                            </div>
+                            <iframe class="overlay-preview-frame" id="overlay-opponent-preview" title="Предпросмотр соперника"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
                         <span>OBS ссылки</span>
                     </div>
                     <div style="display: grid; gap: 12px;">
@@ -1223,7 +1319,7 @@
                         <p class="section-note">Карточка соперника после найденного боя: H2H, последние игры, колоды и matchup.</p>
                         <div class="settings-grid">
                             <div>
-                                <label class="field-label" for="overlay-opponent-display-seconds">Показывать всего, сек</label>
+                                <label class="field-label" for="overlay-opponent-display-seconds">Всего при 2 слайдах, сек</label>
                                 <input class="form-control" id="overlay-opponent-display-seconds" type="number" min="5" max="120" value="30">
                             </div>
                             <div>
@@ -1235,6 +1331,11 @@
                                 <input class="form-control" id="overlay-opponent-transition-ms" type="number" min="100" max="3000" step="50" value="550">
                             </div>
                         </div>
+                        <label class="checkbox-row" style="margin-top: 12px;">
+                            <input type="checkbox" id="overlay-opponent-second-slide-enabled" checked>
+                            <span>Показывать 2-й слайд: колода и matchup</span>
+                        </label>
+                        <p class="section-note" style="margin-top: 8px;">Если выключено, показывается только первый слайд на время из поля "Первый слайд, сек".</p>
                     </div>
 
                     <div class="card">

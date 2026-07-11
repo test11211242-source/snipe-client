@@ -253,6 +253,15 @@ class StreamerPanel {
         if (copyOpponentBtn) {
             copyOpponentBtn.addEventListener('click', () => this.copyOverlayUrl('opponent'));
         }
+
+        [
+            'overlay-stats-layout',
+            'overlay-opponent-layout',
+            'overlay-widget-font-style',
+            'overlay-widget-corner-style'
+        ].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', () => this.updateOverlayPreview());
+        });
     }
 
     setupTabs() {
@@ -1321,9 +1330,13 @@ class StreamerPanel {
         this.setChecked('overlay-opponent-enabled', settings.opponent_enabled !== false);
         this.setChecked('overlay-preview-mode', !!settings.preview_mode);
         this.setChecked('overlay-matchup-enabled', settings.matchup_enabled !== false);
+        this.setChecked('overlay-opponent-second-slide-enabled', settings.opponent_second_slide_enabled !== false);
 
         this.setValue('overlay-preview-target', settings.preview_target || 'both');
         this.setValue('overlay-widget-corner-style', settings.widget_corner_style || 'rounded');
+        this.setValue('overlay-stats-layout', settings.stats_layout || 'detailed');
+        this.setValue('overlay-opponent-layout', settings.opponent_layout || 'detailed');
+        this.setValue('overlay-widget-font-style', settings.widget_font_style || 'gaming');
         this.setValue('overlay-streamer-account-mode', settings.streamer_account_mode || 'stream_title');
         this.setValue('overlay-manual-streamer-tag', settings.manual_streamer_tag || '');
         this.setValue('overlay-recent-limit', settings.recent_limit || 10);
@@ -1360,6 +1373,57 @@ class StreamerPanel {
                 ? 'Preview включен: виджеты принудительно видимы для настройки OBS'
                 : 'Preview выключен: виджеты работают по live-логике';
         }
+        this.updateOverlayPreview();
+    }
+
+    updateOverlayPreview() {
+        const statsLayout = document.getElementById('overlay-stats-layout')?.value || 'detailed';
+        const opponentLayout = document.getElementById('overlay-opponent-layout')?.value || 'detailed';
+        const fontStyle = document.getElementById('overlay-widget-font-style')?.value || 'gaming';
+        const cornerStyle = document.getElementById('overlay-widget-corner-style')?.value || 'rounded';
+        const dimensions = {
+            stats: {
+                compact: '360 × 48',
+                standard: '480 × 64',
+                detailed: '720 × 96'
+            },
+            opponent: {
+                compact: '420 × 300',
+                standard: '560 × 380',
+                detailed: '760 × 500'
+            }
+        };
+
+        this.setText('overlay-stats-recommended-size', dimensions.stats[statsLayout]);
+        this.setText('overlay-opponent-recommended-size', dimensions.opponent[opponentLayout]);
+        this.setOverlayPreviewFrame(
+            'overlay-stats-preview',
+            this.overlayWidgetState.streamerStatsWidgetPageUrl,
+            { mock: '1', layout: statsLayout, font: fontStyle, shape: cornerStyle }
+        );
+        this.setOverlayPreviewFrame(
+            'overlay-opponent-preview',
+            this.overlayWidgetState.opponentWidgetPageUrl,
+            { mock: '1', layout: opponentLayout, font: fontStyle, shape: cornerStyle }
+        );
+    }
+
+    setOverlayPreviewFrame(id, baseUrl, params) {
+        const frame = document.getElementById(id);
+        if (!frame || !baseUrl) return;
+
+        try {
+            const url = new URL(baseUrl);
+            url.search = '';
+            Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+            const nextSrc = url.toString();
+            if (frame.dataset.previewSrc !== nextSrc) {
+                frame.dataset.previewSrc = nextSrc;
+                frame.src = nextSrc;
+            }
+        } catch (error) {
+            console.warn('[Streamer] Не удалось построить URL предпросмотра:', error);
+        }
     }
 
     collectOverlayWidgetSettings() {
@@ -1370,10 +1434,14 @@ class StreamerPanel {
             preview_mode: document.getElementById('overlay-preview-mode')?.checked === true,
             preview_target: document.getElementById('overlay-preview-target')?.value || 'both',
             widget_corner_style: document.getElementById('overlay-widget-corner-style')?.value || 'rounded',
+            stats_layout: document.getElementById('overlay-stats-layout')?.value || 'detailed',
+            opponent_layout: document.getElementById('overlay-opponent-layout')?.value || 'detailed',
+            widget_font_style: document.getElementById('overlay-widget-font-style')?.value || 'gaming',
             streamer_account_mode: document.getElementById('overlay-streamer-account-mode')?.value || 'stream_title',
             manual_streamer_tag: document.getElementById('overlay-manual-streamer-tag')?.value || '',
             recent_limit: this.getNumberInputValue('overlay-recent-limit', 10),
             matchup_enabled: document.getElementById('overlay-matchup-enabled')?.checked !== false,
+            opponent_second_slide_enabled: document.getElementById('overlay-opponent-second-slide-enabled')?.checked !== false,
             matchup_rank_limits: [100, 200, 500, 1000].filter(limit => document.getElementById(`overlay-matchup-top-${limit}`)?.checked === true),
             matchup_min_games: this.getNumberInputValue('overlay-matchup-min-games', 5),
             opponent_display_seconds: this.getNumberInputValue('overlay-opponent-display-seconds', 30),
