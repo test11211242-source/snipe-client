@@ -79,6 +79,13 @@ export class AuthSession {
     return () => this.#listeners.delete(listener)
   }
 
+  cancelPendingOperations(): void {
+    this.#operationController.abort()
+    this.#operationController = new AbortController()
+    this.#refreshPromise = undefined
+    this.#generation += 1
+  }
+
   async bootstrap(): Promise<AuthView> {
     const generation = this.beginOperation()
     this.#accessToken = null

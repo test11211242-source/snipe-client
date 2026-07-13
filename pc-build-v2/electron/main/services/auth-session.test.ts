@@ -156,6 +156,30 @@ describe('AuthSession', () => {
     await expect(auth.getAccessToken()).resolves.toBeNull()
   })
 
+  it('cancels an in-flight bootstrap without committing a stale auth result', async () => {
+    let requestStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      requestStarted = resolve
+    })
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_url, init) => {
+      requestStarted?.()
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        const rejectAbort = (): void => reject(new Error('request aborted'))
+        if (signal?.aborted === true) rejectAbort()
+        else signal?.addEventListener('abort', rejectAbort, { once: true })
+      })
+    })
+    const { auth } = session(fetchMock, store(null))
+
+    const bootstrap = auth.bootstrap()
+    await started
+    auth.cancelPendingOperations()
+
+    await expect(bootstrap).resolves.toMatchObject({ state: 'BOOTSTRAPPING' })
+    expect(auth.getView()).toMatchObject({ state: 'BOOTSTRAPPING', user: null })
+  })
+
   it('clears a refresh token whose encrypted write finishes after logout', async () => {
     let releaseSave: (() => void) | undefined
     let saveStarted: (() => void) | undefined

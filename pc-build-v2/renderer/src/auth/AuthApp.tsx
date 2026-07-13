@@ -18,11 +18,19 @@ export function AuthApp(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
-    void window.crToolsAuth.getView().then((next) => {
-      if (active) setView(next)
-    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refreshView = async (): Promise<void> => {
+      const next = await window.crToolsAuth.getView()
+      if (!active) return
+      setView(next)
+      if (next.state === 'BOOTSTRAPPING') {
+        timer = setTimeout(() => void refreshView(), 250)
+      }
+    }
+    void refreshView()
     return () => {
       active = false
+      if (timer !== undefined) clearTimeout(timer)
     }
   }, [])
 

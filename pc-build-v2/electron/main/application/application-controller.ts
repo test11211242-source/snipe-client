@@ -120,7 +120,13 @@ export class ApplicationController {
       disposeUpdateIpc()
     }
 
+    this.logger.info('Opening authentication shell', this.getSnapshot())
+    await this.windows.ensureAuthWindow()
+    this.logger.info('Authentication shell ready', this.getSnapshot())
     const initialView = await this.auth.bootstrap()
+    if (this.lifecycle.state === 'SHUTTING_DOWN' || this.lifecycle.state === 'STOPPED') {
+      return
+    }
     await this.syncWindows(initialView)
     this.#disposeAuthSubscription = this.auth.subscribe((view) =>
       this.queueWindowSync(view),
@@ -226,6 +232,7 @@ export class ApplicationController {
       this.lifecycle.transitionTo('SHUTTING_DOWN')
     }
 
+    this.auth.cancelPendingOperations()
     await this.updater.stop()
     this.#disposeIpc?.()
     this.#disposeIpc = undefined
