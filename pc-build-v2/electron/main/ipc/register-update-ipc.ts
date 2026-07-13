@@ -8,6 +8,7 @@ import {
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { UpdateService } from '../services/update-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface UpdateIpcDependencies {
   windows: WindowCoordinator
@@ -17,7 +18,7 @@ interface UpdateIpcDependencies {
 
 export function registerUpdateIpc(dependencies: UpdateIpcDependencies): () => void {
   const verify = (event: IpcMainInvokeEvent, rawPayload: unknown): void => {
-    dependencies.windows.assertSender(event.sender, event.senderFrame?.url ?? '', 'main')
+    verifyIpcSender(event, dependencies.windows, 'main')
     EmptyUpdatePayloadSchema.parse(rawPayload)
   }
   ipcMain.handle(UPDATE_IPC_CHANNELS.getView, (event, payload) => {

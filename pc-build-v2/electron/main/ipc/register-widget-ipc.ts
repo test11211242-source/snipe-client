@@ -15,6 +15,7 @@ import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { ImageAssetService } from '../services/image-asset-service'
 import type { WidgetController } from '../services/widget-controller'
 import type { WindowCoordinator, WindowKind } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface WidgetIpcDependencies {
   windows: WindowCoordinator
@@ -28,7 +29,7 @@ function verify(
   windows: WindowCoordinator,
   kind: WindowKind,
 ): void {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', kind)
+  verifyIpcSender(event, windows, kind)
 }
 
 export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => void {

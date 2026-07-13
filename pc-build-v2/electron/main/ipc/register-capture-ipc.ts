@@ -18,6 +18,7 @@ import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
 import type { SetupSessionService } from '../services/setup-session-service'
 import type { WindowCoordinator, WindowKind } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface CaptureIpcDependencies {
   windows: WindowCoordinator
@@ -27,7 +28,7 @@ interface CaptureIpcDependencies {
 }
 
 function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator, kind: WindowKind) {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', kind)
+  verifyIpcSender(event, windows, kind)
 }
 
 export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => void {

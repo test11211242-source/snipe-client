@@ -14,6 +14,7 @@ import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { AuthSession } from '../services/auth-session'
 import type { WebSocketSession } from '../services/websocket-session'
 import type { WindowCoordinator, WindowKind } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface AuthNetworkIpcDependencies {
   windows: WindowCoordinator
@@ -27,7 +28,7 @@ function verifySender(
   windows: WindowCoordinator,
   kind: WindowKind,
 ): void {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', kind)
+  verifyIpcSender(event, windows, kind)
 }
 
 export function registerAuthNetworkIpc(

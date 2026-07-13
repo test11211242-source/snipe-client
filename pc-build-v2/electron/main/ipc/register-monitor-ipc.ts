@@ -10,6 +10,7 @@ import {
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { MonitorSupervisor } from '../services/monitor-supervisor'
 import type { WindowCoordinator } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface MonitorIpcDependencies {
   windows: WindowCoordinator
@@ -18,7 +19,7 @@ interface MonitorIpcDependencies {
 }
 
 function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator): void {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', 'main')
+  verifyIpcSender(event, windows, 'main')
 }
 
 export function registerMonitorIpc(dependencies: MonitorIpcDependencies): () => void {

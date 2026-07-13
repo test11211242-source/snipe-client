@@ -19,6 +19,7 @@ import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { SetupSessionService } from '../services/setup-session-service'
 import type { StreamerService } from '../services/streamer-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface Dependencies {
   windows: WindowCoordinator
@@ -28,7 +29,7 @@ interface Dependencies {
 }
 
 function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator): void {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', 'main')
+  verifyIpcSender(event, windows, 'main')
 }
 
 export function registerStreamerIpc(dependencies: Dependencies): () => void {

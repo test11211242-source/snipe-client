@@ -14,6 +14,7 @@ import type { AppSnapshot } from '../../../shared/models/application'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { AppSettingsController } from '../services/app-settings-controller'
 import type { WindowCoordinator } from '../windows/window-coordinator'
+import { verifyIpcSender } from './verify-ipc-sender'
 
 interface AppIpcDependencies {
   windows: WindowCoordinator
@@ -23,7 +24,7 @@ interface AppIpcDependencies {
 }
 
 function verifyMainSender(event: IpcMainInvokeEvent, windows: WindowCoordinator): void {
-  windows.assertSender(event.sender, event.senderFrame?.url ?? '', 'main')
+  verifyIpcSender(event, windows, 'main')
 }
 
 export function registerAppIpc(dependencies: AppIpcDependencies): () => void {
