@@ -64,7 +64,7 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
 })
 
 test('packaged app opens an isolated auth window and exits cleanly', async () => {
-  test.setTimeout(120_000)
+  test.setTimeout(150_000)
 
   const userDataDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-v2-e2e-'))
   let application: ElectronApplication | undefined
@@ -72,7 +72,8 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
     application = await electron.launch({
       executablePath,
       args: [`--user-data-dir=${userDataDirectory}`],
-      timeout: 30_000,
+      // The first Chromium endpoint follows cold Windows CIM and production auth bootstrap.
+      timeout: 75_000,
     })
     const page = await application.firstWindow({ timeout: 45_000 })
     await expect(page).toHaveTitle(/CR Tools V2/)
