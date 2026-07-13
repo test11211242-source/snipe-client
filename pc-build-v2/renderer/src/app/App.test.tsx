@@ -125,23 +125,21 @@ describe('App shell', () => {
   it('renders operational monitor readiness and keeps capture navigation functional', async () => {
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: 'Монитор соперника' })).toBeVisible()
+    expect(
+      screen.getByRole('heading', { name: 'Получаем состояние системы' }),
+    ).toBeVisible()
     expect((await screen.findAllByText('operator')).length).toBeGreaterThan(0)
-    expect(screen.getAllByText('AUTHENTICATING').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: 'Запустить монитор' })).toBeDisabled()
+    expect(screen.getAllByText('Realtime подключается').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Выбрать источник' })).toBeEnabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
-    expect(
-      screen.getByRole('heading', { name: 'Выберите окно или дисплей' }),
-    ).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Источник захвата' })).toBeVisible()
   })
 
   it('shows the honest unsigned-publisher warning in update settings', async () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
-    expect(
-      await screen.findByText(/Windows SmartScreen может показать неизбежное/),
-    ).toBeVisible()
+    expect(await screen.findByText(/Windows может показать предупреждение/)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Проверить' })).toBeVisible()
     expect(screen.getByText(/Данные автоматически не отправляются/)).toBeVisible()
   })

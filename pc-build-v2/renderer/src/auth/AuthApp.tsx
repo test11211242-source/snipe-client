@@ -126,6 +126,7 @@ export function AuthApp(): React.JSX.Element {
             />
           ) : state === 'BLOCKED' ? (
             <StateMessage
+              tone="danger"
               title="Доступ заблокирован"
               description={
                 view?.error?.message ?? 'Сервер запретил доступ для этой учётной записи.'
@@ -133,6 +134,7 @@ export function AuthApp(): React.JSX.Element {
             />
           ) : state === 'ERROR' ? (
             <StateMessage
+              tone="danger"
               title="Не удалось продолжить"
               description={view?.error?.message ?? 'Произошла ошибка авторизации.'}
               actionLabel={
@@ -289,16 +291,21 @@ function CredentialsForm({
 function StateMessage({
   title,
   description,
+  tone = 'neutral',
   actionLabel,
   onAction,
 }: {
   title: string
   description: string
+  tone?: 'neutral' | 'danger'
   actionLabel?: string | undefined
   onAction?: (() => void) | undefined
 }): React.JSX.Element {
   return (
-    <div className="auth-state" role="alert" aria-live="assertive">
+    <div className="auth-state" data-tone={tone} role="alert" aria-live="assertive">
+      <span className="auth-state-mark" aria-hidden="true">
+        !
+      </span>
       <h2 id="auth-form-title">{title}</h2>
       <p>{description}</p>
       {actionLabel !== undefined && onAction !== undefined && (

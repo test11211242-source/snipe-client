@@ -186,7 +186,13 @@ export function SetupApp(): React.JSX.Element {
   }
 
   if (view === null)
-    return <main className="setup-loading">Подготовка рабочего кадра...</main>
+    return (
+      <main className="setup-loading" role="status" aria-live="polite">
+        <span className="setup-spinner" aria-hidden="true" />
+        <strong>Подготовка рабочего кадра</strong>
+        <p>Загружаем источник и параметры калибровки.</p>
+      </main>
+    )
   const steps = view.kind === 'predictionResult' ? RESULT_STEPS : STEPS
   const activeStep = steps.find((step) => step.id === activeRegion)
   if (activeStep === undefined) throw new Error('Unknown setup region')
@@ -196,7 +202,7 @@ export function SetupApp(): React.JSX.Element {
   const message = localError ?? view.error?.message ?? null
 
   return (
-    <main className="setup-workspace">
+    <main className="setup-workspace" data-state={view.state} aria-busy={busy}>
       <header className="setup-header">
         <div>
           <span className="eyebrow">
@@ -258,7 +264,7 @@ export function SetupApp(): React.JSX.Element {
         </div>
       )}
       {view.state === 'COMMITTED' ? (
-        <section className="setup-complete">
+        <section className="setup-complete" data-tone="success">
           <Check aria-hidden="true" size={32} />
           <h2>
             {view.kind === 'predictionResult'
@@ -271,7 +277,7 @@ export function SetupApp(): React.JSX.Element {
           </button>
         </section>
       ) : view.state === 'FAILED' || frameUrl === null || view.frameSize === null ? (
-        <section className="setup-complete">
+        <section className="setup-complete" data-tone="danger">
           <X aria-hidden="true" size={32} />
           <h2>Кадр недоступен</h2>
           <p>Настройка не изменила активную конфигурацию.</p>
@@ -282,8 +288,25 @@ export function SetupApp(): React.JSX.Element {
       ) : (
         <div className="setup-grid">
           <section className="frame-panel" aria-label="Рабочий кадр">
+            <header className="frame-toolbar">
+              <div>
+                <span>РАБОЧИЙ КАДР</span>
+                <strong>
+                  {view.frameSize.width} × {view.frameSize.height} px
+                </strong>
+              </div>
+              <span className="frame-status" data-busy={busy}>
+                <i aria-hidden="true" />
+                {busy
+                  ? 'Обработка'
+                  : canEdit
+                    ? 'Выделение области'
+                    : 'Проверка конфигурации'}
+              </span>
+            </header>
             <div
               className="capture-stage"
+              data-editable={canEdit}
               ref={stageRef}
               onPointerDown={(event) => {
                 if (!canEdit) return
@@ -325,6 +348,7 @@ export function SetupApp(): React.JSX.Element {
                       <div
                         className={`region-box region-${step.id}`}
                         key={step.id}
+                        data-active={step.id === activeRegion}
                         style={{
                           left: `${rect.x * 100}%`,
                           top: `${rect.y * 100}%`,

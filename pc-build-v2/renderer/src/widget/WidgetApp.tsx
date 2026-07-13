@@ -122,11 +122,13 @@ export function WidgetApp(): React.JSX.Element {
 
       {failed ? (
         <EmptyState
+          tone="danger"
           title="Виджет временно недоступен"
           detail="Повторная проверка выполняется."
         />
       ) : view === null ? (
         <EmptyState
+          loading
           title="Загрузка результата"
           detail="Подключение к локальному монитору."
         />
@@ -135,15 +137,17 @@ export function WidgetApp(): React.JSX.Element {
       ) : (
         <>
           <section className="player-summary" aria-labelledby="player-name">
-            <div>
-              <span>НАЙДЕН ИГРОК</span>
-              <h1 id="player-name">{found.player.name}</h1>
+            <div className="player-heading">
+              <div>
+                <span>НАЙДЕН ИГРОК</span>
+                <h1 id="player-name">{found.player.name}</h1>
+              </div>
+              {found.player.rating !== null && (
+                <strong className="rating" aria-label={`Рейтинг ${found.player.rating}`}>
+                  {found.player.rating}
+                </strong>
+              )}
             </div>
-            {found.player.rating !== null && (
-              <strong className="rating" aria-label={`Рейтинг ${found.player.rating}`}>
-                {found.player.rating}
-              </strong>
-            )}
             <dl>
               <div>
                 <dt>Тег</dt>
@@ -241,18 +245,34 @@ function EmptyResult({ result }: { result: WidgetView['result'] }): React.JSX.El
       : result.kind === 'recognition_failed'
         ? 'Данные не распознаны'
         : 'Ошибка сервиса'
-  return <EmptyState title={title} detail={result.message} />
+  const tone =
+    result.kind === 'recognition_failed'
+      ? 'warning'
+      : result.kind === 'service_error'
+        ? 'danger'
+        : 'neutral'
+  return <EmptyState tone={tone} title={title} detail={result.message} />
 }
 
 function EmptyState({
   title,
   detail,
+  tone = 'neutral',
+  loading = false,
 }: {
   title: string
   detail: string
+  tone?: 'neutral' | 'warning' | 'danger'
+  loading?: boolean
 }): React.JSX.Element {
   return (
-    <section className="widget-empty" aria-live="polite">
+    <section
+      className="widget-empty"
+      data-tone={tone}
+      data-loading={loading}
+      aria-live="polite"
+      aria-busy={loading}
+    >
       <span aria-hidden="true">CR</span>
       <strong>{title}</strong>
       <p>{detail}</p>

@@ -1,15 +1,17 @@
 import {
   Aperture,
   AlertCircle,
+  Check,
   ChevronRight,
+  Clock3,
   House,
   LogOut,
   Radio,
   Settings,
-  ShieldCheck,
   Monitor,
   Play,
   RefreshCw,
+  Search,
   ScanLine,
   Square,
   UserSearch,
@@ -143,6 +145,9 @@ export function App(): React.JSX.Element {
 
   const activeItem =
     NAVIGATION.find((item) => item.id === section) ?? HOME_NAVIGATION_ITEM
+  const monitorActive = ['PREFLIGHT', 'STARTING', 'READY', 'STOPPING'].includes(
+    monitorView?.state ?? 'STOPPED',
+  )
   const logout = async (): Promise<void> => {
     setAuth(await window.crTools.logout())
   }
@@ -164,6 +169,7 @@ export function App(): React.JSX.Element {
             const Icon = item.icon
             return (
               <button
+                aria-current={section === item.id ? 'page' : undefined}
                 className="nav-item"
                 data-active={section === item.id}
                 key={item.id}
@@ -182,17 +188,30 @@ export function App(): React.JSX.Element {
             aria-hidden="true"
           />
           <div>
-            <strong>Realtime {realtime?.state ?? 'CHECKING'}</strong>
-            <span>production server</span>
+            <strong>{realtimeLabel(realtime)}</strong>
+            <span>Live-обновления</span>
           </div>
         </div>
+        <span className="sidebar-version">Версия {snapshot?.version ?? '...'}</span>
       </aside>
 
       <main className="content">
         <header className="topbar">
-          <div>
-            <span className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span>
+          <div className="page-identity">
             <h1>{activeItem.label}</h1>
+            <span>{monitorActive ? 'Мониторинг активен' : 'Мониторинг остановлен'}</span>
+          </div>
+          <div className="global-status" aria-label="Краткое состояние системы">
+            <span data-tone={captureStatus?.configured === true ? 'ready' : 'attention'}>
+              <i aria-hidden="true" />
+              {captureStatus?.configured === true ? 'Захват готов' : 'Настройте захват'}
+            </span>
+            <span data-tone={realtime?.state === 'READY' ? 'ready' : 'neutral'}>
+              <i aria-hidden="true" />
+              {realtime?.state === 'READY'
+                ? 'Realtime подключён'
+                : 'Realtime подключается'}
+            </span>
           </div>
           <div className="user-cluster">
             <div className="user-identity">
@@ -206,33 +225,43 @@ export function App(): React.JSX.Element {
           </div>
         </header>
 
-        {section === 'home' ? (
-          <Home
-            snapshot={snapshot}
-            auth={auth}
-            realtime={realtime}
-            ipcState={ipcState}
-            captureStatus={captureStatus}
-            monitorView={monitorView}
-            onMonitorView={setMonitorView}
-            onConfigure={() => setSection('capture')}
-            onOpenWidget={() => void window.crTools.showWidget().then(setWidgetStatus)}
-          />
-        ) : section === 'capture' ? (
-          <CapturePage onStatus={setCaptureStatus} />
-        ) : section === 'settings' ? (
-          <SettingsPage
-            status={widgetStatus}
-            onStatus={setWidgetStatus}
-            appSettings={appSettings}
-            onAppSettings={setAppSettings}
-          />
-        ) : (
-          <StreamerPage auth={auth} />
-        )}
+        <div className="page-stage" key={section}>
+          {section === 'home' ? (
+            <Home
+              snapshot={snapshot}
+              auth={auth}
+              realtime={realtime}
+              ipcState={ipcState}
+              captureStatus={captureStatus}
+              monitorView={monitorView}
+              onMonitorView={setMonitorView}
+              onConfigure={() => setSection('capture')}
+              onOpenWidget={() => void window.crTools.showWidget().then(setWidgetStatus)}
+            />
+          ) : section === 'capture' ? (
+            <CapturePage status={captureStatus} onStatus={setCaptureStatus} />
+          ) : section === 'settings' ? (
+            <SettingsPage
+              status={widgetStatus}
+              onStatus={setWidgetStatus}
+              appSettings={appSettings}
+              onAppSettings={setAppSettings}
+            />
+          ) : (
+            <StreamerPage auth={auth} />
+          )}
+        </div>
       </main>
     </div>
   )
+}
+
+function realtimeLabel(realtime: RealtimeStatus | null): string {
+  if (realtime === null) return 'Проверяем соединение'
+  if (realtime.state === 'READY') return 'Realtime подключён'
+  if (realtime.state === 'DISCONNECTED') return 'Realtime отключён'
+  if (realtime.state === 'BACKOFF') return 'Повторное подключение'
+  return 'Realtime подключается'
 }
 
 function Home({
@@ -257,12 +286,25 @@ function Home({
   onOpenWidget: () => void
 }): React.JSX.Element {
   const [commandBusy, setCommandBusy] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
   const authenticated = auth?.state === 'AUTHENTICATED'
   const configured = captureStatus?.configured === true
   const monitorState = monitorView?.state ?? 'STOPPED'
   const active = ['PREFLIGHT', 'STARTING', 'READY', 'STOPPING'].includes(monitorState)
+  const sourceUnavailable = monitorView?.readiness.sourceAvailable === false
   const canStart = authenticated && configured && !active && !commandBusy
   const canStop = active && monitorState !== 'STOPPING' && !commandBusy
+
+  useEffect(() => {
+    if (
+      !active ||
+      monitorView?.startedAt === null ||
+      monitorView?.startedAt === undefined
+    )
+      return
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [active, monitorView?.startedAt])
 
   const runCommand = async (command: 'start' | 'stop'): Promise<void> => {
     setCommandBusy(true)
@@ -298,169 +340,340 @@ function Home({
       detail: authenticated ? (auth.user?.username ?? 'Вход выполнен') : 'Требуется вход',
     },
     {
-      label: 'Production API',
+      label: 'Сервис распознавания',
       ready: authenticated,
       detail: authenticated ? 'Сеанс подтверждён' : 'Нет активного сеанса',
     },
     {
-      label: 'Realtime',
+      label: 'Live-обновления',
       ready: realtime?.state === 'READY',
-      detail: realtime?.state ?? 'CHECKING',
+      detail: realtimeLabel(realtime),
     },
     {
-      label: 'Захват',
-      ready: configured,
-      detail: configured
-        ? (captureStatus.sourceLabel ?? 'Настроен')
-        : 'Требуется настройка',
+      label: 'Источник захвата',
+      ready: configured && !sourceUnavailable,
+      detail: !configured
+        ? 'Требуется настройка'
+        : sourceUnavailable
+          ? 'Источник недоступен'
+          : (captureStatus.sourceLabel ?? 'Настроен'),
     },
   ]
+  const hero = getHomePresentation(monitorView, configured, sourceUnavailable)
+  const startedAt = monitorView?.startedAt
+  const sessionDuration =
+    startedAt === null || startedAt === undefined
+      ? null
+      : formatDuration(Math.max(0, now - Date.parse(startedAt)))
+  const primaryDisabled =
+    monitorView === null
+      ? true
+      : active
+        ? !canStop
+        : configured && !sourceUnavailable
+          ? !canStart
+          : commandBusy
+  const runPrimary = (): void => {
+    if (active) void runCommand('stop')
+    else if (!configured || sourceUnavailable) onConfigure()
+    else void runCommand('start')
+  }
+
   return (
     <div className="monitor-home">
-      <section className="monitor-control-panel" aria-labelledby="monitor-title">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">LIVE RECOGNITION</span>
-            <h2 id="monitor-title">Монитор соперника</h2>
-          </div>
-          <span
-            className={`state-pill state-${monitorState === 'READY' ? 'ready' : monitorState === 'FAILED' ? 'failed' : 'checking'}`}
-          >
-            {monitorState}
-          </span>
-        </div>
-        <p className="monitor-lead">
-          Триггер проверяется локально. Только выбранная область данных отправляется в
-          production OCR после подтверждения.
-        </p>
-        <div className="mode-groups">
-          <ModeGroup<SearchMode>
-            label="Поиск"
-            options={[
-              ['fast', 'Быстрый'],
-              ['precise', 'Точный'],
-            ]}
-            value={monitorView?.preferences.searchMode ?? 'fast'}
-            disabled={active || commandBusy}
-            onChange={(searchMode) => void updatePreference({ searchMode })}
-          />
-          <ModeGroup<DeckMode>
-            label="Режим колод"
-            options={[
-              ['pol', 'PoL'],
-              ['gt', 'GT'],
-            ]}
-            value={monitorView?.preferences.deckMode ?? 'pol'}
-            disabled={active || commandBusy}
-            onChange={(deckMode) => void updatePreference({ deckMode })}
-          />
-        </div>
-        {monitorView?.error !== null && monitorView?.error !== undefined && (
-          <div className="monitor-error" role="alert">
-            <AlertCircle aria-hidden="true" size={18} />
-            <div>
-              <strong>{monitorView.error.code}</strong>
-              <span>{monitorView.error.message}</span>
+      <div className="home-main-column">
+        <section
+          className="monitor-control-panel"
+          data-state={hero.tone}
+          aria-labelledby="monitor-title"
+        >
+          <div className="monitor-hero-copy">
+            <div className="monitor-state-line">
+              <span className="status-dot" data-tone={hero.tone} aria-hidden="true" />
+              <span>{hero.kicker}</span>
             </div>
-          </div>
-        )}
-        <div className="monitor-actions">
-          {active ? (
-            <button
-              className="stop-button"
-              type="button"
-              disabled={!canStop}
-              onClick={() => void runCommand('stop')}
-            >
-              <Square aria-hidden="true" size={16} />
-              {monitorState === 'STOPPING' ? 'Остановка...' : 'Остановить'}
-            </button>
-          ) : (
-            <button
-              className="primary-button monitor-primary"
-              type="button"
-              disabled={!canStart}
-              onClick={() => void runCommand('start')}
-            >
-              <Play aria-hidden="true" size={17} />
-              Запустить монитор
-            </button>
-          )}
-          {!configured && (
-            <button
-              className="text-button compact-link"
-              type="button"
-              onClick={onConfigure}
-            >
-              Настроить захват
-              <ChevronRight aria-hidden="true" size={15} />
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="readiness-panel" aria-labelledby="readiness-title">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">PREFLIGHT</span>
-            <h2 id="readiness-title">Готовность</h2>
-          </div>
-          <ShieldCheck aria-hidden="true" size={20} />
-        </div>
-        <div className="readiness-list">
-          {readiness.map((item) => (
-            <div className="readiness-row" key={item.label} data-ready={item.ready}>
-              <span className="readiness-marker" aria-hidden="true" />
-              <div>
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
+            <h2 id="monitor-title">{hero.title}</h2>
+            <p className="monitor-lead">{hero.description}</p>
+            {monitorView?.error !== null && monitorView?.error !== undefined && (
+              <div className="monitor-error" role="alert">
+                <AlertCircle aria-hidden="true" size={17} />
+                <div>
+                  <strong>Не удалось продолжить</strong>
+                  <span>{monitorView.error.message}</span>
+                </div>
               </div>
+            )}
+            <div className="monitor-actions">
+              <button
+                className={active ? 'stop-button' : 'primary-button monitor-primary'}
+                type="button"
+                disabled={primaryDisabled}
+                onClick={runPrimary}
+              >
+                {active ? (
+                  <Square aria-hidden="true" size={15} />
+                ) : configured && !sourceUnavailable ? (
+                  <Play aria-hidden="true" size={16} />
+                ) : (
+                  <Aperture aria-hidden="true" size={16} />
+                )}
+                {commandBusy
+                  ? active
+                    ? 'Останавливаем...'
+                    : 'Проверяем...'
+                  : hero.action}
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+          <div className="monitor-hero-context">
+            {sessionDuration !== null && active && (
+              <div className="session-time">
+                <Clock3 aria-hidden="true" size={15} />
+                <span>Время сессии</span>
+                <strong>{sessionDuration}</strong>
+              </div>
+            )}
+            <div className="mode-groups">
+              <ModeGroup<SearchMode>
+                label="Поиск"
+                options={[
+                  ['fast', 'Быстрый'],
+                  ['precise', 'Точный'],
+                ]}
+                value={monitorView?.preferences.searchMode ?? 'fast'}
+                disabled={active || commandBusy || monitorView === null}
+                onChange={(searchMode) => void updatePreference({ searchMode })}
+              />
+              <ModeGroup<DeckMode>
+                label="Режим колод"
+                options={[
+                  ['pol', 'PoL'],
+                  ['gt', 'GT'],
+                ]}
+                value={monitorView?.preferences.deckMode ?? 'pol'}
+                disabled={active || commandBusy || monitorView === null}
+                onChange={(deckMode) => void updatePreference({ deckMode })}
+              />
+            </div>
+          </div>
+        </section>
+
+        <SessionStats view={monitorView} />
+        <section className="results-panel" aria-labelledby="results-title">
+          <div className="section-heading results-heading">
+            <div>
+              <span className="eyebrow">ИСТОРИЯ СЕССИИ</span>
+              <h2 id="results-title">Последние результаты</h2>
+            </div>
+            <div className="results-tools">
+              <span className="result-count">
+                {monitorView?.results.length ?? 0} / 20
+              </span>
+              {monitorView?.results.some((result) => result.kind === 'player_found') && (
+                <button
+                  className="secondary-button result-widget-action"
+                  type="button"
+                  onClick={onOpenWidget}
+                >
+                  <ExternalLink aria-hidden="true" size={14} />
+                  Открыть виджет
+                </button>
+              )}
+            </div>
+          </div>
+          {monitorView === null ? (
+            <div className="results-loading" aria-label="Загрузка результатов">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : monitorView.results.length === 0 ? (
+            <div className="results-empty">
+              <UserSearch aria-hidden="true" size={23} />
+              <strong>Результатов пока нет</strong>
+              <span>Они появятся здесь после первого распознавания.</span>
+            </div>
+          ) : (
+            <div className="result-list">
+              {monitorView.results.map((result) => (
+                <ResultCard key={result.id} result={result} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <aside className="home-context" aria-label="Контекст мониторинга">
+        <section className="readiness-panel" aria-labelledby="readiness-title">
+          <div className="section-heading compact-heading">
+            <div>
+              <span className="eyebrow">ПОДГОТОВКА</span>
+              <h2 id="readiness-title">Готовность системы</h2>
+            </div>
+            <span className="readiness-total">
+              {readiness.filter((item) => item.ready).length}/{readiness.length}
+            </span>
+          </div>
+          <div className="readiness-list">
+            {readiness.map((item) => (
+              <div className="readiness-row" key={item.label} data-ready={item.ready}>
+                <span className="readiness-marker" aria-hidden="true" />
+                <div>
+                  <strong>{item.label}</strong>
+                  <span>{item.detail}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="context-section current-configuration">
+          <span className="eyebrow">КОНФИГУРАЦИЯ</span>
+          <dl>
+            <div>
+              <dt>Источник</dt>
+              <dd>{captureStatus?.sourceLabel ?? 'Не выбран'}</dd>
+            </div>
+            <div>
+              <dt>Поиск</dt>
+              <dd>
+                {monitorView?.preferences.searchMode === 'precise' ? 'Точный' : 'Быстрый'}
+              </dd>
+            </div>
+            <div>
+              <dt>Колоды</dt>
+              <dd>{(monitorView?.preferences.deckMode ?? 'pol').toUpperCase()}</dd>
+            </div>
+          </dl>
+          <button
+            className="text-button compact-link"
+            type="button"
+            onClick={onConfigure}
+          >
+            Изменить захват
+            <ChevronRight aria-hidden="true" size={14} />
+          </button>
+        </section>
+
+        <section className="context-section recent-activity">
+          <span className="eyebrow">ПОСЛЕДНЯЯ АКТИВНОСТЬ</span>
+          {monitorView === null || monitorView.results.length === 0 ? (
+            <p>Событий этой сессии пока нет.</p>
+          ) : (
+            <ol>
+              {monitorView.results.slice(0, 4).map((result) => (
+                <li key={result.id} data-kind={result.kind}>
+                  <span aria-hidden="true" />
+                  <div>
+                    <strong>{resultTitle(result)}</strong>
+                    <time dateTime={result.timestamp}>
+                      {new Date(result.timestamp).toLocaleTimeString('ru-RU', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </time>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
         <div className="runtime-caption">
           App {snapshot?.version ?? '...'} · IPC {ipcState} ·{' '}
           {snapshot?.lifecycle ?? 'BOOTING'}
         </div>
-      </section>
-
-      <SessionStats view={monitorView} />
-      <section className="results-panel" aria-labelledby="results-title">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">SESSION FEED</span>
-            <h2 id="results-title">Последние результаты</h2>
-          </div>
-          <span className="result-count">{monitorView?.results.length ?? 0} / 20</span>
-        </div>
-        {monitorView?.results.some((result) => result.kind === 'player_found') && (
-          <button
-            className="secondary-button result-widget-action"
-            type="button"
-            onClick={onOpenWidget}
-          >
-            <ExternalLink aria-hidden="true" size={15} />
-            Открыть виджет
-          </button>
-        )}
-        {monitorView === null || monitorView.results.length === 0 ? (
-          <div className="results-empty">
-            <UserSearch aria-hidden="true" size={26} />
-            <strong>Результатов пока нет</strong>
-            <span>
-              После локального триггера здесь появится честный результат OCR и поиска.
-            </span>
-          </div>
-        ) : (
-          <div className="result-list">
-            {monitorView.results.map((result) => (
-              <ResultCard key={result.id} result={result} />
-            ))}
-          </div>
-        )}
-      </section>
+      </aside>
     </div>
   )
+}
+
+function getHomePresentation(
+  view: MonitorView | null,
+  configured: boolean,
+  sourceUnavailable: boolean,
+): { kicker: string; title: string; description: string; action: string; tone: string } {
+  if (view === null) {
+    return {
+      kicker: 'Синхронизация',
+      title: 'Получаем состояние системы',
+      description: 'Проверяем источник захвата и готовность локальных сервисов.',
+      action: 'Подождите...',
+      tone: 'neutral',
+    }
+  }
+  if (view.state === 'PREFLIGHT' || view.state === 'STARTING') {
+    return {
+      kicker: 'Запуск',
+      title: 'Проверяем готовность',
+      description: 'Подготавливаем источник и локальный мониторинг соперника.',
+      action: 'Остановить мониторинг',
+      tone: 'attention',
+    }
+  }
+  if (view.state === 'READY') {
+    return {
+      kicker: 'Активная сессия',
+      title: 'Мониторинг активен',
+      description: 'Ожидаем игровой триггер и следующий результат распознавания.',
+      action: 'Остановить мониторинг',
+      tone: 'ready',
+    }
+  }
+  if (view.state === 'STOPPING') {
+    return {
+      kicker: 'Завершение сессии',
+      title: 'Останавливаем мониторинг',
+      description: 'Корректно завершаем локальный процесс и текущие операции.',
+      action: 'Останавливаем...',
+      tone: 'attention',
+    }
+  }
+  if (!configured) {
+    return {
+      kicker: 'Требуется настройка',
+      title: 'Выберите источник захвата',
+      description: 'Укажите окно Clash Royale или монитор перед запуском распознавания.',
+      action: 'Выбрать источник',
+      tone: 'attention',
+    }
+  }
+  if (sourceUnavailable) {
+    return {
+      kicker: 'Источник недоступен',
+      title: 'Окно захвата не найдено',
+      description: 'Откройте Clash Royale или выберите другой доступный источник.',
+      action: 'Выбрать другой источник',
+      tone: 'attention',
+    }
+  }
+  if (view.state === 'FAILED') {
+    return {
+      kicker: 'Сессия остановлена',
+      title: 'Мониторинг не запущен',
+      description:
+        view.error?.message ?? 'Проверьте состояние системы и повторите запуск.',
+      action: 'Повторить запуск',
+      tone: 'failed',
+    }
+  }
+  return {
+    kicker: 'Готово к работе',
+    title: 'Система готова',
+    description: 'Источник настроен. Можно запускать мониторинг соперника.',
+    action: 'Запустить мониторинг',
+    tone: 'ready',
+  }
+}
+
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.floor(milliseconds / 1_000)
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':')
 }
 
 function ModeGroup<T extends string>({
@@ -500,10 +713,9 @@ function SessionStats({ view }: { view: MonitorView | null }): React.JSX.Element
   return (
     <section className="stats-strip" aria-label="Статистика сессии">
       {[
-        ['Триггеры', stats?.triggers ?? 0],
-        ['Запросы', stats?.requests ?? 0],
         ['Найдены', stats?.playersFound ?? 0],
         ['Не найдены', stats?.playersNotFound ?? 0],
+        ['Не распознано', stats?.recognitionFailures ?? 0],
         ['Ошибки сервиса', stats?.serviceErrors ?? 0],
         ['Пропущено', stats?.droppedActions ?? 0],
       ].map(([label, value]) => (
@@ -516,15 +728,18 @@ function SessionStats({ view }: { view: MonitorView | null }): React.JSX.Element
   )
 }
 
+function resultTitle(result: MonitorResult): string {
+  return result.kind === 'player_found'
+    ? result.player.name
+    : result.kind === 'player_not_found'
+      ? 'Игрок не найден'
+      : result.kind === 'recognition_failed'
+        ? 'Не удалось распознать'
+        : 'Ошибка сервиса'
+}
+
 function ResultCard({ result }: { result: MonitorResult }): React.JSX.Element {
-  const title =
-    result.kind === 'player_found'
-      ? result.player.name
-      : result.kind === 'player_not_found'
-        ? 'Игрок не найден'
-        : result.kind === 'recognition_failed'
-          ? 'Не удалось распознать'
-          : 'Ошибка сервиса'
+  const title = resultTitle(result)
   const detail =
     result.kind === 'player_found'
       ? [result.player.tag, result.player.rating, result.player.clan]
@@ -645,230 +860,244 @@ function SettingsPage({
 
   return (
     <div className="settings-page">
-      <section className="settings-panel" aria-labelledby="widget-settings-heading">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">LOCAL OVERLAY</span>
-            <h2 id="widget-settings-heading">Виджет соперника</h2>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={busy || status === null}
-            onClick={() => void show()}
-          >
-            Открыть виджет
-          </button>
+      <header className="settings-page-heading">
+        <div>
+          <span className="eyebrow">ПЕРСОНАЛИЗАЦИЯ</span>
+          <h2>Настройки приложения</h2>
+          <p>Поведение виджета, системные параметры и обновления CR Tools.</p>
         </div>
-        <p className="settings-intro">
-          Отдельное локальное окно показывает только безопасную проекцию последнего
-          результата. Изображения карт загружает основной процесс.
-        </p>
-        {status === null ? (
-          <div className="settings-loading">Загрузка настроек...</div>
-        ) : (
-          <div className="settings-form">
-            <SettingToggle
-              label="Открывать при найденном игроке"
-              detail="Ошибки и результаты «не найден» окно не открывают."
-              checked={status.settings.autoOpen}
-              disabled={busy}
-              onChange={(autoOpen) => void update({ autoOpen })}
-            />
-            <SettingToggle
-              label="Поверх остальных окон"
-              detail="Сохраняет колоду видимой рядом с игрой."
-              checked={status.settings.alwaysOnTop}
-              disabled={busy}
-              onChange={(alwaysOnTop) => void update({ alwaysOnTop })}
-            />
-            <SettingToggle
-              label="Заблокировать положение"
-              detail="Отключает перемещение и изменение размера окна."
-              checked={status.settings.locked}
-              disabled={busy}
-              onChange={(locked) => void update({ locked })}
-            />
-            <SettingToggle
-              label="Компактный режим"
-              detail="Скрывает второстепенные сведения и уменьшает карточки."
-              checked={status.settings.compactMode}
-              disabled={busy}
-              onChange={(compactMode) => void update({ compactMode })}
-            />
-            <label className="setting-range">
-              <span>
-                <strong>Прозрачность</strong>
-                <small>От 55% до полностью непрозрачного окна.</small>
-              </span>
-              <input
-                aria-label="Прозрачность виджета"
-                type="range"
-                min="55"
-                max="100"
-                step="5"
+      </header>
+      <div className="settings-layout">
+        <section
+          className="settings-panel settings-widget-panel"
+          aria-labelledby="widget-settings-heading"
+        >
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">ОКНО СОПЕРНИКА</span>
+              <h2 id="widget-settings-heading">Виджет соперника</h2>
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || status === null}
+              onClick={() => void show()}
+            >
+              Открыть виджет
+            </button>
+          </div>
+          <p className="settings-intro">
+            Настройте поведение отдельного окна с последним найденным соперником.
+          </p>
+          {status === null ? (
+            <div className="settings-loading">Загрузка настроек...</div>
+          ) : (
+            <div className="settings-form">
+              <SettingToggle
+                label="Открывать при найденном игроке"
+                detail="Ошибки и результаты «не найден» окно не открывают."
+                checked={status.settings.autoOpen}
                 disabled={busy}
-                value={Math.round(status.settings.opacity * 100)}
-                onChange={(event) =>
-                  void update({ opacity: Number(event.currentTarget.value) / 100 })
+                onChange={(autoOpen) => void update({ autoOpen })}
+              />
+              <SettingToggle
+                label="Поверх остальных окон"
+                detail="Сохраняет колоду видимой рядом с игрой."
+                checked={status.settings.alwaysOnTop}
+                disabled={busy}
+                onChange={(alwaysOnTop) => void update({ alwaysOnTop })}
+              />
+              <SettingToggle
+                label="Заблокировать положение"
+                detail="Отключает перемещение и изменение размера окна."
+                checked={status.settings.locked}
+                disabled={busy}
+                onChange={(locked) => void update({ locked })}
+              />
+              <SettingToggle
+                label="Компактный режим"
+                detail="Скрывает второстепенные сведения и уменьшает карточки."
+                checked={status.settings.compactMode}
+                disabled={busy}
+                onChange={(compactMode) => void update({ compactMode })}
+              />
+              <label className="setting-range">
+                <span>
+                  <strong>Прозрачность</strong>
+                  <small>От 55% до полностью непрозрачного окна.</small>
+                </span>
+                <input
+                  aria-label="Прозрачность виджета"
+                  type="range"
+                  min="55"
+                  max="100"
+                  step="5"
+                  disabled={busy}
+                  value={Math.round(status.settings.opacity * 100)}
+                  onChange={(event) =>
+                    void update({ opacity: Number(event.currentTarget.value) / 100 })
+                  }
+                />
+                <output>{Math.round(status.settings.opacity * 100)}%</output>
+              </label>
+            </div>
+          )}
+        </section>
+        <section
+          className="honest-settings application-settings"
+          aria-labelledby="application-settings-heading"
+        >
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">ПРИЛОЖЕНИЕ</span>
+              <h2 id="application-settings-heading">Приложение</h2>
+            </div>
+          </div>
+          {appSettings === null ? (
+            <div className="settings-loading">Загрузка настроек...</div>
+          ) : (
+            <div className="settings-form">
+              <SettingToggle
+                label="Уменьшить движение"
+                detail="Отключает декоративные анимации и переходы интерфейса."
+                checked={appSettings.reducedMotion}
+                disabled={busy}
+                onChange={(reducedMotion) => void updateApplication({ reducedMotion })}
+              />
+              <SettingToggle
+                label="Запускать вместе с Windows"
+                detail="Изменяет системный параметр автозапуска только в Windows."
+                checked={appSettings.launchAtStartup}
+                disabled={busy}
+                onChange={(launchAtStartup) =>
+                  void updateApplication({ launchAtStartup })
                 }
               />
-              <output>{Math.round(status.settings.opacity * 100)}%</output>
-            </label>
-          </div>
-        )}
-      </section>
-      <section className="honest-settings" aria-labelledby="application-settings-heading">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">LOCAL APPLICATION</span>
-            <h2 id="application-settings-heading">Приложение</h2>
-          </div>
-        </div>
-        {appSettings === null ? (
-          <div className="settings-loading">Загрузка настроек...</div>
-        ) : (
-          <div className="settings-form">
-            <SettingToggle
-              label="Уменьшить движение"
-              detail="Отключает декоративные анимации и переходы интерфейса."
-              checked={appSettings.reducedMotion}
-              disabled={busy}
-              onChange={(reducedMotion) => void updateApplication({ reducedMotion })}
-            />
-            <SettingToggle
-              label="Запускать вместе с Windows"
-              detail="Изменяет системный параметр автозапуска только в Windows."
-              checked={appSettings.launchAtStartup}
-              disabled={busy}
-              onChange={(launchAtStartup) => void updateApplication({ launchAtStartup })}
-            />
-            <SettingToggle
-              label="Подробная локальная диагностика"
-              detail="Включает отладочные записи локального журнала. Данные автоматически не отправляются."
-              checked={appSettings.diagnosticsEnabled}
-              disabled={busy}
-              onChange={(diagnosticsEnabled) =>
-                void updateApplication({ diagnosticsEnabled })
-              }
-            />
-          </div>
-        )}
-      </section>
-      <section
-        className="honest-settings update-settings"
-        aria-labelledby="update-heading"
-      >
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">SIGNED UPDATE CHANNEL</span>
-            <h2 id="update-heading">Обновления приложения</h2>
-          </div>
-          <span
-            className={`state-pill state-${updateView?.state === 'READY' || updateView?.state === 'UP_TO_DATE' ? 'ready' : updateView?.state === 'FAILED' ? 'failed' : 'checking'}`}
-          >
-            {updateView?.state ?? 'LOADING'}
-          </span>
-        </div>
-        <div className="unsigned-warning" role="note">
-          <AlertCircle aria-hidden="true" size={18} />
-          <p>
-            Издатель установщика не подписан Authenticode. Windows SmartScreen может
-            показать неизбежное предупреждение «Неизвестный издатель». Подпись манифеста
-            Ed25519 проверяет источник и целостность обновления, но не заменяет подпись
-            Authenticode.
-          </p>
-        </div>
-        <dl className="update-summary">
-          <div>
-            <dt>Текущая версия</dt>
-            <dd>{updateView?.currentVersion ?? '...'}</dd>
-          </div>
-          <div>
-            <dt>Доступная версия</dt>
-            <dd>{updateView?.availableVersion ?? 'нет'}</dd>
-          </div>
-        </dl>
-        {updateView?.progress !== null && updateView?.progress !== undefined && (
-          <div className="update-progress">
-            <div>
-              <strong>Загрузка {updateView.progress.percent.toFixed(1)}%</strong>
-              <span>
-                {formatBytes(updateView.progress.downloadedBytes)} /{' '}
-                {formatBytes(updateView.progress.totalBytes)}
-              </span>
+              <SettingToggle
+                label="Подробная локальная диагностика"
+                detail="Включает отладочные записи локального журнала. Данные автоматически не отправляются."
+                checked={appSettings.diagnosticsEnabled}
+                disabled={busy}
+                onChange={(diagnosticsEnabled) =>
+                  void updateApplication({ diagnosticsEnabled })
+                }
+              />
             </div>
-            <progress
-              value={updateView.progress.downloadedBytes}
-              max={updateView.progress.totalBytes}
-            />
-          </div>
-        )}
-        {updateView?.error !== null && updateView?.error !== undefined && (
-          <div className="inline-alert" role="alert">
-            {updateView.error.message}
-            {updateView.error.retryable ? ' Повторите операцию.' : ''}
-          </div>
-        )}
-        {updateView !== null && updateView.releaseNotes.length > 0 && (
-          <div className="release-notes">
-            <strong>
-              {updateView.critical ? 'Критическое обновление' : 'Что нового'}
-            </strong>
-            <ul>
-              {updateView.releaseNotes.map((note, index) => (
-                <li key={`${index}-${note}`}>{note}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <div className="update-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={
-              busy ||
-              updateView?.state === 'CHECKING' ||
-              updateView?.state === 'DOWNLOADING'
-            }
-            onClick={() => void runUpdateCommand('check')}
-          >
-            <RefreshCw aria-hidden="true" size={16} />
-            Проверить
-          </button>
-          {updateView?.state === 'AVAILABLE' && (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void runUpdateCommand('download')}
-            >
-              <Download aria-hidden="true" size={16} />
-              Скачать
-            </button>
           )}
-          {updateView?.state === 'DOWNLOADING' && (
-            <button
-              className="danger-button"
-              type="button"
-              onClick={() => void runUpdateCommand('cancel')}
+        </section>
+        <section
+          className="honest-settings update-settings"
+          aria-labelledby="update-heading"
+        >
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">ОБНОВЛЕНИЯ</span>
+              <h2 id="update-heading">Обновления приложения</h2>
+            </div>
+            <span
+              className={`state-pill state-${updateView?.state === 'READY' || updateView?.state === 'UP_TO_DATE' ? 'ready' : updateView?.state === 'FAILED' ? 'failed' : 'checking'}`}
             >
-              <X aria-hidden="true" size={16} />
-              Отменить
-            </button>
+              {updateView?.state ?? 'LOADING'}
+            </span>
+          </div>
+          <div className="unsigned-warning" role="note">
+            <AlertCircle aria-hidden="true" size={18} />
+            <p>
+              Windows может показать предупреждение «Неизвестный издатель». Перед
+              установкой приложение отдельно проверяет источник и целостность обновления.
+            </p>
+          </div>
+          <dl className="update-summary">
+            <div>
+              <dt>Текущая версия</dt>
+              <dd>{updateView?.currentVersion ?? '...'}</dd>
+            </div>
+            <div>
+              <dt>Доступная версия</dt>
+              <dd>{updateView?.availableVersion ?? 'нет'}</dd>
+            </div>
+          </dl>
+          {updateView?.progress !== null && updateView?.progress !== undefined && (
+            <div className="update-progress">
+              <div>
+                <strong>Загрузка {updateView.progress.percent.toFixed(1)}%</strong>
+                <span>
+                  {formatBytes(updateView.progress.downloadedBytes)} /{' '}
+                  {formatBytes(updateView.progress.totalBytes)}
+                </span>
+              </div>
+              <progress
+                value={updateView.progress.downloadedBytes}
+                max={updateView.progress.totalBytes}
+              />
+            </div>
           )}
-          {updateView?.state === 'READY' && (
+          {updateView?.error !== null && updateView?.error !== undefined && (
+            <div className="inline-alert" role="alert">
+              {updateView.error.message}
+              {updateView.error.retryable ? ' Повторите операцию.' : ''}
+            </div>
+          )}
+          {updateView !== null && updateView.releaseNotes.length > 0 && (
+            <div className="release-notes">
+              <strong>
+                {updateView.critical ? 'Критическое обновление' : 'Что нового'}
+              </strong>
+              <ul>
+                {updateView.releaseNotes.map((note, index) => (
+                  <li key={`${index}-${note}`}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="update-actions">
             <button
-              className="primary-button"
+              className="secondary-button"
               type="button"
-              disabled={busy}
-              onClick={() => void runUpdateCommand('install')}
+              disabled={
+                busy ||
+                updateView?.state === 'CHECKING' ||
+                updateView?.state === 'DOWNLOADING'
+              }
+              onClick={() => void runUpdateCommand('check')}
             >
-              Установить и перезапустить
+              <RefreshCw aria-hidden="true" size={16} />
+              Проверить
             </button>
-          )}
-        </div>
-      </section>
+            {updateView?.state === 'AVAILABLE' && (
+              <button
+                className="primary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void runUpdateCommand('download')}
+              >
+                <Download aria-hidden="true" size={16} />
+                Скачать
+              </button>
+            )}
+            {updateView?.state === 'DOWNLOADING' && (
+              <button
+                className="danger-button"
+                type="button"
+                onClick={() => void runUpdateCommand('cancel')}
+              >
+                <X aria-hidden="true" size={16} />
+                Отменить
+              </button>
+            )}
+            {updateView?.state === 'READY' && (
+              <button
+                className="primary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void runUpdateCommand('install')}
+              >
+                Установить и перезапустить
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }
@@ -893,23 +1122,28 @@ function SettingToggle({
 }): React.JSX.Element {
   return (
     <label className="setting-toggle">
-      <span>
+      <span className="setting-copy">
         <strong>{label}</strong>
         <small>{detail}</small>
       </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
+      <span className="switch-control">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.currentTarget.checked)}
+        />
+        <span aria-hidden="true" />
+      </span>
     </label>
   )
 }
 
 function CapturePage({
+  status,
   onStatus,
 }: {
+  status: CaptureStatus | null
   onStatus: (status: CaptureStatus) => void
 }): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<CaptureSourceSnapshot | null>(null)
@@ -917,12 +1151,21 @@ function CapturePage({
   const [loading, setLoading] = useState(true)
   const [startingKey, setStartingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [availableOnly, setAvailableOnly] = useState(true)
 
   const refresh = async (): Promise<void> => {
     setLoading(true)
     setError(null)
     try {
-      setSnapshot(await window.crTools.listCaptureSources())
+      const nextSnapshot = await window.crTools.listCaptureSources()
+      setSnapshot(nextSnapshot)
+      setSelectedKey((current) =>
+        nextSnapshot.sources.some((source) => source.sourceKey === current)
+          ? current
+          : null,
+      )
     } catch {
       setError('Не удалось получить источники. Захват доступен только в Windows.')
     } finally {
@@ -970,16 +1213,29 @@ function CapturePage({
     }
   }
 
-  const sources = snapshot?.sources.filter((source) => source.kind === tab) ?? []
+  const allSources = snapshot?.sources ?? []
+  const normalizedQuery = query.trim().toLocaleLowerCase('ru-RU')
+  const sources = allSources.filter(
+    (source) =>
+      source.kind === tab &&
+      (!availableOnly || source.captureSupported) &&
+      (normalizedQuery.length === 0 ||
+        source.label.toLocaleLowerCase('ru-RU').includes(normalizedQuery) ||
+        source.detail?.toLocaleLowerCase('ru-RU').includes(normalizedQuery) === true),
+  )
+  const selectedSource =
+    allSources.find((source) => source.sourceKey === selectedKey) ?? null
+  const windowCount = allSources.filter((source) => source.kind === 'window').length
+  const displayCount = allSources.filter((source) => source.kind === 'display').length
   return (
     <section className="capture-page" aria-labelledby="capture-heading">
       <div className="capture-intro">
         <div>
-          <span className="eyebrow">CANONICAL SOURCE</span>
-          <h2 id="capture-heading">Выберите окно или дисплей</h2>
+          <span className="eyebrow">ИСТОЧНИК ИЗОБРАЖЕНИЯ</span>
+          <h2 id="capture-heading">Источник захвата</h2>
           <p>
-            Предпросмотр загружается только для видимых карточек. Настройка использует
-            новый кадр из Windows Capture.
+            Выберите окно Clash Royale или монитор. Области распознавания настраиваются на
+            следующем шаге.
           </p>
         </div>
         <button
@@ -989,62 +1245,155 @@ function CapturePage({
           disabled={loading}
         >
           <RefreshCw aria-hidden="true" size={16} />
-          {loading ? 'Обновление' : 'Обновить'}
+          {loading ? 'Обновляем...' : 'Обновить список'}
         </button>
       </div>
-      <div className="source-tabs" role="tablist" aria-label="Тип источника">
+
+      <div className="source-toolbar">
+        <label className="source-search">
+          <Search aria-hidden="true" size={16} />
+          <span className="sr-only">Поиск источника</span>
+          <input
+            type="search"
+            value={query}
+            placeholder="Поиск по названию"
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
+        </label>
+        <div className="source-tabs" role="tablist" aria-label="Тип источника">
+          <button
+            role="tab"
+            aria-selected={tab === 'window'}
+            onClick={() => setTab('window')}
+            type="button"
+          >
+            Окна <span>{windowCount}</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === 'display'}
+            onClick={() => setTab('display')}
+            type="button"
+          >
+            Мониторы <span>{displayCount}</span>
+          </button>
+        </div>
         <button
-          role="tab"
-          aria-selected={tab === 'window'}
-          onClick={() => setTab('window')}
+          className="availability-filter"
           type="button"
+          aria-pressed={availableOnly}
+          onClick={() => setAvailableOnly((value) => !value)}
         >
-          Окна
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'display'}
-          onClick={() => setTab('display')}
-          type="button"
-        >
-          Дисплеи
+          Только доступные
         </button>
       </div>
-      {error !== null && (
-        <div className="inline-alert" role="alert">
-          {error}
+
+      <div className="capture-workspace">
+        <div className="source-browser">
+          {loading && snapshot === null ? (
+            <div className="source-grid" aria-label="Загрузка источников">
+              {Array.from({ length: 6 }, (_, index) => (
+                <div className="source-card source-card-skeleton" key={index}>
+                  <span />
+                  <div>
+                    <i />
+                    <i />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : sources.length === 0 ? (
+            <div className="source-empty">
+              <Monitor aria-hidden="true" size={24} />
+              <strong>
+                {normalizedQuery.length > 0
+                  ? `По запросу «${query.trim()}» ничего не найдено`
+                  : 'Источники не найдены'}
+              </strong>
+              <span>
+                {normalizedQuery.length > 0
+                  ? 'Измените запрос или переключите тип источника.'
+                  : 'Откройте нужное окно и обновите список.'}
+              </span>
+            </div>
+          ) : (
+            <div className="source-grid">
+              {sources.map((source) => (
+                <SourceCard
+                  key={source.sourceKey}
+                  source={source}
+                  selected={selectedKey === source.sourceKey}
+                  disabled={startingKey !== null}
+                  busy={startingKey === source.sourceKey}
+                  onSelect={() => setSelectedKey(source.sourceKey)}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      )}
-      {!loading && sources.length === 0 ? (
-        <div className="source-empty">
-          <Monitor aria-hidden="true" size={26} />
-          <strong>Источники не найдены</strong>
-          <span>Откройте нужное окно и обновите список.</span>
-        </div>
-      ) : (
-        <div className="source-grid">
-          {sources.map((source) => (
-            <SourceCard
-              key={source.sourceKey}
-              source={source}
-              busy={startingKey === source.sourceKey}
-              onStart={() => void start(source)}
-            />
-          ))}
-        </div>
-      )}
+
+        <aside className="source-selection" aria-live="polite">
+          <div>
+            <span className="eyebrow">ТЕКУЩАЯ КОНФИГУРАЦИЯ</span>
+            <strong>{status?.sourceLabel ?? 'Источник не настроен'}</strong>
+            <p>
+              {status?.configured === true
+                ? `Конфигурация ${status.revision ?? ''} активна.`
+                : 'Перед запуском мониторинга выберите источник.'}
+            </p>
+          </div>
+          <div className="selection-summary">
+            <span className="eyebrow">ВЫБРАННЫЙ ИСТОЧНИК</span>
+            {selectedSource === null ? (
+              <p>Выберите окно или монитор слева.</p>
+            ) : (
+              <>
+                <strong>{selectedSource.label}</strong>
+                <span>
+                  {selectedSource.detail ??
+                    (selectedSource.kind === 'window' ? 'Окно приложения' : 'Монитор')}
+                </span>
+                <p>Настройка областей откроется в отдельном окне.</p>
+              </>
+            )}
+          </div>
+          {error !== null && (
+            <div className="inline-alert" role="alert">
+              <AlertCircle aria-hidden="true" size={16} />
+              <span>{error}</span>
+            </div>
+          )}
+          <button
+            className="primary-button source-continue"
+            type="button"
+            disabled={
+              selectedSource === null ||
+              !selectedSource.captureSupported ||
+              startingKey !== null
+            }
+            onClick={() => selectedSource !== null && void start(selectedSource)}
+          >
+            {startingKey !== null ? 'Получаем кадр...' : 'Продолжить к настройке'}
+            {startingKey === null && <ChevronRight aria-hidden="true" size={15} />}
+          </button>
+        </aside>
+      </div>
     </section>
   )
 }
 
 function SourceCard({
   source,
+  selected,
+  disabled,
   busy,
-  onStart,
+  onSelect,
 }: {
   source: CaptureSourceView
+  selected: boolean
+  disabled: boolean
   busy: boolean
-  onStart: () => void
+  onSelect: () => void
 }): React.JSX.Element {
   const [preview, setPreview] = useState<CaptureSourcePreview | null>(null)
   const [previewError, setPreviewError] = useState(false)
@@ -1084,30 +1433,54 @@ function SourceCard({
   }, [source.revision, source.sourceKey, visible])
 
   return (
-    <article className="source-card" ref={cardRef}>
-      <div className="source-preview">
-        {preview !== null ? (
-          <img src={preview.dataUrl} alt="" />
-        ) : (
-          <ScanLine aria-hidden="true" size={28} />
-        )}
-        {previewError && <span>Предпросмотр недоступен</span>}
-      </div>
-      <div className="source-card-body">
-        <strong title={source.label}>{source.label}</strong>
-        <span>
-          {source.detail ?? (source.kind === 'window' ? 'Окно приложения' : 'Дисплей')}
-        </span>
-        {source.unavailableReason !== null && <p>{source.unavailableReason}</p>}
-        <button
-          className="primary-button"
-          disabled={!source.captureSupported || busy}
-          onClick={onStart}
-          type="button"
-        >
-          {busy ? 'Получение кадра...' : 'Настроить источник'}
-        </button>
-      </div>
+    <article
+      className="source-card"
+      ref={cardRef}
+      data-selected={selected}
+      data-unavailable={!source.captureSupported}
+    >
+      <button
+        className="source-card-select"
+        type="button"
+        aria-pressed={selected}
+        disabled={disabled || !source.captureSupported}
+        onClick={onSelect}
+      >
+        <div className="source-preview">
+          {preview !== null ? (
+            <img src={preview.dataUrl} alt="" />
+          ) : (
+            <ScanLine
+              className={busy ? 'is-spinning' : undefined}
+              aria-hidden="true"
+              size={25}
+            />
+          )}
+          {previewError && <span>Предпросмотр недоступен</span>}
+          {selected && (
+            <span className="source-selected-mark" aria-hidden="true">
+              <Check size={13} />
+            </span>
+          )}
+        </div>
+        <div className="source-card-body">
+          <div>
+            <strong title={source.label}>{source.label}</strong>
+            <span>
+              {source.detail ??
+                (source.kind === 'window' ? 'Окно приложения' : 'Монитор')}
+            </span>
+          </div>
+          <small>
+            {preview !== null
+              ? `${preview.size.width} × ${preview.size.height}`
+              : source.captureSupported
+                ? 'Загружаем preview'
+                : 'Недоступен'}
+          </small>
+          {source.unavailableReason !== null && <p>{source.unavailableReason}</p>}
+        </div>
+      </button>
     </article>
   )
 }
