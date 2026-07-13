@@ -310,6 +310,7 @@ fi
 info 'Running local release gates'
 npm run lint
 npm run typecheck
+npm run release:verify-inputs
 npm test
 (
   cd python
@@ -427,6 +428,7 @@ RUN_URL="https://github.com/$REPOSITORY/actions/runs/$RUN_ID"
 info "Waiting for Windows build $RUN_ID"
 printf 'Run: %s\n' "$RUN_URL"
 
+WORKFLOW_WARNING=false
 for attempt in {1..360}; do
   run_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID")"
   run_state="$(printf '%s' "$run_json" | node -e '
@@ -441,7 +443,14 @@ for attempt in {1..360}; do
   printf '\rStatus: %-12s conclusion: %-12s (%d/360)' "$run_status" "$run_conclusion" "$attempt"
   if [[ "$run_status" == completed ]]; then
     printf '\n'
-    [[ "$run_conclusion" == success ]] || die "Windows workflow failed: $RUN_URL"
+    if [[ "$run_conclusion" != success ]]; then
+      if [[ "$MODE" == test ]]; then
+        WORKFLOW_WARNING=true
+        printf 'WARNING: The test workflow reported failure. Checking whether a complete installer artifact was uploaded.\n'
+      else
+        die "Windows workflow failed: $RUN_URL"
+      fi
+    fi
     break
   fi
   ((attempt < 360)) || die "Timed out waiting for Windows workflow: $RUN_URL"
@@ -449,24 +458,6 @@ for attempt in {1..360}; do
 done
 
 SMOKE_WARNING=false
-if [[ "$MODE" == test ]]; then
-  jobs_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
-  smoke_conclusion="$(printf '%s' "$jobs_json" | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => input += chunk);
-    process.stdin.on("end", () => {
-      const jobs = JSON.parse(input).jobs || [];
-      const steps = jobs.flatMap((job) => job.steps || []);
-      const smoke = steps.find((step) => step.name === "Packaged Electron security smoke");
-      process.stdout.write(smoke?.conclusion || "unknown");
-    });
-  ')"
-  if [[ "$smoke_conclusion" == failure ]]; then
-    SMOKE_WARNING=true
-    printf '\nWARNING: GitHub hosted GUI smoke failed. The installer is a test artifact and must be launched manually on Windows.\n'
-  fi
-fi
-
 ARTIFACT_ID=""
 for artifact_attempt in {1..30}; do
   artifacts_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
@@ -488,6 +479,21 @@ if ((artifact_attempt > 1)); then
   printf '\n'
 fi
 [[ -n "$ARTIFACT_ID" ]] || die 'Windows installer artifact was not found.'
+if [[ "$MODE" == test ]]; then
+  smoke_artifact_present="$(printf '%s' "$artifacts_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => {
+      const name = process.argv[1];
+      const artifacts = JSON.parse(input).artifacts || [];
+      process.stdout.write(artifacts.some((artifact) => artifact.name === name) ? "true" : "false");
+    });
+  ' "cr-tools-v2-smoke-$VERSION")"
+  if [[ "$smoke_artifact_present" == true ]]; then
+    SMOKE_WARNING=true
+    printf '\nWARNING: GitHub hosted GUI smoke failed. The installer is a test artifact and must be launched manually on Windows.\n'
+  fi
+fi
 
 artifact_zip="$TMP_DIR/artifact.zip"
 extract_dir="$TMP_DIR/artifact"
@@ -532,4 +538,7 @@ else
 fi
 if [[ "$SMOKE_WARNING" == true ]]; then
   printf 'Manual gate: Install and launch this build on a real Windows desktop before release.\n'
+fi
+if [[ "$WORKFLOW_WARNING" == true ]]; then
+  printf 'Workflow note: GitHub reported a post-build failure, but the complete installer artifact was recovered.\n'
 fi

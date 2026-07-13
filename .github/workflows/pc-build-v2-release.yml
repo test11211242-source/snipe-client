@@ -46,11 +46,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11.9"
-          cache: pip
-          cache-dependency-path: |
-            pc-build-v2/python/requirements.txt
-            pc-build-v2/python/requirements-windows-runtime.txt
-            pc-build-v2/python/requirements-dev.txt
 
       - name: Validate release version
         shell: pwsh
@@ -73,6 +68,8 @@ jobs:
           npm run lint
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run release:verify-inputs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

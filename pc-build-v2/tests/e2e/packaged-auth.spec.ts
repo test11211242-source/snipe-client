@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { createHash, createPublicKey } from 'node:crypto'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -82,12 +83,22 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
     access(join(resources, 'python', 'capture_once.py')),
     access(join(resources, 'python', 'monitor_engine.py')),
     access(join(resources, 'runtime-integrity.json')),
+    access(join(resources, 'update-public-key.pem')),
   ])
   const inventory = JSON.parse(
     await readFile(join(resources, 'runtime-integrity.json'), 'utf8'),
   ) as { root?: unknown; files?: unknown[] }
   expect(inventory.root).toBe('python-runtime')
   expect(inventory.files?.length).toBeGreaterThan(0)
+  const publicKey = createPublicKey(
+    await readFile(join(resources, 'update-public-key.pem'), 'utf8'),
+  )
+  const publicKeyFingerprint = createHash('sha256')
+    .update(publicKey.export({ format: 'der', type: 'spki' }))
+    .digest('hex')
+  expect(publicKeyFingerprint).toBe(
+    '2a16488a2a16440e6c1ac19f82f9b262b7e9154d0851e3dbbac0be8d9b612d99',
+  )
   await expect(
     executeFile(
       python,
