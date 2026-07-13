@@ -448,17 +448,26 @@ for attempt in {1..360}; do
   sleep 10
 done
 
-artifacts_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
-ARTIFACT_ID="$(printf '%s' "$artifacts_json" | node -e '
-  let input = "";
-  process.stdin.on("data", (chunk) => input += chunk);
-  process.stdin.on("end", () => {
-    const name = process.argv[1];
-    const artifacts = JSON.parse(input).artifacts || [];
-    const match = artifacts.find((artifact) => artifact.name === name && !artifact.expired);
-    if (match) process.stdout.write(String(match.id));
-  });
-' "cr-tools-v2-$VERSION")"
+ARTIFACT_ID=""
+for artifact_attempt in {1..30}; do
+  artifacts_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
+  ARTIFACT_ID="$(printf '%s' "$artifacts_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => {
+      const name = process.argv[1];
+      const artifacts = JSON.parse(input).artifacts || [];
+      const match = artifacts.find((artifact) => artifact.name === name && !artifact.expired);
+      if (match) process.stdout.write(String(match.id));
+    });
+  ' "cr-tools-v2-$VERSION")"
+  [[ -z "$ARTIFACT_ID" ]] || break
+  printf '\rWaiting for the Windows artifact (%d/30)' "$artifact_attempt"
+  sleep 2
+done
+if ((artifact_attempt > 1)); then
+  printf '\n'
+fi
 [[ -n "$ARTIFACT_ID" ]] || die 'Windows installer artifact was not found.'
 
 artifact_zip="$TMP_DIR/artifact.zip"

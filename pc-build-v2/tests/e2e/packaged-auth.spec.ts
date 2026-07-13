@@ -1,16 +1,45 @@
-import { _electron as electron, expect, test } from '@playwright/test'
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+} from '@playwright/test'
 import { execFile } from 'node:child_process'
-import { access, readFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 test.skip(process.platform !== 'win32', 'Packaged Electron smoke runs on Windows only')
 
 const executeFile = promisify(execFile)
+const executablePath = join(process.cwd(), 'release', 'win-unpacked', 'CR Tools V2.exe')
+const resources = join(process.cwd(), 'release', 'win-unpacked', 'resources')
 
-test('packaged app opens an isolated auth window and exits cleanly', async () => {
-  const executablePath = join(process.cwd(), 'release', 'win-unpacked', 'CR Tools V2.exe')
-  const resources = join(process.cwd(), 'release', 'win-unpacked', 'resources')
+async function closeApplication(application: ElectronApplication): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      application.close(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error('Packaged Electron did not exit cleanly within 15 seconds')),
+          15_000,
+        )
+      }),
+    ])
+  } catch (error) {
+    application.process().kill()
+    throw error
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+test('packaged portable runtime contains the pinned capture stack', async () => {
+  test.setTimeout(45_000)
+
   const python = join(resources, 'python-runtime', 'python.exe')
   await Promise.all([
     access(python),
@@ -32,9 +61,20 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
   ).resolves.toMatchObject({
     stdout: expect.stringContaining('bundled imports verified'),
   })
-  const application = await electron.launch({ executablePath })
+})
+
+test('packaged app opens an isolated auth window and exits cleanly', async () => {
+  test.setTimeout(120_000)
+
+  const userDataDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-v2-e2e-'))
+  let application: ElectronApplication | undefined
   try {
-    const page = await application.firstWindow()
+    application = await electron.launch({
+      executablePath,
+      args: [`--user-data-dir=${userDataDirectory}`],
+      timeout: 30_000,
+    })
+    const page = await application.firstWindow({ timeout: 45_000 })
     await expect(page).toHaveTitle(/CR Tools V2/)
     await expect.poll(() => page.evaluate(() => typeof window.crToolsAuth)).toBe('object')
     expect(
@@ -60,6 +100,10 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
     expect(application.windows()).toHaveLength(pagesBefore)
     expect(page.url()).not.toMatch(/^https:\/\/example\.com/)
   } finally {
-    await application.close()
+    try {
+      if (application !== undefined) await closeApplication(application)
+    } finally {
+      await rm(userDataDirectory, { force: true, recursive: true })
+    }
   }
 })
