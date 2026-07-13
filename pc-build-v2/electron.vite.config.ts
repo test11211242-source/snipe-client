@@ -12,8 +12,10 @@ export default defineConfig({
     },
   },
   preload: {
+    logLevel: 'warn',
     build: {
       externalizeDeps: false,
+      isolatedEntries: true,
       rollupOptions: {
         input: {
           auth: resolve(import.meta.dirname, 'electron/preload/auth.ts'),

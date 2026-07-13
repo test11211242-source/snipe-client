@@ -1,6 +1,6 @@
 {
   "name": "cr-tools-v2",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Secure Windows capture and recognition client for CR Tools V2",
   "author": "Snipe",
   "private": true,
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:e2e:windows": "playwright test --config playwright.config.ts",
     "test:python": "cd python && python -m pytest tests",
-    "build:app": "electron-vite build",
+    "build:app": "node scripts/build-app.mjs && node scripts/verify-preload-bundles.mjs",
     "runtime:build": "pwsh -NoProfile -File scripts/Build-PortablePython.ps1",
     "runtime:inventory": "pwsh -NoProfile -File scripts/New-RuntimeInventory.ps1",
     "runtime:verify": "pwsh -NoProfile -File scripts/Test-PortableRuntime.ps1",

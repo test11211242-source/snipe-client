@@ -1,4 +1,9 @@
-import { expect, test } from '@playwright/test'
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+} from '@playwright/test'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -160,5 +165,44 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
     } finally {
       await rm(userDataDirectory, { force: true, recursive: true })
     }
+  }
+})
+
+test('packaged auth preload exposes a working IPC bridge', async () => {
+  test.setTimeout(90_000)
+
+  const userDataDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-v2-bridge-e2e-'))
+  let electronApp: ElectronApplication | undefined
+  try {
+    const environment: Record<string, string> = {}
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) environment[key] = value
+    }
+    delete environment['ELECTRON_RUN_AS_NODE']
+    electronApp = await electron.launch({
+      executablePath,
+      args: [`--user-data-dir=${userDataDirectory}`],
+      env: environment,
+      timeout: 30_000,
+    })
+    const page = await electronApp.firstWindow()
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          bridge: typeof (window as unknown as { crToolsAuth?: unknown }).crToolsAuth,
+          getView: typeof (window as unknown as { crToolsAuth?: { getView?: unknown } })
+            .crToolsAuth?.getView,
+        })),
+      )
+      .toEqual({ bridge: 'object', getView: 'function' })
+
+    const view = await page.evaluate(() => window.crToolsAuth.getView())
+    expect(view.state).toMatch(
+      /^(BOOTSTRAPPING|INVITE_REQUIRED|UNAUTHENTICATED|AUTHENTICATED|BLOCKED|ERROR)$/,
+    )
+  } finally {
+    await electronApp?.close().catch(() => undefined)
+    await rm(userDataDirectory, { force: true, recursive: true })
   }
 })
