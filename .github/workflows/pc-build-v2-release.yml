@@ -94,7 +94,22 @@ jobs:
         run: npm run build:unpacked
 
       - name: Packaged Electron security smoke
+        id: packaged-smoke
+        continue-on-error: ${{ inputs.deploy == false }}
         run: npm run test:e2e:windows
+
+      - name: Upload packaged smoke diagnostics
+        if: ${{ always() && steps.packaged-smoke.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cr-tools-v2-smoke-${{ inputs.version }}
+          if-no-files-found: warn
+          path: pc-build-v2/test-results
+
+      - name: Warn about hosted GUI smoke
+        if: ${{ inputs.deploy == false && steps.packaged-smoke.outcome == 'failure' }}
+        shell: pwsh
+        run: Write-Warning 'The hosted runner could not observe the Electron GUI. The test installer will still be built, but it requires a manual Windows launch check.'
 
       - name: Build unsigned NSIS installer
         run: npm run build

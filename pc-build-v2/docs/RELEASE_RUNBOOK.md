@@ -51,11 +51,13 @@ Explicit forms are:
 `test` runs local gates, commits and pushes only V2 release paths, dispatches the Windows workflow,
 waits for the exact commit run, and downloads the installer into
 `pc-build-v2/published/<version>/run-<id>/`. It never reads signing or deployment secrets and does
-not publish an update.
+not publish an update. The hosted runner's GUI observation is diagnostic in this mode: a failure
+does not block the installer artifact, but the publisher prints a mandatory manual Windows launch
+warning.
 
 `release` performs the same gates, requires the literal `PUBLISH` confirmation, signs and deploys
 the manifest, verifies the remote hash and public HTTPS files, then downloads the released
-installer locally.
+installer locally. Unlike `test`, a packaged GUI smoke failure blocks release deployment.
 
 The publisher never reads `pc-build/.env`. On the first interactive run it securely prompts for a
 fine-grained token and can store it with mode `600`. Alternatively, authenticate with

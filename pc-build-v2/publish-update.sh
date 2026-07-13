@@ -448,6 +448,25 @@ for attempt in {1..360}; do
   sleep 10
 done
 
+SMOKE_WARNING=false
+if [[ "$MODE" == test ]]; then
+  jobs_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+  smoke_conclusion="$(printf '%s' "$jobs_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => {
+      const jobs = JSON.parse(input).jobs || [];
+      const steps = jobs.flatMap((job) => job.steps || []);
+      const smoke = steps.find((step) => step.name === "Packaged Electron security smoke");
+      process.stdout.write(smoke?.conclusion || "unknown");
+    });
+  ')"
+  if [[ "$smoke_conclusion" == failure ]]; then
+    SMOKE_WARNING=true
+    printf '\nWARNING: GitHub hosted GUI smoke failed. The installer is a test artifact and must be launched manually on Windows.\n'
+  fi
+fi
+
 ARTIFACT_ID=""
 for artifact_attempt in {1..30}; do
   artifacts_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
@@ -510,4 +529,7 @@ if [[ "$MODE" == release ]]; then
   printf 'Public URL: https://updates.artcsworld.xyz/downloads/v2/%s\n' "$ARTIFACT_NAME"
 else
   printf 'Production deployment was not performed.\n'
+fi
+if [[ "$SMOKE_WARNING" == true ]]; then
+  printf 'Manual gate: Install and launch this build on a real Windows desktop before release.\n'
 fi
