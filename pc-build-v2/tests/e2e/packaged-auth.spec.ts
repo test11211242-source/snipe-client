@@ -1,11 +1,7 @@
-import {
-  _electron as electron,
-  expect,
-  test,
-  type ElectronApplication,
-} from '@playwright/test'
-import { execFile } from 'node:child_process'
+import { chromium, expect, test, type Browser } from '@playwright/test'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,25 +12,84 @@ const executeFile = promisify(execFile)
 const executablePath = join(process.cwd(), 'release', 'win-unpacked', 'CR Tools V2.exe')
 const resources = join(process.cwd(), 'release', 'win-unpacked', 'resources')
 
-async function closeApplication(application: ElectronApplication): Promise<void> {
-  let timer: NodeJS.Timeout | undefined
-  try {
-    await Promise.race([
-      application.close(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(new Error('Packaged Electron did not exit cleanly within 15 seconds')),
-          15_000,
-        )
-      }),
-    ])
-  } catch (error) {
-    application.process().kill()
-    throw error
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)))
+  })
+  if (address === null || typeof address === 'string') {
+    throw new Error('Could not reserve a loopback debugging port')
   }
+  return address.port
+}
+
+function captureProcessOutput(child: ChildProcess): () => string {
+  let output = ''
+  const append = (chunk: Buffer): void => {
+    output = `${output}${chunk.toString('utf8')}`.slice(-16_384)
+  }
+  child.stdout?.on('data', append)
+  child.stderr?.on('data', append)
+  child.on('error', (error) => {
+    output = `${output}\n${error.stack ?? error.message}`.slice(-16_384)
+  })
+  return () => output
+}
+
+async function waitForDevTools(
+  child: ChildProcess,
+  port: number,
+  output: () => string,
+): Promise<void> {
+  const deadline = Date.now() + 30_000
+  const endpoint = `http://127.0.0.1:${port}/json/version`
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Packaged Electron exited before CDP was ready:\n${output()}`)
+    }
+    try {
+      const response = await fetch(endpoint, { signal: AbortSignal.timeout(1_000) })
+      await response.body?.cancel().catch(() => undefined)
+      if (response.ok) return
+    } catch {
+      // The local endpoint is expected to refuse connections during Chromium startup.
+    }
+    await delay(250)
+  }
+  throw new Error(`Packaged Electron did not expose CDP within 30 seconds:\n${output()}`)
+}
+
+async function waitForCleanExit(
+  child: ChildProcess,
+  output: () => string,
+): Promise<void> {
+  if (child.exitCode !== null) {
+    expect(child.exitCode, output()).toBe(0)
+    return
+  }
+  const result = await new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+  }>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Packaged Electron did not exit cleanly:\n${output()}`)),
+      15_000,
+    )
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      resolve({ code, signal })
+    })
+  })
+  expect(result, output()).toEqual({ code: 0, signal: null })
 }
 
 test('packaged portable runtime contains the pinned capture stack', async () => {
@@ -67,14 +122,35 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
   test.setTimeout(90_000)
 
   const userDataDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-v2-e2e-'))
-  let application: ElectronApplication | undefined
+  const port = await reserveLoopbackPort()
+  let child: ChildProcess | undefined
+  let browser: Browser | undefined
   try {
-    application = await electron.launch({
+    const environment = { ...process.env }
+    delete environment['ELECTRON_RUN_AS_NODE']
+    child = spawn(
       executablePath,
-      args: [`--user-data-dir=${userDataDirectory}`],
-      timeout: 30_000,
-    })
-    const page = await application.firstWindow({ timeout: 45_000 })
+      [
+        `--remote-debugging-port=${port}`,
+        `--user-data-dir=${userDataDirectory}`,
+        '--enable-logging=stderr',
+      ],
+      {
+        env: environment,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    )
+    const processOutput = captureProcessOutput(child)
+    await waitForDevTools(child, port, processOutput)
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+    const pageCount = (): number =>
+      browser?.contexts().reduce((count, context) => count + context.pages().length, 0) ??
+      0
+    await expect.poll(pageCount, { timeout: 15_000 }).toBeGreaterThan(0)
+    const page = browser.contexts().flatMap((context) => context.pages())[0]
+    if (page === undefined) throw new Error('Packaged Electron did not create a page')
+
     await expect(page).toHaveTitle(/CR Tools V2/)
     await expect.poll(() => page.evaluate(() => typeof window.crToolsAuth)).toBe('object')
     expect(
@@ -91,17 +167,20 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
       mainApi: 'undefined',
     })
 
-    const pagesBefore = application.windows().length
+    const pagesBefore = pageCount()
     await page.evaluate(() => {
       window.open('https://example.com', '_blank')
       window.location.assign('https://example.com')
     })
     await page.waitForTimeout(500)
-    expect(application.windows()).toHaveLength(pagesBefore)
+    expect(pageCount()).toBe(pagesBefore)
     expect(page.url()).not.toMatch(/^https:\/\/example\.com/)
+    await page.close()
+    await waitForCleanExit(child, processOutput)
   } finally {
     try {
-      if (application !== undefined) await closeApplication(application)
+      await browser?.close().catch(() => undefined)
+      if (child?.exitCode === null) child.kill()
     } finally {
       await rm(userDataDirectory, { force: true, recursive: true })
     }
