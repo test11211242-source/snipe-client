@@ -65,7 +65,8 @@ fine-grained token and can store it with mode `600`. Alternatively, authenticate
 GH_TOKEN=github_pat_...
 ```
 
-Set the file mode to `600`. The token needs repository contents write and Actions write access.
+Set the file mode to `600`. The token needs repository `Contents`, `Actions`, and `Workflows`
+read/write access. `Workflows` is required specifically to commit files under `.github/workflows/`.
 The publisher uses a temporary askpass process and GitHub API configuration, so the token is not
 placed in the git remote URL or a command argument.
 

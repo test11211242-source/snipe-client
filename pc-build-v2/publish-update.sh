@@ -45,7 +45,9 @@ Modes:
 
 Authentication:
   Set GH_TOKEN/GITHUB_TOKEN, or create ~/.config/cr-tools-v2/publisher.env
-  with GH_TOKEN=... and chmod 600. The old pc-build/.env is never read.
+  with GH_TOKEN=... and chmod 600. Required repository permissions are
+  Contents write, Actions write, and Workflows write. The old pc-build/.env
+  is never read.
 EOF
 }
 
@@ -157,7 +159,7 @@ fi
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [[ -z "$TOKEN" && -t 0 ]]; then
   printf '\nA fine-grained GitHub token is required once.\n'
-  printf 'Required repository permissions: Contents write, Actions write.\n'
+  printf 'Required repository permissions: Contents write, Actions write, Workflows write.\n'
   read -r -s -p 'GitHub token: ' TOKEN
   printf '\n'
   [[ -n "$TOKEN" ]] || die 'GitHub token was not provided.'
@@ -203,6 +205,7 @@ github_api() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
+  local quiet="${4:-false}"
   local response_file="$TMP_DIR/api-response-$RANDOM.json"
   local status
   local -a arguments=(
@@ -223,14 +226,16 @@ github_api() {
     printf 'header = "Content-Type: application/json"\n'
   } | curl --config - "${arguments[@]}")"
   if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
-    printf 'GitHub API request failed with HTTP %s:\n' "$status" >&2
-    node -e '
-      const fs = require("fs");
-      try {
-        const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        console.error(value.message || "Unknown GitHub API error");
-      } catch { console.error("Unreadable GitHub API error"); }
-    ' "$response_file"
+    if [[ "$quiet" != true ]]; then
+      printf 'GitHub API request failed with HTTP %s:\n' "$status" >&2
+      node -e '
+        const fs = require("fs");
+        try {
+          const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          console.error(value.message || "Unknown GitHub API error");
+        } catch { console.error("Unreadable GitHub API error"); }
+      ' "$response_file"
+    fi
     return 1
   fi
   cat "$response_file"
@@ -361,7 +366,24 @@ GH_TOKEN="$TOKEN" \
 
 HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 runs_path="/repos/$REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs?event=workflow_dispatch&branch=$BRANCH&per_page=20"
-before_runs="$(github_api GET "$runs_path")"
+before_runs=""
+workflow_registered=false
+for registration_attempt in {1..30}; do
+  if before_runs="$(github_api GET "$runs_path" '' true)"; then
+    workflow_registered=true
+    break
+  fi
+  printf '\rWaiting for GitHub to register the workflow (%d/30)' "$registration_attempt"
+  sleep 2
+done
+if [[ "$workflow_registered" != true ]]; then
+  printf '\n'
+  github_api GET "$runs_path" >/dev/null
+  die 'GitHub did not register the workflow within 60 seconds.'
+fi
+if ((registration_attempt > 1)); then
+  printf '\n'
+fi
 before_ids="$(printf '%s' "$before_runs" | node -e '
   let input = "";
   process.stdin.on("data", (chunk) => input += chunk);
@@ -407,14 +429,15 @@ printf 'Run: %s\n' "$RUN_URL"
 
 for attempt in {1..360}; do
   run_json="$(github_api GET "/repos/$REPOSITORY/actions/runs/$RUN_ID")"
-  IFS=' ' read -r run_status run_conclusion < <(printf '%s' "$run_json" | node -e '
+  run_state="$(printf '%s' "$run_json" | node -e '
     let input = "";
     process.stdin.on("data", (chunk) => input += chunk);
     process.stdin.on("end", () => {
       const run = JSON.parse(input);
       process.stdout.write(`${run.status || "unknown"} ${run.conclusion || "pending"}`);
     });
-  ')
+  ')"
+  IFS=' ' read -r run_status run_conclusion <<<"$run_state"
   printf '\rStatus: %-12s conclusion: %-12s (%d/360)' "$run_status" "$run_conclusion" "$attempt"
   if [[ "$run_status" == completed ]]; then
     printf '\n'
