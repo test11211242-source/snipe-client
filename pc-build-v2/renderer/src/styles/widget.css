@@ -1,0 +1,371 @@
+:root {
+  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  color: #f0f0f5;
+  background: #0d0f1c;
+  color-scheme: dark;
+  font-synthesis: none;
+  --surface: #111322;
+  --raised: #171a2b;
+  --border: rgba(255, 255, 255, 0.1);
+  --muted: #9a9db2;
+  --primary: #8b5cf6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 340px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: #0d0f1c;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.widget-shell {
+  min-height: 100vh;
+  padding: 14px;
+  background: #0d0f1c;
+}
+
+.widget-header {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 11px;
+}
+
+.widget-brand span,
+.widget-brand strong {
+  display: block;
+}
+
+.widget-brand span,
+.player-summary > div > span {
+  color: #888ca3;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+
+.widget-brand strong {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.widget-controls {
+  display: flex;
+  gap: 3px;
+}
+
+.widget-control {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.widget-control:hover,
+.widget-control[data-active='true'] {
+  border-color: var(--border);
+  color: #ddd6fe;
+  background: rgba(139, 92, 246, 0.11);
+}
+
+.opacity-control {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 16px auto minmax(70px, 1fr) 32px;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.opacity-control input {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+.opacity-control output {
+  color: #c6c8d5;
+  text-align: right;
+}
+
+.player-summary {
+  margin-top: 8px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.player-summary > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.player-summary h1 {
+  overflow: hidden;
+  margin: 5px 0 0;
+  font-size: clamp(18px, 5vw, 24px);
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rating {
+  float: right;
+  margin-top: -29px;
+  color: #c4b5fd;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 15px;
+}
+
+.player-summary dl {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 10px;
+  margin: 15px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.player-summary dt {
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.player-summary dd {
+  overflow: hidden;
+  margin: 4px 0 0;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deck-section {
+  margin-top: 10px;
+}
+
+.deck-tabs {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 7px;
+}
+
+.deck-tabs button {
+  min-width: 58px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  background: #10121f;
+  cursor: pointer;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.deck-tabs button[aria-selected='true'] {
+  border-color: rgba(139, 92, 246, 0.45);
+  color: #ddd6fe;
+  background: rgba(139, 92, 246, 0.13);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.deck-card {
+  min-width: 0;
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.card-art {
+  width: 50px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: #c4b5fd;
+  background: var(--raised);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.card-copy {
+  min-width: 0;
+  align-self: center;
+}
+
+.card-copy strong,
+.card-copy span,
+.card-copy small {
+  display: block;
+}
+
+.card-copy strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-copy span,
+.card-copy small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.card-copy small {
+  color: #c4b5fd;
+}
+
+.widget-empty {
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.widget-empty > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 7px;
+  color: #c4b5fd;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.widget-empty strong {
+  font-size: 13px;
+}
+
+.widget-empty p {
+  max-width: 260px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.widget-shell[data-compact='true'] .opacity-control,
+.widget-shell[data-compact='true'] .player-summary dl,
+.widget-shell[data-compact='true'] .card-copy span {
+  display: none;
+}
+
+.widget-shell[data-compact='true'] .player-summary {
+  padding: 11px 13px;
+}
+
+.widget-shell[data-compact='true'] .deck-card {
+  min-height: 60px;
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+.widget-shell[data-compact='true'] .card-art {
+  width: 40px;
+  height: 46px;
+}
+
+@media (max-width: 390px) {
+  .widget-shell {
+    padding: 10px;
+  }
+
+  .widget-control {
+    width: 28px;
+  }
+
+  .deck-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .card-art {
+    width: 42px;
+    height: 54px;
+  }
+}
+
+@media (min-width: 560px) {
+  .card-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .deck-card {
+    display: block;
+  }
+
+  .card-art {
+    width: 100%;
+    height: 82px;
+  }
+
+  .card-copy {
+    margin-top: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

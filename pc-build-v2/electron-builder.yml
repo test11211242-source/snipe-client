@@ -1,0 +1,41 @@
+appId: com.snipe.client.v2
+productName: CR Tools V2
+artifactName: CR_Tools_V2_Setup_${version}.${ext}
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: python
+    to: python
+    filter:
+      - '*.py'
+      - 'capture/**/*.py'
+      - 'protocol/**/*.py'
+      - '!**/__pycache__/**'
+      - '!**/tests/**'
+  - from: resources/python-runtime
+    to: python-runtime
+    filter:
+      - '**/*'
+  - from: resources/update-public-key.pem
+    to: update-public-key.pem
+  - from: resources/runtime-integrity.json
+    to: runtime-integrity.json
+asar: true
+win:
+  forceCodeSigning: false
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  executableName: CR Tools V2
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CR Tools V2

@@ -1,0 +1,190 @@
+name: CR Tools V2 Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Strict x.y.z release version
+        required: true
+        type: string
+      critical:
+        description: Mark the update critical
+        required: true
+        default: false
+        type: boolean
+      deploy:
+        description: Sign and deploy this build to the production update channel
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cr-tools-v2-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: pc-build-v2
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: pc-build-v2/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: pip
+          cache-dependency-path: |
+            pc-build-v2/python/requirements.txt
+            pc-build-v2/python/requirements-windows-runtime.txt
+            pc-build-v2/python/requirements-dev.txt
+
+      - name: Validate release version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'Version must be strict x.y.z semver.'
+          }
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python test dependencies
+        run: "python -m pip install --only-binary=:all: -r python/requirements-dev.txt"
+
+      - name: Static and unit gates
+        shell: pwsh
+        run: |
+          npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:python
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build pinned portable Python runtime
+        run: npm run runtime:build
+
+      - name: Set package version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm version $env:RELEASE_VERSION --no-git-tag-version --allow-same-version
+
+      - name: Build unpacked application
+        run: npm run build:unpacked
+
+      - name: Packaged Electron security smoke
+        run: npm run test:e2e:windows
+
+      - name: Build unsigned NSIS installer
+        run: npm run build
+
+      - name: Prepare installer metadata
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $artifactName = "CR_Tools_V2_Setup_$env:RELEASE_VERSION.exe"
+          $artifactPath = Join-Path $PWD "release\$artifactName"
+          if (-not (Test-Path $artifactPath -PathType Leaf)) { throw 'Expected installer was not built.' }
+          "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ARTIFACT_PATH=release/$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ARTIFACT_SHA512_HEX=$((Get-FileHash -Algorithm SHA512 $artifactPath).Hash.ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create signed update manifest
+        if: ${{ inputs.deploy }}
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CRITICAL: ${{ inputs.critical }}
+          CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64: ${{ secrets.CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64 }}
+        run: |
+          $artifactPath = Join-Path $PWD $env:ARTIFACT_PATH
+          '["CR Tools V2 release ' + $env:RELEASE_VERSION + '"]' | Set-Content -Encoding utf8NoBOM release\notes.json
+          $critical = ($env:RELEASE_CRITICAL).ToLowerInvariant()
+          node scripts/create-release-manifest.mjs --version $env:RELEASE_VERSION --artifact $artifactPath --output release\manifest.json --notes-file release\notes.json --critical $critical
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cr-tools-v2-${{ inputs.version }}
+          if-no-files-found: error
+          path: |
+            pc-build-v2/release/CR_Tools_V2_Setup_*.exe
+            pc-build-v2/resources/runtime-integrity.json
+
+      - name: Upload signed manifest artifact
+        if: ${{ inputs.deploy }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cr-tools-v2-manifest-${{ inputs.version }}
+          if-no-files-found: error
+          path: pc-build-v2/release/manifest.json
+
+      - name: Configure deployment SSH
+        if: ${{ inputs.deploy }}
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          test -n "$SERVER_KNOWN_HOSTS"
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy installer and manifest atomically
+        if: ${{ inputs.deploy }}
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          remote_dir='/home/ubuntu/snipe/data/updates/downloads/v2'
+          ssh_options=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519")
+          ssh "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$remote_dir'"
+          scp "${ssh_options[@]}" "$ARTIFACT_PATH" "$SERVER_USER@$SERVER_HOST:$remote_dir/$ARTIFACT_NAME.new"
+          scp "${ssh_options[@]}" release/manifest.json "$SERVER_USER@$SERVER_HOST:$remote_dir/manifest.json.new"
+          ssh "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "set -eu; printf '%s  %s\n' '$ARTIFACT_SHA512_HEX' '$remote_dir/$ARTIFACT_NAME.new' | sha512sum --check --status; mv '$remote_dir/$ARTIFACT_NAME.new' '$remote_dir/$ARTIFACT_NAME'; mv '$remote_dir/manifest.json.new' '$remote_dir/manifest.json'"
+
+      - name: Smoke public release over HTTPS
+        if: ${{ inputs.deploy }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          temporary_artifact="$(mktemp)"
+          temporary_manifest="$(mktemp)"
+          trap 'rm -f "$temporary_artifact" "$temporary_manifest"' EXIT
+          public_base='https://updates.artcsworld.xyz/downloads/v2'
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$public_base/manifest.json" --output "$temporary_manifest"
+          cmp release/manifest.json "$temporary_manifest"
+          test "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version)' "$temporary_manifest")" = "${{ inputs.version }}"
+          test "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).artifact.fileName)' "$temporary_manifest")" = "$ARTIFACT_NAME"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$public_base/$ARTIFACT_NAME" --output "$temporary_artifact"
+          test "$(sha512sum "$temporary_artifact" | cut -d ' ' -f 1)" = "$ARTIFACT_SHA512_HEX"

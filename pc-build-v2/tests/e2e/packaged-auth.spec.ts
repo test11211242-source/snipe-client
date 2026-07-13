@@ -1,0 +1,65 @@
+import { _electron as electron, expect, test } from '@playwright/test'
+import { execFile } from 'node:child_process'
+import { access, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+
+test.skip(process.platform !== 'win32', 'Packaged Electron smoke runs on Windows only')
+
+const executeFile = promisify(execFile)
+
+test('packaged app opens an isolated auth window and exits cleanly', async () => {
+  const executablePath = join(process.cwd(), 'release', 'win-unpacked', 'CR Tools V2.exe')
+  const resources = join(process.cwd(), 'release', 'win-unpacked', 'resources')
+  const python = join(resources, 'python-runtime', 'python.exe')
+  await Promise.all([
+    access(python),
+    access(join(resources, 'python', 'capture_once.py')),
+    access(join(resources, 'python', 'monitor_engine.py')),
+    access(join(resources, 'runtime-integrity.json')),
+  ])
+  const inventory = JSON.parse(
+    await readFile(join(resources, 'runtime-integrity.json'), 'utf8'),
+  ) as { root?: unknown; files?: unknown[] }
+  expect(inventory.root).toBe('python-runtime')
+  expect(inventory.files?.length).toBeGreaterThan(0)
+  await expect(
+    executeFile(
+      python,
+      ['-c', "import cv2, numpy, windows_capture; print('bundled imports verified')"],
+      { windowsHide: true, timeout: 30_000 },
+    ),
+  ).resolves.toMatchObject({
+    stdout: expect.stringContaining('bundled imports verified'),
+  })
+  const application = await electron.launch({ executablePath })
+  try {
+    const page = await application.firstWindow()
+    await expect(page).toHaveTitle(/CR Tools V2/)
+    await expect.poll(() => page.evaluate(() => typeof window.crToolsAuth)).toBe('object')
+    expect(
+      await page.evaluate(() => ({
+        nodeRequire: typeof (globalThis as { require?: unknown }).require,
+        nodeProcess: typeof (globalThis as { process?: unknown }).process,
+        authApiFrozen: Object.isFrozen(window.crToolsAuth),
+        mainApi: typeof (window as unknown as { crTools?: unknown }).crTools,
+      })),
+    ).toEqual({
+      nodeRequire: 'undefined',
+      nodeProcess: 'undefined',
+      authApiFrozen: true,
+      mainApi: 'undefined',
+    })
+
+    const pagesBefore = application.windows().length
+    await page.evaluate(() => {
+      window.open('https://example.com', '_blank')
+      window.location.assign('https://example.com')
+    })
+    await page.waitForTimeout(500)
+    expect(application.windows()).toHaveLength(pagesBefore)
+    expect(page.url()).not.toMatch(/^https:\/\/example\.com/)
+  } finally {
+    await application.close()
+  }
+})
