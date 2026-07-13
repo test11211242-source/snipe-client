@@ -63,10 +63,14 @@ function store(
 function session(
   fetchImplementation: typeof fetch,
   secrets = store('refresh-1'),
+  bootstrapTimeoutMs = 30_000,
 ): { auth: AuthSession; secrets: ReturnType<typeof store> } {
   const api = new ApiClient(createProductionServerConfig(), fetchImplementation, logger)
   const identity = new DeviceIdentityService({ collect: () => Promise.resolve(device) })
-  return { auth: new AuthSession(api, secrets, identity), secrets }
+  return {
+    auth: new AuthSession(api, secrets, identity, undefined, bootstrapTimeoutMs),
+    secrets,
+  }
 }
 
 describe('AuthSession', () => {
@@ -178,6 +182,18 @@ describe('AuthSession', () => {
 
     await expect(bootstrap).resolves.toMatchObject({ state: 'BOOTSTRAPPING' })
     expect(auth.getView()).toMatchObject({ state: 'BOOTSTRAPPING', user: null })
+  })
+
+  it('turns a stalled bootstrap into a retryable timeout state', async () => {
+    const stalledFetch = vi
+      .fn<typeof fetch>()
+      .mockReturnValue(new Promise(() => undefined))
+    const { auth } = session(stalledFetch, store(null), 10)
+
+    await expect(auth.bootstrap()).resolves.toMatchObject({
+      state: 'ERROR',
+      error: { code: 'REQUEST_TIMEOUT', retryable: true },
+    })
   })
 
   it('clears a refresh token whose encrypted write finishes after logout', async () => {

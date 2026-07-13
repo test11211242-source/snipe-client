@@ -1,5 +1,5 @@
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join, normalize } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { BrowserWindow, type WebContents } from 'electron'
 
@@ -18,16 +18,28 @@ interface RegisteredWindow {
   suppressBoundsEvents: boolean
 }
 
-function isAllowedRendererUrl(actualValue: string, expectedValue: string): boolean {
+export function isAllowedRendererUrl(
+  actualValue: string,
+  expectedValue: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   try {
     const actual = new URL(actualValue)
     const expected = new URL(expectedValue)
-    return (
-      actual.protocol === expected.protocol &&
-      actual.host === expected.host &&
-      actual.pathname === expected.pathname &&
-      actual.search === expected.search
-    )
+    if (
+      actual.protocol !== expected.protocol ||
+      actual.host !== expected.host ||
+      actual.search !== expected.search
+    ) {
+      return false
+    }
+    if (actual.protocol !== 'file:') return actual.pathname === expected.pathname
+
+    const actualPath = normalize(fileURLToPath(actual))
+    const expectedPath = normalize(fileURLToPath(expected))
+    return platform === 'win32'
+      ? actualPath.toLowerCase() === expectedPath.toLowerCase()
+      : actualPath === expectedPath
   } catch {
     return false
   }

@@ -36,7 +36,7 @@ vi.mock('electron', () => {
   return { BrowserWindow }
 })
 
-import { WindowCoordinator } from './window-coordinator'
+import { isAllowedRendererUrl, WindowCoordinator } from './window-coordinator'
 
 describe('WindowCoordinator auth shell', () => {
   beforeEach(() => {
@@ -91,5 +91,24 @@ describe('WindowCoordinator auth shell', () => {
       kind: 'auth',
       navigationUrl: 'https://example.com',
     })
+  })
+
+  it('normalizes encoded Windows file URLs without allowing a different renderer', () => {
+    const expected =
+      'file:///C:/Users/Operator/AppData/Local/Programs/CR%20Tools%20V2/resources/app.asar/out/renderer/auth.html'
+    expect(
+      isAllowedRendererUrl(
+        'file:///c:/users/operator/appdata/local/programs/CR%20Tools%20V2/resources/app.asar/out/renderer/auth.html',
+        expected,
+        'win32',
+      ),
+    ).toBe(true)
+    expect(
+      isAllowedRendererUrl(
+        'file:///C:/Users/Operator/AppData/Local/Programs/CR%20Tools%20V2/resources/app.asar/out/renderer/index.html',
+        expected,
+        'win32',
+      ),
+    ).toBe(false)
   })
 })

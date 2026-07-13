@@ -11,6 +11,20 @@ function readFormString(data: FormData, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+function ipcErrorView(): AuthView {
+  return {
+    state: 'ERROR',
+    user: null,
+    deviceHint: null,
+    error: {
+      code: 'UNKNOWN',
+      message: 'Не удалось получить состояние авторизации от приложения.',
+      retryable: true,
+      status: null,
+    },
+  }
+}
+
 export function AuthApp(): React.JSX.Element {
   const [view, setView] = useState<AuthView | null>(null)
   const [mode, setMode] = useState<FormMode>('login')
@@ -20,11 +34,15 @@ export function AuthApp(): React.JSX.Element {
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const refreshView = async (): Promise<void> => {
-      const next = await window.crToolsAuth.getView()
-      if (!active) return
-      setView(next)
-      if (next.state === 'BOOTSTRAPPING') {
-        timer = setTimeout(() => void refreshView(), 250)
+      try {
+        const next = await window.crToolsAuth.getView()
+        if (!active) return
+        setView(next)
+        if (next.state === 'BOOTSTRAPPING') {
+          timer = setTimeout(() => void refreshView(), 250)
+        }
+      } catch {
+        if (active) setView(ipcErrorView())
       }
     }
     void refreshView()
@@ -38,6 +56,8 @@ export function AuthApp(): React.JSX.Element {
     setPending(true)
     try {
       setView(await operation())
+    } catch {
+      setView(ipcErrorView())
     } finally {
       setPending(false)
     }

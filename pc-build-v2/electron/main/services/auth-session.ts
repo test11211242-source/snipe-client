@@ -31,6 +31,7 @@ export interface AuthSessionRevoker {
 }
 
 export type AuthViewListener = (view: AuthView) => void
+const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 30_000
 
 function errorFromUnknown(error: unknown): ApiError {
   if (error instanceof ApplicationError) {
@@ -68,6 +69,7 @@ export class AuthSession {
     private readonly secrets: RefreshTokenStore,
     private readonly identity: DeviceIdentityService,
     private readonly revoker?: AuthSessionRevoker,
+    private readonly bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   ) {}
 
   getView(): AuthView {
@@ -93,6 +95,31 @@ export class AuthSession {
     this.#refreshPromise = undefined
     this.update({ state: 'BOOTSTRAPPING', user: null, error: null })
 
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<AuthView>((resolve) => {
+      timer = setTimeout(() => {
+        if (this.isCurrent(generation)) {
+          this.cancelPendingOperations()
+          this.fail(
+            createApiError(
+              'REQUEST_TIMEOUT',
+              'Проверка защищённого сеанса заняла слишком много времени.',
+              true,
+            ),
+          )
+        }
+        resolve(this.#view)
+      }, this.bootstrapTimeoutMs)
+    })
+
+    try {
+      return await Promise.race([this.runBootstrap(generation), timeout])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
+  private async runBootstrap(generation: number): Promise<AuthView> {
     const identity = await this.prepareIdentity(generation)
     if (identity === null) return this.#view
     const invite = await this.requestInviteCheck(identity.hwid, generation)

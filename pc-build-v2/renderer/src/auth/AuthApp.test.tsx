@@ -6,6 +6,28 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthApp } from './AuthApp'
 
 describe('AuthApp', () => {
+  it('shows a retryable error instead of spinning forever when auth IPC fails', async () => {
+    Object.defineProperty(window, 'crToolsAuth', {
+      configurable: true,
+      value: Object.freeze({
+        getView: vi.fn().mockRejectedValue(new Error('IPC rejected')),
+        retryBootstrap: vi.fn(),
+        checkInvite: vi.fn(),
+        activateInvite: vi.fn(),
+        login: vi.fn(),
+        register: vi.fn(),
+      }),
+    })
+
+    render(<AuthApp />)
+    expect(
+      await screen.findByRole('heading', { name: 'Не удалось продолжить' }),
+    ).toBeVisible()
+    expect(
+      screen.getByText('Не удалось получить состояние авторизации от приложения.'),
+    ).toBeVisible()
+  })
+
   it('refreshes the bootstrap view until the initial auth check completes', async () => {
     const getView = vi
       .fn()
