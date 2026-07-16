@@ -34,6 +34,10 @@ export const RegisterRequestSchema = z
 export const RefreshRequestSchema = z
   .object({ refresh_token: z.string().min(1).max(8192) })
   .strict()
+export const LogoutRequestSchema = z
+  .object({ refresh_token: z.string().min(1).max(16_384) })
+  .strict()
+export const ServerLogoutResponseSchema = z.object({ success: z.literal(true) }).loose()
 
 export const ServerUserSchema = z
   .object({

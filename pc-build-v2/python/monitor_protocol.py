@@ -7,7 +7,7 @@ import math
 import uuid
 from typing import Any, BinaryIO
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_COMMAND_BYTES = 128 * 1024
 
 
@@ -45,7 +45,16 @@ def _positive_int(value: Any, maximum: int, name: str) -> int:
 def validate_start_payload(value: Any) -> dict[str, Any]:
     payload = _exact(
         value,
-        {"selector", "configuredFrameSize", "regions", "triggerProfile", "searchMode", "limits", "prediction"},
+        {
+            "selector",
+            "configuredFrameSize",
+            "regions",
+            "triggerProfile",
+            "searchMode",
+            "captureDelaySeconds",
+            "limits",
+            "prediction",
+        },
         "start payload",
     )
     selector = payload["selector"]
@@ -75,6 +84,12 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
         regions[name] = validate_ratio(regions[name], f"regions.{name}")
     if payload["searchMode"] not in ("fast", "precise"):
         raise MonitorProtocolError("search mode is invalid")
+    delay = payload["captureDelaySeconds"]
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay):
+        raise MonitorProtocolError("capture delay is invalid")
+    if not 0 <= delay <= 5:
+        raise MonitorProtocolError("capture delay is invalid")
+    payload["captureDelaySeconds"] = float(delay)
     limits = _exact(
         payload["limits"],
         {

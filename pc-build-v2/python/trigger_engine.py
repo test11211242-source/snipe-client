@@ -185,11 +185,14 @@ class TriggerEngine:
         self.profile = TriggerProfile(payload["triggerProfile"])
         self.trigger_ratio = payload["regions"]["trigger"]
         self.data_ratio = payload["regions"]["normal" if payload["searchMode"] == "fast" else "precise"]
+        self.capture_delay = float(payload["captureDelaySeconds"])
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
         self.last_trigger_time = -math.inf
         self.confirmations = 0.0
+        self.capture_due_at: float | None = None
+        self.triggered = False
         self.configured_aspect = (
             payload["configuredFrameSize"]["width"]
             / payload["configuredFrameSize"]["height"]
@@ -197,6 +200,7 @@ class TriggerEngine:
         self.frame_geometry_validated = False
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
+        self.triggered = False
         if now - self.last_frame_time < self.frame_interval:
             return None
         self.last_frame_time = now
@@ -209,6 +213,12 @@ class TriggerEngine:
             if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
                 raise RuntimeError("capture source aspect ratio changed; configure capture again")
             self.frame_geometry_validated = True
+        if self.capture_due_at is not None:
+            if now < self.capture_due_at:
+                return None
+            self.capture_due_at = None
+            data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
+            return encode_action_png(crop(bgr, data_rect), self.limits)
         if now - self.last_trigger_time < self.limits["cooldownSeconds"]:
             return None
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
@@ -226,8 +236,17 @@ class TriggerEngine:
             return None
         self.confirmations = 0.0
         self.last_trigger_time = now
+        self.triggered = True
+        if self.capture_delay > 0:
+            self.capture_due_at = now + self.capture_delay
+            return None
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def take_triggered(self) -> bool:
+        triggered = self.triggered
+        self.triggered = False
+        return triggered
 
 
 class PredictionTriggerEngine:

@@ -1,5 +1,5 @@
 import { Eye, EyeOff, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { WidgetSettings, WidgetView } from '../../../shared/models/widget'
 
@@ -7,40 +7,134 @@ export function WidgetApp(): React.JSX.Element {
   const [view, setView] = useState<WidgetView | null>(null)
   const [deckSelection, setDeckSelection] = useState({ resultId: '', index: 0 })
   const [failed, setFailed] = useState(false)
+  const [pendingMutations, setPendingMutations] = useState(0)
+  const [mutationError, setMutationError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [opacityDraft, setOpacityDraft] = useState(95)
+  const [opacityDirty, setOpacityDirty] = useState(false)
+  const deckTabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const pendingMutationsRef = useRef(0)
+  const mountedRef = useRef(true)
+
+  const saving = pendingMutations > 0
+
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+    },
+    [],
+  )
 
   useEffect(() => {
     let active = true
-    const load = (): void => {
-      void window.crToolsWidget.getView().then(
-        (nextView) => {
-          if (!active) return
-          setView(nextView)
-          setFailed(false)
-        },
-        () => {
-          if (active) setFailed(true)
-        },
-      )
+    let inFlight = false
+    let restartPending = false
+    let timer: number | undefined
+
+    const schedule = (delay: number): void => {
+      if (!active) return
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(() => void load(), delay)
     }
-    load()
-    const timer = setInterval(load, 1_000)
+
+    const restart = (): void => {
+      if (inFlight) {
+        restartPending = true
+        return
+      }
+      schedule(document.hidden ? 5_000 : 0)
+    }
+
+    const load = async (): Promise<void> => {
+      if (inFlight) return
+      inFlight = true
+      let nextView: WidgetView | null = null
+      try {
+        nextView = await window.crToolsWidget.getView()
+        if (active) {
+          if (pendingMutationsRef.current === 0) setView(nextView)
+          setFailed(false)
+        }
+      } catch {
+        if (active) setFailed(true)
+      }
+      inFlight = false
+      if (!active) return
+      if (restartPending) {
+        restartPending = false
+        restart()
+        return
+      }
+      const hasResult = nextView?.result !== null && nextView?.result !== undefined
+      const delay = document.hidden ? 5_000 : hasResult ? 2_500 : 1_000
+      schedule(delay)
+    }
+
+    const onVisibilityChange = (): void => restart()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    schedule(0)
     return () => {
       active = false
-      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [])
 
   const resultId = view?.result?.id ?? null
   const selectedDeck = deckSelection.resultId === resultId ? deckSelection.index : 0
 
-  const updateSettings = async (patch: Partial<WidgetSettings>): Promise<void> => {
-    if (view === null) return
-    const settings = await window.crToolsWidget.updateSettings({
-      ...view.settings,
-      ...patch,
+  const enqueueSettings = (patch: Partial<WidgetSettings>): Promise<boolean> => {
+    pendingMutationsRef.current += 1
+    setPendingMutations((current) => current + 1)
+    setMutationError(null)
+    setSaved(false)
+
+    const mutation = mutationQueueRef.current.then(async () => {
+      const latestView = await window.crToolsWidget.getView()
+      const settings = await window.crToolsWidget.updateSettings({
+        ...latestView.settings,
+        ...patch,
+      })
+      if (mountedRef.current) setView({ ...latestView, settings })
     })
-    setView((current) => (current === null ? current : { ...current, settings }))
+    const result = mutation.then(
+      () => true,
+      () => {
+        if (mountedRef.current) setMutationError('Не удалось сохранить настройку.')
+        return false
+      },
+    )
+    mutationQueueRef.current = result.then(() => undefined)
+    void result.then((updated) => {
+      pendingMutationsRef.current -= 1
+      if (!mountedRef.current) return
+      setPendingMutations((current) => Math.max(0, current - 1))
+      if (updated && pendingMutationsRef.current === 0) setSaved(true)
+    })
+    return result
   }
+
+  const enqueueSettingsEvent = useEffectEvent(enqueueSettings)
+
+  useEffect(() => {
+    if (!opacityDirty) return
+    let active = true
+    const timer = window.setTimeout(() => {
+      void enqueueSettingsEvent({ opacity: opacityDraft / 100 }).then((updated) => {
+        if (!active) return
+        setOpacityDirty(false)
+        if (!updated) setMutationError('Не удалось сохранить прозрачность.')
+      })
+    }, 300)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [opacityDirty, opacityDraft])
+
+  const displayedOpacity =
+    opacityDirty || view === null ? opacityDraft : Math.round(view.settings.opacity * 100)
 
   const result = view?.result ?? null
   const found = result?.kind === 'player_found' ? result : null
@@ -51,15 +145,18 @@ export function WidgetApp(): React.JSX.Element {
       <header className="widget-header">
         <div className="widget-brand">
           <span>CR TOOLS</span>
-          <strong>Opponent</strong>
+          <strong>Соперник</strong>
         </div>
         {view !== null && (
           <div className="widget-controls" aria-label="Настройки окна">
             <ControlButton
               active={view.settings.alwaysOnTop}
               label="Поверх остальных окон"
+              disabled={saving}
               onClick={() =>
-                void updateSettings({ alwaysOnTop: !view.settings.alwaysOnTop })
+                void enqueueSettings({
+                  alwaysOnTop: !view.settings.alwaysOnTop,
+                })
               }
             >
               <Pin aria-hidden="true" size={15} />
@@ -67,7 +164,8 @@ export function WidgetApp(): React.JSX.Element {
             <ControlButton
               active={view.settings.locked}
               label={view.settings.locked ? 'Разблокировать окно' : 'Заблокировать окно'}
-              onClick={() => void updateSettings({ locked: !view.settings.locked })}
+              disabled={saving}
+              onClick={() => void enqueueSettings({ locked: !view.settings.locked })}
             >
               {view.settings.locked ? (
                 <Lock aria-hidden="true" size={15} />
@@ -78,8 +176,11 @@ export function WidgetApp(): React.JSX.Element {
             <ControlButton
               active={view.settings.compactMode}
               label="Компактный режим"
+              disabled={saving}
               onClick={() =>
-                void updateSettings({ compactMode: !view.settings.compactMode })
+                void enqueueSettings({
+                  compactMode: !view.settings.compactMode,
+                })
               }
             >
               <LayoutGrid aria-hidden="true" size={15} />
@@ -99,7 +200,7 @@ export function WidgetApp(): React.JSX.Element {
 
       {view !== null && (
         <label className="opacity-control">
-          {view.settings.opacity < 0.8 ? (
+          {displayedOpacity < 80 ? (
             <EyeOff aria-hidden="true" size={14} />
           ) : (
             <Eye aria-hidden="true" size={14} />
@@ -111,16 +212,31 @@ export function WidgetApp(): React.JSX.Element {
             min="55"
             max="100"
             step="5"
-            value={Math.round(view.settings.opacity * 100)}
-            onChange={(event) =>
-              void updateSettings({ opacity: Number(event.currentTarget.value) / 100 })
-            }
+            disabled={saving}
+            value={displayedOpacity}
+            onChange={(event) => {
+              setOpacityDraft(Number(event.currentTarget.value))
+              setOpacityDirty(true)
+              setSaved(false)
+            }}
           />
-          <output>{Math.round(view.settings.opacity * 100)}%</output>
+          <output>{displayedOpacity}%</output>
         </label>
       )}
 
-      {failed ? (
+      <div className="widget-mutation-status" aria-live="polite">
+        {saving
+          ? 'Сохраняем настройку...'
+          : (mutationError ?? (saved ? 'Настройка сохранена' : ''))}
+      </div>
+
+      {failed && view !== null && (
+        <div className="widget-stale-notice" role="status">
+          Не удалось обновить данные. Показан последний результат.
+        </div>
+      )}
+
+      {failed && view === null ? (
         <EmptyState
           tone="danger"
           title="Виджет временно недоступен"
@@ -173,14 +289,40 @@ export function WidgetApp(): React.JSX.Element {
                     key={`${item.label ?? 'deck'}-${index}`}
                     type="button"
                     role="tab"
+                    id={`deck-tab-${index}`}
+                    aria-controls={`deck-panel-${index}`}
                     aria-selected={selectedDeck === index}
+                    tabIndex={selectedDeck === index ? 0 : -1}
                     onClick={() => setDeckSelection({ resultId: found.id, index })}
+                    onKeyDown={(event) => {
+                      let nextIndex: number | null = null
+                      if (event.key === 'ArrowRight') {
+                        nextIndex = (index + 1) % found.decks.length
+                      }
+                      if (event.key === 'ArrowLeft') {
+                        nextIndex = (index - 1 + found.decks.length) % found.decks.length
+                      }
+                      if (event.key === 'Home') nextIndex = 0
+                      if (event.key === 'End') nextIndex = found.decks.length - 1
+                      if (nextIndex === null) return
+                      event.preventDefault()
+                      setDeckSelection({ resultId: found.id, index: nextIndex })
+                      deckTabRefs.current[nextIndex]?.focus()
+                    }}
+                    ref={(node) => {
+                      deckTabRefs.current[index] = node
+                    }}
                   >
                     {item.label ?? `Колода ${index + 1}`}
                   </button>
                 ))}
               </div>
-              <div className="card-grid">
+              <div
+                className="card-grid"
+                id={`deck-panel-${selectedDeck}`}
+                role="tabpanel"
+                aria-labelledby={`deck-tab-${selectedDeck}`}
+              >
                 {deck?.cards.map((card, cardIndex) => (
                   <Card
                     key={`${found.id}-${selectedDeck}-${cardIndex}`}
@@ -202,11 +344,13 @@ export function WidgetApp(): React.JSX.Element {
 function ControlButton({
   active,
   label,
+  disabled,
   onClick,
   children,
 }: {
   active: boolean
   label: string
+  disabled: boolean
   onClick: () => void
   children: React.ReactNode
 }): React.JSX.Element {
@@ -214,6 +358,7 @@ function ControlButton({
     <button
       className="widget-control"
       data-active={active}
+      disabled={disabled}
       type="button"
       aria-label={label}
       aria-pressed={active}

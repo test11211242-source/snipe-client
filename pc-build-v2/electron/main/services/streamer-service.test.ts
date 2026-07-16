@@ -192,9 +192,7 @@ describe('StreamerService', () => {
     const test = harness()
     test.request.mockImplementationOnce((input) => {
       expect(input.schema?.safeParse({ success: false }).success).toBe(false)
-      expect(input.schema?.safeParse({ success: true, ignored: true }).success).toBe(
-        false,
-      )
+      expect(input.schema?.safeParse({ success: true, ignored: true }).success).toBe(true)
       return Promise.resolve({
         ok: false,
         error: {

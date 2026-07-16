@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from monitor_protocol import MonitorProtocolError, read_command
+from monitor_protocol import MonitorProtocolError, encode_event, read_command
 
 
 def payload():
@@ -18,6 +18,7 @@ def payload():
         },
         "triggerProfile": {},
         "searchMode": "fast",
+        "captureDelaySeconds": 0,
         "limits": {
             "fps": 10,
             "maxImageBytes": 10 * 1024 * 1024,
@@ -39,7 +40,7 @@ def line(command):
 def test_strict_versioned_start_and_stop() -> None:
     session_id = str(uuid.uuid4())
     start = {
-        "protocolVersion": 1,
+        "protocolVersion": 2,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
@@ -47,19 +48,29 @@ def test_strict_versioned_start_and_stop() -> None:
     }
     assert read_command(line(start))["payload"]["searchMode"] == "fast"
     stop = {
-        "protocolVersion": 1,
+        "protocolVersion": 2,
         "sessionId": session_id,
         "sequence": 3,
         "type": "stop",
         "payload": {},
     }
     assert read_command(line(stop), expected_session_id=session_id)["type"] == "stop"
+    triggered = json.loads(
+        encode_event(
+            session_id,
+            2,
+            "triggered",
+            {"timestamp": "2026-07-12T12:00:00.000Z"},
+        )
+    )
+    assert triggered["protocolVersion"] == 2
+    assert triggered["type"] == "triggered"
 
 
 def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
     session_id = str(uuid.uuid4())
     command = {
-        "protocolVersion": 1,
+        "protocolVersion": 2,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
@@ -77,7 +88,7 @@ def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
 
 def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     command = {
-        "protocolVersion": 1,
+        "protocolVersion": 2,
         "sessionId": str(uuid.uuid4()),
         "sequence": 0,
         "type": "start",
@@ -90,3 +101,20 @@ def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     command["payload"]["regions"]["normal"]["x"] = 0.8
     with pytest.raises(MonitorProtocolError, match="bounds"):
         read_command(line(command))
+
+
+def test_accepts_only_bounded_finite_capture_delay() -> None:
+    command = {
+        "protocolVersion": 2,
+        "sessionId": str(uuid.uuid4()),
+        "sequence": 0,
+        "type": "start",
+        "payload": payload(),
+    }
+    command["payload"]["captureDelaySeconds"] = 2.2
+    assert read_command(line(command))["payload"]["captureDelaySeconds"] == 2.2
+    for invalid in (-0.1, 5.1, True, float("inf")):
+        command["payload"] = payload()
+        command["payload"]["captureDelaySeconds"] = invalid
+        with pytest.raises(MonitorProtocolError, match="capture delay"):
+            read_command(line(command))

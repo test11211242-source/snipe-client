@@ -27,7 +27,7 @@ def profile(template: np.ndarray, mode="ncc"):
     }
 
 
-def payload(template: np.ndarray, search_mode="fast", feature_mode="ncc"):
+def payload(template: np.ndarray, search_mode="fast", feature_mode="ncc", capture_delay=0):
     return {
         "configuredFrameSize": {"width": 256, "height": 128},
         "triggerProfile": profile(template, feature_mode),
@@ -37,6 +37,7 @@ def payload(template: np.ndarray, search_mode="fast", feature_mode="ncc"):
             "precise": {"x": 0.5, "y": 0, "width": 0.5, "height": 1},
         },
         "searchMode": search_mode,
+        "captureDelaySeconds": capture_delay,
         "limits": {
             "fps": 10,
             "maxImageBytes": 10 * 1024 * 1024,
@@ -77,6 +78,8 @@ def test_ncc_requires_two_confirmations_uses_fast_crop_and_cooldown() -> None:
     assert engine.process(frame, 0.0) is None
     action = engine.process(frame, 0.11)
     assert action is not None
+    assert engine.take_triggered() is True
+    assert engine.take_triggered() is False
     encoded, width, height = action
     assert (width, height) == (64, 128)
     assert encoded.startswith(b"\x89PNG\r\n\x1a\n")
@@ -97,6 +100,39 @@ def test_precise_crop_and_confirmation_decay() -> None:
     assert action is not None
     _, width, height = action
     assert (width, height) == (128, 128)
+
+
+def test_precise_capture_uses_a_later_data_frame_without_blocking_prediction() -> None:
+    template = synthetic_template()
+    configured = payload(template, "precise", capture_delay=2.2)
+    engine = TriggerEngine(configured)
+    prediction = PredictionTriggerEngine(
+        {
+            "configuredFrameSize": configured["configuredFrameSize"],
+            "trigger": configured["regions"]["trigger"],
+            "data": configured["regions"]["normal"],
+            "triggerProfile": configured["triggerProfile"],
+        },
+        configured["limits"],
+    )
+    trigger_frame = frame_for(template)
+    assert engine.process(trigger_frame, 0.0) is None
+    assert engine.take_triggered() is False
+    assert engine.process(trigger_frame, 0.11) is None
+    assert engine.take_triggered() is True
+    assert prediction.process(trigger_frame, 0.12) is not None
+
+    later_frame = np.zeros_like(trigger_frame)
+    later_frame[:, 128:] = (7, 211, 33)
+    assert engine.process(later_frame, 2.3) is None
+    action = engine.process(later_frame, 2.42)
+    assert action is not None
+    assert engine.take_triggered() is False
+    encoded, width, height = action
+    decoded = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert (width, height) == (128, 128)
+    assert decoded is not None
+    assert tuple(int(value) for value in decoded[64, 64]) == (7, 211, 33)
 
 
 def test_orb_bf_hamming_crosscheck_thresholds_on_synthetic_frame() -> None:

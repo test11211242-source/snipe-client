@@ -24,14 +24,17 @@
 html,
 body,
 #root {
-  min-width: 340px;
+  min-width: 0;
+  width: 100%;
   min-height: 100%;
   margin: 0;
 }
 
 body {
   min-height: 100vh;
+  overflow-x: hidden;
   background: var(--widget-bg);
+  font-size: 13px;
 }
 
 button,
@@ -46,6 +49,8 @@ input:focus-visible {
 }
 
 .widget-shell {
+  width: 100%;
+  min-width: 0;
   min-height: 100vh;
   padding: 13px;
   color: var(--widget-text);
@@ -87,8 +92,8 @@ input:focus-visible {
 }
 
 .widget-control {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -115,6 +120,11 @@ input:focus-visible {
   background: #1d202b;
 }
 
+.widget-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .opacity-control {
   min-height: 36px;
   display: grid;
@@ -138,6 +148,24 @@ input:focus-visible {
   color: #c9cbd2;
   font-size: 12px;
   text-align: right;
+}
+
+.widget-mutation-status {
+  min-height: 20px;
+  margin-top: 2px;
+  color: var(--widget-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.widget-stale-notice {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(208, 164, 90, 0.45);
+  border-radius: 6px;
+  color: #dfc28c;
+  background: rgba(208, 164, 90, 0.08);
+  font-size: 12px;
 }
 
 .player-summary {
@@ -221,7 +249,7 @@ input:focus-visible {
 
 .deck-tabs button {
   min-width: 64px;
-  min-height: 31px;
+  min-height: 36px;
   padding: 6px 10px;
   border: 1px solid var(--widget-border);
   border-radius: 6px;
@@ -389,8 +417,7 @@ input:focus-visible {
 }
 
 .widget-shell[data-compact='true'] .opacity-control,
-.widget-shell[data-compact='true'] .player-summary dl,
-.widget-shell[data-compact='true'] .card-copy span {
+.widget-shell[data-compact='true'] .player-summary dl {
   display: none;
 }
 
@@ -408,6 +435,15 @@ input:focus-visible {
   height: 44px;
 }
 
+.widget-shell[data-compact='true'] .card-copy strong {
+  white-space: normal;
+}
+
+.widget-shell[data-compact='true'] .card-copy span,
+.widget-shell[data-compact='true'] .card-copy small {
+  margin-top: 2px;
+}
+
 @media (max-width: 390px) {
   .widget-shell {
     padding: 10px;
@@ -418,7 +454,7 @@ input:focus-visible {
   }
 
   .widget-control {
-    width: 28px;
+    width: 31px;
   }
 
   .opacity-control {
@@ -462,5 +498,21 @@ input:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .widget-control,
+  .player-summary,
+  .deck-tabs button,
+  .deck-card,
+  .widget-empty {
+    border: 1px solid CanvasText;
+  }
+
+  .deck-tabs button[aria-selected='true'],
+  .widget-control[data-active='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }

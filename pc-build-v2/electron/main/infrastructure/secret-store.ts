@@ -13,6 +13,13 @@ const SecretFileSchema = z
   })
   .strict()
 
+const InvalidatedSecretFileSchema = z
+  .object({
+    version: z.literal(1),
+    invalidated: z.literal(true),
+  })
+  .strict()
+
 export interface SecretCryptoAdapter {
   isEncryptionAvailable: () => boolean
   encryptString: (value: string) => Buffer
@@ -72,12 +79,20 @@ export class SecretStore {
 
     this.assertEncryptionAvailable()
     try {
-      const file = SecretFileSchema.parse(JSON.parse(content) as unknown)
+      const parsed = JSON.parse(content) as unknown
+      if (InvalidatedSecretFileSchema.safeParse(parsed).success) {
+        throw new ApplicationError(
+          'SECRET_CLEAR_FAILED',
+          'Сохранённый сеанс был отозван, но его marker не удалось удалить.',
+        )
+      }
+      const file = SecretFileSchema.parse(parsed)
       const token = this.crypto.decryptString(Buffer.from(file.ciphertext, 'base64'))
       if (token.length === 0 || token.length > 16_384)
         throw new Error('Invalid token length')
       return token
     } catch (cause) {
+      if (cause instanceof ApplicationError) throw cause
       throw new ApplicationError(
         'SECRET_INVALID',
         'Сохранённые данные входа повреждены. Выполните вход заново.',
@@ -97,23 +112,44 @@ export class SecretStore {
       version: 1,
       ciphertext: encrypted.toString('base64'),
     })}\n`
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`
-    await this.fs.mkdir(dirname(this.filePath), { recursive: true })
+    await this.writeAtomically(
+      content,
+      'SECRET_WRITE_FAILED',
+      'Не удалось безопасно сохранить данные входа',
+    )
+  }
+
+  async invalidateAndClear(): Promise<void> {
+    await this.writeAtomically(
+      `${JSON.stringify({ version: 1, invalidated: true })}\n`,
+      'SECRET_CLEAR_FAILED',
+      'Не удалось безопасно отозвать сохранённый сеанс',
+    )
     try {
-      await this.fs.writeFile(temporaryPath, content, { encoding: 'utf8', mode: 0o600 })
-      await this.fs.rename(temporaryPath, this.filePath)
+      await this.fs.rm(this.filePath, { force: true })
     } catch (cause) {
-      await this.fs.rm(temporaryPath, { force: true })
       throw new ApplicationError(
-        'SECRET_WRITE_FAILED',
-        'Не удалось безопасно сохранить данные входа',
+        'SECRET_CLEAR_FAILED',
+        'Сохранённый сеанс отозван, но marker не удалось удалить',
         { cause },
       )
     }
   }
 
-  async clear(): Promise<void> {
-    await this.fs.rm(this.filePath, { force: true })
+  private async writeAtomically(
+    content: string,
+    code: 'SECRET_WRITE_FAILED' | 'SECRET_CLEAR_FAILED',
+    message: string,
+  ): Promise<void> {
+    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`
+    try {
+      await this.fs.mkdir(dirname(this.filePath), { recursive: true })
+      await this.fs.writeFile(temporaryPath, content, { encoding: 'utf8', mode: 0o600 })
+      await this.fs.rename(temporaryPath, this.filePath)
+    } catch (cause) {
+      await this.fs.rm(temporaryPath, { force: true }).catch(() => undefined)
+      throw new ApplicationError(code, message, { cause })
+    }
   }
 
   private assertEncryptionAvailable(): void {

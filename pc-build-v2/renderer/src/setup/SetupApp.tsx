@@ -40,8 +40,25 @@ const RESULT_STEPS: readonly { id: RegionKind; label: string; help: string }[] =
   },
 ]
 
-function command(view: SetupSessionView) {
+interface SetupCommand {
+  sessionId: string
+  generation: number
+}
+type RegionHistory = Record<RegionKind, NormalizedRect[]>
+type RectInputValues = Record<keyof NormalizedRect, string>
+
+function command(view: SetupSessionView): SetupCommand {
   return { sessionId: view.sessionId, generation: view.generation }
+}
+
+function emptyHistory(): RegionHistory {
+  return {
+    trigger: [],
+    normal: [],
+    precise: [],
+    resultTrigger: [],
+    resultData: [],
+  }
 }
 
 export function SetupApp(): React.JSX.Element {
@@ -49,43 +66,75 @@ export function SetupApp(): React.JSX.Element {
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   const [activeRegion, setActiveRegion] = useState<RegionKind>('trigger')
   const [draft, setDraft] = useState<NormalizedRect | null>(null)
-  const [history, setHistory] = useState<NormalizedRect[]>([])
+  const [fieldsValid, setFieldsValid] = useState(false)
+  const [history, setHistory] = useState<RegionHistory>(emptyHistory)
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [initialState, setInitialState] = useState<'loading' | 'error' | 'ready'>(
+    'loading',
+  )
+  const [initialAttempt, setInitialAttempt] = useState(0)
   const [transform, setTransform] = useState<ContainTransform | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
-  const dragStart = useRef<{ x: number; y: number } | null>(null)
+  const drag = useRef<{
+    pointerId: number
+    start: { x: number; y: number }
+  } | null>(null)
   const frameUrlRef = useRef<string | null>(null)
+  const viewRef = useRef<SetupSessionView | null>(null)
+  const activeRegionRef = useRef<RegionKind>('trigger')
+  const busyRef = useRef(false)
 
   useEffect(() => {
     const lifecycle = new AbortController()
-    void window.crToolsSetup
-      .getSession()
-      .then((session) => {
-        if (lifecycle.signal.aborted) return
-        setView(session)
-        if (session.kind === 'predictionResult') setActiveRegion('resultTrigger')
-        if (session.frameSize === null) return
-        return window.crToolsSetup.getFrame(command(session)).then((frame) => {
-          if (lifecycle.signal.aborted) return
-          const url = URL.createObjectURL(
+
+    void (async () => {
+      try {
+        const session = await window.crToolsSetup.getSession()
+        let nextFrameUrl: string | null = null
+        if (session.frameSize !== null) {
+          const frame = await window.crToolsSetup.getFrame(command(session))
+          if (
+            frame.sessionId !== session.sessionId ||
+            frame.generation !== session.generation
+          )
+            throw new Error('Setup frame does not belong to the active session')
+          nextFrameUrl = URL.createObjectURL(
             new Blob([frame.bytes], { type: frame.mimeType }),
           )
-          frameUrlRef.current = url
-          setFrameUrl(url)
-          setDraft(
-            session.kind === 'predictionResult'
-              ? session.regions.resultTrigger
-              : session.regions.trigger,
-          )
-        })
-      })
-      .catch(() => setLocalError('Сессия настройки недоступна.'))
+        }
+        if (lifecycle.signal.aborted) {
+          if (nextFrameUrl !== null) URL.revokeObjectURL(nextFrameUrl)
+          return
+        }
+
+        const initialRegion =
+          session.kind === 'predictionResult' ? 'resultTrigger' : 'trigger'
+        const initialDraft = session.regions[initialRegion]
+        frameUrlRef.current = nextFrameUrl
+        viewRef.current = session
+        activeRegionRef.current = initialRegion
+        setView(session)
+        setFrameUrl(nextFrameUrl)
+        setActiveRegion(initialRegion)
+        setDraft(initialDraft)
+        setFieldsValid(initialDraft !== null)
+        setHistory(emptyHistory())
+        setInitialState('ready')
+      } catch {
+        if (lifecycle.signal.aborted) return
+        setInitialState('error')
+      }
+    })()
+
     return () => {
       lifecycle.abort()
-      if (frameUrlRef.current !== null) URL.revokeObjectURL(frameUrlRef.current)
+      if (frameUrlRef.current !== null) {
+        URL.revokeObjectURL(frameUrlRef.current)
+        frameUrlRef.current = null
+      }
     }
-  }, [])
+  }, [initialAttempt])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -108,25 +157,68 @@ export function SetupApp(): React.JSX.Element {
     return () => observer.disconnect()
   }, [view?.frameSize])
 
-  const persist = async (rect: NormalizedRect, remember = true): Promise<void> => {
-    if (view === null) return
+  const acceptView = (next: SetupSessionView): void => {
+    viewRef.current = next
+    setView(next)
+  }
+
+  const beginOperation = (): boolean => {
+    if (busyRef.current) return false
+    busyRef.current = true
     setBusy(true)
     setLocalError(null)
+    return true
+  }
+
+  const endOperation = (): void => {
+    busyRef.current = false
+    setBusy(false)
+  }
+
+  const persist = async (rect: NormalizedRect, remember = true): Promise<boolean> => {
+    const current = viewRef.current
+    if (current?.state !== 'SELECTING' || !beginOperation()) return false
+
+    const region = activeRegionRef.current
+    const request = command(current)
+    const previous = current.regions[region]
     try {
-      const previous = view.regions[activeRegion]
-      if (remember && previous !== null)
-        setHistory((items) => [...items.slice(-9), previous])
       const next = await window.crToolsSetup.setRegion({
-        ...command(view),
-        region: activeRegion,
+        ...request,
+        region,
         rect,
       })
-      setView(next)
-      setDraft(rect)
+      const latest = viewRef.current
+      if (
+        latest?.sessionId !== request.sessionId ||
+        latest.generation !== request.generation ||
+        next.sessionId !== request.sessionId ||
+        next.generation !== request.generation + 1
+      ) {
+        setLocalError('Состояние настройки изменилось. Повторно выберите область.')
+        return false
+      }
+
+      acceptView(next)
+      if (remember && previous !== null) {
+        setHistory((items) => ({
+          ...items,
+          [region]: [...items[region].slice(-9), previous],
+        }))
+      }
+      if (activeRegionRef.current === region) {
+        const acceptedRect = next.regions[region]
+        setDraft(acceptedRect)
+        setFieldsValid(acceptedRect !== null)
+      }
+      return true
     } catch {
-      setLocalError('Не удалось сохранить область. Повторите выделение.')
+      setLocalError(
+        'Не удалось подтвердить координаты. Проверьте область перед повтором.',
+      )
+      return false
     } finally {
-      setBusy(false)
+      endOperation()
     }
   }
 
@@ -143,49 +235,73 @@ export function SetupApp(): React.JSX.Element {
     )
   }
 
-  const analyze = async (): Promise<void> => {
-    if (view === null) return
-    setBusy(true)
-    setLocalError(null)
+  const releasePointer = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (
+      typeof event.currentTarget.hasPointerCapture === 'function' &&
+      event.currentTarget.hasPointerCapture(event.pointerId) &&
+      typeof event.currentTarget.releasePointerCapture === 'function'
+    )
+      event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const runCommand = async (
+    invoke: (request: SetupCommand) => Promise<SetupSessionView>,
+    failureMessage: string,
+  ): Promise<void> => {
+    const current = viewRef.current
+    if (current === null || !beginOperation()) return
+    const request = command(current)
     try {
-      setView(await window.crToolsSetup.analyzeTrigger(command(view)))
+      const next = await invoke(request)
+      const latest = viewRef.current
+      if (
+        latest?.sessionId !== request.sessionId ||
+        latest.generation !== request.generation ||
+        next.sessionId !== request.sessionId ||
+        next.generation !== request.generation + 1
+      ) {
+        setLocalError('Состояние настройки изменилось. Обновите текущий этап.')
+        return
+      }
+      acceptView(next)
     } catch {
-      setLocalError('Анализ не завершён. Проверьте область триггера.')
+      setLocalError(failureMessage)
     } finally {
-      setBusy(false)
+      endOperation()
     }
   }
 
-  const review = async (): Promise<void> => {
-    if (view === null) return
-    setBusy(true)
-    try {
-      setView(await window.crToolsSetup.review(command(view)))
-    } catch {
-      setLocalError('Для проверки нужны все три области и анализ триггера.')
-    } finally {
-      setBusy(false)
-    }
-  }
+  const analyze = (): Promise<void> =>
+    runCommand(
+      (request) => window.crToolsSetup.analyzeTrigger(request),
+      'Анализ не завершён. Проверьте область триггера.',
+    )
 
-  const commit = async (): Promise<void> => {
-    if (view === null) return
-    setBusy(true)
-    try {
-      setView(await window.crToolsSetup.commit(command(view)))
-    } catch {
-      setLocalError('Настройка не сохранена. Активная конфигурация не изменилась.')
-    } finally {
-      setBusy(false)
-    }
-  }
+  const review = (): Promise<void> =>
+    runCommand(
+      (request) => window.crToolsSetup.review(request),
+      'Для проверки нужны все области и анализ триггера.',
+    )
+
+  const commit = (): Promise<void> =>
+    runCommand(
+      (request) => window.crToolsSetup.commit(request),
+      'Не удалось подтвердить сохранение. Сервер мог принять часть изменений; проверьте состояние перед повтором.',
+    )
 
   const close = async (): Promise<void> => {
-    if (view === null) return
-    await window.crToolsSetup.close(command(view)).catch(() => undefined)
+    const current = viewRef.current
+    if (current === null || !beginOperation()) return
+    try {
+      await window.crToolsSetup.close(command(current))
+    } catch {
+      setLocalError('Не удалось закрыть настройку. Повторите попытку.')
+    } finally {
+      endOperation()
+    }
   }
 
-  if (view === null)
+  if (initialState === 'loading')
     return (
       <main className="setup-loading" role="status" aria-live="polite">
         <span className="setup-spinner" aria-hidden="true" />
@@ -193,13 +309,44 @@ export function SetupApp(): React.JSX.Element {
         <p>Загружаем источник и параметры калибровки.</p>
       </main>
     )
+
+  if (initialState === 'error' || view === null)
+    return (
+      <main className="setup-loading setup-load-error" role="alert">
+        <X aria-hidden="true" size={32} />
+        <h1>Не удалось загрузить настройку</h1>
+        <p>Не удалось получить сессию или рабочий кадр от приложения.</p>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => {
+            setInitialState('loading')
+            setLocalError(null)
+            setTransform(null)
+            setFrameUrl(null)
+            setView(null)
+            viewRef.current = null
+            setInitialAttempt((attempt) => attempt + 1)
+          }}
+        >
+          Повторить
+        </button>
+      </main>
+    )
+
   const steps = view.kind === 'predictionResult' ? RESULT_STEPS : STEPS
   const activeStep = steps.find((step) => step.id === activeRegion)
   if (activeStep === undefined) throw new Error('Unknown setup region')
   const redrawing = draft === null && view.regions[activeRegion] !== null
   const complete = !redrawing && steps.every((step) => view.regions[step.id] !== null)
   const canEdit = view.state === 'SELECTING'
+  const canSelectRegion = canEdit || view.state === 'REVIEW'
+  const pointerEditable = canEdit && !busy
   const message = localError ?? view.error?.message ?? null
+  const activeHistory = history[activeRegion]
+  const failed = view.state === 'FAILED' || frameUrl === null || view.frameSize === null
+  const frameSizeLabel =
+    view.frameSize === null ? '' : `${view.frameSize.width} × ${view.frameSize.height} px`
 
   return (
     <main className="setup-workspace" data-state={view.state} aria-busy={busy}>
@@ -221,37 +368,67 @@ export function SetupApp(): React.JSX.Element {
           className="icon-button"
           type="button"
           aria-label="Отменить и закрыть"
+          disabled={busy}
           onClick={() => void close()}
         >
           <X aria-hidden="true" />
         </button>
       </header>
       <ol className="setup-steps" aria-label="Этапы настройки">
-        {steps.map((step, index) => (
-          <li
-            key={step.id}
-            data-active={step.id === activeRegion}
-            data-complete={view.regions[step.id] !== null}
-          >
-            <span>
-              {view.regions[step.id] === null ? index + 1 : <Check size={14} />}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveRegion(step.id)
-                setDraft(view.regions[step.id])
-              }}
-            >
-              {step.label}
-            </button>
-          </li>
-        ))}
-        <li data-active={view.state === 'REVIEW'}>
-          <span>{steps.length + 1}</span>
+        {steps.map((step, index) => {
+          const stepComplete = view.regions[step.id] !== null
+          const stepSelected = step.id === activeRegion
+          const stepCurrent = canEdit && stepSelected
+          return (
+            <li key={step.id} data-active={stepSelected} data-complete={stepComplete}>
+              <span aria-hidden="true">
+                {stepComplete ? <Check size={14} /> : index + 1}
+              </span>
+              <button
+                type="button"
+                aria-current={stepCurrent ? 'step' : undefined}
+                aria-label={`${step.label}. ${
+                  stepComplete ? 'Область задана.' : 'Область не задана.'
+                }${
+                  stepCurrent
+                    ? ' Текущий этап.'
+                    : stepSelected
+                      ? ' Выбрана для просмотра.'
+                      : ''
+                }`}
+                disabled={busy || !canSelectRegion}
+                onClick={() => {
+                  const currentState = viewRef.current?.state
+                  if (
+                    busyRef.current ||
+                    (currentState !== 'SELECTING' && currentState !== 'REVIEW')
+                  )
+                    return
+                  activeRegionRef.current = step.id
+                  setActiveRegion(step.id)
+                  setDraft(view.regions[step.id])
+                  setFieldsValid(view.regions[step.id] !== null)
+                }}
+              >
+                {step.label}
+              </button>
+            </li>
+          )
+        })}
+        <li
+          data-active={view.state === 'REVIEW'}
+          data-complete={view.state === 'COMMITTED'}
+        >
+          <span aria-hidden="true">
+            {view.state === 'COMMITTED' ? <Check size={14} /> : steps.length + 1}
+          </span>
           <button
             type="button"
-            disabled={view.triggerProfile === null}
+            aria-current={view.state === 'REVIEW' ? 'step' : undefined}
+            aria-label={`Проверка. ${
+              view.triggerProfile === null ? 'Анализ триггера не выполнен.' : 'Доступна.'
+            }${view.state === 'REVIEW' ? ' Текущий этап.' : ''}`}
+            disabled={busy || !canEdit || view.triggerProfile === null}
             onClick={() => void review()}
           >
             Проверка
@@ -271,17 +448,39 @@ export function SetupApp(): React.JSX.Element {
               ? 'Зоны результата настроены'
               : 'Захват настроен'}
           </h2>
-          <p>Конфигурация сохранена локально и на сервере.</p>
-          <button className="primary-button" type="button" onClick={() => void close()}>
+          <p>Приложение подтвердило сохранение конфигурации.</p>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void close()}
+          >
             Закрыть
           </button>
         </section>
-      ) : view.state === 'FAILED' || frameUrl === null || view.frameSize === null ? (
+      ) : failed ? (
         <section className="setup-complete" data-tone="danger">
           <X aria-hidden="true" size={32} />
-          <h2>Кадр недоступен</h2>
-          <p>Настройка не изменила активную конфигурацию.</p>
-          <button className="secondary-button" type="button" onClick={() => void close()}>
+          <h2>
+            {view.state === 'FAILED'
+              ? 'Настройка завершилась с ошибкой'
+              : 'Кадр недоступен'}
+          </h2>
+          <p>
+            {view.error?.message ??
+              localError ??
+              'Приложение не смогло получить рабочий кадр.'}
+          </p>
+          <p className="setup-state-note">
+            Итоговое состояние удалённой конфигурации не подтверждено. Часть изменений
+            могла быть принята сервером.
+          </p>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void close()}
+          >
             Закрыть
           </button>
         </section>
@@ -291,9 +490,7 @@ export function SetupApp(): React.JSX.Element {
             <header className="frame-toolbar">
               <div>
                 <span>РАБОЧИЙ КАДР</span>
-                <strong>
-                  {view.frameSize.width} × {view.frameSize.height} px
-                </strong>
+                <strong>{frameSizeLabel}</strong>
               </div>
               <span className="frame-status" data-busy={busy}>
                 <i aria-hidden="true" />
@@ -306,29 +503,62 @@ export function SetupApp(): React.JSX.Element {
             </header>
             <div
               className="capture-stage"
-              data-editable={canEdit}
+              data-editable={pointerEditable}
               ref={stageRef}
+              role="group"
+              aria-label="Выделение области на рабочем кадре"
+              aria-describedby="capture-stage-help"
               onPointerDown={(event) => {
-                if (!canEdit) return
+                if (!pointerEditable || busyRef.current) return
                 const next = point(event)
                 if (next !== null) {
-                  dragStart.current = next
-                  event.currentTarget.setPointerCapture(event.pointerId)
+                  drag.current = { pointerId: event.pointerId, start: next }
+                  if (typeof event.currentTarget.setPointerCapture === 'function')
+                    event.currentTarget.setPointerCapture(event.pointerId)
                 }
               }}
               onPointerMove={(event) => {
+                const currentDrag = drag.current
+                if (
+                  !pointerEditable ||
+                  busyRef.current ||
+                  currentDrag?.pointerId !== event.pointerId
+                )
+                  return
                 const next = point(event)
-                if (next !== null && dragStart.current !== null)
-                  setDraft(rectFromPoints(dragStart.current, next))
+                if (next !== null) {
+                  const nextDraft = rectFromPoints(currentDrag.start, next)
+                  setDraft(nextDraft)
+                  setFieldsValid(nextDraft !== null)
+                }
               }}
               onPointerUp={(event) => {
-                const next = point(event)
-                const rect =
-                  next === null || dragStart.current === null
-                    ? null
-                    : rectFromPoints(dragStart.current, next)
-                dragStart.current = null
-                if (rect !== null) void persist(rect)
+                const currentDrag = drag.current
+                if (currentDrag?.pointerId === event.pointerId) {
+                  if (!busyRef.current) {
+                    const next = point(event)
+                    const nextDraft =
+                      next === null ? null : rectFromPoints(currentDrag.start, next)
+                    if (nextDraft !== null) {
+                      setDraft(nextDraft)
+                      setFieldsValid(true)
+                    }
+                  }
+                  drag.current = null
+                }
+                releasePointer(event)
+              }}
+              onPointerCancel={(event) => {
+                if (drag.current?.pointerId === event.pointerId) {
+                  drag.current = null
+                  const saved = viewRef.current?.regions[activeRegionRef.current] ?? null
+                  setDraft(saved)
+                  setFieldsValid(saved !== null)
+                }
+                releasePointer(event)
+              }}
+              onLostPointerCapture={(event) => {
+                if (drag.current?.pointerId === event.pointerId) drag.current = null
               }}
             >
               {transform !== null && (
@@ -357,7 +587,7 @@ export function SetupApp(): React.JSX.Element {
                         }}
                       >
                         <span>{step.label}</span>
-                        <i className="region-handle" />
+                        <i className="region-handle" aria-hidden="true" />
                       </div>
                     )
                   })}
@@ -368,22 +598,36 @@ export function SetupApp(): React.JSX.Element {
           <aside className="region-panel">
             <span className="eyebrow">ТЕКУЩИЙ ЭТАП</span>
             <h2>{activeStep.label}</h2>
-            <p>{activeStep.help}</p>
-            <RectFields rect={draft} onChange={setDraft} />
+            <p id="capture-stage-help">
+              {activeStep.help} Нарисуйте область указателем или введите координаты с
+              клавиатуры.
+            </p>
+            <RectFields
+              key={activeRegion}
+              rect={draft}
+              disabled={!canEdit || busy}
+              onChange={setDraft}
+              onValidityChange={setFieldsValid}
+            />
             <div className="region-actions">
               <button
                 className="secondary-button"
                 type="button"
-                disabled={history.length === 0 || busy}
+                disabled={activeHistory.length === 0 || busy || !canEdit}
                 onClick={() => {
-                  const previous = history.at(-1)
-                  if (previous !== undefined) {
-                    setHistory((items) => items.slice(0, -1))
-                    void persist(previous, false)
-                  }
+                  const region = activeRegionRef.current
+                  const previous = history[region].at(-1)
+                  if (previous === undefined) return
+                  void persist(previous, false).then((accepted) => {
+                    if (!accepted) return
+                    setHistory((items) => ({
+                      ...items,
+                      [region]: items[region].slice(0, -1),
+                    }))
+                  })
                 }}
               >
-                <ArrowLeft size={15} />
+                <ArrowLeft aria-hidden="true" size={15} />
                 Отменить
               </button>
               <button
@@ -391,19 +635,21 @@ export function SetupApp(): React.JSX.Element {
                 type="button"
                 disabled={draft === null || busy || !canEdit}
                 onClick={() => {
+                  if (busyRef.current) return
                   setDraft(null)
+                  setFieldsValid(false)
                 }}
               >
-                <RotateCcw size={15} />
+                <RotateCcw aria-hidden="true" size={15} />
                 Перерисовать
               </button>
             </div>
             <button
               className="primary-button region-save"
               type="button"
-              disabled={draft === null || busy || !canEdit}
+              disabled={draft === null || !fieldsValid || busy || !canEdit}
               onClick={() => {
-                if (draft !== null) void persist(draft)
+                if (draft !== null && fieldsValid) void persist(draft)
               }}
             >
               Применить координаты
@@ -412,10 +658,10 @@ export function SetupApp(): React.JSX.Element {
               <button
                 className="primary-button region-save"
                 type="button"
-                disabled={busy}
+                disabled={busy || !canEdit}
                 onClick={() => void analyze()}
               >
-                <ScanLine size={16} />
+                <ScanLine aria-hidden="true" size={16} />
                 {busy ? 'Анализ...' : 'Анализировать триггер'}
               </button>
             )}
@@ -423,7 +669,7 @@ export function SetupApp(): React.JSX.Element {
               <button
                 className="primary-button region-save"
                 type="button"
-                disabled={busy}
+                disabled={busy || !canEdit}
                 onClick={() => void review()}
               >
                 Перейти к проверке
@@ -465,31 +711,70 @@ export function SetupApp(): React.JSX.Element {
   )
 }
 
+function inputValues(rect: NormalizedRect | null): RectInputValues {
+  if (rect === null) return { x: '', y: '', width: '', height: '' }
+  return {
+    x: String(Number((rect.x * 100).toFixed(2))),
+    y: String(Number((rect.y * 100).toFixed(2))),
+    width: String(Number((rect.width * 100).toFixed(2))),
+    height: String(Number((rect.height * 100).toFixed(2))),
+  }
+}
+
+function parseRect(values: RectInputValues): NormalizedRect | null {
+  if (Object.values(values).some((value) => value.trim() === '')) return null
+  const next = {
+    x: Number(values.x) / 100,
+    y: Number(values.y) / 100,
+    width: Number(values.width) / 100,
+    height: Number(values.height) / 100,
+  }
+  return Number.isFinite(next.x) &&
+    Number.isFinite(next.y) &&
+    Number.isFinite(next.width) &&
+    Number.isFinite(next.height) &&
+    next.width > 0 &&
+    next.height > 0 &&
+    next.x >= 0 &&
+    next.y >= 0 &&
+    next.x + next.width <= 1 &&
+    next.y + next.height <= 1
+    ? next
+    : null
+}
+
 function RectFields({
   rect,
+  disabled,
   onChange,
+  onValidityChange,
 }: {
   rect: NormalizedRect | null
-  onChange: (rect: NormalizedRect | null) => void
+  disabled: boolean
+  onChange: (rect: NormalizedRect) => void
+  onValidityChange: (valid: boolean) => void
 }): React.JSX.Element {
-  const values = rect ?? { x: 0, y: 0, width: 0.1, height: 0.1 }
-  const update = (key: keyof NormalizedRect, raw: string): void => {
-    const value = Number(raw) / 100
-    const next = { ...values, [key]: value }
-    onChange(
-      next.width > 0 &&
-        next.height > 0 &&
-        next.x >= 0 &&
-        next.y >= 0 &&
-        next.x + next.width <= 1 &&
-        next.y + next.height <= 1
-        ? next
-        : null,
-    )
+  const [lastRect, setLastRect] = useState(rect)
+  const [values, setValues] = useState<RectInputValues>(() => inputValues(rect))
+  if (rect !== lastRect) {
+    setLastRect(rect)
+    setValues(inputValues(rect))
   }
+
+  const update = (key: keyof NormalizedRect, raw: string): void => {
+    const nextValues = { ...values, [key]: raw }
+    const nextRect = parseRect(nextValues)
+    setValues(nextValues)
+    onValidityChange(nextRect !== null)
+    if (nextRect !== null) onChange(nextRect)
+  }
+
   return (
-    <fieldset className="rect-fields">
+    <fieldset className="rect-fields" disabled={disabled}>
       <legend>Координаты, %</legend>
+      <p className="rect-fields-hint" id="rect-fields-hint">
+        Числовая альтернатива выделению указателем. Заполните все четыре поля.
+      </p>
       {(['x', 'y', 'width', 'height'] as const).map((key) => (
         <label key={key}>
           <span>{key.toUpperCase()}</span>
@@ -498,7 +783,9 @@ function RectFields({
             min="0"
             max="100"
             step="0.1"
-            value={Number((values[key] * 100).toFixed(2))}
+            inputMode="decimal"
+            value={values[key]}
+            aria-describedby="rect-fields-hint"
             onChange={(event) => update(key, event.target.value)}
           />
         </label>

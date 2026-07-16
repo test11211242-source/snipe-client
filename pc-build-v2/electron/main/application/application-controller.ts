@@ -34,6 +34,7 @@ export class ApplicationController {
   #disposeWindowSubscription: (() => void) | undefined
   #shutdownPromise: Promise<void> | undefined
   #windowSync: Promise<void> = Promise.resolve()
+  #activeUserId: string | null = null
 
   constructor(
     private readonly electronApp: App,
@@ -182,6 +183,20 @@ export class ApplicationController {
 
   private async syncWindows(view: AuthView): Promise<void> {
     if (view.state === 'AUTHENTICATED') {
+      if (view.user === null) throw new Error('Authenticated view is missing its user')
+      if (this.#activeUserId !== view.user.id) {
+        if (this.#activeUserId !== null) {
+          this.realtime.stop()
+          this.reprocessedResults.stop()
+          this.notifications.stop()
+          await this.streamer.stop()
+          await this.widget.stop('auth-transition')
+        }
+        this.images.stop()
+        await this.monitor.stop()
+        this.monitor.setUserContext(view.user.id)
+        this.#activeUserId = view.user.id
+      }
       if (
         this.lifecycle.state === 'AUTHENTICATING' ||
         this.lifecycle.state === 'RECOVERING'
@@ -189,7 +204,6 @@ export class ApplicationController {
         this.lifecycle.transitionTo('READY')
       }
       await this.windows.ensureMainWindow()
-      if (view.user === null) throw new Error('Authenticated view is missing its user')
       await this.widget.start(view.user.id)
       this.notifications.start()
       this.reprocessedResults.start(view.user.id)
@@ -206,6 +220,8 @@ export class ApplicationController {
     await this.streamer.stop()
     await this.widget.stop('auth-transition')
     await this.monitor.stop()
+    this.monitor.setUserContext(null)
+    this.#activeUserId = null
     this.windows.close('setup', 'auth-transition')
     try {
       const setup = this.setup.getSession()

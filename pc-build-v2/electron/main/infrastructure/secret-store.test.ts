@@ -83,4 +83,37 @@ describe('SecretStore', () => {
       code: 'SECRET_INVALID',
     })
   })
+
+  it('atomically replaces a token with a durable tombstone before failed deletion', async () => {
+    const fs = fakeFileSystem()
+    const crypto = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(`cipher:${value}`).reverse(),
+      decryptString: (value: Buffer) => value.reverse().toString().replace('cipher:', ''),
+    }
+    const store = new SecretStore('/data/auth.enc', crypto, fs)
+    await store.saveRefreshToken('refresh-secret')
+    const remove = fs.rm
+    fs.rm = (path, options) =>
+      path === '/data/auth.enc'
+        ? Promise.reject(new Error('delete denied'))
+        : remove(path, options)
+
+    await expect(store.invalidateAndClear()).rejects.toMatchObject({
+      code: 'SECRET_CLEAR_FAILED',
+    })
+    const persisted = fs.files.get('/data/auth.enc')
+    expect(persisted).toContain('"invalidated":true')
+    expect(persisted).not.toContain('refresh-secret')
+
+    const restarted = new SecretStore('/data/auth.enc', crypto, fs)
+    await expect(restarted.loadRefreshToken()).rejects.toMatchObject({
+      code: 'SECRET_CLEAR_FAILED',
+    })
+
+    fs.rm = remove
+    await restarted.saveRefreshToken('new-refresh-secret')
+    await expect(restarted.loadRefreshToken()).resolves.toBe('new-refresh-secret')
+    expect(fs.files.get('/data/auth.enc')).not.toContain('invalidated')
+  })
 })

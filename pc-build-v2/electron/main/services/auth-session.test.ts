@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { createProductionServerConfig } from '../infrastructure/server-config'
 import { ApiClient } from './api-client'
-import { AuthSession, type RefreshTokenStore } from './auth-session'
+import {
+  AuthSession,
+  type AuthSessionRevoker,
+  type RefreshTokenStore,
+} from './auth-session'
 import { DeviceIdentityService, type DeviceRawData } from './device-identity-service'
 
 const device: DeviceRawData = {
@@ -37,24 +41,36 @@ function requestPath(input: string | URL | Request): string {
   return new URL(input instanceof Request ? input.url : input).pathname
 }
 
-function store(
-  initial: string | null,
-): RefreshTokenStore & { value: string | null; saves: number; clears: number } {
+function store(initial: string | null): RefreshTokenStore & {
+  value: string | null
+  invalidated: boolean
+  saves: number
+  clears: number
+} {
   return {
     value: initial,
+    invalidated: false,
     saves: 0,
     clears: 0,
     loadRefreshToken() {
+      if (this.invalidated) {
+        return Promise.reject(
+          new ApplicationError('SECRET_CLEAR_FAILED', 'durable logout marker'),
+        )
+      }
       return Promise.resolve(this.value)
     },
     saveRefreshToken(token) {
       this.value = token
+      this.invalidated = false
       this.saves += 1
       return Promise.resolve()
     },
-    clear() {
+    invalidateAndClear() {
+      this.invalidated = true
       this.value = null
       this.clears += 1
+      this.invalidated = false
       return Promise.resolve()
     },
   }
@@ -64,11 +80,12 @@ function session(
   fetchImplementation: typeof fetch,
   secrets = store('refresh-1'),
   bootstrapTimeoutMs = 30_000,
+  revoker?: AuthSessionRevoker,
 ): { auth: AuthSession; secrets: ReturnType<typeof store> } {
   const api = new ApiClient(createProductionServerConfig(), fetchImplementation, logger)
   const identity = new DeviceIdentityService({ collect: () => Promise.resolve(device) })
   return {
-    auth: new AuthSession(api, secrets, identity, undefined, bootstrapTimeoutMs),
+    auth: new AuthSession(api, secrets, identity, revoker, bootstrapTimeoutMs),
     secrets,
   }
 }
@@ -160,6 +177,48 @@ describe('AuthSession', () => {
     await expect(auth.getAccessToken()).resolves.toBeNull()
   })
 
+  it('invokes revocation but always completes durable local invalidation', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
+      const path = requestPath(url)
+      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+      if (path.endsWith('refresh')) {
+        return Promise.resolve(
+          json({ tokens: { access_token: 'access', refresh_token: 'refresh-current' } }),
+        )
+      }
+      return Promise.resolve(json(user))
+    })
+    const failingRevoker = {
+      revoke: vi.fn().mockRejectedValue(new Error('network unavailable')),
+    }
+    const local = store('refresh-old')
+    const { auth } = session(fetchMock, local, 30_000, failingRevoker)
+    await auth.bootstrap()
+
+    await expect(auth.logout()).resolves.toMatchObject({
+      state: 'UNAUTHENTICATED',
+      user: null,
+      error: null,
+    })
+    expect(failingRevoker.revoke).toHaveBeenCalledWith('refresh-current')
+    expect(local.value).toBeNull()
+    expect(local.clears).toBe(1)
+
+    const failedLocal = store('refresh-old')
+    const successfulRevoker = { revoke: vi.fn().mockResolvedValue(undefined) }
+    const second = session(fetchMock, failedLocal, 30_000, successfulRevoker).auth
+    await second.bootstrap()
+    failedLocal.invalidateAndClear = () => {
+      failedLocal.invalidated = true
+      return Promise.reject(new Error('local delete denied'))
+    }
+    await expect(second.logout()).resolves.toMatchObject({
+      state: 'ERROR',
+      error: { code: 'SECRET_CLEAR_FAILED' },
+    })
+    expect(successfulRevoker.revoke).toHaveBeenCalledWith('refresh-current')
+  })
+
   it('cancels an in-flight bootstrap without committing a stale auth result', async () => {
     let requestStarted: (() => void) | undefined
     const started = new Promise<void>((resolve) => {
@@ -231,6 +290,99 @@ describe('AuthSession', () => {
     expect(auth.getView().state).toBe('UNAUTHENTICATED')
     expect(delayedStore.value).toBeNull()
   })
+
+  it('reports failed secret clearing and never reloads the retained refresh token', async () => {
+    const retainedStore = store('refresh-1')
+    let clearAttempts = 0
+    retainedStore.invalidateAndClear = () => {
+      clearAttempts += 1
+      retainedStore.invalidated = true
+      return Promise.reject(new Error('storage denied'))
+    }
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
+      const path = requestPath(url)
+      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+      if (path.endsWith('refresh')) {
+        return Promise.resolve(
+          json({ tokens: { access_token: 'access', refresh_token: 'refresh-1' } }),
+        )
+      }
+      return Promise.resolve(json(user))
+    })
+    const { auth } = session(fetchMock, retainedStore)
+    await auth.bootstrap()
+    const refreshCallsBeforeLogout = fetchMock.mock.calls.filter(([url]) =>
+      requestPath(url).endsWith('refresh'),
+    ).length
+
+    await expect(auth.logout()).resolves.toMatchObject({
+      state: 'ERROR',
+      user: null,
+      error: { code: 'SECRET_CLEAR_FAILED', retryable: true },
+    })
+    await expect(auth.getAccessToken()).resolves.toBeNull()
+    await expect(auth.retryBootstrap()).resolves.toMatchObject({
+      state: 'ERROR',
+      error: { code: 'SECRET_CLEAR_FAILED' },
+    })
+    expect(clearAttempts).toBe(2)
+    expect(
+      fetchMock.mock.calls.filter(([url]) => requestPath(url).endsWith('refresh')),
+    ).toHaveLength(refreshCallsBeforeLogout)
+    expect(retainedStore.value).toBe('refresh-1')
+
+    const restarted = session(fetchMock, retainedStore).auth
+    await expect(restarted.bootstrap()).resolves.toMatchObject({
+      state: 'ERROR',
+      error: { code: 'SECRET_CLEAR_FAILED' },
+    })
+    expect(
+      fetchMock.mock.calls.filter(([url]) => requestPath(url).endsWith('refresh')),
+    ).toHaveLength(refreshCallsBeforeLogout)
+  })
+
+  it.each([
+    [401, 'UNAUTHENTICATED'],
+    [403, 'BLOCKED'],
+  ] as const)(
+    'keeps a durable tombstone when %s auth cleanup cannot delete it',
+    async (status, expectedState) => {
+      const retainedStore = store('refresh-1')
+      retainedStore.invalidateAndClear = () => {
+        retainedStore.invalidated = true
+        retainedStore.clears += 1
+        return Promise.reject(new Error('delete denied'))
+      }
+      let refreshCalls = 0
+      const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
+        const path = requestPath(url)
+        if (path.endsWith('check-hwid'))
+          return Promise.resolve(json({ has_access: true }))
+        if (path.endsWith('refresh')) {
+          refreshCalls += 1
+          return Promise.resolve(json({ message: 'expired' }, status))
+        }
+        return Promise.resolve(json(user))
+      })
+
+      await expect(
+        session(fetchMock, retainedStore).auth.bootstrap(),
+      ).resolves.toMatchObject({
+        state: expectedState,
+        user: null,
+      })
+      expect(retainedStore.invalidated).toBe(true)
+      expect(refreshCalls).toBe(1)
+
+      await expect(
+        session(fetchMock, retainedStore).auth.bootstrap(),
+      ).resolves.toMatchObject({
+        state: 'ERROR',
+        error: { code: 'SECRET_CLEAR_FAILED' },
+      })
+      expect(refreshCalls).toBe(1)
+    },
+  )
 
   it('refreshes once after /me 401 and maps 403 to blocked', async () => {
     let refreshCalls = 0

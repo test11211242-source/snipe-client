@@ -9,7 +9,7 @@ import { SearchModeSchema } from '../models/monitor'
 import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
 
 const ProtocolBaseSchema = z.object({
-  protocolVersion: z.literal(1),
+  protocolVersion: z.literal(2),
   sessionId: z.uuid(),
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 })
@@ -53,6 +53,7 @@ export const MonitorStartPayloadSchema = z
     regions: NormalizedRegionsSchema,
     triggerProfile: TriggerProfileSchema,
     searchMode: SearchModeSchema,
+    captureDelaySeconds: z.number().min(0).max(5),
     limits: MonitorLimitsSchema,
     prediction: PredictionRuntimeProfileSchema.nullable(),
   })
@@ -75,6 +76,15 @@ export const MonitorReadyEventSchema = ProtocolBaseSchema.extend({
     .object({
       frameWidth: z.number().int().positive().max(16_384),
       frameHeight: z.number().int().positive().max(16_384),
+    })
+    .strict(),
+}).strict()
+
+export const MonitorTriggeredEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('triggered'),
+  payload: z
+    .object({
+      timestamp: z.iso.datetime(),
     })
     .strict(),
 }).strict()
@@ -120,6 +130,7 @@ export const MonitorStoppedEventSchema = ProtocolBaseSchema.extend({
 
 export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorReadyEventSchema,
+  MonitorTriggeredEventSchema,
   MonitorActionEventSchema,
   MonitorPredictionResultEventSchema,
   MonitorFatalEventSchema,

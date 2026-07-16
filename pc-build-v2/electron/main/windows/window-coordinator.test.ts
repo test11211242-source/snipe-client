@@ -1,13 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 
 const electronMocks = vi.hoisted(() => ({
   browserWindowConstructed: vi.fn<(options: unknown, instance: unknown) => void>(),
+  loadFile: vi.fn<(path: string) => Promise<void>>(),
 }))
 
 vi.mock('electron', () => {
   class BrowserWindow {
+    destroyed = false
     readonly webContents = {
       id: 7,
       on: vi.fn(),
@@ -19,7 +21,7 @@ vi.mock('electron', () => {
     }
 
     isDestroyed(): boolean {
-      return false
+      return this.destroyed
     }
 
     isMinimized(): boolean {
@@ -30,18 +32,42 @@ vi.mock('electron', () => {
     focus = vi.fn()
     once = vi.fn()
     on = vi.fn()
-    loadFile = vi.fn().mockResolvedValue(undefined)
+    loadFile = vi.fn((path: string) => electronMocks.loadFile(path))
+    loadURL = vi.fn().mockResolvedValue(undefined)
+    destroy = vi.fn(() => {
+      this.destroyed = true
+    })
+    getBounds = vi.fn(() => ({ x: 0, y: 0, width: 420, height: 560 }))
   }
 
-  return { BrowserWindow }
+  return {
+    BrowserWindow,
+    screen: {
+      getPrimaryDisplay: () => ({
+        workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      }),
+      getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+    },
+  }
 })
 
-import { isAllowedRendererUrl, WindowCoordinator } from './window-coordinator'
+import {
+  clampWidgetBoundsToWorkAreas,
+  fitWindowBounds,
+  isAllowedRendererUrl,
+  persistableWidgetBounds,
+  resolveDevelopmentRendererUrl,
+  WindowCoordinator,
+} from './window-coordinator'
 
 describe('WindowCoordinator auth shell', () => {
   beforeEach(() => {
     electronMocks.browserWindowConstructed.mockClear()
+    electronMocks.loadFile.mockReset().mockResolvedValue(undefined)
+    vi.stubEnv('ELECTRON_RENDERER_URL', '')
   })
+
+  afterEach(() => vi.unstubAllEnvs())
 
   it('enforces isolated renderer preferences and blocks external navigation', async () => {
     const warn = vi.fn()
@@ -75,6 +101,9 @@ describe('WindowCoordinator auth shell', () => {
         setWindowOpenHandler: ReturnType<typeof vi.fn>
       }
     }
+    expect(
+      (rawWindow as { loadURL: ReturnType<typeof vi.fn> }).loadURL,
+    ).not.toHaveBeenCalled()
     const openHandler = window.webContents.setWindowOpenHandler.mock.calls[0]?.[0] as
       (() => { action: string }) | undefined
     expect(openHandler?.()).toEqual({ action: 'deny' })
@@ -91,6 +120,118 @@ describe('WindowCoordinator auth shell', () => {
       kind: 'auth',
       navigationUrl: 'https://example.com',
     })
+  })
+
+  it('allows only credential-free loopback dev URLs and ignores them in production', () => {
+    expect(
+      resolveDevelopmentRendererUrl('http://127.0.0.1:5173', 'auth.html', false),
+    ).toBe('http://127.0.0.1:5173/auth.html')
+    expect(
+      resolveDevelopmentRendererUrl('https://[::1]:5173/', 'setup.html', false),
+    ).toBe('https://[::1]:5173/setup.html')
+    expect(
+      resolveDevelopmentRendererUrl('http://user@localhost:5173', 'index.html', false),
+    ).toBeNull()
+    expect(
+      resolveDevelopmentRendererUrl('https://example.com', 'index.html', false),
+    ).toBeNull()
+    expect(
+      resolveDevelopmentRendererUrl('http://localhost:5173', 'index.html', true),
+    ).toBeNull()
+  })
+
+  it('fits normal windows and clamps saved widget bounds to current work areas', () => {
+    expect(
+      fitWindowBounds(
+        { x: -100, y: 20, width: 640, height: 480 },
+        { width: 1280, height: 860 },
+        { width: 860, height: 640 },
+      ),
+    ).toEqual({
+      x: -100,
+      y: 20,
+      width: 640,
+      height: 480,
+      minWidth: 640,
+      minHeight: 480,
+    })
+    const workAreas = [
+      { x: 0, y: 0, width: 800, height: 600 },
+      { x: 800, y: 0, width: 1024, height: 768 },
+    ]
+    expect(
+      clampWidgetBoundsToWorkAreas(
+        { x: 1600, y: 700, width: 420, height: 560 },
+        workAreas,
+      ),
+    ).toEqual({ x: 1404, y: 208, width: 420, height: 560 })
+    expect(
+      clampWidgetBoundsToWorkAreas(
+        { x: 5000, y: 5000, width: 720, height: 900 },
+        workAreas,
+      ),
+    ).toEqual({ x: 80, y: 0, width: 720, height: 600 })
+    expect(
+      persistableWidgetBounds({ x: -50_000, y: 50_000, width: 200, height: 120 }),
+    ).toEqual({ x: -32_768, y: 32_767, width: 340, height: 300 })
+  })
+
+  it('coalesces widget loading, destroys failed loads, and allows retry', async () => {
+    let release!: () => void
+    electronMocks.loadFile.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+    )
+    const warn = vi.fn()
+    const coordinator = new WindowCoordinator({ warn } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 1,
+      compactMode: false,
+      bounds: { x: null, y: null, width: 420, height: 560 },
+    }
+    const first = coordinator.ensureWidgetWindow(settings)
+    const second = coordinator.ensureWidgetWindow(settings)
+    expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(1)
+    await Promise.resolve()
+    expect(electronMocks.loadFile).toHaveBeenCalledTimes(1)
+    release()
+    await Promise.all([first, second])
+    const loadedWindow = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
+      on: ReturnType<typeof vi.fn>
+      getBounds: ReturnType<typeof vi.fn>
+    }
+    const observed = vi.fn()
+    coordinator.onWidgetBoundsChanged(observed)
+    coordinator.onWidgetBoundsChanged(() => {
+      throw new Error('listener failed')
+    })
+    loadedWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 200, height: 120 })
+    const move = loadedWindow.on.mock.calls.find(([event]) => event === 'move')?.[1] as
+      (() => void) | undefined
+    expect(() => move?.()).not.toThrow()
+    expect(observed).toHaveBeenCalledWith({ x: 0, y: 0, width: 340, height: 300 })
+    const warning = warn.mock.calls[0] as unknown as
+      [string, { error: unknown }] | undefined
+    expect(warning?.[0]).toBe('Widget bounds listener failed')
+    expect(warning?.[1].error).toBeInstanceOf(Error)
+
+    electronMocks.loadFile.mockRejectedValueOnce(new Error('load failed'))
+    coordinator.close('widget', 'auth-transition')
+    const failed = coordinator.ensureWidgetWindow(settings)
+    const failedWindow = electronMocks.browserWindowConstructed.mock.calls.at(
+      -1,
+    )?.[1] as {
+      destroy: ReturnType<typeof vi.fn>
+    }
+    await expect(failed).rejects.toThrow('load failed')
+    expect(failedWindow.destroy).toHaveBeenCalledOnce()
+
+    await expect(coordinator.ensureWidgetWindow(settings)).resolves.toBeUndefined()
+    expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(3)
   })
 
   it('normalizes encoded Windows file URLs without allowing a different renderer', () => {

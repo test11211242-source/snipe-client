@@ -23,7 +23,7 @@ import type { DeviceIdentityService } from './device-identity-service'
 export interface RefreshTokenStore {
   loadRefreshToken: () => Promise<string | null>
   saveRefreshToken: (token: string) => Promise<void>
-  clear: () => Promise<void>
+  invalidateAndClear: () => Promise<void>
 }
 
 export interface AuthSessionRevoker {
@@ -40,6 +40,9 @@ function errorFromUnknown(error: unknown): ApiError {
     }
     if (error.code === 'SECRET_INVALID') {
       return createApiError('SECRET_INVALID', error.message, false)
+    }
+    if (error.code === 'SECRET_CLEAR_FAILED') {
+      return createApiError('SECRET_CLEAR_FAILED', error.message, true)
     }
     if (error.code.startsWith('DEVICE_')) {
       return createApiError('DEVICE_IDENTITY_UNAVAILABLE', error.message, false)
@@ -139,7 +142,20 @@ export class AuthSession {
         this.secrets.loadRefreshToken(),
       )
     } catch (error) {
-      await this.secrets.clear().catch(() => undefined)
+      if (error instanceof ApplicationError && error.code === 'SECRET_CLEAR_FAILED') {
+        try {
+          await this.runSecretMutation(() => this.secrets.invalidateAndClear())
+          if (this.isCurrent(generation)) {
+            this.update({ state: 'UNAUTHENTICATED', user: null, error: null })
+          }
+        } catch {
+          if (this.isCurrent(generation)) this.fail(this.secretClearError())
+        }
+        return this.#view
+      }
+      await this.runSecretMutation(() => this.secrets.invalidateAndClear()).catch(
+        () => undefined,
+      )
       if (this.isCurrent(generation)) this.fail(errorFromUnknown(error))
       return this.#view
     }
@@ -274,11 +290,20 @@ export class AuthSession {
     if (tokenToRevoke !== null && this.revoker !== undefined) {
       await this.revoker.revoke(tokenToRevoke).catch(() => undefined)
     }
-    await this.runSecretMutation(() => this.secrets.clear()).catch(() => undefined)
+    let clearFailed = false
+    try {
+      await this.runSecretMutation(() => this.secrets.invalidateAndClear())
+    } catch {
+      clearFailed = true
+    }
     this.update({
-      state: this.#inviteGranted ? 'UNAUTHENTICATED' : 'INVITE_REQUIRED',
+      state: clearFailed
+        ? 'ERROR'
+        : this.#inviteGranted
+          ? 'UNAUTHENTICATED'
+          : 'INVITE_REQUIRED',
       user: null,
-      error: null,
+      error: clearFailed ? this.secretClearError() : null,
     })
     return this.#view
   }
@@ -420,7 +445,7 @@ export class AuthSession {
         if (!this.isCurrent(generation)) return false
         await this.secrets.saveRefreshToken(refreshToken)
         if (!this.isCurrent(generation)) {
-          await this.secrets.clear().catch(() => undefined)
+          await this.secrets.invalidateAndClear().catch(() => undefined)
           return false
         }
         return true
@@ -467,12 +492,16 @@ export class AuthSession {
     if (error.code === 'FORBIDDEN') {
       this.#accessToken = null
       this.#refreshToken = null
-      await this.runSecretMutation(() => this.secrets.clear()).catch(() => undefined)
+      await this.runSecretMutation(() => this.secrets.invalidateAndClear()).catch(
+        () => undefined,
+      )
       this.update({ state: 'BLOCKED', user: null, error })
     } else if (error.code === 'UNAUTHORIZED' && clearUnauthorized) {
       this.#accessToken = null
       this.#refreshToken = null
-      await this.runSecretMutation(() => this.secrets.clear()).catch(() => undefined)
+      await this.runSecretMutation(() => this.secrets.invalidateAndClear()).catch(
+        () => undefined,
+      )
       this.update({ state: 'UNAUTHENTICATED', user: null, error })
     } else {
       this.fail(error)
@@ -514,6 +543,14 @@ export class AuthSession {
       user: null,
       error,
     })
+  }
+
+  private secretClearError(): ApiError {
+    return createApiError(
+      'SECRET_CLEAR_FAILED',
+      'Не удалось удалить сохранённые данные входа. Повторите выход перед новым входом.',
+      true,
+    )
   }
 
   private update(patch: Partial<AuthView>): void {

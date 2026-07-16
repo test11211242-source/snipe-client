@@ -54,6 +54,7 @@ export class WidgetController {
   #settingsMutation: Promise<void> = Promise.resolve()
   readonly #autoOpenedIds = new Set<string>()
   readonly #autoOpenedOrder: string[] = []
+  readonly #autoOpeningIds = new Set<string>()
 
   constructor(
     private readonly monitor: Pick<
@@ -74,6 +75,7 @@ export class WidgetController {
     this.#userId = userId
     this.#autoOpenedIds.clear()
     this.#autoOpenedOrder.length = 0
+    this.#autoOpeningIds.clear()
     const current = this.monitor.getLatestResult()
     if (current !== null) this.rememberResult(current.id)
     this.#disposeMonitor = this.monitor.subscribeResults((result) =>
@@ -103,6 +105,7 @@ export class WidgetController {
     this.#settings = null
     this.#autoOpenedIds.clear()
     this.#autoOpenedOrder.length = 0
+    this.#autoOpeningIds.clear()
   }
 
   getView(): WidgetView {
@@ -124,6 +127,10 @@ export class WidgetController {
   }
 
   async show(): Promise<WidgetStatus> {
+    return this.open(false)
+  }
+
+  private async open(passive: boolean): Promise<WidgetStatus> {
     const settings = this.requireSettings()
     const generation = this.#generation
     await this.windows.ensureWidgetWindow(settings)
@@ -132,7 +139,8 @@ export class WidgetController {
       throw new ApplicationError('WIDGET_CANCELLED', 'Widget opening was cancelled')
     }
     this.windows.applyWidgetSettings(this.requireSettings())
-    this.windows.showWidget()
+    if (passive) this.windows.showWidgetInactive()
+    else this.windows.showWidget()
     return this.getStatus()
   }
 
@@ -168,17 +176,26 @@ export class WidgetController {
     if (
       this.#settings?.autoOpen !== true ||
       result.kind !== 'player_found' ||
-      this.#autoOpenedIds.has(result.id)
+      this.#autoOpenedIds.has(result.id) ||
+      this.#autoOpeningIds.has(result.id)
     ) {
       return
     }
-    this.rememberResult(result.id)
-    void this.show().catch(() => undefined)
+    const generation = this.#generation
+    this.#autoOpeningIds.add(result.id)
+    void this.open(true)
+      .then(() => this.rememberResult(result.id))
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation === this.#generation) this.#autoOpeningIds.delete(result.id)
+      })
   }
 
   private acceptBounds(rawBounds: WidgetBounds): void {
     if (this.#settings === null || this.#userId === null) return
-    const bounds = WidgetBoundsSchema.parse(rawBounds)
+    const parsed = WidgetBoundsSchema.safeParse(rawBounds)
+    if (!parsed.success) return
+    const bounds = parsed.data
     this.#settings = { ...this.#settings, bounds }
     if (this.#boundsTimer !== null) clearTimeout(this.#boundsTimer)
     this.#boundsTimer = setTimeout(() => {

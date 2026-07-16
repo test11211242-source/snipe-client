@@ -76,8 +76,9 @@ The production origin is fixed to `https://api.artcsworld.xyz`; realtime uses
 `wss://api.artcsworld.xyz/ws`. The refresh token is encrypted with Electron
 `safeStorage` and written atomically to `userData/auth.v1.enc.json`. Access tokens
 remain memory-only. If platform encryption is unavailable, authentication fails
-closed and no plaintext fallback is written. Logout is local because the current
-server has no revoke endpoint; `AuthSessionRevoker` is the explicit future seam.
+closed and no plaintext fallback is written. Logout posts the bounded refresh token to
+the fixed `/api/auth/logout` revocation endpoint, then always performs durable local
+invalidation; network revocation failure cannot skip local cleanup.
 
 Production HWID generation is Windows-only and uses one non-shell PowerShell/CIM
 invocation. Non-production Linux development uses an explicitly constructed dev

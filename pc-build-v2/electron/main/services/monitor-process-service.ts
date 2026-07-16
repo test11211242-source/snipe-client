@@ -81,6 +81,7 @@ export interface MonitorAction {
 }
 
 export interface MonitorProcessListener {
+  onTriggered: (timestamp: string) => void
   onAction: (action: MonitorAction) => void
   onPredictionResult: (action: MonitorAction) => void
   onFatal: (error: ApplicationError) => void
@@ -114,6 +115,12 @@ interface OwnedProcess {
     error: (error: Error) => void
     close: (code: number | null, signal: NodeJS.Signals | null) => void
   }
+}
+
+interface PendingStart {
+  generation: number
+  cancelled: Promise<never>
+  cancel: (error: ApplicationError) => void
 }
 
 const defaultTimers: MonitorTimers = {
@@ -182,6 +189,7 @@ function pngDimensions(image: Buffer): { width: number; height: number } | null 
 
 export class MonitorProcessService {
   #owned: OwnedProcess | null = null
+  #starting: PendingStart | null = null
   #generation = 0
 
   constructor(
@@ -198,14 +206,30 @@ export class MonitorProcessService {
     payload: MonitorStartPayload,
     listener: MonitorProcessListener,
   ): Promise<string> {
-    if (this.#owned !== null) {
+    if (this.#owned !== null || this.#starting !== null) {
       throw new ApplicationError(
         'MONITOR_PROCESS_OWNED',
         'A monitor process is already active',
       )
     }
-    if (this.beforeSpawn !== undefined) await this.beforeSpawn()
     const generation = ++this.#generation
+    let cancel!: (error: ApplicationError) => void
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancel = reject
+    })
+    const starting = { generation, cancelled, cancel }
+    this.#starting = starting
+    try {
+      if (this.beforeSpawn !== undefined) {
+        await Promise.race([this.beforeSpawn(), starting.cancelled])
+      }
+    } catch (error) {
+      if (this.#starting === starting) this.#starting = null
+      throw error
+    }
+    if (this.#starting !== starting || generation !== this.#generation) {
+      throw new ApplicationError('MONITOR_START_CANCELLED', 'Monitor start was cancelled')
+    }
     const sessionId = randomUUID()
     let child: MonitorChild
     try {
@@ -216,6 +240,7 @@ export class MonitorProcessService {
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
       })
     } catch (cause) {
+      if (this.#starting === starting) this.#starting = null
       throw new ApplicationError(
         'MONITOR_START_FAILED',
         'The monitor worker could not start',
@@ -269,6 +294,7 @@ export class MonitorProcessService {
       READY_TIMEOUT_MS,
     )
     this.#owned = owned
+    this.#starting = null
     child.stdout.on('data', owned.handlers.stdout)
     child.stderr.on('data', owned.handlers.stderr)
     child.on('error', owned.handlers.error)
@@ -276,7 +302,7 @@ export class MonitorProcessService {
 
     try {
       const command = MonitorStartCommandSchema.parse({
-        protocolVersion: 1,
+        protocolVersion: 2,
         sessionId,
         sequence: 0,
         type: 'start',
@@ -293,6 +319,14 @@ export class MonitorProcessService {
   }
 
   async stop(): Promise<void> {
+    const starting = this.#starting
+    if (starting !== null) {
+      this.#starting = null
+      ++this.#generation
+      starting.cancel(
+        new ApplicationError('MONITOR_START_CANCELLED', 'Monitor start was cancelled'),
+      )
+    }
     const owned = this.#owned
     if (owned === null) return
     if (owned.resolveStopped !== null) {
@@ -317,7 +351,7 @@ export class MonitorProcessService {
     })
     try {
       const command = MonitorStopCommandSchema.parse({
-        protocolVersion: 1,
+        protocolVersion: 2,
         sessionId: owned.sessionId,
         sequence: owned.lastSequence + 1,
         type: 'stop',
@@ -419,7 +453,9 @@ export class MonitorProcessService {
       )
       return
     }
-    if (event.type === 'action' || event.type === 'prediction_result') {
+    if (event.type === 'triggered') {
+      owned.listener.onTriggered(event.payload.timestamp)
+    } else if (event.type === 'action' || event.type === 'prediction_result') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)
       if (

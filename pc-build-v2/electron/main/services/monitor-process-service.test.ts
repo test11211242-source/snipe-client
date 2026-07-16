@@ -35,6 +35,7 @@ function payload(): MonitorStartPayload {
       nccMinScore: 0.72,
     },
     searchMode: 'fast',
+    captureDelaySeconds: 0,
     limits: {
       fps: 10,
       maxImageBytes: 10 * 1024 * 1024,
@@ -73,7 +74,7 @@ class FakeChild extends EventEmitter implements MonitorChild {
   event(sequence: number, type: string, payloadValue: unknown): void {
     this.stdout.write(
       `${JSON.stringify({
-        protocolVersion: 1,
+        protocolVersion: 2,
         sessionId: this.command()['sessionId'],
         sequence,
         type,
@@ -90,6 +91,7 @@ class FakeChild extends EventEmitter implements MonitorChild {
 
 function listener(): MonitorProcessListener {
   return {
+    onTriggered: vi.fn(),
     onAction: vi.fn(),
     onPredictionResult: vi.fn(),
     onFatal: vi.fn(),
@@ -113,6 +115,45 @@ function service(child: FakeChild, treeKill = vi.fn().mockResolvedValue(undefine
 afterEach(() => vi.useRealTimers())
 
 describe('MonitorProcessService', () => {
+  it('reserves ownership before beforeSpawn and cancels a deferred spawn', async () => {
+    let release!: () => void
+    const beforeSpawn = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const monitor = new MonitorProcessService(
+      'python.exe',
+      'monitor_engine.py',
+      { info: vi.fn(), warn: vi.fn() },
+      spawn,
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      () => beforeSpawn,
+    )
+
+    const starting = monitor.start(payload(), listener())
+    const cancelled = expect(starting).rejects.toMatchObject({
+      code: 'MONITOR_START_CANCELLED',
+    })
+    await expect(monitor.start(payload(), listener())).rejects.toMatchObject({
+      code: 'MONITOR_PROCESS_OWNED',
+    })
+    await expect(monitor.stop()).resolves.toBeUndefined()
+    await cancelled
+    release()
+    await Promise.resolve()
+    expect(spawn).not.toHaveBeenCalled()
+
+    const restarted = monitor.start(payload(), listener())
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1))
+    child.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
+    await expect(restarted).resolves.toBeDefined()
+    const stopping = monitor.stop()
+    child.emit('close', 0, null)
+    await stopping
+  })
+
   it('uses no shell, sends one start line, accepts one ready, and stops gracefully', async () => {
     const child = new FakeChild()
     const spawn = vi.fn(() => child)
@@ -130,6 +171,7 @@ describe('MonitorProcessService', () => {
       expect.objectContaining({ shell: false, windowsHide: true }),
     )
     expect(child.written.trim().split('\n')).toHaveLength(1)
+    expect(child.command()['protocolVersion']).toBe(2)
     child.event(1, 'ready', { frameWidth: 1920, frameHeight: 1080 })
     await expect(started).resolves.toBe(child.command()['sessionId'])
     const stopped = monitor.stop()
@@ -199,7 +241,11 @@ describe('MonitorProcessService', () => {
     image.write('IHDR', 12, 'ascii')
     image.writeUInt32BE(20, 16)
     image.writeUInt32BE(10, 20)
-    child.event(2, 'action', {
+    child.event(2, 'triggered', {
+      timestamp: '2026-07-12T12:00:00.000Z',
+    })
+    expect(processListener.onTriggered).toHaveBeenCalledWith('2026-07-12T12:00:00.000Z')
+    child.event(3, 'action', {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 20,
       height: 10,
@@ -209,7 +255,7 @@ describe('MonitorProcessService', () => {
     expect(processListener.onAction).toHaveBeenCalledWith(
       expect.objectContaining({ width: 20, height: 10, image }),
     )
-    child.event(3, 'prediction_result', {
+    child.event(4, 'prediction_result', {
       timestamp: '2026-07-12T12:00:01.000Z',
       width: 20,
       height: 10,

@@ -1,10 +1,18 @@
 import { join, normalize } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { BrowserWindow, type WebContents } from 'electron'
+import { BrowserWindow, screen, type WebContents } from 'electron'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
-import type { WidgetBounds, WidgetSettings } from '../../../shared/models/widget'
+import {
+  WIDGET_MAX_HEIGHT,
+  WIDGET_MAX_WIDTH,
+  WIDGET_MIN_HEIGHT,
+  WIDGET_MIN_WIDTH,
+  WidgetBoundsSchema,
+  type WidgetBounds,
+  type WidgetSettings,
+} from '../../../shared/models/widget'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 
 export type WindowKind = 'main' | 'auth' | 'setup' | 'widget'
@@ -16,6 +24,131 @@ interface RegisteredWindow {
   rendererUrl: string
   closeReason: WindowCloseReason
   suppressBoundsEvents: boolean
+}
+
+export interface WorkAreaBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+interface WindowSize {
+  width: number
+  height: number
+}
+
+export function fitWindowBounds(
+  workArea: WorkAreaBounds,
+  desired: WindowSize,
+  minimum: WindowSize,
+): WorkAreaBounds & { minWidth: number; minHeight: number } {
+  const width = Math.max(1, Math.min(desired.width, workArea.width))
+  const height = Math.max(1, Math.min(desired.height, workArea.height))
+  return {
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y + Math.floor((workArea.height - height) / 2),
+    width,
+    height,
+    minWidth: Math.min(minimum.width, width),
+    minHeight: Math.min(minimum.height, height),
+  }
+}
+
+function overlap(left: WorkAreaBounds, right: WorkAreaBounds): number {
+  const width = Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x),
+  )
+  const height = Math.max(
+    0,
+    Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y),
+  )
+  return width * height
+}
+
+export function clampWidgetBoundsToWorkAreas(
+  bounds: WidgetBounds,
+  workAreas: readonly WorkAreaBounds[],
+): Omit<WidgetBounds, 'x' | 'y'> & { x: number; y: number } {
+  const firstWorkArea = workAreas.at(0)
+  if (firstWorkArea === undefined) {
+    return { ...bounds, x: bounds.x ?? 0, y: bounds.y ?? 0 }
+  }
+  const positioned = bounds.x !== null && bounds.y !== null
+  const saved = {
+    x: bounds.x ?? firstWorkArea.x,
+    y: bounds.y ?? firstWorkArea.y,
+    width: bounds.width,
+    height: bounds.height,
+  }
+  let selected = firstWorkArea
+  if (positioned) {
+    let bestOverlap = 0
+    for (const candidate of workAreas) {
+      const candidateOverlap = overlap(saved, candidate)
+      if (candidateOverlap > bestOverlap) {
+        selected = candidate
+        bestOverlap = candidateOverlap
+      }
+    }
+  }
+  const width = Math.max(1, Math.min(bounds.width, selected.width))
+  const height = Math.max(1, Math.min(bounds.height, selected.height))
+  const centeredX = selected.x + Math.floor((selected.width - width) / 2)
+  const centeredY = selected.y + Math.floor((selected.height - height) / 2)
+  return {
+    x: positioned
+      ? Math.min(Math.max(saved.x, selected.x), selected.x + selected.width - width)
+      : centeredX,
+    y: positioned
+      ? Math.min(Math.max(saved.y, selected.y), selected.y + selected.height - height)
+      : centeredY,
+    width,
+    height,
+  }
+}
+
+export function persistableWidgetBounds(bounds: WorkAreaBounds): WidgetBounds {
+  return WidgetBoundsSchema.parse({
+    x: Math.min(32_767, Math.max(-32_768, Math.round(bounds.x))),
+    y: Math.min(32_767, Math.max(-32_768, Math.round(bounds.y))),
+    width: Math.min(
+      WIDGET_MAX_WIDTH,
+      Math.max(WIDGET_MIN_WIDTH, Math.round(bounds.width)),
+    ),
+    height: Math.min(
+      WIDGET_MAX_HEIGHT,
+      Math.max(WIDGET_MIN_HEIGHT, Math.round(bounds.height)),
+    ),
+  })
+}
+
+export function resolveDevelopmentRendererUrl(
+  value: string | undefined,
+  entryPoint: string,
+  production: boolean,
+): string | null {
+  if (production || value === undefined) return null
+  try {
+    const url = new URL(value)
+    const hostname = url.hostname.toLowerCase()
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(hostname) ||
+      url.username !== '' ||
+      url.password !== ''
+    ) {
+      return null
+    }
+    if (entryPoint === 'index.html') return url.href
+    url.search = ''
+    url.hash = ''
+    if (!url.pathname.endsWith('/')) url.pathname += '/'
+    return new URL(entryPoint, url).href
+  } catch {
+    return null
+  }
 }
 
 export function isAllowedRendererUrl(
@@ -51,6 +184,7 @@ export class WindowCoordinator {
     (kind: WindowKind, reason: WindowCloseReason) => void
   >()
   readonly #widgetBoundsListeners = new Set<(bounds: WidgetBounds) => void>()
+  #widgetLoadPromise: Promise<void> | null = null
 
   constructor(private readonly logger: StructuredLogger) {}
 
@@ -63,12 +197,14 @@ export class WindowCoordinator {
       return existing
     }
 
-    const rendererUrl = this.getMainRendererUrl()
+    const renderer = this.getRenderer('index.html')
+    const bounds = fitWindowBounds(
+      screen.getPrimaryDisplay().workArea,
+      { width: 1180, height: 760 },
+      { width: 720, height: 560 },
+    )
     const window = new BrowserWindow({
-      width: 1180,
-      height: 760,
-      minWidth: 720,
-      minHeight: 560,
+      ...bounds,
       show: false,
       backgroundColor: '#080913',
       title: 'CR Tools V2',
@@ -83,11 +219,11 @@ export class WindowCoordinator {
       },
     })
 
-    this.register('main', window, rendererUrl)
+    this.register('main', window, renderer.url)
     window.once('ready-to-show', () => window.show())
 
-    if (process.env['ELECTRON_RENDERER_URL'] !== undefined) {
-      await window.loadURL(rendererUrl)
+    if (renderer.development) {
+      await window.loadURL(renderer.url)
     } else {
       await window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
     }
@@ -104,12 +240,14 @@ export class WindowCoordinator {
       return existing
     }
 
-    const rendererUrl = this.getAuthRendererUrl()
+    const renderer = this.getRenderer('auth.html')
+    const bounds = fitWindowBounds(
+      screen.getPrimaryDisplay().workArea,
+      { width: 920, height: 680 },
+      { width: 680, height: 560 },
+    )
     const window = new BrowserWindow({
-      width: 920,
-      height: 680,
-      minWidth: 680,
-      minHeight: 560,
+      ...bounds,
       show: false,
       backgroundColor: '#080913',
       title: 'Вход | CR Tools V2',
@@ -124,10 +262,10 @@ export class WindowCoordinator {
       },
     })
 
-    this.register('auth', window, rendererUrl)
+    this.register('auth', window, renderer.url)
     window.once('ready-to-show', () => window.show())
-    if (process.env['ELECTRON_RENDERER_URL'] !== undefined) {
-      await window.loadURL(rendererUrl)
+    if (renderer.development) {
+      await window.loadURL(renderer.url)
     } else {
       await window.loadFile(join(import.meta.dirname, '../renderer/auth.html'))
     }
@@ -142,12 +280,14 @@ export class WindowCoordinator {
       return existing
     }
 
-    const rendererUrl = this.getSetupRendererUrl()
+    const renderer = this.getRenderer('setup.html')
+    const bounds = fitWindowBounds(
+      screen.getPrimaryDisplay().workArea,
+      { width: 1280, height: 860 },
+      { width: 860, height: 640 },
+    )
     const window = new BrowserWindow({
-      width: 1280,
-      height: 860,
-      minWidth: 860,
-      minHeight: 640,
+      ...bounds,
       show: false,
       backgroundColor: '#080913',
       title: 'Capture setup | CR Tools V2',
@@ -161,31 +301,31 @@ export class WindowCoordinator {
         devTools: !import.meta.env.PROD,
       },
     })
-    this.register('setup', window, rendererUrl)
+    this.register('setup', window, renderer.url)
     window.once('ready-to-show', () => window.show())
-    if (process.env['ELECTRON_RENDERER_URL'] !== undefined)
-      await window.loadURL(rendererUrl)
+    if (renderer.development) await window.loadURL(renderer.url)
     else await window.loadFile(join(import.meta.dirname, '../renderer/setup.html'))
     return window
   }
 
   async ensureWidgetWindow(settings: WidgetSettings): Promise<void> {
-    const existing = this.#registry.get('widget')?.window
-    if (existing !== undefined && !existing.isDestroyed()) return
+    const registered = this.#registry.get('widget')
+    const existing = registered?.window
+    if (existing !== undefined && !existing.isDestroyed()) {
+      if (this.#widgetLoadPromise !== null) return this.#widgetLoadPromise
+      return
+    }
+    if (registered !== undefined) this.#registry.delete('widget')
 
-    const rendererUrl = this.getWidgetRendererUrl()
-    const positionedBounds =
-      settings.bounds.x !== null && settings.bounds.y !== null
-        ? { x: settings.bounds.x, y: settings.bounds.y }
-        : {}
+    const renderer = this.getRenderer('widget.html')
+    const workAreas = screen.getAllDisplays().map((display) => display.workArea)
+    const bounds = clampWidgetBoundsToWorkAreas(settings.bounds, workAreas)
     const window = new BrowserWindow({
-      ...positionedBounds,
-      width: settings.bounds.width,
-      height: settings.bounds.height,
-      minWidth: 340,
-      minHeight: 300,
-      maxWidth: 720,
-      maxHeight: 900,
+      ...bounds,
+      minWidth: Math.min(WIDGET_MIN_WIDTH, bounds.width),
+      minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
+      maxWidth: WIDGET_MAX_WIDTH,
+      maxHeight: WIDGET_MAX_HEIGHT,
       show: false,
       alwaysOnTop: settings.alwaysOnTop,
       movable: !settings.locked,
@@ -204,13 +344,37 @@ export class WindowCoordinator {
         devTools: !import.meta.env.PROD,
       },
     })
-    this.register('widget', window, rendererUrl)
-    if (process.env['ELECTRON_RENDERER_URL'] !== undefined)
-      await window.loadURL(rendererUrl)
-    else await window.loadFile(join(import.meta.dirname, '../renderer/widget.html'))
+    this.register('widget', window, renderer.url)
+    const operation = Promise.resolve()
+      .then(() =>
+        renderer.development
+          ? window.loadURL(renderer.url)
+          : window.loadFile(join(import.meta.dirname, '../renderer/widget.html')),
+      )
+      .catch((error: unknown) => {
+        const current = this.#registry.get('widget')
+        if (current?.window === window) {
+          current.closeReason = 'auth-transition'
+          this.#registry.delete('widget')
+        }
+        if (!window.isDestroyed()) window.destroy()
+        throw error
+      })
+      .finally(() => {
+        if (this.#widgetLoadPromise === operation) this.#widgetLoadPromise = null
+      })
+    this.#widgetLoadPromise = operation
+    return operation
   }
 
   showWidget(): void {
+    const window = this.#registry.get('widget')?.window
+    if (window === undefined || window.isDestroyed()) return
+    window.show()
+    window.focus()
+  }
+
+  showWidgetInactive(): void {
     const window = this.#registry.get('widget')?.window
     if (window === undefined || window.isDestroyed()) return
     window.showInactive()
@@ -237,16 +401,11 @@ export class WindowCoordinator {
     window.setOpacity(settings.opacity)
     registered.suppressBoundsEvents = true
     try {
-      if (settings.bounds.x !== null && settings.bounds.y !== null) {
-        window.setBounds({
-          x: settings.bounds.x,
-          y: settings.bounds.y,
-          width: settings.bounds.width,
-          height: settings.bounds.height,
-        })
-      } else {
-        window.setSize(settings.bounds.width, settings.bounds.height)
-      }
+      const bounds = clampWidgetBoundsToWorkAreas(
+        settings.bounds,
+        screen.getAllDisplays().map((display) => display.workArea),
+      )
+      window.setBounds(bounds)
     } finally {
       registered.suppressBoundsEvents = false
     }
@@ -342,8 +501,14 @@ export class WindowCoordinator {
     if (kind === 'widget') {
       const notifyBounds = (): void => {
         if (registered.suppressBoundsEvents || window.isDestroyed()) return
-        const bounds = window.getBounds()
-        for (const listener of this.#widgetBoundsListeners) listener(bounds)
+        const bounds = persistableWidgetBounds(window.getBounds())
+        for (const listener of this.#widgetBoundsListeners) {
+          try {
+            listener(bounds)
+          } catch (error) {
+            this.logger.warn('Widget bounds listener failed', { error })
+          }
+        }
       }
       window.on('move', notifyBounds)
       window.on('resize', notifyBounds)
@@ -355,37 +520,19 @@ export class WindowCoordinator {
     })
   }
 
-  private getMainRendererUrl(): string {
-    return (
-      process.env['ELECTRON_RENDERER_URL'] ??
-      pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
+  private getRenderer(entryPoint: string): {
+    url: string
+    development: boolean
+  } {
+    const developmentUrl = resolveDevelopmentRendererUrl(
+      process.env['ELECTRON_RENDERER_URL'],
+      entryPoint,
+      import.meta.env.PROD,
     )
-  }
-
-  private getAuthRendererUrl(): string {
-    const developmentUrl = process.env['ELECTRON_RENDERER_URL']
-    if (developmentUrl !== undefined) {
-      const base = developmentUrl.endsWith('/') ? developmentUrl : `${developmentUrl}/`
-      return new URL('auth.html', base).href
+    if (developmentUrl !== null) return { url: developmentUrl, development: true }
+    return {
+      url: pathToFileURL(join(import.meta.dirname, `../renderer/${entryPoint}`)).href,
+      development: false,
     }
-    return pathToFileURL(join(import.meta.dirname, '../renderer/auth.html')).href
-  }
-
-  private getSetupRendererUrl(): string {
-    const developmentUrl = process.env['ELECTRON_RENDERER_URL']
-    if (developmentUrl !== undefined) {
-      const base = developmentUrl.endsWith('/') ? developmentUrl : `${developmentUrl}/`
-      return new URL('setup.html', base).href
-    }
-    return pathToFileURL(join(import.meta.dirname, '../renderer/setup.html')).href
-  }
-
-  private getWidgetRendererUrl(): string {
-    const developmentUrl = process.env['ELECTRON_RENDERER_URL']
-    if (developmentUrl !== undefined) {
-      const base = developmentUrl.endsWith('/') ? developmentUrl : `${developmentUrl}/`
-      return new URL('widget.html', base).href
-    }
-    return pathToFileURL(join(import.meta.dirname, '../renderer/widget.html')).href
   }
 }

@@ -74,6 +74,8 @@ export class MonitorSupervisor {
     (action: MonitorAction) => void | Promise<void>
   >()
   #predictionProfile: PredictionRuntimeProfile | null = null
+  #userContextId: string | null = null
+  #userContextGeneration = 0
 
   constructor(
     private readonly auth: AuthSession,
@@ -83,16 +85,30 @@ export class MonitorSupervisor {
     private readonly process: MonitorProcessService,
     private readonly ocr: OcrApiClient,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+  ) {
+    this.#userContextId = this.auth.getView().user?.id ?? null
+  }
 
   async getView(): Promise<MonitorView> {
     const user = this.auth.getView().user
+    if (user?.id !== this.#userContextId) {
+      if (this.#view.state === 'STOPPED' || this.#view.state === 'FAILED') {
+        this.setUserContext(user?.id ?? null)
+      } else {
+        void this.stop()
+        return this.redactedView(user !== null)
+      }
+    }
+    const contextGeneration = this.#userContextGeneration
     let configured = false
     if (user !== null) {
       const [configuration, preferences] = await Promise.all([
         this.captureConfigurations.load(user.id),
         this.preferences.load(user.id),
       ])
+      if (!this.isUserContextCurrent(user.id, contextGeneration)) {
+        return this.redactedView(this.auth.getView().user !== null)
+      }
       configured = configuration !== null
       if (this.#view.state === 'STOPPED' || this.#view.state === 'FAILED') {
         this.patch({ preferences })
@@ -110,10 +126,12 @@ export class MonitorSupervisor {
   }
 
   getRetainedResult(resultId: string): MonitorResult | null {
+    if (this.auth.getView().user?.id !== this.#userContextId) return null
     return this.#view.results.find((result) => result.id === resultId) ?? null
   }
 
   getLatestResult(): MonitorResult | null {
+    if (this.auth.getView().user?.id !== this.#userContextId) return null
     return this.#view.results[0] ?? null
   }
 
@@ -154,7 +172,43 @@ export class MonitorSupervisor {
     return this.#view.state === 'READY'
   }
 
+  setUserContext(userId: string | null): boolean {
+    if (this.#userContextId === userId) return false
+    if (this.#view.state !== 'STOPPED' && this.#view.state !== 'FAILED') {
+      throw new ApplicationError(
+        'MONITOR_ACTIVE',
+        'Stop monitoring before changing the user context',
+      )
+    }
+    this.#userContextId = userId
+    ++this.#userContextGeneration
+    ++this.#generation
+    this.#runController.abort()
+    this.#ocrController?.abort()
+    this.#ocrController = null
+    this.#ocrActive = false
+    this.#pendingAction = null
+    this.#predictionProfile = null
+    this.patch({
+      state: 'STOPPED',
+      preferences: { ...DEFAULT_MONITOR_PREFERENCES },
+      readiness: {
+        authenticated: userId !== null,
+        captureConfigured: false,
+        sourceAvailable: null,
+      },
+      error: null,
+      startedAt: null,
+      stats: { ...EMPTY_STATS },
+      results: [],
+    })
+    return true
+  }
+
   start(): Promise<MonitorView> {
+    if (this.#view.state === 'STOPPED' || this.#view.state === 'FAILED') {
+      this.setUserContext(this.auth.getView().user?.id ?? null)
+    }
     if (this.#startPromise !== null) {
       if (this.#view.state === 'PREFLIGHT' || this.#view.state === 'STARTING') {
         return this.#startPromise
@@ -165,6 +219,8 @@ export class MonitorSupervisor {
     if (this.#view.state === 'STOPPING' && this.#stopPromise !== null) {
       return this.#stopPromise.then(() => this.start())
     }
+    const userId = this.auth.getView().user?.id ?? null
+    const contextGeneration = this.#userContextGeneration
     const generation = ++this.#generation
     this.#runController.abort()
     this.#runController = new AbortController()
@@ -181,7 +237,7 @@ export class MonitorSupervisor {
         sourceAvailable: null,
       },
     })
-    const operation = this.runStart(generation).finally(() => {
+    const operation = this.runStart(generation, userId, contextGeneration).finally(() => {
       if (this.#startPromise === operation) this.#startPromise = null
     })
     this.#startPromise = operation
@@ -227,7 +283,9 @@ export class MonitorSupervisor {
   async getPreferences(): Promise<MonitorPreferences> {
     const user = this.auth.getView().user
     if (user === null) return { ...DEFAULT_MONITOR_PREFERENCES }
+    const contextGeneration = this.#userContextGeneration
     const value = await this.preferences.load(user.id)
+    this.assertUserContext(user.id, contextGeneration)
     this.patch({ preferences: value })
     return value
   }
@@ -242,27 +300,32 @@ export class MonitorSupervisor {
     const user = this.auth.getView().user
     if (user === null)
       throw new ApplicationError('AUTH_REQUIRED', 'Sign in to save preferences')
+    const contextGeneration = this.#userContextGeneration
     const saved = await this.preferences.save(
       user.id,
       MonitorPreferencesSchema.parse(value),
     )
+    this.assertUserContext(user.id, contextGeneration)
     this.patch({ preferences: saved })
     return saved
   }
 
-  private async runStart(generation: number): Promise<MonitorView> {
+  private async runStart(
+    generation: number,
+    userId: string | null,
+    contextGeneration: number,
+  ): Promise<MonitorView> {
     try {
       await this.process.stop()
-      this.assertCurrent(generation)
-      const user = this.auth.getView().user
-      if (user === null)
+      this.assertCurrent(generation, userId, contextGeneration)
+      if (userId === null)
         throw new ApplicationError('AUTH_REQUIRED', 'Sign in to start monitoring')
       const [token, preferences, resolved] = await Promise.all([
         this.auth.getAccessToken(),
-        this.preferences.load(user.id),
+        this.preferences.load(userId),
         this.targetResolver.resolve(),
       ])
-      this.assertCurrent(generation)
+      this.assertCurrent(generation, userId, contextGeneration)
       if (token === null)
         throw new ApplicationError('AUTH_REQUIRED', 'Sign in again to start monitoring')
       this.patch({
@@ -280,6 +343,7 @@ export class MonitorSupervisor {
         regions: resolved.configuration.regions,
         triggerProfile: resolved.configuration.triggerProfile,
         searchMode: preferences.searchMode,
+        captureDelaySeconds: preferences.searchMode === 'precise' ? 2.2 : 0,
         limits: {
           fps: 10,
           maxImageBytes: 10 * 1024 * 1024,
@@ -292,18 +356,29 @@ export class MonitorSupervisor {
         },
         prediction: this.#predictionProfile,
       })
+      this.assertCurrent(generation, userId, contextGeneration)
       await this.process.start(payload, {
-        onAction: (action) => this.acceptAction(generation, action),
-        onPredictionResult: (action) => this.acceptPredictionResult(generation, action),
-        onFatal: (error) => this.failRun(generation, error),
+        onTriggered: (timestamp) =>
+          this.acceptTriggered(generation, userId, contextGeneration, timestamp),
+        onAction: (action) =>
+          this.acceptAction(generation, userId, contextGeneration, action),
+        onPredictionResult: (action) =>
+          this.acceptPredictionResult(generation, userId, contextGeneration, action),
+        onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
         onExit: (error) => {
-          if (error !== null) this.failRun(generation, error)
+          if (error !== null) this.failRun(generation, userId, contextGeneration, error)
         },
       })
-      this.assertCurrent(generation)
+      this.assertCurrent(generation, userId, contextGeneration)
       this.transition('READY', { startedAt: this.now().toISOString() })
     } catch (error) {
-      if (generation !== this.#generation) {
+      if (!this.isCurrent(generation, userId, contextGeneration)) {
+        if (
+          generation === this.#generation &&
+          !['STOPPED', 'STOPPING', 'FAILED'].includes(this.#view.state)
+        ) {
+          return await this.stop()
+        }
         return this.#stopPromise === null ? this.#view : await this.#stopPromise
       }
       if (this.#view.state === 'STOPPING' || this.#view.state === 'STOPPED')
@@ -322,27 +397,54 @@ export class MonitorSupervisor {
     return this.#view
   }
 
-  private acceptAction(generation: number, action: MonitorAction): void {
-    if (generation !== this.#generation || this.#view.state !== 'READY') return
-    for (const listener of this.#battleStartListeners) {
-      try {
-        void Promise.resolve(listener(action.timestamp)).catch(() => undefined)
-      } catch {
-        // Private one-way notifications cannot affect normal monitor processing.
-      }
-    }
-    this.increment('triggers')
+  private acceptAction(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    action: MonitorAction,
+  ): void {
+    if (
+      !this.isCurrent(generation, userId, contextGeneration) ||
+      !['STARTING', 'READY'].includes(this.#view.state)
+    )
+      return
     if (this.#ocrActive) {
       if (this.#pendingAction !== null) this.increment('droppedActions')
       this.#pendingAction = action
       return
     }
-    void this.processAction(generation, action)
+    void this.processAction(generation, userId, contextGeneration, action)
   }
 
-  private acceptPredictionResult(generation: number, action: MonitorAction): void {
+  private acceptTriggered(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    timestamp: string,
+  ): void {
     if (
-      generation !== this.#generation ||
+      !this.isCurrent(generation, userId, contextGeneration) ||
+      !['STARTING', 'READY'].includes(this.#view.state)
+    )
+      return
+    for (const listener of this.#battleStartListeners) {
+      try {
+        void Promise.resolve(listener(timestamp)).catch(() => undefined)
+      } catch {
+        // Private one-way notifications cannot affect normal monitor processing.
+      }
+    }
+    this.increment('triggers')
+  }
+
+  private acceptPredictionResult(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    action: MonitorAction,
+  ): void {
+    if (
+      !this.isCurrent(generation, userId, contextGeneration) ||
       this.#view.state !== 'READY' ||
       this.#predictionProfile === null
     )
@@ -357,8 +459,13 @@ export class MonitorSupervisor {
     }
   }
 
-  private async processAction(generation: number, action: MonitorAction): Promise<void> {
-    if (generation !== this.#generation) return
+  private async processAction(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    action: MonitorAction,
+  ): Promise<void> {
+    if (!this.isCurrent(generation, userId, contextGeneration)) return
     this.#ocrActive = true
     const controller = new AbortController()
     this.#ocrController = controller
@@ -386,15 +493,17 @@ export class MonitorSupervisor {
           authBlocked: false,
         })
       }
-      if (generation !== this.#generation) return
+      if (!this.isCurrent(generation, userId, contextGeneration)) return
       this.addResult(result)
     } finally {
-      if (generation === this.#generation) {
+      if (this.isCurrent(generation, userId, contextGeneration)) {
         if (this.#ocrController === controller) this.#ocrController = null
         this.#ocrActive = false
         const pending = this.#pendingAction
         this.#pendingAction = null
-        if (pending !== null) void this.processAction(generation, pending)
+        if (pending !== null) {
+          void this.processAction(generation, userId, contextGeneration, pending)
+        }
       }
     }
   }
@@ -425,9 +534,14 @@ export class MonitorSupervisor {
     this.patch({ stats: { ...this.#view.stats, [key]: this.#view.stats[key] + 1 } })
   }
 
-  private failRun(generation: number, error: ApplicationError): void {
+  private failRun(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    error: ApplicationError,
+  ): void {
     if (
-      generation !== this.#generation ||
+      !this.isCurrent(generation, userId, contextGeneration) ||
       this.#view.state === 'STOPPING' ||
       this.#view.state === 'STOPPED' ||
       this.#view.state === 'FAILED'
@@ -442,10 +556,50 @@ export class MonitorSupervisor {
     void this.process.stop()
   }
 
-  private assertCurrent(generation: number): void {
-    if (generation !== this.#generation || this.#runController.signal.aborted) {
+  private assertCurrent(
+    generation: number,
+    userId: string | null,
+    contextGeneration: number,
+  ): void {
+    if (
+      generation !== this.#generation ||
+      this.#runController.signal.aborted ||
+      !this.isUserContextCurrent(userId, contextGeneration)
+    ) {
       throw new ApplicationError('MONITOR_CANCELLED', 'Monitor start was cancelled')
     }
+  }
+
+  private assertUserContext(userId: string, contextGeneration: number): void {
+    if (!this.isUserContextCurrent(userId, contextGeneration)) {
+      throw new ApplicationError(
+        'MONITOR_CONTEXT_STALE',
+        'The monitor user context changed during the operation',
+      )
+    }
+  }
+
+  private isCurrent(
+    generation: number,
+    userId: string | null,
+    contextGeneration: number,
+  ): boolean {
+    return (
+      generation === this.#generation &&
+      !this.#runController.signal.aborted &&
+      this.isUserContextCurrent(userId, contextGeneration)
+    )
+  }
+
+  private isUserContextCurrent(
+    userId: string | null,
+    contextGeneration: number,
+  ): boolean {
+    return (
+      contextGeneration === this.#userContextGeneration &&
+      userId === this.#userContextId &&
+      userId === (this.auth.getView().user?.id ?? null)
+    )
   }
 
   private transition(state: MonitorState, patch: Partial<MonitorView> = {}): void {
@@ -457,5 +611,19 @@ export class MonitorSupervisor {
 
   private patch(patch: Partial<MonitorView>): void {
     this.#view = MonitorViewSchema.parse({ ...this.#view, ...patch })
+  }
+
+  private redactedView(authenticated: boolean): MonitorView {
+    return MonitorViewSchema.parse({
+      ...this.#view,
+      preferences: DEFAULT_MONITOR_PREFERENCES,
+      readiness: {
+        authenticated,
+        captureConfigured: false,
+        sourceAvailable: null,
+      },
+      stats: EMPTY_STATS,
+      results: [],
+    })
   }
 }

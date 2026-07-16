@@ -34,7 +34,7 @@ import {
 } from './streamer-adapters'
 
 const UnknownSchema = z.unknown()
-const CommandSuccessSchema = z.object({ success: z.literal(true) }).strict()
+const CommandSuccessSchema = z.object({ success: z.literal(true) }).loose()
 const AuthConnectSchema = z
   .object({ auth_url: z.string().max(4096), success: z.boolean().optional() })
   .loose()

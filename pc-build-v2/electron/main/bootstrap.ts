@@ -22,6 +22,7 @@ import {
 } from './infrastructure/monitor-preferences-repository'
 import { ApiClient, AuthenticatedApiClient } from './services/api-client'
 import { AuthSession } from './services/auth-session'
+import { ApiAuthSessionRevoker } from './services/auth-session-revoker'
 import { CaptureService } from './services/capture-service'
 import { CaptureSourceRegistry } from './services/capture-source-registry'
 import { ElectronCaptureSourceProvider } from './services/electron-capture-source-provider'
@@ -85,7 +86,7 @@ const secrets = new SecretStore(
   safeStorage,
   nodeSecretFileSystem,
 )
-const auth = new AuthSession(api, secrets, identity)
+const auth = new AuthSession(api, secrets, identity, new ApiAuthSessionRevoker(api))
 const authenticatedApi = new AuthenticatedApiClient(api, auth)
 const realtime = new WebSocketSession(server.webSocketUrl, auth, logger)
 const settingsRepository = new SettingsRepository(

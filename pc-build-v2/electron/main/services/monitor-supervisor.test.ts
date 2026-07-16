@@ -53,8 +53,16 @@ function harness(
     configuration,
     selector: { kind: 'window', windowHwnd: '12' },
   }),
+  searchMode: 'fast' | 'precise' = 'fast',
 ) {
+  let currentUserId: string | null = '42'
   let processListener: MonitorProcessListener | null = null
+  const captureConfigurations = { load: vi.fn().mockResolvedValue(configuration) }
+  const preferenceRepository = {
+    load: vi.fn().mockResolvedValue({ searchMode, deckMode: 'pol' }),
+    save: vi.fn().mockResolvedValue({ searchMode, deckMode: 'pol' }),
+  }
+  const targetResolver = { resolve: vi.fn(() => resolveTarget) }
   const process = {
     start: vi.fn((_payload, listener: MonitorProcessListener) => {
       processListener = listener
@@ -66,30 +74,41 @@ function harness(
   const supervisor = new MonitorSupervisor(
     {
       getView: () => ({
-        state: 'AUTHENTICATED',
-        user: {
-          id: '42',
-          username: 'operator',
-          email: 'operator@example.com',
-          role: 'premium',
-          roles: ['premium'],
-        },
+        state: currentUserId === null ? 'UNAUTHENTICATED' : 'AUTHENTICATED',
+        user:
+          currentUserId === null
+            ? null
+            : {
+                id: currentUserId,
+                username: `operator-${currentUserId}`,
+                email: `${currentUserId}@example.com`,
+                role: 'premium',
+                roles: ['premium'],
+              },
         deviceHint: null,
         error: null,
       }),
       getAccessToken: vi.fn().mockResolvedValue('token'),
     } as never,
-    { load: vi.fn().mockResolvedValue(configuration) } as never,
-    {
-      load: vi.fn().mockResolvedValue({ searchMode: 'fast', deckMode: 'pol' }),
-      save: vi.fn().mockResolvedValue({ searchMode: 'fast', deckMode: 'pol' }),
-    } as never,
-    { resolve: vi.fn(() => resolveTarget) } as never,
+    captureConfigurations as never,
+    preferenceRepository as never,
+    targetResolver as never,
     process as never,
     ocr as never,
     () => new Date('2026-07-12T12:00:00.000Z'),
   )
-  return { supervisor, process, ocr, listener: () => processListener }
+  return {
+    supervisor,
+    process,
+    ocr,
+    captureConfigurations,
+    preferences: preferenceRepository,
+    targetResolver,
+    listener: () => processListener,
+    user: (userId: string | null) => {
+      currentUserId = userId
+    },
+  }
 }
 
 describe('MonitorSupervisor concurrency', () => {
@@ -106,6 +125,10 @@ describe('MonitorSupervisor concurrency', () => {
     target.resolve({ configuration, selector: { kind: 'window', windowHwnd: '12' } })
     await expect(first).resolves.toMatchObject({ state: 'READY' })
     expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.start).toHaveBeenCalledWith(
+      expect.objectContaining({ captureDelaySeconds: 0 }),
+      expect.anything(),
+    )
   })
 
   it('cancels a start during preflight without spawning a stale child', async () => {
@@ -122,6 +145,21 @@ describe('MonitorSupervisor concurrency', () => {
     expect(test.process.start).not.toHaveBeenCalled()
   })
 
+  it('uses the precise delayed-capture policy only for precise search', async () => {
+    const test = harness(
+      Promise.resolve({
+        configuration,
+        selector: { kind: 'window', windowHwnd: '12' },
+      }),
+      'precise',
+    )
+    await test.supervisor.start()
+    expect(test.process.start).toHaveBeenCalledWith(
+      expect.objectContaining({ searchMode: 'precise', captureDelaySeconds: 2.2 }),
+      expect.anything(),
+    )
+  })
+
   it('uses one active OCR plus one replaceable action and fences results after stop', async () => {
     const test = harness()
     await test.supervisor.start()
@@ -136,8 +174,11 @@ describe('MonitorSupervisor concurrency', () => {
       height: 10,
       image: Buffer.from('private'),
     }
+    test.listener()?.onTriggered(action.timestamp)
     test.listener()?.onAction(action)
+    test.listener()?.onTriggered('2026-07-12T12:00:01.000Z')
     test.listener()?.onAction({ ...action, timestamp: '2026-07-12T12:00:01.000Z' })
+    test.listener()?.onTriggered('2026-07-12T12:00:02.000Z')
     test.listener()?.onAction({ ...action, timestamp: '2026-07-12T12:00:02.000Z' })
     expect(test.ocr.process).toHaveBeenCalledTimes(1)
     first.resolve({
@@ -279,12 +320,101 @@ describe('MonitorSupervisor concurrency', () => {
       searchedNickname: null,
       message: 'not found',
     })
+    test.listener()?.onTriggered(action.timestamp)
     test.listener()?.onAction(action)
     test.listener()?.onPredictionResult(action)
     expect(battle).toHaveBeenCalledWith(action.timestamp)
+    expect((await test.supervisor.getView()).stats.triggers).toBe(1)
     expect(result).toHaveBeenCalledWith(expect.objectContaining({ image: action.image }))
     await vi.waitFor(async () =>
       expect((await test.supervisor.getView()).results).toHaveLength(1),
     )
+  })
+
+  it('clears retained user state on A -> logout -> B but preserves it on ordinary stop', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    await test.supervisor.configurePredictionRuntime({
+      configuredFrameSize: configuration.frameSize,
+      trigger: configuration.regions.trigger,
+      data: configuration.regions.normal,
+      triggerProfile: configuration.triggerProfile,
+    })
+    const result = {
+      id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
+      kind: 'player_not_found' as const,
+      timestamp: '2026-07-12T12:00:00.000Z',
+      searchMode: 'fast' as const,
+      deckMode: 'pol' as const,
+      searchedNickname: 'A-only',
+      message: 'not found',
+    }
+    test.supervisor.addExternalResult(result)
+    await test.supervisor.stop()
+    expect(test.supervisor.getLatestResult()).toEqual(result)
+
+    test.user(null)
+    expect(test.supervisor.getLatestResult()).toBeNull()
+    expect(test.supervisor.setUserContext(null)).toBe(true)
+    expect(await test.supervisor.getView()).toMatchObject({
+      stats: { playersNotFound: 0 },
+      results: [],
+    })
+
+    test.user('84')
+    expect(test.supervisor.setUserContext('84')).toBe(true)
+    await test.supervisor.start()
+    expect(test.process.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({ prediction: null }),
+      expect.anything(),
+    )
+    expect(test.supervisor.getRetainedResult(result.id)).toBeNull()
+  })
+
+  it('fences deferred start work from spawning after A changes to B', async () => {
+    const target = deferred<{
+      configuration: typeof configuration
+      selector: { kind: 'window'; windowHwnd: string }
+    }>()
+    const test = harness(target.promise)
+    const starting = test.supervisor.start()
+    await vi.waitFor(() => expect(test.targetResolver.resolve).toHaveBeenCalledOnce())
+    await test.supervisor.stop()
+    test.user('84')
+    test.supervisor.setUserContext('84')
+    target.resolve({ configuration, selector: { kind: 'window', windowHwnd: '12' } })
+    await expect(starting).resolves.toMatchObject({ state: 'STOPPED' })
+    expect(test.process.start).not.toHaveBeenCalled()
+  })
+
+  it('rejects stale deferred preference reads and writes without patching B', async () => {
+    const reading = harness()
+    const loaded = deferred<{ searchMode: 'precise'; deckMode: 'gt' }>()
+    reading.preferences.load.mockReturnValueOnce(loaded.promise)
+    const getPreferences = reading.supervisor.getPreferences()
+    reading.user('84')
+    reading.supervisor.setUserContext('84')
+    loaded.resolve({ searchMode: 'precise', deckMode: 'gt' })
+    await expect(getPreferences).rejects.toMatchObject({ code: 'MONITOR_CONTEXT_STALE' })
+    expect((await reading.supervisor.getView()).preferences).toEqual({
+      searchMode: 'fast',
+      deckMode: 'pol',
+    })
+
+    const writing = harness()
+    const saved = deferred<{ searchMode: 'precise'; deckMode: 'gt' }>()
+    writing.preferences.save.mockReturnValueOnce(saved.promise)
+    const update = writing.supervisor.updatePreferences({
+      searchMode: 'precise',
+      deckMode: 'gt',
+    })
+    writing.user(null)
+    writing.supervisor.setUserContext(null)
+    saved.resolve({ searchMode: 'precise', deckMode: 'gt' })
+    await expect(update).rejects.toMatchObject({ code: 'MONITOR_CONTEXT_STALE' })
+    expect((await writing.supervisor.getView()).preferences).toEqual({
+      searchMode: 'fast',
+      deckMode: 'pol',
+    })
   })
 })

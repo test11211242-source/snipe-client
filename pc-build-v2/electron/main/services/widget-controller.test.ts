@@ -69,6 +69,7 @@ function harness(autoOpen = true) {
     ensureWidgetWindow: vi.fn().mockResolvedValue(undefined),
     applyWidgetSettings: vi.fn(),
     showWidget: vi.fn(),
+    showWidgetInactive: vi.fn(),
     hideWidget: vi.fn(),
     isWidgetVisible: vi.fn().mockReturnValue(false),
     close: vi.fn(),
@@ -105,9 +106,13 @@ describe('WidgetController', () => {
     })
     test.result(first)
     test.result(first)
-    await vi.waitFor(() => expect(test.windows.showWidget).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() =>
+      expect(test.windows.showWidgetInactive).toHaveBeenCalledTimes(1),
+    )
     test.result(found('39d970c1-fc4f-4bea-a767-8f108d3b8739'))
-    await vi.waitFor(() => expect(test.windows.showWidget).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(test.windows.showWidgetInactive).toHaveBeenCalledTimes(2),
+    )
   })
 
   it('does not auto-open when disabled and closes only widget on logout', async () => {
@@ -115,8 +120,41 @@ describe('WidgetController', () => {
     await test.controller.start('user')
     test.result(found('29d970c1-fc4f-4bea-a767-8f108d3b8739'))
     expect(test.windows.showWidget).not.toHaveBeenCalled()
+    expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
     await test.controller.stop('auth-transition')
     expect(test.windows.close).toHaveBeenCalledWith('widget', 'auth-transition')
+  })
+
+  it('focuses a manual show instead of using passive auto-open', async () => {
+    const test = harness()
+    await test.controller.start('user')
+    await test.controller.show()
+    expect(test.windows.showWidget).toHaveBeenCalledOnce()
+    expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
+  })
+
+  it('waits for window load before showing and retries a failed auto-open id', async () => {
+    const test = harness()
+    await test.controller.start('user')
+    const opening = deferred()
+    test.windows.ensureWidgetWindow.mockReturnValueOnce(opening.promise)
+    const manual = test.controller.show()
+    await Promise.resolve()
+    expect(test.windows.showWidget).not.toHaveBeenCalled()
+    opening.resolve()
+    await manual
+    expect(test.windows.showWidget).toHaveBeenCalledOnce()
+
+    const result = found('29d970c1-fc4f-4bea-a767-8f108d3b8739')
+    test.windows.ensureWidgetWindow.mockRejectedValueOnce(new Error('load failed'))
+    test.result(result)
+    await vi.waitFor(() =>
+      expect(test.windows.ensureWidgetWindow).toHaveBeenCalledTimes(2),
+    )
+    expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    test.result(result)
+    await vi.waitFor(() => expect(test.windows.showWidgetInactive).toHaveBeenCalledOnce())
   })
 
   it('applies settings and debounces persisted user bounds', async () => {
@@ -138,6 +176,15 @@ describe('WidgetController', () => {
         bounds: { x: 11, y: 21, width: 510, height: 610 },
       }),
     )
+  })
+
+  it('ignores bounds below the persisted schema minimum', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.controller.start('user')
+    expect(() => test.bounds({ x: 0, y: 0, width: 200, height: 120 })).not.toThrow()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(test.repository.save).not.toHaveBeenCalled()
   })
 
   it('projects card availability without exposing retained URLs', async () => {
@@ -164,6 +211,7 @@ describe('WidgetController', () => {
     await expect(show).rejects.toMatchObject({ code: 'WIDGET_CANCELLED' })
     await stop
     expect(test.windows.showWidget).not.toHaveBeenCalled()
+    expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
     expect(test.windows.close).toHaveBeenCalledWith('widget', 'auth-transition')
   })
 })

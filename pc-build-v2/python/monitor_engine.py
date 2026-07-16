@@ -62,6 +62,15 @@ def run(start: dict[str, Any]) -> int:
                 ready.set()
             now = time.monotonic()
             action = engine.process(bgr, now)
+            if engine.take_triggered():
+                writer.emit(
+                    "triggered",
+                    {
+                        "timestamp": datetime.now(timezone.utc)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    },
+                )
             if action is not None:
                 image, image_width, image_height = action
                 writer.emit(
