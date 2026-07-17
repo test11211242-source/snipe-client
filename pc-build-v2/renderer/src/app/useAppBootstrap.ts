@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import type { AppSettingsView, HelloResult } from '../../../shared/contracts/app'
 import type { AppSnapshot } from '../../../shared/models/application'
 import type { AuthView } from '../../../shared/models/auth'
-import type { CaptureStatus } from '../../../shared/models/capture'
+import type { CaptureProfilesView, CaptureStatus } from '../../../shared/models/capture'
 import type { MonitorView } from '../../../shared/models/monitor'
 import type { RealtimeStatus } from '../../../shared/models/network'
 import type { UpdateView } from '../../../shared/models/update'
@@ -23,6 +23,7 @@ export interface BootstrapData {
   auth: Resource<AuthView>
   realtime: Resource<RealtimeStatus>
   capture: Resource<CaptureStatus>
+  profiles: Resource<CaptureProfilesView>
   monitor: Resource<MonitorView>
   widget: Resource<WidgetStatus>
   settings: Resource<AppSettingsView>
@@ -83,6 +84,7 @@ export function useAppBootstrap(): {
   setAuth: (value: AuthView) => void
   setRealtime: (value: RealtimeStatus) => void
   setCapture: (value: CaptureStatus) => void
+  setProfiles: (value: CaptureProfilesView) => void
   setMonitor: (value: MonitorView) => void
   setWidget: (value: WidgetStatus) => void
   setSettings: (value: AppSettingsView) => void
@@ -94,6 +96,8 @@ export function useAppBootstrap(): {
   const [realtime, setRealtimeResource] =
     useState<Resource<RealtimeStatus>>(initialResource)
   const [capture, setCaptureResource] = useState<Resource<CaptureStatus>>(initialResource)
+  const [profiles, setProfilesResource] =
+    useState<Resource<CaptureProfilesView>>(initialResource)
   const [monitor, setMonitorResource] = useState<Resource<MonitorView>>(initialResource)
   const [widget, setWidgetResource] = useState<Resource<WidgetStatus>>(initialResource)
   const [settings, setSettingsResource] =
@@ -114,6 +118,7 @@ export function useAppBootstrap(): {
     beginLoading(setAuthResource)
     beginLoading(setRealtimeResource)
     beginLoading(setCaptureResource)
+    beginLoading(setProfilesResource)
     beginLoading(setMonitorResource)
     beginLoading(setWidgetResource)
     beginLoading(setSettingsResource)
@@ -130,6 +135,7 @@ export function useAppBootstrap(): {
       loadResource(window.crTools.getAuthView(), setAuthResource, isActive),
       loadResource(window.crTools.getRealtimeStatus(), setRealtimeResource, isActive),
       loadResource(window.crTools.getCaptureStatus(), setCaptureResource, isActive),
+      loadResource(window.crTools.getCaptureProfiles(), setProfilesResource, isActive),
       loadResource(
         window.crTools.getMonitorView().then((value) => {
           monitorStateRef.current = value.state
@@ -191,15 +197,18 @@ export function useAppBootstrap(): {
       if (inFlight) return
       inFlight = true
       const pollGeneration = generation
-      const [nextRealtime, nextCapture, nextMonitor] = await Promise.allSettled([
-        window.crTools.getRealtimeStatus(),
-        window.crTools.getCaptureStatus(),
-        window.crTools.getMonitorView(),
-      ])
+      const [nextRealtime, nextCapture, nextProfiles, nextMonitor] =
+        await Promise.allSettled([
+          window.crTools.getRealtimeStatus(),
+          window.crTools.getCaptureStatus(),
+          window.crTools.getCaptureProfiles(),
+          window.crTools.getMonitorView(),
+        ])
       if (active) {
         applySettlement(nextRealtime, setRealtimeResource)
         applySettlement(nextCapture, setCaptureResource)
         if (pollGeneration === generation) {
+          applySettlement(nextProfiles, setProfilesResource)
           applySettlement(nextMonitor, setMonitorResource)
           if (nextMonitor.status === 'fulfilled') {
             monitorStateRef.current = nextMonitor.value.state
@@ -307,6 +316,7 @@ export function useAppBootstrap(): {
       auth,
       realtime,
       capture,
+      profiles,
       monitor,
       widget,
       settings,
@@ -317,6 +327,10 @@ export function useAppBootstrap(): {
     setAuth: (value) => ready(setAuthResource, value),
     setRealtime: (value) => ready(setRealtimeResource, value),
     setCapture: (value) => ready(setCaptureResource, value),
+    setProfiles: (value) => {
+      ready(setProfilesResource, value)
+      restartMonitorPollingRef.current()
+    },
     setMonitor: (value) => {
       monitorStateRef.current = value.state
       ready(setMonitorResource, value)

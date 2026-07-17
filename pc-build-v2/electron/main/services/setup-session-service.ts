@@ -5,6 +5,9 @@ import { z } from 'zod'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
   CaptureConfigurationSchema,
+  CaptureProfileIdSchema,
+  CaptureProfileNameSchema,
+  MAX_CAPTURE_PROFILES,
   CaptureStatusSchema,
   NormalizedRectSchema,
   NormalizedRegionsSchema,
@@ -52,6 +55,14 @@ interface InternalSession {
   frame: CapturedFrame | null
   controller: AbortController
   commitLocked: boolean
+  profileTarget: SetupCaptureProfileTarget | null
+}
+
+export interface SetupCaptureProfileTarget {
+  userId: string
+  profileId: string
+  profileName: string
+  expectedRevision: number
 }
 
 const SaveResponseSchema = z.object({ success: z.literal(true) }).loose()
@@ -116,6 +127,12 @@ export function buildLegacyProjection(
 
 export class SetupSessionService {
   #session: InternalSession | null = null
+  #startOperation: Promise<void> = Promise.resolve()
+  #assertCaptureCommitAllowed: () => void = () => undefined
+  #captureCommitted: () => Promise<void> = () => Promise.resolve()
+  #runCaptureCommit: (
+    operation: () => Promise<SetupSessionView>,
+  ) => Promise<SetupSessionView> = (operation) => operation()
 
   constructor(
     private readonly capture: CaptureService,
@@ -128,11 +145,36 @@ export class SetupSessionService {
     private readonly targetResolver?: CaptureTargetResolver,
   ) {}
 
+  configureCaptureProfileLifecycle(
+    assertCommitAllowed: () => void,
+    captureCommitted: () => Promise<void>,
+    runCaptureCommit: (
+      operation: () => Promise<SetupSessionView>,
+    ) => Promise<SetupSessionView>,
+  ): void {
+    this.#assertCaptureCommitAllowed = assertCommitAllowed
+    this.#captureCommitted = captureCommitted
+    this.#runCaptureCommit = runCaptureCommit
+  }
+
   async start(
     selector: SetupCaptureSelector,
     preference: CapturePreference,
     kind: SetupSessionView['kind'] = 'capture',
     preparedFrame?: CapturedFrame,
+    requestedProfile?: Omit<SetupCaptureProfileTarget, 'userId'>,
+  ): Promise<SetupSessionView> {
+    return this.serializedStart(() =>
+      this.performStart(selector, preference, kind, preparedFrame, requestedProfile),
+    )
+  }
+
+  private async performStart(
+    selector: SetupCaptureSelector,
+    preference: CapturePreference,
+    kind: SetupSessionView['kind'],
+    preparedFrame: CapturedFrame | undefined,
+    requestedProfile: Omit<SetupCaptureProfileTarget, 'userId'> | undefined,
   ): Promise<SetupSessionView> {
     if (
       this.#session !== null &&
@@ -143,18 +185,26 @@ export class SetupSessionService {
         'A capture setup is already active',
       )
     }
+    const user = this.auth.getView().user
+    const profileTarget =
+      kind === 'capture' || requestedProfile !== undefined
+        ? await this.resolveProfileTarget(user?.id ?? null, requestedProfile)
+        : null
     const controller = new AbortController()
     const session: InternalSession = {
       selector,
       frame: null,
       controller,
       commitLocked: false,
+      profileTarget,
       view: SetupSessionViewSchema.parse({
         kind,
         sessionId: randomUUID(),
         generation: 0,
         state: 'CREATED',
         source: preference,
+        profileId: profileTarget?.profileId ?? null,
+        profileName: profileTarget?.profileName ?? null,
         frameSize: null,
         regions: {
           trigger: null,
@@ -199,11 +249,24 @@ export class SetupSessionService {
         'Result setup is unavailable',
       )
     }
-    const resolved = await this.targetResolver.resolve()
+    const resolved = await this.targetResolver.resolveActiveProfile()
+    const user = this.auth.getView().user
+    if (user?.id !== resolved.userId) {
+      throw new ApplicationError(
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in user changed while result setup was starting',
+      )
+    }
     return this.start(
       resolved.selector,
       resolved.configuration.source,
       'predictionResult',
+      undefined,
+      {
+        profileId: resolved.profileId,
+        profileName: resolved.profileName,
+        expectedRevision: resolved.collectionRevision,
+      },
     )
   }
 
@@ -369,15 +432,37 @@ export class SetupSessionService {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
     }
     if (session.view.kind === 'predictionResult') {
-      return this.commitPredictionResult(session, generation)
+      return this.#runCaptureCommit(() =>
+        this.commitPredictionResult(session, generation),
+      )
+    }
+    return this.#runCaptureCommit(() => this.commitCapture(session, generation))
+  }
+
+  private async commitCapture(
+    session: InternalSession,
+    generation: number,
+  ): Promise<SetupSessionView> {
+    this.assertCommand(session.view.sessionId, generation)
+    if (session.view.state !== 'REVIEW') {
+      throw new ApplicationError(
+        'SETUP_STATE_INVALID',
+        'Setup is no longer ready to save',
+      )
+    }
+    const frame = session.frame
+    const triggerProfile = session.view.triggerProfile
+    if (frame === null || triggerProfile === null) {
+      throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
     }
     const regions = NormalizedRegionsSchema.parse({
       trigger: session.view.regions.trigger,
       normal: session.view.regions.normal,
       precise: session.view.regions.precise,
     })
-    const triggerProfile = session.view.triggerProfile
     const user = this.auth.getView().user
+    const profileTarget = session.profileTarget
+    this.#assertCaptureCommitAllowed()
     session.commitLocked = true
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
@@ -386,7 +471,7 @@ export class SetupSessionService {
     })
     const token = await this.auth.getAccessToken()
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (user === null || token === null) {
+    if (token === null || user?.id === undefined || user.id !== profileTarget?.userId) {
       session.commitLocked = false
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -396,9 +481,55 @@ export class SetupSessionService {
       })
       return session.view
     }
+    const profileStatus = await this.repository.list(user.id)
+    if (
+      (profileStatus?.revision ?? 0) !== profileTarget.expectedRevision ||
+      !this.isCurrentOperation(session, generation, 'SAVING')
+    ) {
+      session.commitLocked = false
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'REVIEW',
+        generation: generation + 1,
+        error: {
+          code: 'CAPTURE_PROFILE_STALE',
+          message: 'Capture profiles changed while setup was open',
+        },
+      })
+      return session.view
+    }
+    const existingProfile = profileStatus?.profiles.find(
+      (profile) => profile.profileId === profileTarget.profileId,
+    )
+    if (
+      (existingProfile === undefined &&
+        (profileStatus?.profileCount ?? 0) >= MAX_CAPTURE_PROFILES) ||
+      profileStatus?.profiles.some(
+        (profile) =>
+          profile.profileId !== profileTarget.profileId &&
+          profile.profileName.toLocaleLowerCase('ru-RU') ===
+            profileTarget.profileName.toLocaleLowerCase('ru-RU'),
+      ) === true
+    ) {
+      session.commitLocked = false
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'REVIEW',
+        generation: generation + 1,
+        error: {
+          code:
+            existingProfile === undefined &&
+            (profileStatus?.profileCount ?? 0) >= MAX_CAPTURE_PROFILES
+              ? 'CAPTURE_PROFILE_LIMIT'
+              : 'CAPTURE_PROFILE_NAME_CONFLICT',
+          message: 'The capture profile cannot be created with the selected name',
+        },
+      })
+      return session.view
+    }
     const timestamp = this.now().toISOString()
     const projection = buildLegacyProjection(
-      session.frame,
+      frame,
       regions,
       triggerProfile,
       session.view.source,
@@ -413,6 +544,19 @@ export class SetupSessionService {
       signal: session.controller.signal,
     })
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (this.auth.getView().user?.id !== profileTarget.userId) {
+      session.commitLocked = false
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'REVIEW',
+        generation: generation + 1,
+        error: {
+          code: 'AUTH_CONTEXT_CHANGED',
+          message: 'The signed-in user changed while capture setup was saving',
+        },
+      })
+      return session.view
+    }
     if (!remote.ok) {
       session.commitLocked = false
       session.view = SetupSessionViewSchema.parse({
@@ -425,14 +569,14 @@ export class SetupSessionService {
     }
 
     try {
-      const previous = await this.repository.load(user.id)
+      const previous = await this.repository.get(user.id, profileTarget.profileId)
       const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
         schemaVersion: 1,
         userId: user.id,
-        revision: (previous?.revision ?? 0) + 1,
+        revision: (previous?.configuration.revision ?? 0) + 1,
         committedAt: timestamp,
         source: session.view.source,
-        frameSize: session.frame.size,
+        frameSize: frame.size,
         regions,
         triggerProfile,
       }
@@ -440,7 +584,12 @@ export class SetupSessionService {
         ...unsigned,
         fingerprint: captureConfigurationFingerprint(unsigned),
       })
-      await this.repository.save(config)
+      await this.repository.save(config, {
+        profileId: profileTarget.profileId,
+        profileName: profileTarget.profileName,
+        expectedRevision: profileTarget.expectedRevision,
+      })
+      await this.#captureCommitted().catch(() => undefined)
     } catch (error) {
       session.frame = null
       session.view = SetupSessionViewSchema.parse({
@@ -465,8 +614,14 @@ export class SetupSessionService {
     session: InternalSession,
     generation: number,
   ): Promise<SetupSessionView> {
+    this.assertCommand(session.view.sessionId, generation)
+    if (session.view.state !== 'REVIEW') {
+      throw new ApplicationError(
+        'SETUP_STATE_INVALID',
+        'Setup is no longer ready to save',
+      )
+    }
     if (
-      session.view.state !== 'REVIEW' ||
       session.frame === null ||
       session.view.triggerProfile === null ||
       session.view.regions.resultTrigger === null ||
@@ -477,7 +632,8 @@ export class SetupSessionService {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Result setup is not ready to save')
     }
     const user = this.auth.getView().user
-    if (user === null)
+    const profileTarget = session.profileTarget
+    if (user?.id === undefined || user.id !== profileTarget?.userId)
       throw new ApplicationError('AUTH_REQUIRED', 'Sign in again to save setup')
     const frame = session.frame
     const trigger = session.view.regions.resultTrigger
@@ -490,6 +646,31 @@ export class SetupSessionService {
       state: 'SAVING',
       error: null,
     })
+    const token = await this.auth.getAccessToken()
+    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (token === null || this.auth.getView().user?.id !== profileTarget.userId) {
+      return this.resultCommitFailure(
+        session,
+        generation,
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in user changed while result setup was saving',
+      )
+    }
+    const profileStatus = await this.repository.list(profileTarget.userId)
+    if (
+      !this.isCurrentOperation(session, generation, 'SAVING') ||
+      profileStatus?.revision !== profileTarget.expectedRevision ||
+      !profileStatus.profiles.some(
+        (profileSummary) => profileSummary.profileId === profileTarget.profileId,
+      )
+    ) {
+      return this.resultCommitFailure(
+        session,
+        generation,
+        'CAPTURE_PROFILE_STALE',
+        'The capture profile changed while result setup was open',
+      )
+    }
     const captureReference = {
       target_type: session.view.source.kind === 'window' ? 'window' : 'screen',
       target_id:
@@ -532,14 +713,23 @@ export class SetupSessionService {
         analyzer_version: profile.analyzer.version,
       },
     }
-    const triggerRemote = await this.authenticatedApi.request({
+    const triggerRemote = await this.api.request({
       method: 'POST',
       path: '/api/streamer/result-trigger-area',
       body: triggerPayload,
+      accessToken: token,
       schema: SaveResponseSchema,
       signal: session.controller.signal,
     })
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (this.auth.getView().user?.id !== profileTarget.userId) {
+      return this.resultCommitFailure(
+        session,
+        generation,
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in user changed while result setup was saving',
+      )
+    }
     if (!triggerRemote.ok)
       return this.resultCommitFailure(
         session,
@@ -547,7 +737,7 @@ export class SetupSessionService {
         triggerRemote.error.code,
         triggerRemote.error.message,
       )
-    const dataRemote = await this.authenticatedApi.request({
+    const dataRemote = await this.api.request({
       method: 'POST',
       path: '/api/streamer/result-data-area',
       body: {
@@ -556,10 +746,19 @@ export class SetupSessionService {
         screen_resolution: frame.size,
         capture_reference: captureReference,
       },
+      accessToken: token,
       schema: SaveResponseSchema,
       signal: session.controller.signal,
     })
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (this.auth.getView().user?.id !== profileTarget.userId) {
+      return this.resultCommitFailure(
+        session,
+        generation,
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in user changed while result setup was saving',
+      )
+    }
     if (!dataRemote.ok) {
       return this.resultCommitFailure(
         session,
@@ -569,7 +768,8 @@ export class SetupSessionService {
       )
     }
     try {
-      const previous = await this.resultRepository.load(user.id)
+      const resultProfileId = profileTarget.profileId
+      const previous = await this.resultRepository.load(user.id, resultProfileId)
       const unsigned: Omit<PredictionResultConfiguration, 'fingerprint'> = {
         schemaVersion: 1,
         userId: user.id,
@@ -586,6 +786,7 @@ export class SetupSessionService {
           ...unsigned,
           fingerprint: predictionResultFingerprint(unsigned),
         }),
+        resultProfileId,
       )
     } catch {
       session.frame = null
@@ -696,5 +897,58 @@ export class SetupSessionService {
       session.view.generation === generation &&
       session.view.state === state
     )
+  }
+
+  private async resolveProfileTarget(
+    userId: string | null,
+    requested: Omit<SetupCaptureProfileTarget, 'userId'> | undefined,
+  ): Promise<SetupCaptureProfileTarget> {
+    if (userId === null)
+      throw new ApplicationError('AUTH_REQUIRED', 'Sign in to configure capture')
+    if (requested !== undefined) {
+      return {
+        userId,
+        profileId: CaptureProfileIdSchema.parse(requested.profileId),
+        profileName: CaptureProfileNameSchema.parse(requested.profileName),
+        expectedRevision: z
+          .number()
+          .int()
+          .nonnegative()
+          .parse(requested.expectedRevision),
+      }
+    }
+    const profiles = await this.repository.list(userId)
+    if (profiles === null) {
+      return {
+        userId,
+        profileId: randomUUID(),
+        profileName: 'Основной',
+        expectedRevision: 0,
+      }
+    }
+    const active = profiles.profiles.find(
+      (profile) => profile.profileId === profiles.activeProfileId,
+    )
+    if (active === undefined) {
+      throw new ApplicationError(
+        'CAPTURE_PROFILE_NOT_FOUND',
+        'The active capture profile is unavailable',
+      )
+    }
+    return {
+      userId,
+      profileId: active.profileId,
+      profileName: active.profileName,
+      expectedRevision: profiles.revision,
+    }
+  }
+
+  private serializedStart<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#startOperation.then(operation, operation)
+    this.#startOperation = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 }

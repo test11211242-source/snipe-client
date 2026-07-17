@@ -1252,6 +1252,137 @@ summary:focus-visible,
   width: 100%;
 }
 
+.capture-profile-manager {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #171822 0%, var(--color-surface) 72%);
+}
+
+.capture-profile-heading,
+.capture-profile-copy > div,
+.capture-profile-actions {
+  display: flex;
+  align-items: center;
+}
+
+.capture-profile-heading {
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.capture-profile-heading h3 {
+  margin: 5px 0 0;
+  font-size: 17px;
+}
+
+.capture-profile-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.capture-profile-card {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #12131a;
+}
+
+.capture-profile-card[data-active='true'] {
+  border-color: #706db0;
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.capture-profile-card[data-selected='true'] {
+  background: #191a26;
+}
+
+.capture-profile-copy {
+  min-width: 0;
+}
+
+.capture-profile-copy > div {
+  gap: var(--space-2);
+}
+
+.capture-profile-copy strong,
+.capture-profile-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-profile-copy span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #cbc9ff;
+  background: var(--color-accent-soft);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.capture-profile-copy small {
+  margin-top: 5px;
+  color: var(--color-text-tertiary);
+}
+
+.capture-profile-actions {
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: var(--space-3);
+}
+
+.capture-profile-actions button {
+  min-height: 30px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+.capture-profile-task {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  margin-top: var(--space-4);
+  padding: 10px 12px;
+  border-left: 3px solid #706db0;
+  color: var(--color-text-secondary);
+  background: #141520;
+  font-size: var(--font-secondary);
+}
+
+.capture-profile-task strong {
+  color: var(--color-text);
+}
+
+.profile-manager-empty {
+  margin: var(--space-4) 0 0;
+  color: var(--color-text-tertiary);
+}
+
+.active-profile-select {
+  display: grid;
+  gap: 6px;
+  margin-top: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.active-profile-select select {
+  width: 100%;
+  height: 36px;
+  padding-inline: 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
 .source-toolbar {
   min-height: 62px;
   display: grid;
@@ -1768,6 +1899,12 @@ summary:focus-visible,
 
   .source-toolbar {
     grid-template-columns: 1fr auto;
+  }
+
+  .capture-profile-heading,
+  .capture-profile-task {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .source-tabs,

@@ -51,6 +51,16 @@ describe('App shell', () => {
           revision: null,
           sourceLabel: null,
         }),
+        getCaptureProfiles: vi.fn().mockResolvedValue({
+          revision: null,
+          activeProfileId: null,
+          profiles: [],
+        }),
+        activateCaptureProfile: vi.fn(),
+        renameCaptureProfile: vi.fn(),
+        duplicateCaptureProfile: vi.fn(),
+        deleteCaptureProfile: vi.fn(),
+        rebindCaptureProfile: vi.fn(),
         listCaptureSources: vi.fn().mockResolvedValue({
           revision: 'a'.repeat(32),
           expiresAt: Date.now() + 30_000,
@@ -157,6 +167,50 @@ describe('App shell', () => {
     expect(await screen.findByText(/Windows может показать сообщение/)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Проверить' })).toBeVisible()
     expect(screen.getByText(/Данные автоматически не отправляются/)).toBeVisible()
+  })
+
+  it('switches the active capture profile from the home page', async () => {
+    const primary = {
+      profileId: '00000000-0000-4000-8000-000000000001',
+      profileName: 'Основной',
+      isActive: true,
+      sourceLabel: 'Emulator 1',
+    }
+    const secondary = {
+      profileId: '00000000-0000-4000-8000-000000000002',
+      profileName: 'Второй',
+      isActive: false,
+      sourceLabel: 'Emulator 2',
+    }
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
+      revision: 1,
+      activeProfileId: primary.profileId,
+      profiles: [primary, secondary] as never,
+    })
+    const monitor = await window.crTools.getMonitorView()
+    vi.mocked(window.crTools.activateCaptureProfile).mockResolvedValue({
+      profiles: {
+        revision: 2,
+        activeProfileId: secondary.profileId,
+        profiles: [
+          { ...primary, isActive: false },
+          { ...secondary, isActive: true },
+        ] as never,
+      },
+      monitor,
+    })
+    render(<App />)
+
+    fireEvent.change(await screen.findByLabelText('Профиль захвата'), {
+      target: { value: secondary.profileId },
+    })
+
+    await waitFor(() =>
+      expect(window.crTools.activateCaptureProfile).toHaveBeenCalledWith({
+        profileId: secondary.profileId,
+        expectedRevision: 1,
+      }),
+    )
   })
 
   it('shows update availability in the global shell', async () => {

@@ -6,6 +6,9 @@ import {
   PredictionResultConfigurationSchema,
   type PredictionResultConfiguration,
 } from '../../../shared/models/prediction-result'
+import { CaptureProfileIdSchema } from '../../../shared/models/capture'
+import { migratedCaptureProfileId } from './capture-configuration-repository'
+import { z } from 'zod'
 
 export interface PredictionResultFileSystem {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
@@ -26,6 +29,16 @@ export const nodePredictionResultFileSystem: PredictionResultFileSystem = {
 const fileName = (userId: string): string =>
   `${createHash('sha256').update(userId).digest('hex')}.json`
 
+const profileFileName = (userId: string, profileId: string): string =>
+  `${createHash('sha256').update(userId).digest('hex')}.${CaptureProfileIdSchema.parse(profileId)}.json`
+
+const migrationFileName = (userId: string): string =>
+  `${createHash('sha256').update(userId).digest('hex')}.profiles-v2-migration.json`
+
+const MigrationSchema = z
+  .object({ schemaVersion: z.literal(1), profileId: CaptureProfileIdSchema })
+  .strict()
+
 export function predictionResultFingerprint(
   value: Omit<PredictionResultConfiguration, 'fingerprint'>,
 ): string {
@@ -33,17 +46,71 @@ export function predictionResultFingerprint(
 }
 
 export class PredictionResultConfigurationRepository {
+  #operation: Promise<void> = Promise.resolve()
+
   constructor(
     private readonly directory: string,
     private readonly fs: PredictionResultFileSystem = nodePredictionResultFileSystem,
   ) {}
 
-  async load(userId: string): Promise<PredictionResultConfiguration | null> {
+  load(
+    userId: string,
+    profileId?: string,
+  ): Promise<PredictionResultConfiguration | null> {
+    return this.serialized(async () => {
+      if (profileId === undefined) return this.readConfiguration(userId, fileName(userId))
+      const validatedProfileId = CaptureProfileIdSchema.parse(profileId)
+      const profileConfiguration = await this.readConfiguration(
+        userId,
+        profileFileName(userId, validatedProfileId),
+      )
+      if (profileConfiguration !== null) {
+        if (
+          validatedProfileId === migratedCaptureProfileId(userId) &&
+          (await this.readMigration(userId)) === null
+        ) {
+          await this.writeMigration(userId, validatedProfileId)
+        }
+        return profileConfiguration
+      }
+
+      const migration = await this.readMigration(userId)
+      if (migration !== null) return null
+      if (validatedProfileId !== migratedCaptureProfileId(userId)) return null
+      const legacy = await this.readConfiguration(userId, fileName(userId))
+      if (legacy === null) return null
+      await this.writeConfiguration(legacy, profileFileName(userId, validatedProfileId))
+      await this.writeMigration(userId, validatedProfileId)
+      return legacy
+    })
+  }
+
+  save(value: PredictionResultConfiguration, profileId?: string): Promise<void> {
+    return this.serialized(async () => {
+      const parsed = this.validate(value)
+      const destination =
+        profileId === undefined
+          ? fileName(parsed.userId)
+          : profileFileName(parsed.userId, CaptureProfileIdSchema.parse(profileId))
+      await this.writeConfiguration(parsed, destination)
+    })
+  }
+
+  delete(userId: string, profileId: string): Promise<void> {
+    return this.serialized(async () => {
+      await this.fs.rm(join(this.directory, profileFileName(userId, profileId)), {
+        force: true,
+      })
+    })
+  }
+
+  private async readConfiguration(
+    userId: string,
+    name: string,
+  ): Promise<PredictionResultConfiguration | null> {
     try {
       const parsed = PredictionResultConfigurationSchema.parse(
-        JSON.parse(
-          await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8'),
-        ),
+        JSON.parse(await this.fs.readFile(join(this.directory, name), 'utf8')),
       )
       if (parsed.userId !== userId) return null
       const { fingerprint, ...unsigned } = parsed
@@ -60,13 +127,21 @@ export class PredictionResultConfigurationRepository {
     }
   }
 
-  async save(value: PredictionResultConfiguration): Promise<void> {
+  private validate(value: PredictionResultConfiguration): PredictionResultConfiguration {
     const parsed = PredictionResultConfigurationSchema.parse(value)
     const { fingerprint, ...unsigned } = parsed
     if (predictionResultFingerprint(unsigned) !== fingerprint)
       throw new Error('Result configuration fingerprint is invalid')
+    return parsed
+  }
+
+  private async writeConfiguration(
+    value: PredictionResultConfiguration,
+    name: string,
+  ): Promise<void> {
+    const parsed = this.validate(value)
     await this.fs.mkdir(this.directory, { recursive: true })
-    const destination = join(this.directory, fileName(parsed.userId))
+    const destination = join(this.directory, name)
     const temporary = `${destination}.${randomUUID()}.tmp`
     try {
       await this.fs.writeFile(temporary, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
@@ -75,5 +150,55 @@ export class PredictionResultConfigurationRepository {
       await this.fs.rm(temporary, { force: true })
       throw error
     }
+  }
+
+  private async readMigration(
+    userId: string,
+  ): Promise<z.infer<typeof MigrationSchema> | null> {
+    try {
+      return MigrationSchema.parse(
+        JSON.parse(
+          await this.fs.readFile(join(this.directory, migrationFileName(userId)), 'utf8'),
+        ),
+      )
+    } catch (error) {
+      if (this.fileNotFound(error)) return null
+      throw error
+    }
+  }
+
+  private async writeMigration(userId: string, profileId: string): Promise<void> {
+    await this.fs.mkdir(this.directory, { recursive: true })
+    const destination = join(this.directory, migrationFileName(userId))
+    const temporary = `${destination}.${randomUUID()}.tmp`
+    try {
+      await this.fs.writeFile(
+        temporary,
+        `${JSON.stringify(MigrationSchema.parse({ schemaVersion: 1, profileId }), null, 2)}\n`,
+        'utf8',
+      )
+      await this.fs.rename(temporary, destination)
+    } catch (error) {
+      await this.fs.rm(temporary, { force: true })
+      throw error
+    }
+  }
+
+  private fileNotFound(error: unknown): boolean {
+    return (
+      error !== null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    )
+  }
+
+  private serialized<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#operation.then(operation, operation)
+    this.#operation = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 }

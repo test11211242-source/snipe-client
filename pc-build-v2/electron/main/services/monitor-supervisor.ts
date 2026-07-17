@@ -68,6 +68,7 @@ export class MonitorSupervisor {
   #pendingAction: MonitorAction | null = null
   #startPromise: Promise<MonitorView> | null = null
   #stopPromise: Promise<MonitorView> | null = null
+  #stopIntentGeneration = 0
   readonly #resultListeners = new Set<(result: MonitorResult) => void | Promise<void>>()
   readonly #battleStartListeners = new Set<(timestamp: string) => void | Promise<void>>()
   readonly #predictionResultListeners = new Set<
@@ -165,7 +166,9 @@ export class MonitorSupervisor {
   ): Promise<MonitorView> {
     this.#predictionProfile =
       profile === null ? null : PredictionRuntimeProfileSchema.parse(profile)
-    return this.#view.state === 'READY' ? this.restart() : this.#view
+    return ['PREFLIGHT', 'STARTING', 'READY'].includes(this.#view.state)
+      ? this.restart()
+      : this.#view
   }
 
   isRunning(): boolean {
@@ -245,6 +248,7 @@ export class MonitorSupervisor {
   }
 
   stop(): Promise<MonitorView> {
+    ++this.#stopIntentGeneration
     if (this.#stopPromise !== null) return this.#stopPromise
     if (this.#view.state === 'STOPPED') return Promise.resolve(this.#view)
     const generation = ++this.#generation
@@ -276,8 +280,16 @@ export class MonitorSupervisor {
   }
 
   async restart(): Promise<MonitorView> {
+    const expectedStopIntent = this.#stopIntentGeneration + 1
     await this.stop()
+    if (this.#stopIntentGeneration !== expectedStopIntent) return this.#view
     return this.start()
+  }
+
+  restartIfActive(): Promise<MonitorView> {
+    return ['PREFLIGHT', 'STARTING', 'READY'].includes(this.#view.state)
+      ? this.restart()
+      : Promise.resolve(this.#view)
   }
 
   async getPreferences(): Promise<MonitorPreferences> {

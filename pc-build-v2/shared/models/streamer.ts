@@ -119,7 +119,7 @@ export const StreamerViewSchema = z
       .object({
         active: z.boolean(),
         state: z.string().max(64),
-        runtimeState: z.enum(['stopped', 'active', 'failed', 'unknown']),
+        runtimeState: z.enum(['stopped', 'starting', 'active', 'failed', 'unknown']),
         settings: PredictionPreferencesSchema,
         statistics: z
           .object({

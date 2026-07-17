@@ -24,6 +24,7 @@ import type { AppSettingsController } from '../services/app-settings-controller'
 import type { NotificationService } from '../services/notification-service'
 import type { ReprocessedResultService } from '../services/reprocessed-result-service'
 import type { CapturePreparationService } from '../services/capture-preparation-service'
+import type { CaptureProfileService } from '../services/capture-profile-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
 import { ApplicationLifecycle } from './lifecycle'
 import { installDenyAllSessionPermissions } from '../services/session-permissions'
@@ -54,6 +55,7 @@ export class ApplicationController {
     private readonly streamer: StreamerService,
     private readonly updater: UpdateService,
     private readonly capturePreparations: CapturePreparationService,
+    private readonly captureProfiles: CaptureProfileService,
   ) {}
 
   async start(): Promise<void> {
@@ -90,6 +92,7 @@ export class ApplicationController {
       logger: this.logger,
       registry: this.captureSources,
       preparations: this.capturePreparations,
+      profiles: this.captureProfiles,
       setup: this.setup,
     })
     const disposeMonitorIpc = registerMonitorIpc({

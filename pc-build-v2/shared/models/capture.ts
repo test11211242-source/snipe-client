@@ -122,6 +122,10 @@ export const CapturePreferenceSchema = z.discriminatedUnion('kind', [
       label: z.string().min(1).max(300),
       titleHint: z.string().min(1).max(300),
       executableLabel: z.string().min(1).max(120).nullable(),
+      windowHwnd: z
+        .string()
+        .regex(/^[1-9]\d{0,18}$/)
+        .optional(),
     })
     .strict(),
   z
@@ -147,6 +151,151 @@ export const CaptureConfigurationSchema = z
   })
   .strict()
 
+export const MAX_CAPTURE_PROFILES = 20
+
+export const CaptureProfileIdSchema = z.uuid()
+export const CaptureProfileNameSchema = z.string().trim().min(1).max(80)
+
+export const CaptureProfileSchema = z
+  .object({
+    profileId: CaptureProfileIdSchema,
+    profileName: CaptureProfileNameSchema,
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    configuration: CaptureConfigurationSchema,
+  })
+  .strict()
+
+export const CaptureProfileCollectionSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    userId: z.string().min(1).max(128),
+    revision: z.number().int().positive(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    activeProfileId: CaptureProfileIdSchema,
+    profiles: z.array(CaptureProfileSchema).min(1).max(MAX_CAPTURE_PROFILES),
+  })
+  .strict()
+  .superRefine((collection, context) => {
+    const profileIds = new Set<string>()
+    const profileNames = new Set<string>()
+    let activeProfileCount = 0
+
+    for (const [index, profile] of collection.profiles.entries()) {
+      if (profileIds.has(profile.profileId)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Profile IDs must be unique',
+          path: ['profiles', index, 'profileId'],
+        })
+      }
+      profileIds.add(profile.profileId)
+
+      const normalizedName = profile.profileName.toLowerCase()
+      if (profileNames.has(normalizedName)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Profile names must be unique ignoring case',
+          path: ['profiles', index, 'profileName'],
+        })
+      }
+      profileNames.add(normalizedName)
+
+      if (profile.profileId === collection.activeProfileId) activeProfileCount += 1
+      if (profile.configuration.userId !== collection.userId) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Profile configuration userId must match collection userId',
+          path: ['profiles', index, 'configuration', 'userId'],
+        })
+      }
+    }
+
+    if (activeProfileCount !== 1) {
+      context.addIssue({
+        code: 'custom',
+        message: 'activeProfileId must identify exactly one profile',
+        path: ['activeProfileId'],
+      })
+    }
+  })
+
+export const CaptureProfileSummarySchema = z
+  .object({
+    profileId: CaptureProfileIdSchema,
+    profileName: CaptureProfileNameSchema,
+    isActive: z.boolean(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    configurationRevision: z.number().int().positive(),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    committedAt: z.iso.datetime(),
+    sourceKind: CaptureSourceKindSchema,
+    sourceLabel: z.string().min(1).max(300),
+  })
+  .strict()
+
+export const CaptureProfileCollectionStatusSchema = z
+  .object({
+    userId: z.string().min(1).max(128),
+    revision: z.number().int().positive(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    activeProfileId: CaptureProfileIdSchema,
+    profileCount: z.number().int().min(1).max(MAX_CAPTURE_PROFILES),
+    profiles: z.array(CaptureProfileSummarySchema).min(1).max(MAX_CAPTURE_PROFILES),
+  })
+  .strict()
+  .superRefine((status, context) => {
+    if (status.profileCount !== status.profiles.length) {
+      context.addIssue({
+        code: 'custom',
+        message: 'profileCount must match profiles length',
+        path: ['profileCount'],
+      })
+    }
+    const activeProfiles = status.profiles.filter(
+      (profile) => profile.profileId === status.activeProfileId && profile.isActive,
+    )
+    if (
+      activeProfiles.length !== 1 ||
+      status.profiles.some(
+        (profile) => profile.profileId !== status.activeProfileId && profile.isActive,
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Exactly the active profile must have isActive set',
+        path: ['profiles'],
+      })
+    }
+  })
+
+export const CaptureProfilesViewSchema = z
+  .object({
+    revision: z.number().int().positive().nullable(),
+    activeProfileId: CaptureProfileIdSchema.nullable(),
+    profiles: z.array(CaptureProfileSummarySchema).max(MAX_CAPTURE_PROFILES),
+  })
+  .strict()
+  .superRefine((view, context) => {
+    if (
+      (view.profiles.length === 0 &&
+        (view.revision !== null || view.activeProfileId !== null)) ||
+      (view.profiles.length > 0 &&
+        (view.revision === null ||
+          view.activeProfileId === null ||
+          !view.profiles.some(
+            (profile) => profile.profileId === view.activeProfileId && profile.isActive,
+          )))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Capture profile view active state is invalid',
+        path: ['activeProfileId'],
+      })
+    }
+  })
+
 export const CaptureStatusSchema = z
   .object({
     configured: z.boolean(),
@@ -166,4 +315,11 @@ export type NormalizedRegions = z.infer<typeof NormalizedRegionsSchema>
 export type TriggerProfile = z.infer<typeof TriggerProfileSchema>
 export type CapturePreference = z.infer<typeof CapturePreferenceSchema>
 export type CaptureConfiguration = z.infer<typeof CaptureConfigurationSchema>
+export type CaptureProfile = z.infer<typeof CaptureProfileSchema>
+export type CaptureProfileCollection = z.infer<typeof CaptureProfileCollectionSchema>
+export type CaptureProfileSummary = z.infer<typeof CaptureProfileSummarySchema>
+export type CaptureProfileCollectionStatus = z.infer<
+  typeof CaptureProfileCollectionStatusSchema
+>
+export type CaptureProfilesView = z.infer<typeof CaptureProfilesViewSchema>
 export type CaptureStatus = z.infer<typeof CaptureStatusSchema>

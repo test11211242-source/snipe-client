@@ -35,6 +35,8 @@ function setupView(overrides: Partial<SetupSessionView> = {}): SetupSessionView 
     generation: 7,
     state: 'SELECTING',
     source: { kind: 'display', label: 'Основной экран', displayId: 'display-1' },
+    profileId: '00000000-0000-4000-8000-000000000010',
+    profileName: 'Основной',
     frameSize: { width: 800, height: 450 },
     regions: {
       trigger: TRIGGER,

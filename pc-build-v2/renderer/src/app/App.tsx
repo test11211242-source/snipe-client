@@ -32,6 +32,7 @@ const RESOURCE_LABELS = {
   auth: 'профиль',
   realtime: 'обновления в реальном времени',
   capture: 'захват',
+  profiles: 'профили захвата',
   monitor: 'мониторинг',
   widget: 'виджет',
   settings: 'настройки',
@@ -48,6 +49,7 @@ export function App(): React.JSX.Element {
     retry,
     setAuth,
     setCapture,
+    setProfiles,
     setMonitor,
     setWidget,
     setSettings,
@@ -80,6 +82,7 @@ export function App(): React.JSX.Element {
     ['auth', data.auth],
     ['realtime', data.realtime],
     ['capture', data.capture],
+    ['profiles', data.profiles],
     ['monitor', data.monitor],
     ['widget', data.widget],
     ['settings', data.settings],
@@ -242,13 +245,22 @@ export function App(): React.JSX.Element {
             <HomePage
               auth={data.auth.value}
               captureStatus={data.capture.value}
+              profiles={data.profiles.value}
               monitorView={data.monitor.value}
               onMonitorView={setMonitor}
+              onProfiles={setProfiles}
+              onCaptureStatus={setCapture}
               onConfigure={() => setSection('capture')}
               onOpenWidget={() => void openWidget()}
             />
           ) : section === 'capture' ? (
-            <CapturePage status={data.capture.value} onStatus={setCapture} />
+            <CapturePage
+              status={data.capture.value}
+              profiles={data.profiles.value}
+              onStatus={setCapture}
+              onProfiles={setProfiles}
+              onMonitor={setMonitor}
+            />
           ) : section === 'settings' ? (
             <SettingsPage
               status={data.widget.value}

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { MonitorStartPayload } from '../../../shared/contracts/monitor-protocol'
 import type { MonitorProcessListener } from './monitor-process-service'
 import { MonitorSupervisor } from './monitor-supervisor'
 
@@ -64,7 +65,7 @@ function harness(
   }
   const targetResolver = { resolve: vi.fn(() => resolveTarget) }
   const process = {
-    start: vi.fn((_payload, listener: MonitorProcessListener) => {
+    start: vi.fn((_payload: MonitorStartPayload, listener: MonitorProcessListener) => {
       processListener = listener
       return Promise.resolve('session')
     }),
@@ -143,6 +144,43 @@ describe('MonitorSupervisor concurrency', () => {
     await expect(stopped).resolves.toMatchObject({ state: 'STOPPED' })
     await expect(starting).resolves.toMatchObject({ state: 'STOPPED' })
     expect(test.process.start).not.toHaveBeenCalled()
+  })
+
+  it('restarts an in-flight preflight when the prediction runtime changes', async () => {
+    const target = deferred<{
+      configuration: typeof configuration
+      selector: { kind: 'window'; windowHwnd: string }
+    }>()
+    const test = harness(target.promise)
+    const starting = test.supervisor.start()
+    const configuring = test.supervisor.configurePredictionRuntime({
+      configuredFrameSize: configuration.frameSize,
+      trigger: configuration.regions.trigger,
+      data: configuration.regions.normal,
+      triggerProfile: configuration.triggerProfile,
+    })
+    target.resolve({ configuration, selector: { kind: 'window', windowHwnd: '12' } })
+
+    await starting
+    await expect(configuring).resolves.toMatchObject({ state: 'READY' })
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.start.mock.calls[0]?.[0].prediction?.configuredFrameSize).toEqual(
+      configuration.frameSize,
+    )
+  })
+
+  it('does not restart when a user stop joins an internal restart', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    const stopping = deferred<undefined>()
+    test.process.stop.mockReturnValueOnce(stopping.promise)
+    const restart = test.supervisor.restart()
+    const userStop = test.supervisor.stop()
+    stopping.resolve(undefined)
+
+    await Promise.all([restart, userStop])
+    expect((await test.supervisor.getView()).state).toBe('STOPPED')
+    expect(test.process.start).toHaveBeenCalledTimes(1)
   })
 
   it('uses the precise delayed-capture policy only for precise search', async () => {

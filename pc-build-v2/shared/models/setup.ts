@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { PublicErrorSchema } from '../errors/application-error'
 import {
   CapturePreferenceSchema,
+  CaptureProfileIdSchema,
+  CaptureProfileNameSchema,
   NormalizedRectSchema,
   NormalizedRegionsSchema,
   PixelSizeSchema,
@@ -29,6 +31,8 @@ export const SetupSessionViewSchema = z
     generation: z.number().int().nonnegative(),
     state: SetupStateSchema,
     source: CapturePreferenceSchema,
+    profileId: CaptureProfileIdSchema.nullable().default(null),
+    profileName: CaptureProfileNameSchema.nullable().default(null),
     frameSize: PixelSizeSchema.nullable(),
     regions: z
       .object({

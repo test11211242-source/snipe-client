@@ -314,9 +314,14 @@ export class StreamerService {
       refresh: { ...this.#view.refresh, state: 'refreshing', errors: [] },
     })
     const userId = authView.user.id
+    const captureProfiles = await this.captureConfigurations
+      .list(userId)
+      .catch(() => null)
     const local = await Promise.allSettled([
       this.preferences.load(userId),
-      this.resultConfigurations.load(userId),
+      captureProfiles === null
+        ? Promise.resolve(null)
+        : this.resultConfigurations.load(userId, captureProfiles.activeProfileId),
       this.captureConfigurations.load(userId),
       this.monitor.getView(),
     ])

@@ -69,6 +69,7 @@ describe('ApplicationController user context', () => {
       streamer as never,
       {} as never,
       capturePreparations as never,
+      {} as never,
     )
     const syncWindows = (
       controller as unknown as { syncWindows: (view: AuthView) => Promise<void> }

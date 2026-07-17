@@ -63,6 +63,7 @@ import { launchVerifiedInstaller } from './services/launch-verified-installer'
 import { ReprocessedResultService } from './services/reprocessed-result-service'
 import { PreparedCaptureProcessService } from './services/prepared-capture-process-service'
 import { CapturePreparationService } from './services/capture-preparation-service'
+import { CaptureProfileService } from './services/capture-profile-service'
 
 app.setName('CR Tools V2')
 
@@ -98,8 +99,9 @@ const settingsRepository = new SettingsRepository(
 )
 const settings = new AppSettingsController(settingsRepository, app, logger)
 const captureConfigurations = new CaptureConfigurationRepository(
-  join(app.getPath('userData'), 'capture-config.v1'),
+  join(app.getPath('userData'), 'capture-profiles.v2'),
   nodeCaptureConfigurationFileSystem,
+  { legacyDirectory: join(app.getPath('userData'), 'capture-config.v1') },
 )
 const pythonRoot = import.meta.env.PROD
   ? join(process.resourcesPath, 'python')
@@ -180,11 +182,31 @@ const predictionPreferences = new PredictionPreferencesRepository(
   join(app.getPath('userData'), 'prediction-preferences.v1'),
   nodePredictionPreferencesFileSystem,
 )
+let captureProfiles: CaptureProfileService | null = null
 const predictions = new PredictionCoordinator(
   auth,
   authenticatedApi,
   predictionResults,
   monitor,
+  captureConfigurations,
+  (operation) => {
+    if (captureProfiles === null)
+      throw new Error('Capture profile service is unavailable')
+    return captureProfiles.runCaptureCommit(operation)
+  },
+)
+captureProfiles = new CaptureProfileService(
+  auth,
+  captureConfigurations,
+  targetResolver,
+  monitor,
+  () => predictions.state,
+  predictionResults,
+)
+setup.configureCaptureProfileLifecycle(
+  () => captureProfiles.assertCanChangeProfile(),
+  () => captureProfiles.captureSetupCommitted(),
+  (operation) => captureProfiles.runCaptureCommit(operation),
 )
 const streamer = new StreamerService(
   auth,
@@ -245,6 +267,7 @@ const application = new ApplicationController(
   streamer,
   updater,
   capturePreparations,
+  captureProfiles,
 )
 requestApplicationShutdown = () => application.requestShutdown()
 

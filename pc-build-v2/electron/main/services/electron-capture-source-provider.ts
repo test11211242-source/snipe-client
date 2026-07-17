@@ -10,6 +10,8 @@ import type {
 
 const DISPLAY_HELPER_TIMEOUT_MS = 5_000
 const DISPLAY_HELPER_MAX_BYTES = 64 * 1024
+const WINDOW_METADATA_TIMEOUT_MS = 5_000
+const WINDOW_METADATA_MAX_BYTES = 256 * 1024
 const DISPLAY_DEVICE_PATTERN = /^\\\\\.\\DISPLAY[1-9]\d*$/
 const POWERSHELL_DISPLAY_COMMAND = String.raw`$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CrToolsDpi { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value); }'
@@ -17,6 +19,21 @@ if (-not [CrToolsDpi]::SetProcessDpiAwarenessContext([IntPtr](-4))) { throw 'DPI
 Add-Type -AssemblyName System.Windows.Forms
 $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [ordered]@{ deviceName = $_.DeviceName; bounds = [ordered]@{ x = $_.Bounds.X; y = $_.Bounds.Y; width = $_.Bounds.Width; height = $_.Bounds.Height } } })
 ConvertTo-Json -InputObject $screens -Compress -Depth 4`
+const POWERSHELL_WINDOW_METADATA_COMMAND = String.raw`param([Parameter(Mandatory=$true)][string]$Handles)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CrToolsWindowMetadata { [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId); }'
+$items = @()
+foreach ($rawHandle in $Handles.Split(',')) {
+  [long]$handle = 0
+  if (-not [long]::TryParse($rawHandle, [ref]$handle) -or $handle -le 0) { continue }
+  [uint32]$processId = 0
+  [void][CrToolsWindowMetadata]::GetWindowThreadProcessId([IntPtr]$handle, [ref]$processId)
+  if ($processId -eq 0) { continue }
+  try { $executable = "$(Get-Process -Id $processId -ErrorAction Stop | Select-Object -ExpandProperty ProcessName).exe" } catch { $executable = $null }
+  if ($null -ne $executable -and $executable.Length -gt 120) { $executable = $executable.Substring(0, 120) }
+  $items += [ordered]@{ windowHwnd = $handle.ToString(); ownerProcessId = [int64]$processId; executableLabel = $executable }
+}
+ConvertTo-Json -InputObject @($items) -Compress -Depth 3`
 
 interface PhysicalBounds {
   x: number
@@ -31,6 +48,16 @@ export interface WindowsPhysicalDisplay {
 }
 
 export type PhysicalDisplayResolver = () => Promise<WindowsPhysicalDisplay[]>
+
+export interface WindowsWindowMetadata {
+  windowHwnd: string
+  ownerProcessId: number
+  executableLabel: string | null
+}
+
+export type WindowMetadataResolver = (
+  windowHandles: readonly string[],
+) => Promise<WindowsWindowMetadata[]>
 
 function validInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value)
@@ -115,6 +142,77 @@ export const resolveWindowsPhysicalDisplays: PhysicalDisplayResolver = () =>
     )
   })
 
+export const resolveWindowsWindowMetadata: WindowMetadataResolver = (windowHandles) =>
+  new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      reject(new Error('Windows window metadata helper is unavailable'))
+      return
+    }
+    if (windowHandles.length === 0) {
+      resolve([])
+      return
+    }
+    nodeExecFile(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        POWERSHELL_WINDOW_METADATA_COMMAND,
+        '-Handles',
+        windowHandles.join(','),
+      ],
+      {
+        encoding: 'utf8',
+        timeout: WINDOW_METADATA_TIMEOUT_MS,
+        maxBuffer: WINDOW_METADATA_MAX_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout) => {
+        if (error !== null) {
+          reject(
+            error instanceof Error ? error : new Error('Window metadata helper failed'),
+          )
+          return
+        }
+        try {
+          const raw: unknown = JSON.parse(stdout)
+          const entries = Array.isArray(raw) ? raw : [raw]
+          if (entries.length > 512) throw new Error('Window metadata list is too large')
+          const parsed: WindowsWindowMetadata[] = []
+          for (const entry of entries) {
+            if (typeof entry !== 'object' || entry === null) continue
+            const record = entry as Record<string, unknown>
+            if (
+              Object.keys(record).length !== 3 ||
+              typeof record['windowHwnd'] !== 'string' ||
+              !/^[1-9]\d{0,18}$/.test(record['windowHwnd']) ||
+              !validInteger(record['ownerProcessId']) ||
+              record['ownerProcessId'] <= 0 ||
+              (record['executableLabel'] !== null &&
+                (typeof record['executableLabel'] !== 'string' ||
+                  record['executableLabel'].length < 1 ||
+                  record['executableLabel'].length > 120))
+            ) {
+              continue
+            }
+            parsed.push({
+              windowHwnd: record['windowHwnd'],
+              ownerProcessId: record['ownerProcessId'],
+              executableLabel: record['executableLabel'],
+            })
+          }
+          resolve(parsed)
+        } catch (cause) {
+          reject(
+            cause instanceof Error ? cause : new Error('Window metadata output failed'),
+          )
+        }
+      },
+    )
+  })
+
 function boundsKey(bounds: PhysicalBounds): string {
   return `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
 }
@@ -134,6 +232,7 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
 
   constructor(
     private readonly physicalDisplays: PhysicalDisplayResolver = resolveWindowsPhysicalDisplays,
+    private readonly windowMetadata: WindowMetadataResolver = resolveWindowsWindowMetadata,
   ) {}
 
   async enumerate(thumbnailSize: { width: number; height: number }) {
@@ -142,12 +241,33 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
       thumbnailSize,
       fetchWindowIcons: false,
     })
-    return sources.map<ElectronCaptureSource>((source) => ({
-      id: source.id,
-      name: source.name,
-      displayId: source.display_id,
-      thumbnail: source.thumbnail,
-    }))
+    const handles = sources
+      .map((source) => /^window:(\d+):0$/.exec(source.id)?.[1])
+      .filter((value): value is string => value !== undefined)
+    const metadata = new Map(
+      (await this.windowMetadata(handles).catch(() => [])).map((entry) => [
+        entry.windowHwnd,
+        entry,
+      ]),
+    )
+    return sources.map<ElectronCaptureSource>((source) => {
+      const handle = /^window:(\d+):0$/.exec(source.id)?.[1]
+      const details = handle === undefined ? undefined : metadata.get(handle)
+      return {
+        id: source.id,
+        name: source.name,
+        displayId: source.display_id,
+        thumbnail: source.thumbnail,
+        ...(details === undefined
+          ? {}
+          : {
+              ownerProcessId: details.ownerProcessId,
+              ...(details.executableLabel === null
+                ? {}
+                : { executableLabel: details.executableLabel }),
+            }),
+      }
+    })
   }
 
   async displays(): Promise<ElectronDisplayInfo[]> {

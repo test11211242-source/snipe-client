@@ -5,6 +5,7 @@ import { hasStreamerRole } from '../../../shared/models/auth'
 import type { PredictionRuntimeProfile } from '../../../shared/models/prediction-result'
 import type { PredictionPreferences } from '../../../shared/models/streamer'
 import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
+import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
 import type { MonitorAction } from './monitor-process-service'
@@ -15,7 +16,8 @@ const TwitchSchema = z
   .object({ connected: z.boolean(), success: z.boolean().optional() })
   .loose()
 
-export type PredictionRuntimeState = 'stopped' | 'active' | 'failed' | 'unknown'
+export type PredictionRuntimeState =
+  'stopped' | 'starting' | 'active' | 'failed' | 'unknown'
 
 export class PredictionCoordinator {
   #state: PredictionRuntimeState = 'stopped'
@@ -34,6 +36,10 @@ export class PredictionCoordinator {
     private readonly api: AuthenticatedApiClient,
     private readonly results: PredictionResultConfigurationRepository,
     private readonly monitor: MonitorSupervisor,
+    private readonly captures?: CaptureConfigurationRepository,
+    private readonly runLifecycle: (operation: () => Promise<void>) => Promise<void> = (
+      operation,
+    ) => operation(),
   ) {}
 
   get state(): PredictionRuntimeState {
@@ -56,98 +62,144 @@ export class PredictionCoordinator {
     )
   }
 
-  async start(settings: PredictionPreferences): Promise<void> {
+  start(settings: PredictionPreferences): Promise<void> {
     const generation = ++this.#generation
+    return this.runLifecycle(() => {
+      if (generation !== this.#generation) {
+        throw new ApplicationError(
+          'PREDICTION_CANCELLED',
+          'Prediction start was cancelled',
+        )
+      }
+      return this.performStart(settings, generation)
+    })
+  }
+
+  private async performStart(
+    settings: PredictionPreferences,
+    generation: number,
+  ): Promise<void> {
     this.#eventController.abort()
     this.#eventController = new AbortController()
     const view = this.auth.getView()
     if (!hasStreamerRole(view) || view.user === null) {
       throw new ApplicationError('STREAMER_ROLE_REQUIRED', 'Streamer role is required')
     }
-    const [configuration, twitch] = await Promise.all([
-      this.results.load(view.user.id),
-      this.api.request({
-        method: 'GET',
-        path: '/api/streamer/auth/status',
-        schema: TwitchSchema,
-        signal: this.#eventController.signal,
-      }),
-    ])
-    if (generation !== this.#generation) {
-      throw new ApplicationError('PREDICTION_CANCELLED', 'Prediction start was cancelled')
-    }
-    if (configuration === null) {
-      throw new ApplicationError(
-        'RESULT_SETUP_REQUIRED',
-        'Configure result trigger and data areas first',
-      )
-    }
-    if (!twitch.ok || !twitch.data.connected) {
-      throw new ApplicationError(
-        'TWITCH_REQUIRED',
-        'Connect Twitch before starting predictions',
-      )
-    }
-
-    const started = await this.api.request({
-      method: 'POST',
-      path: '/api/streamer/bot/start',
-      body: {
-        prediction_type: settings.predictionType,
-        prediction_window: settings.predictionWindow,
-        win_streak_count: settings.winStreakCount,
-        delay_between_predictions: settings.delayBetweenPredictions,
-        auto_create_next: settings.autoCreateNext,
-      },
-      schema: SuccessSchema,
-      signal: this.#eventController.signal,
-    })
-    if (!started.ok) {
-      throw new ApplicationError('PREDICTION_START_FAILED', started.error.message)
-    }
-    if (generation !== this.#generation) {
-      await this.stopServer().catch(() => false)
-      throw new ApplicationError('PREDICTION_CANCELLED', 'Prediction start was cancelled')
-    }
-    const profile: PredictionRuntimeProfile = {
-      configuredFrameSize: configuration.frameSize,
-      trigger: configuration.trigger,
-      data: configuration.data,
-      triggerProfile: configuration.triggerProfile,
-    }
-    const wasRunning = this.monitor.isRunning()
+    const userId = view.user.id
+    this.#state = 'starting'
     try {
-      const configured = await this.monitor.configurePredictionRuntime(profile)
-      if (wasRunning && configured.state !== 'READY') {
-        throw new Error('monitor restart did not become ready')
-      }
-      if (!wasRunning) {
-        const monitorView = await this.monitor.start()
-        if (monitorView.state !== 'READY') throw new Error('monitor did not become ready')
-      }
-      if (generation !== this.#generation)
-        throw new Error('prediction start became stale')
-      this.#monitorOwned = !wasRunning
-      this.#state = 'active'
-    } catch (error) {
-      const rollback = await this.stopServer().catch(() => false)
-      await this.monitor.configurePredictionRuntime(null).catch(() => undefined)
+      const configurationRequest =
+        this.captures === undefined
+          ? this.results.load(userId)
+          : this.captures
+              .list(userId)
+              .then((profiles) =>
+                profiles === null
+                  ? null
+                  : this.results.load(userId, profiles.activeProfileId),
+              )
+      const [configuration, twitch] = await Promise.all([
+        configurationRequest,
+        this.api.request({
+          method: 'GET',
+          path: '/api/streamer/auth/status',
+          schema: TwitchSchema,
+          signal: this.#eventController.signal,
+        }),
+      ])
       if (generation !== this.#generation) {
-        this.#state = 'stopped'
         throw new ApplicationError(
           'PREDICTION_CANCELLED',
           'Prediction start was cancelled',
+        )
+      }
+      if (configuration === null) {
+        throw new ApplicationError(
+          'RESULT_SETUP_REQUIRED',
+          'Configure result trigger and data areas first',
+        )
+      }
+      if (!twitch.ok || !twitch.data.connected) {
+        throw new ApplicationError(
+          'TWITCH_REQUIRED',
+          'Connect Twitch before starting predictions',
+        )
+      }
+
+      const started = await this.api.request({
+        method: 'POST',
+        path: '/api/streamer/bot/start',
+        body: {
+          prediction_type: settings.predictionType,
+          prediction_window: settings.predictionWindow,
+          win_streak_count: settings.winStreakCount,
+          delay_between_predictions: settings.delayBetweenPredictions,
+          auto_create_next: settings.autoCreateNext,
+        },
+        schema: SuccessSchema,
+        signal: this.#eventController.signal,
+      })
+      if (!started.ok) {
+        throw new ApplicationError('PREDICTION_START_FAILED', started.error.message)
+      }
+      if (generation !== this.#generation) {
+        await this.stopServer().catch(() => false)
+        throw new ApplicationError(
+          'PREDICTION_CANCELLED',
+          'Prediction start was cancelled',
+        )
+      }
+      const profile: PredictionRuntimeProfile = {
+        configuredFrameSize: configuration.frameSize,
+        trigger: configuration.trigger,
+        data: configuration.data,
+        triggerProfile: configuration.triggerProfile,
+      }
+      const monitorBefore = await this.monitor.getView()
+      const wasRunning = ['PREFLIGHT', 'STARTING', 'READY'].includes(monitorBefore.state)
+      try {
+        const configured = await this.monitor.configurePredictionRuntime(profile)
+        if (wasRunning && configured.state !== 'READY') {
+          throw new Error('monitor restart did not become ready')
+        }
+        if (!wasRunning) {
+          const monitorView = await this.monitor.start()
+          if (monitorView.state !== 'READY')
+            throw new Error('monitor did not become ready')
+        }
+        if (generation !== this.#generation)
+          throw new Error('prediction start became stale')
+        this.#monitorOwned = !wasRunning
+        this.#state = 'active'
+      } catch (error) {
+        const rollback = await this.stopServer().catch(() => false)
+        await this.monitor.configurePredictionRuntime(null).catch(() => undefined)
+        if (generation !== this.#generation) {
+          this.#state = 'stopped'
+          throw new ApplicationError(
+            'PREDICTION_CANCELLED',
+            'Prediction start was cancelled',
+            { cause: error },
+          )
+        }
+        this.#state = rollback ? 'failed' : 'unknown'
+        throw new ApplicationError(
+          rollback ? 'PREDICTION_LOCAL_START_FAILED' : 'PREDICTION_ROLLBACK_UNKNOWN',
+          rollback
+            ? 'Predictions were stopped because the local monitor could not restart'
+            : 'Local monitor failed and server rollback could not be confirmed',
           { cause: error },
         )
       }
-      this.#state = rollback ? 'failed' : 'unknown'
-      throw new ApplicationError(
-        rollback ? 'PREDICTION_LOCAL_START_FAILED' : 'PREDICTION_ROLLBACK_UNKNOWN',
-        rollback
-          ? 'Predictions were stopped because the local monitor could not restart'
-          : 'Local monitor failed and server rollback could not be confirmed',
-        { cause: error },
-      )
+    } catch (error) {
+      this.resetStartingState(generation)
+      throw error
+    }
+  }
+
+  private resetStartingState(generation: number): void {
+    if (generation === this.#generation && this.#state === 'starting') {
+      this.#state = 'stopped'
     }
   }
 

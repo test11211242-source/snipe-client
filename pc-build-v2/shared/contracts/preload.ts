@@ -5,12 +5,19 @@ import type { ActivateInvitePayload, LoginPayload, RegisterPayload } from './aut
 import type { AppSettingsView, HelloResult } from './app'
 import type {
   CapturePreparationResult,
+  CaptureProfileCommand,
+  CaptureProfileNamePayload,
   PreviewPayload,
+  RebindCaptureProfilePayload,
   SetRegionPayload,
   SetupCommand,
   StartSetupPayload,
 } from './capture-ipc'
-import type { CaptureSourceSnapshot, CaptureStatus } from '../models/capture'
+import type {
+  CaptureProfilesView,
+  CaptureSourceSnapshot,
+  CaptureStatus,
+} from '../models/capture'
 import type { SetupFrame, SetupSessionView } from '../models/setup'
 import type { MonitorPreferences, MonitorView } from '../models/monitor'
 import type { WidgetSettings, WidgetStatus, WidgetView } from '../models/widget'
@@ -37,6 +44,22 @@ export interface CrToolsApi {
   releaseCaptureSource: (payload: PreviewPayload) => Promise<{ released: boolean }>
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>
   getCaptureStatus: () => Promise<CaptureStatus>
+  getCaptureProfiles: () => Promise<CaptureProfilesView>
+  activateCaptureProfile: (
+    payload: CaptureProfileCommand,
+  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
+  renameCaptureProfile: (
+    payload: CaptureProfileNamePayload,
+  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
+  duplicateCaptureProfile: (
+    payload: CaptureProfileNamePayload,
+  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
+  deleteCaptureProfile: (
+    payload: CaptureProfileCommand,
+  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
+  rebindCaptureProfile: (
+    payload: RebindCaptureProfilePayload,
+  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
   getMonitorView: () => Promise<MonitorView>
   startMonitor: () => Promise<MonitorView>
   stopMonitor: () => Promise<MonitorView>

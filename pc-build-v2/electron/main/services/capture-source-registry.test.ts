@@ -86,6 +86,7 @@ describe('CaptureSourceRegistry', () => {
     )
     const resolved = await registry.resolve(largeHandle.sourceKey, result.revision)
     expect(resolved.selector).toEqual({ kind: 'window', windowHwnd: '9007199254740993' })
+    expect(resolved.preference).toMatchObject({ windowHwnd: '9007199254740993' })
   })
 
   it('returns previews from one enumeration and fails closed for stale entries', async () => {
@@ -191,6 +192,29 @@ describe('CaptureSourceRegistry', () => {
     await expect(registry.resolvePreference(preference)).rejects.toMatchObject({
       code: 'SOURCE_AMBIGUOUS',
     })
+  })
+
+  it('prefers a validated persisted HWND when duplicate emulator windows are open', async () => {
+    const sources = [
+      { ...source('window:12:0', 'Clash Royale'), executableLabel: 'Game.exe' },
+      { ...source('window:13:0', 'Clash Royale'), executableLabel: 'Game.exe' },
+    ]
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: () => Promise.resolve(sources),
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    }
+    const registry = new CaptureSourceRegistry(provider)
+    await expect(
+      registry.resolvePreference({
+        kind: 'window',
+        label: 'Second instance',
+        titleHint: 'Clash Royale',
+        executableLabel: 'Game.exe',
+        windowHwnd: '13',
+      }),
+    ).resolves.toEqual({ kind: 'window', windowHwnd: '13' })
   })
 
   it('fails closed for stale or unmapped durable displays', async () => {

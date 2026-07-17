@@ -198,6 +198,14 @@ export class CaptureSourceRegistry {
 
     let selector: SetupCaptureSelector
     if (entry.view.kind === 'window' && entry.windowHwnd !== null) {
+      if (
+        parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
+        currentSource.name !== entry.view.label ||
+        (entry.executableLabel !== null &&
+          safeExecutableLabel(currentSource.executableLabel) !== entry.executableLabel)
+      ) {
+        throw this.staleError()
+      }
       selector = { kind: 'window', windowHwnd: entry.windowHwnd }
     } else if (
       entry.view.kind === 'display' &&
@@ -235,6 +243,7 @@ export class CaptureSourceRegistry {
               label: entry.view.label,
               titleHint: entry.view.label,
               executableLabel: entry.executableLabel,
+              ...(entry.windowHwnd === null ? {} : { windowHwnd: entry.windowHwnd }),
             }
           : {
               kind: 'display',
@@ -252,6 +261,22 @@ export class CaptureSourceRegistry {
 
     if (preference.kind === 'window') {
       const ownHandles = this.provider.ownWindowHandles()
+      if (preference.windowHwnd !== undefined) {
+        const bound = sources.filter((source) => {
+          const hwnd = parseElectronWindowHandle(source.id)
+          return (
+            hwnd === preference.windowHwnd &&
+            !ownHandles.has(hwnd) &&
+            source.ownerProcessId !== this.provider.currentProcessId &&
+            source.name === preference.titleHint &&
+            (preference.executableLabel === null ||
+              safeExecutableLabel(source.executableLabel) === preference.executableLabel)
+          )
+        })
+        if (bound.length === 1) {
+          return { kind: 'window', windowHwnd: preference.windowHwnd }
+        }
+      }
       const matches = sources.filter((source) => {
         const hwnd = parseElectronWindowHandle(source.id)
         if (

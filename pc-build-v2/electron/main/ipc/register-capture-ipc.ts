@@ -1,12 +1,19 @@
+import { randomUUID } from 'node:crypto'
+
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
   CapturePreparationResultSchema,
+  CaptureProfileCommandSchema,
+  CaptureProfileMutationResultSchema,
+  CaptureProfileNamePayloadSchema,
+  CaptureProfilesResultSchema,
   CaptureStatusResultSchema,
   EmptyCapturePayloadSchema,
   MAIN_CAPTURE_IPC_CHANNELS,
   PreviewPayloadSchema,
   ReleasePreparationResultSchema,
+  RebindCaptureProfilePayloadSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
@@ -18,6 +25,7 @@ import {
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
 import type { CapturePreparationService } from '../services/capture-preparation-service'
+import type { CaptureProfileService } from '../services/capture-profile-service'
 import type { SetupSessionService } from '../services/setup-session-service'
 import type { WindowCoordinator, WindowKind } from '../windows/window-coordinator'
 import { verifyIpcSender } from './verify-ipc-sender'
@@ -27,6 +35,7 @@ interface CaptureIpcDependencies {
   logger: StructuredLogger
   registry: CaptureSourceRegistry
   preparations: CapturePreparationService
+  profiles: CaptureProfileService
   setup: SetupSessionService
 }
 
@@ -66,6 +75,11 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
       prepared.source.preference,
       'capture',
       prepared.frame,
+      {
+        profileId: payload.profileId ?? randomUUID(),
+        profileName: payload.profileName,
+        expectedRevision: payload.expectedRevision,
+      },
     )
     if (view.state !== 'CANCELLED' && view.state !== 'COMMITTED') {
       await dependencies.windows.ensureSetupWindow()
@@ -76,6 +90,63 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     verify(event, dependencies.windows, 'main')
     EmptyCapturePayloadSchema.parse(rawPayload)
     return CaptureStatusResultSchema.parse(await dependencies.setup.getStatus())
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.getProfiles, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    EmptyCapturePayloadSchema.parse(rawPayload)
+    return CaptureProfilesResultSchema.parse(await dependencies.profiles.getView())
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.activateProfile, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = CaptureProfileCommandSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await dependencies.profiles.activate(payload.profileId, payload.expectedRevision),
+    )
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.renameProfile, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await dependencies.profiles.rename(
+        payload.profileId,
+        payload.profileName,
+        payload.expectedRevision,
+      ),
+    )
+  })
+  ipcMain.handle(
+    MAIN_CAPTURE_IPC_CHANNELS.duplicateProfile,
+    async (event, rawPayload) => {
+      verify(event, dependencies.windows, 'main')
+      const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
+      return CaptureProfileMutationResultSchema.parse(
+        await dependencies.profiles.duplicate(
+          payload.profileId,
+          payload.profileName,
+          payload.expectedRevision,
+        ),
+      )
+    },
+  )
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.deleteProfile, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = CaptureProfileCommandSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await dependencies.profiles.delete(payload.profileId, payload.expectedRevision),
+    )
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.rebindProfile, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = RebindCaptureProfilePayloadSchema.parse(rawPayload)
+    const prepared = await dependencies.preparations.freeze(payload.preparationId)
+    return CaptureProfileMutationResultSchema.parse(
+      await dependencies.profiles.rebind(
+        payload.profileId,
+        prepared.source.preference,
+        prepared.frame.size,
+        payload.expectedRevision,
+      ),
+    )
   })
 
   ipcMain.handle(SETUP_IPC_CHANNELS.getSession, (event, rawPayload) => {

@@ -31,6 +31,15 @@ const preference = {
   executableLabel: null,
 }
 const selector = { kind: 'window' as const, windowHwnd: '9007199254740993' }
+const resultTarget = {
+  profileId: '00000000-0000-4000-8000-000000000001',
+  profileName: 'Основной',
+  expectedRevision: 1,
+}
+const resultProfileStatus = {
+  revision: 1,
+  profiles: [{ profileId: resultTarget.profileId }],
+}
 
 function harness(remoteOk = true) {
   const capture = {
@@ -39,6 +48,8 @@ function harness(remoteOk = true) {
   }
   const repository = {
     load: vi.fn().mockResolvedValue(null),
+    list: vi.fn().mockResolvedValue(null),
+    get: vi.fn().mockResolvedValue(null),
     save: vi.fn().mockResolvedValue(undefined),
   }
   const apiRequests: unknown[] = []
@@ -74,8 +85,15 @@ function harness(remoteOk = true) {
   return { service, capture, repository, apiRequests }
 }
 
-async function readyForCommit(service: SetupSessionService) {
-  let view = await service.start(selector, preference)
+async function readyForCommit(
+  service: SetupSessionService,
+  target?: {
+    profileId: string
+    profileName: string
+    expectedRevision: number
+  },
+) {
+  let view = await service.start(selector, preference, 'capture', undefined, target)
   for (const region of ['trigger', 'normal', 'precise'] as const) {
     view = service.setRegion(view.sessionId, view.generation, region, {
       x: 0.1,
@@ -143,6 +161,43 @@ describe('SetupSessionService', () => {
     expect(repository.save).not.toHaveBeenCalled()
   })
 
+  it('fails closed when the capture profile collection changes during setup', async () => {
+    const { service, repository, apiRequests } = harness()
+    repository.list.mockResolvedValueOnce(null).mockResolvedValueOnce({ revision: 2 })
+    const view = await readyForCommit(service)
+
+    await expect(service.commit(view.sessionId, view.generation)).resolves.toMatchObject({
+      state: 'REVIEW',
+      error: { code: 'CAPTURE_PROFILE_STALE' },
+    })
+    expect(apiRequests).toHaveLength(0)
+    expect(repository.save).not.toHaveBeenCalled()
+  })
+
+  it('rejects a new profile at the local limit before changing remote regions', async () => {
+    const { service, repository, apiRequests } = harness()
+    repository.list.mockResolvedValue({
+      revision: 1,
+      profileCount: 20,
+      profiles: Array.from({ length: 20 }, (_, index) => ({
+        profileId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        profileName: `Profile ${index + 1}`,
+      })),
+    })
+    const view = await readyForCommit(service, {
+      profileId: '00000000-0000-4000-8000-000000000099',
+      profileName: 'One too many',
+      expectedRevision: 1,
+    })
+
+    await expect(service.commit(view.sessionId, view.generation)).resolves.toMatchObject({
+      state: 'REVIEW',
+      error: { code: 'CAPTURE_PROFILE_LIMIT' },
+    })
+    expect(apiRequests).toHaveLength(0)
+    expect(repository.save).not.toHaveBeenCalled()
+  })
+
   it('posts the exact legacy projection before an atomic per-user commit', async () => {
     const { service, repository, apiRequests } = harness()
     const view = await readyForCommit(service)
@@ -177,6 +232,7 @@ describe('SetupSessionService', () => {
     })
     expect(repository.save).toHaveBeenCalledWith(
       expect.objectContaining({ userId: '42', revision: 1, source: preference }),
+      expect.objectContaining({ profileName: 'Основной', expectedRevision: 0 }),
     )
   })
 
@@ -216,7 +272,7 @@ describe('SetupSessionService', () => {
     }
     const resultRepository = { load: vi.fn().mockResolvedValue(null), save: vi.fn() }
     const resultPaths: string[] = []
-    const authenticatedApi = {
+    const rawApi = {
       request: vi.fn((request: { path: string }) => {
         resultPaths.push(request.path)
         return Promise.resolve(
@@ -228,14 +284,27 @@ describe('SetupSessionService', () => {
     }
     const service = new SetupSessionService(
       capture as never,
-      { load: vi.fn(), save: vi.fn() } as never,
-      { request: vi.fn() } as never,
-      { getView: () => ({ user: { id: '42' } }) } as never,
+      {
+        load: vi.fn(),
+        save: vi.fn(),
+        list: vi.fn().mockResolvedValue(resultProfileStatus),
+      } as never,
+      rawApi as never,
+      {
+        getView: () => ({ user: { id: '42' } }),
+        getAccessToken: vi.fn().mockResolvedValue('secret'),
+      } as never,
       () => new Date('2026-07-12T12:00:00.000Z'),
       resultRepository as never,
-      authenticatedApi as never,
+      { request: vi.fn() } as never,
     )
-    let view = await service.start(selector, preference, 'predictionResult')
+    let view = await service.start(
+      selector,
+      preference,
+      'predictionResult',
+      undefined,
+      resultTarget,
+    )
     view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
       x: 0.1,
       y: 0.1,
@@ -267,7 +336,7 @@ describe('SetupSessionService', () => {
       load: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockRejectedValue(new Error('disk full')),
     }
-    const authenticatedApi = {
+    const rawApi = {
       request: vi
         .fn()
         .mockResolvedValue({ ok: true, status: 200, data: { success: true } }),
@@ -277,14 +346,27 @@ describe('SetupSessionService', () => {
         capture: vi.fn().mockResolvedValue(frame),
         analyze: vi.fn().mockResolvedValue(profile),
       } as never,
-      { load: vi.fn(), save: vi.fn() } as never,
-      { request: vi.fn() } as never,
-      { getView: () => ({ user: { id: '42' } }) } as never,
+      {
+        load: vi.fn(),
+        save: vi.fn(),
+        list: vi.fn().mockResolvedValue(resultProfileStatus),
+      } as never,
+      rawApi as never,
+      {
+        getView: () => ({ user: { id: '42' } }),
+        getAccessToken: vi.fn().mockResolvedValue('secret'),
+      } as never,
       () => new Date('2026-07-12T12:00:00.000Z'),
       resultRepository as never,
-      authenticatedApi as never,
+      { request: vi.fn() } as never,
     )
-    let view = await service.start(selector, preference, 'predictionResult')
+    let view = await service.start(
+      selector,
+      preference,
+      'predictionResult',
+      undefined,
+      resultTarget,
+    )
     view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
       x: 0.1,
       y: 0.1,
@@ -303,7 +385,7 @@ describe('SetupSessionService', () => {
       state: 'FAILED',
       error: { code: 'RESULT_SETUP_LOCAL_COMMIT_FAILED' },
     })
-    expect(authenticatedApi.request).toHaveBeenCalledTimes(2)
+    expect(rawApi.request).toHaveBeenCalledTimes(2)
     expect(resultRepository.save).toHaveBeenCalledTimes(1)
   })
 

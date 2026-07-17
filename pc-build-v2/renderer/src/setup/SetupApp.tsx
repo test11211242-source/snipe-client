@@ -450,7 +450,11 @@ export function SetupApp(): React.JSX.Element {
               ? 'Зоны результата боя'
               : 'Области распознавания'}
           </h1>
-          <p>{view.source.label}</p>
+          <p>
+            {view.profileName === null
+              ? view.source.label
+              : `${view.profileName} · ${view.source.label}`}
+          </p>
         </div>
         <button
           className="icon-button"

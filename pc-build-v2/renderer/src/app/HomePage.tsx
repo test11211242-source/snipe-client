@@ -11,7 +11,7 @@ import {
 import { useEffect, useState } from 'react'
 
 import type { AuthView } from '../../../shared/models/auth'
-import type { CaptureStatus } from '../../../shared/models/capture'
+import type { CaptureProfilesView, CaptureStatus } from '../../../shared/models/capture'
 import type {
   DeckMode,
   MonitorPreferences,
@@ -25,15 +25,21 @@ import { Alert, Button, Section } from './ui'
 export function HomePage({
   auth,
   captureStatus,
+  profiles,
   monitorView,
   onMonitorView,
+  onProfiles,
+  onCaptureStatus,
   onConfigure,
   onOpenWidget,
 }: {
   auth: AuthView | null
   captureStatus: CaptureStatus | null
+  profiles: CaptureProfilesView | null
   monitorView: MonitorView | null
   onMonitorView: (view: MonitorView) => void
+  onProfiles: (view: CaptureProfilesView) => void
+  onCaptureStatus: (view: CaptureStatus) => void
   onConfigure: () => void
   onOpenWidget: () => void
 }): React.JSX.Element {
@@ -49,6 +55,7 @@ export function HomePage({
     monitorState !== null &&
     ['PREFLIGHT', 'STARTING', 'READY', 'STOPPING'].includes(monitorState)
   const sourceUnavailable = monitorView?.readiness.sourceAvailable === false
+  const activeProfile = profiles?.profiles.find((profile) => profile.isActive) ?? null
   const canStart = authenticated && configured && !active && !commandBusy
   const canStop = active && monitorState !== 'STOPPING' && !commandBusy
 
@@ -95,6 +102,27 @@ export function HomePage({
       onMonitorView({ ...monitorView, preferences })
     } catch {
       setCommandError('Не удалось сохранить режим мониторинга.')
+    } finally {
+      setCommandBusy(false)
+    }
+  }
+
+  const activateProfile = async (profileId: string): Promise<void> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return
+    setCommandBusy(true)
+    setCommandError(null)
+    try {
+      const result = await window.crTools.activateCaptureProfile({
+        profileId,
+        expectedRevision: profiles.revision,
+      })
+      onProfiles(result.profiles)
+      onMonitorView(result.monitor)
+      onCaptureStatus(await window.crTools.getCaptureStatus())
+    } catch {
+      setCommandError(
+        'Не удалось переключить профиль. Проверьте окно источника или откройте перепривязку.',
+      )
     } finally {
       setCommandBusy(false)
     }
@@ -305,6 +333,22 @@ export function HomePage({
 
         <section className="context-section current-configuration">
           <span className="eyebrow">ТЕКУЩАЯ КОНФИГУРАЦИЯ</span>
+          {profiles !== null && profiles.profiles.length > 0 && (
+            <label className="active-profile-select">
+              <span>Профиль захвата</span>
+              <select
+                value={activeProfile?.profileId ?? ''}
+                disabled={commandBusy}
+                onChange={(event) => void activateProfile(event.currentTarget.value)}
+              >
+                {profiles.profiles.map((profile) => (
+                  <option key={profile.profileId} value={profile.profileId}>
+                    {profile.profileName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <dl>
             <div>
               <dt>Источник</dt>

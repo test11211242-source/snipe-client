@@ -1,22 +1,50 @@
-import { Check, ChevronRight, Monitor, RefreshCw, ScanLine, Search } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  Link,
+  Monitor,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  ScanLine,
+  Search,
+  Trash2,
+} from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { CapturePreparationResult } from '../../../shared/contracts/capture-ipc'
+import { MAX_CAPTURE_PROFILES } from '../../../shared/models/capture'
 import type {
   CaptureSourceSnapshot,
   CaptureSourceView,
   CaptureStatus,
+  CaptureProfilesView,
 } from '../../../shared/models/capture'
+import type { MonitorView } from '../../../shared/models/monitor'
 import { Alert, Button, PageHeader, Tabs } from './ui'
 
 type SourceTab = 'window' | 'display'
+interface ProfileAction {
+  kind: 'configure' | 'rebind'
+  profileId: string | null
+  profileName: string
+  expectedRevision: number
+}
 
 export function CapturePage({
   status,
+  profiles,
   onStatus,
+  onProfiles,
+  onMonitor,
 }: {
   status: CaptureStatus | null
+  profiles: CaptureProfilesView | null
   onStatus: (status: CaptureStatus) => void
+  onProfiles: (profiles: CaptureProfilesView) => void
+  onMonitor: (monitor: MonitorView) => void
 }): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<CaptureSourceSnapshot | null>(null)
   const [tab, setTab] = useState<SourceTab>('window')
@@ -28,9 +56,43 @@ export function CapturePage({
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [availableOnly, setAvailableOnly] = useState(true)
+  const [profileAction, setProfileAction] = useState<ProfileAction | null>(null)
+  const [profileBusy, setProfileBusy] = useState<string | null>(null)
   const selectedRef = useRef<CaptureSourceView | null>(null)
   const selectionGeneration = useRef(0)
   const applyStatus = useEffectEvent(onStatus)
+  const applyProfiles = useEffectEvent(onProfiles)
+  const actionProfile =
+    profileAction === null || profiles === null
+      ? undefined
+      : profileAction.profileId === null
+        ? profiles.profiles.find(
+            (profile) =>
+              profile.profileName.toLocaleLowerCase('ru-RU') ===
+              profileAction.profileName.toLocaleLowerCase('ru-RU'),
+          )
+        : profiles.profiles.find(
+            (profile) => profile.profileId === profileAction.profileId,
+          )
+  const activeProfile = profiles?.profiles.find((profile) => profile.isActive)
+  const currentProfileAction: ProfileAction | null =
+    actionProfile !== undefined
+      ? {
+          ...(profileAction ?? { kind: 'configure' as const }),
+          profileId: actionProfile.profileId,
+          profileName: actionProfile.profileName,
+          expectedRevision: profiles?.revision ?? profileAction?.expectedRevision ?? 0,
+        }
+      : profileAction?.profileId === null
+        ? profileAction
+        : profiles === null
+          ? null
+          : {
+              kind: 'configure',
+              profileId: activeProfile?.profileId ?? null,
+              profileName: activeProfile?.profileName ?? 'Основной',
+              expectedRevision: profiles.revision ?? 0,
+            }
 
   const releaseSelection = (): void => {
     selectionGeneration.current += 1
@@ -98,6 +160,7 @@ export function CapturePage({
   useEffect(() => {
     const refreshStatus = (): void => {
       void window.crTools.getCaptureStatus().then(applyStatus, () => undefined)
+      void window.crTools.getCaptureProfiles().then(applyProfiles, () => undefined)
     }
     window.addEventListener('focus', refreshStatus)
     return () => window.removeEventListener('focus', refreshStatus)
@@ -115,6 +178,172 @@ export function CapturePage({
   )
   const selectedSource =
     sources.find((source) => source.sourceKey === selectedKey) ?? null
+
+  const applyMutation = (result: {
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+  }): void => {
+    onProfiles(result.profiles)
+    onMonitor(result.monitor)
+  }
+
+  const activateProfile = async (profileId: string): Promise<void> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return
+    setProfileBusy(profileId)
+    setError(null)
+    try {
+      const result = await window.crTools.activateCaptureProfile({
+        profileId,
+        expectedRevision: profiles.revision,
+      })
+      applyMutation(result)
+      const active = result.profiles.profiles.find((profile) => profile.isActive)
+      if (active !== undefined) {
+        setProfileAction({
+          kind: 'configure',
+          profileId: active.profileId,
+          profileName: active.profileName,
+          expectedRevision: result.profiles.revision ?? 0,
+        })
+      }
+      onStatus(await window.crTools.getCaptureStatus())
+    } catch {
+      setError(
+        'Не удалось включить профиль. Если окно изменилось, перепривяжите источник.',
+      )
+    } finally {
+      setProfileBusy(null)
+    }
+  }
+
+  const addProfile = (): void => {
+    const name = window.prompt(
+      'Название нового профиля',
+      `Профиль ${(profiles?.profiles.length ?? 0) + 1}`,
+    )
+    const trimmed = name?.trim()
+    if (trimmed === undefined || trimmed.length === 0) return
+    if (trimmed.length > 80) {
+      setError('Название профиля должно быть короче 81 символа.')
+      return
+    }
+    if (
+      profiles?.profiles.some(
+        (profile) =>
+          profile.profileName.toLocaleLowerCase('ru-RU') ===
+          trimmed.toLocaleLowerCase('ru-RU'),
+      ) === true
+    ) {
+      setError('Профиль с таким названием уже существует.')
+      return
+    }
+    releaseSelection()
+    setProfileAction({
+      kind: 'configure',
+      profileId: null,
+      profileName: trimmed,
+      expectedRevision: profiles?.revision ?? 0,
+    })
+  }
+
+  const renameProfile = async (profileId: string, currentName: string): Promise<void> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return
+    const name = window.prompt('Новое название профиля', currentName)?.trim()
+    if (name === undefined || name.length === 0 || name === currentName) return
+    setProfileBusy(profileId)
+    setError(null)
+    try {
+      const result = await window.crTools.renameCaptureProfile({
+        profileId,
+        profileName: name,
+        expectedRevision: profiles.revision,
+      })
+      applyMutation(result)
+      setProfileAction((current) =>
+        current?.profileId === profileId
+          ? {
+              ...current,
+              profileName: name,
+              expectedRevision: result.profiles.revision ?? current.expectedRevision,
+            }
+          : current,
+      )
+    } catch {
+      setError('Не удалось переименовать профиль. Название должно быть уникальным.')
+    } finally {
+      setProfileBusy(null)
+    }
+  }
+
+  const duplicateProfile = async (
+    profileId: string,
+    currentName: string,
+  ): Promise<void> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return
+    const name = window.prompt('Название копии профиля', `${currentName} 2`)?.trim()
+    if (name === undefined || name.length === 0) return
+    setProfileBusy(profileId)
+    setError(null)
+    try {
+      const result = await window.crTools.duplicateCaptureProfile({
+        profileId,
+        profileName: name,
+        expectedRevision: profiles.revision,
+      })
+      applyMutation(result)
+      const duplicate = result.profiles.profiles.find(
+        (profile) => profile.profileName === name,
+      )
+      if (duplicate !== undefined) {
+        releaseSelection()
+        setProfileAction({
+          kind: 'rebind',
+          profileId: duplicate.profileId,
+          profileName: duplicate.profileName,
+          expectedRevision: result.profiles.revision ?? 0,
+        })
+      }
+    } catch {
+      setError('Не удалось дублировать профиль. Проверьте название и повторите.')
+    } finally {
+      setProfileBusy(null)
+    }
+  }
+
+  const deleteProfile = async (profileId: string, profileName: string): Promise<void> => {
+    if (
+      profiles?.revision === null ||
+      profiles?.revision === undefined ||
+      !window.confirm(`Удалить профиль «${profileName}»?`)
+    ) {
+      return
+    }
+    setProfileBusy(profileId)
+    setError(null)
+    try {
+      const result = await window.crTools.deleteCaptureProfile({
+        profileId,
+        expectedRevision: profiles.revision,
+      })
+      applyMutation(result)
+      const active = result.profiles.profiles.find((profile) => profile.isActive)
+      setProfileAction(
+        active === undefined
+          ? null
+          : {
+              kind: 'configure',
+              profileId: active.profileId,
+              profileName: active.profileName,
+              expectedRevision: result.profiles.revision ?? 0,
+            },
+      )
+      onStatus(await window.crTools.getCaptureStatus())
+    } catch {
+      setError('Не удалось удалить профиль. Единственный профиль удалить нельзя.')
+    } finally {
+      setProfileBusy(null)
+    }
+  }
 
   const selectSource = async (source: CaptureSourceView): Promise<void> => {
     if (!source.captureSupported || startingKey !== null) return
@@ -163,9 +392,26 @@ export function CapturePage({
     setStartingKey(source.sourceKey)
     setError(null)
     try {
-      await window.crTools.startCaptureSetup({
-        preparationId: prepared.preparationId,
-      })
+      if (
+        currentProfileAction?.kind === 'rebind' &&
+        currentProfileAction.profileId !== null
+      ) {
+        applyMutation(
+          await window.crTools.rebindCaptureProfile({
+            preparationId: prepared.preparationId,
+            profileId: currentProfileAction.profileId,
+            expectedRevision: currentProfileAction.expectedRevision,
+          }),
+        )
+        onStatus(await window.crTools.getCaptureStatus())
+      } else if (currentProfileAction !== null) {
+        await window.crTools.startCaptureSetup({
+          preparationId: prepared.preparationId,
+          profileId: currentProfileAction.profileId,
+          profileName: currentProfileAction.profileName,
+          expectedRevision: currentProfileAction.expectedRevision,
+        })
+      }
       selectedRef.current = null
       setPreparation(null)
       onStatus(await window.crTools.getCaptureStatus())
@@ -199,6 +445,141 @@ export function CapturePage({
           </Button>
         }
       />
+
+      <section
+        className="capture-profile-manager"
+        aria-labelledby="capture-profiles-title"
+      >
+        <div className="capture-profile-heading">
+          <div>
+            <span className="eyebrow">ПРОФИЛИ ЗАХВАТА</span>
+            <h3 id="capture-profiles-title">Сохранённые конфигурации</h3>
+          </div>
+          <Button
+            onClick={addProfile}
+            disabled={
+              profileBusy !== null ||
+              (profiles?.profiles.length ?? 0) >= MAX_CAPTURE_PROFILES
+            }
+          >
+            <Plus aria-hidden="true" size={15} />
+            Добавить профиль
+          </Button>
+        </div>
+        {profiles === null ? (
+          <p className="profile-manager-empty">Загружаем профили...</p>
+        ) : profiles.profiles.length === 0 ? (
+          <p className="profile-manager-empty">
+            Создайте первый профиль и выберите окно игры ниже.
+          </p>
+        ) : (
+          <div className="capture-profile-list">
+            {profiles.profiles.map((profile) => (
+              <article
+                className="capture-profile-card"
+                data-active={profile.isActive}
+                data-selected={currentProfileAction?.profileId === profile.profileId}
+                key={profile.profileId}
+              >
+                <div className="capture-profile-copy">
+                  <div>
+                    <strong>{profile.profileName}</strong>
+                    {profile.isActive && <span>Активный</span>}
+                  </div>
+                  <small title={profile.sourceLabel}>{profile.sourceLabel}</small>
+                </div>
+                <div className="capture-profile-actions">
+                  {!profile.isActive && (
+                    <Button
+                      variant="text"
+                      disabled={profileBusy !== null}
+                      onClick={() => void activateProfile(profile.profileId)}
+                    >
+                      <Play aria-hidden="true" size={13} />
+                      Использовать
+                    </Button>
+                  )}
+                  <Button
+                    variant="text"
+                    disabled={profileBusy !== null}
+                    onClick={() => {
+                      releaseSelection()
+                      setProfileAction({
+                        kind: 'rebind',
+                        profileId: profile.profileId,
+                        profileName: profile.profileName,
+                        expectedRevision: profiles.revision ?? 0,
+                      })
+                    }}
+                  >
+                    <Link aria-hidden="true" size={13} />
+                    Перепривязать
+                  </Button>
+                  <Button
+                    variant="text"
+                    disabled={profileBusy !== null}
+                    onClick={() => {
+                      releaseSelection()
+                      setProfileAction({
+                        kind: 'configure',
+                        profileId: profile.profileId,
+                        profileName: profile.profileName,
+                        expectedRevision: profiles.revision ?? 0,
+                      })
+                    }}
+                  >
+                    <ScanLine aria-hidden="true" size={13} />
+                    Области
+                  </Button>
+                  <Button
+                    variant="icon"
+                    aria-label={`Переименовать ${profile.profileName}`}
+                    disabled={profileBusy !== null}
+                    onClick={() =>
+                      void renameProfile(profile.profileId, profile.profileName)
+                    }
+                  >
+                    <Pencil aria-hidden="true" size={13} />
+                  </Button>
+                  <Button
+                    variant="icon"
+                    aria-label={`Дублировать ${profile.profileName}`}
+                    disabled={profileBusy !== null}
+                    onClick={() =>
+                      void duplicateProfile(profile.profileId, profile.profileName)
+                    }
+                  >
+                    <Copy aria-hidden="true" size={13} />
+                  </Button>
+                  <Button
+                    variant="icon"
+                    aria-label={`Удалить ${profile.profileName}`}
+                    disabled={profileBusy !== null || profiles.profiles.length === 1}
+                    onClick={() =>
+                      void deleteProfile(profile.profileId, profile.profileName)
+                    }
+                  >
+                    <Trash2 aria-hidden="true" size={13} />
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {currentProfileAction !== null && (
+          <div className="capture-profile-task" data-kind={currentProfileAction.kind}>
+            <strong>
+              {currentProfileAction.kind === 'rebind' ? 'Перепривязка' : 'Настройка'}:{' '}
+              {currentProfileAction.profileName}
+            </strong>
+            <span>
+              {currentProfileAction.kind === 'rebind'
+                ? 'Выберите другое окно. Сохранённые области останутся без изменений.'
+                : 'Выберите источник, затем настройте области распознавания.'}
+            </span>
+          </div>
+        )}
+      </section>
 
       <div className="source-toolbar">
         <label className="source-search">
@@ -316,7 +697,11 @@ export function CapturePage({
                   {selectedSource.detail ??
                     (selectedSource.kind === 'window' ? 'Окно приложения' : 'Монитор')}
                 </span>
-                <p>Настройка областей откроется в отдельном окне.</p>
+                <p>
+                  {currentProfileAction?.kind === 'rebind'
+                    ? 'Области останутся прежними.'
+                    : 'Настройка областей откроется в отдельном окне.'}
+                </p>
               </>
             )}
           </div>
@@ -326,6 +711,7 @@ export function CapturePage({
             variant="primary"
             disabled={
               selectedSource === null ||
+              currentProfileAction === null ||
               !selectedSource.captureSupported ||
               preparation === null ||
               preparingKey !== null ||
@@ -337,7 +723,9 @@ export function CapturePage({
               ? 'Фиксируем кадр...'
               : preparingKey !== null
                 ? 'Подготовка захвата...'
-                : 'Продолжить к настройке'}
+                : currentProfileAction?.kind === 'rebind'
+                  ? 'Перепривязать источник'
+                  : 'Продолжить к настройке'}
             {startingKey === null && <ChevronRight aria-hidden="true" size={15} />}
           </Button>
         </aside>

@@ -8,11 +8,17 @@ const electron = vi.hoisted(() => ({
     scaleFactor: number
   }[],
   origins: new Map<string, { x: number; y: number }>(),
+  sources: [] as {
+    id: string
+    name: string
+    display_id: string
+    thumbnail: { isEmpty: () => boolean }
+  }[],
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
-  desktopCapturer: { getSources: vi.fn().mockResolvedValue([]) },
+  desktopCapturer: { getSources: vi.fn(() => Promise.resolve(electron.sources)) },
   screen: {
     getAllDisplays: () => electron.displays,
     dipToScreenPoint: (point: { x: number; y: number }) =>
@@ -44,6 +50,7 @@ beforeEach(() => {
     ['0,0', { x: 0, y: 0 }],
     ['-1280,-100', { x: -1920, y: -150 }],
   ])
+  electron.sources = []
 })
 
 function resolver(displays: WindowsPhysicalDisplay[]) {
@@ -102,5 +109,33 @@ describe('ElectronCaptureSourceProvider display mapping', () => {
     expect(displays).toHaveLength(2)
     expect(displays[0]).not.toHaveProperty('deviceName')
     expect(displays[1]).not.toHaveProperty('deviceName')
+  })
+})
+
+describe('ElectronCaptureSourceProvider window metadata', () => {
+  it('enriches window sources with batch-resolved process identity', async () => {
+    electron.sources = [
+      {
+        id: 'window:42:0',
+        name: 'Clash Royale',
+        display_id: '',
+        thumbnail: { isEmpty: () => false },
+      },
+    ]
+    const metadata = vi
+      .fn()
+      .mockResolvedValue([
+        { windowHwnd: '42', ownerProcessId: 123, executableLabel: 'Emulator.exe' },
+      ])
+    const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+
+    await expect(provider.enumerate({ width: 0, height: 0 })).resolves.toEqual([
+      expect.objectContaining({
+        id: 'window:42:0',
+        ownerProcessId: 123,
+        executableLabel: 'Emulator.exe',
+      }),
+    ])
+    expect(metadata).toHaveBeenCalledWith(['42'])
   })
 })

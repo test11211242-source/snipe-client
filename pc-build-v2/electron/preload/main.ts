@@ -19,11 +19,16 @@ import {
 } from '../../shared/contracts/auth-ipc'
 import {
   CapturePreparationResultSchema,
+  CaptureProfileCommandSchema,
+  CaptureProfileMutationResultSchema,
+  CaptureProfileNamePayloadSchema,
+  CaptureProfilesResultSchema,
   CaptureStatusResultSchema,
   EmptyCapturePayloadSchema,
   MAIN_CAPTURE_IPC_CHANNELS,
   PreviewPayloadSchema,
   ReleasePreparationResultSchema,
+  RebindCaptureProfilePayloadSchema,
   SourceSnapshotResultSchema,
   StartSetupPayloadSchema,
   SetupSessionResultSchema,
@@ -153,6 +158,43 @@ const api: CrToolsApi = Object.freeze({
         EmptyCapturePayloadSchema.parse({}),
       ),
     ),
+  getCaptureProfiles: async () =>
+    CaptureProfilesResultSchema.parse(
+      await ipcRenderer.invoke(
+        MAIN_CAPTURE_IPC_CHANNELS.getProfiles,
+        EmptyCapturePayloadSchema.parse({}),
+      ),
+    ),
+  activateCaptureProfile: async (rawPayload: unknown) => {
+    const payload = CaptureProfileCommandSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.activateProfile, payload),
+    )
+  },
+  renameCaptureProfile: async (rawPayload: unknown) => {
+    const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.renameProfile, payload),
+    )
+  },
+  duplicateCaptureProfile: async (rawPayload: unknown) => {
+    const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.duplicateProfile, payload),
+    )
+  },
+  deleteCaptureProfile: async (rawPayload: unknown) => {
+    const payload = CaptureProfileCommandSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.deleteProfile, payload),
+    )
+  },
+  rebindCaptureProfile: async (rawPayload: unknown) => {
+    const payload = RebindCaptureProfilePayloadSchema.parse(rawPayload)
+    return CaptureProfileMutationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.rebindProfile, payload),
+    )
+  },
   getMonitorView: async () =>
     MonitorViewResultSchema.parse(
       await ipcRenderer.invoke(

@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MonitorAction } from './monitor-process-service'
 import { PredictionCoordinator } from './prediction-coordinator'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 const auth = {
   getView: () => ({
     state: 'AUTHENTICATED',
@@ -31,7 +39,10 @@ const settings = {
   autoCreateNext: true,
 } as const
 
-function harness(failConfigure = false) {
+function harness(
+  failConfigure = false,
+  runLifecycle?: (operation: () => Promise<void>) => Promise<void>,
+) {
   interface TestRequest {
     path: string
     body?: unknown
@@ -49,6 +60,7 @@ function harness(failConfigure = false) {
   })
   const monitor = {
     isRunning: vi.fn().mockReturnValue(true),
+    getView: vi.fn().mockResolvedValue({ state: 'READY' }),
     configurePredictionRuntime: failConfigure
       ? vi.fn().mockRejectedValue(new Error('restart failed'))
       : vi.fn().mockResolvedValue({ state: 'READY' }),
@@ -68,6 +80,8 @@ function harness(failConfigure = false) {
     { request } as never,
     { load: vi.fn().mockResolvedValue(configuration) } as never,
     monitor as never,
+    undefined,
+    runLifecycle,
   )
   coordinator.startLifecycle()
   return {
@@ -133,5 +147,21 @@ describe('PredictionCoordinator', () => {
         ([value]) => value.path === '/api/streamer/bot/stop',
       ),
     ).toHaveLength(2)
+  })
+
+  it('cancels a prediction start that was still waiting for the lifecycle lock', async () => {
+    const gate = deferred<undefined>()
+    const test = harness(false, async (operation) => {
+      await gate.promise
+      return operation()
+    })
+    const starting = test.coordinator.start(settings)
+    await test.coordinator.stop()
+    gate.resolve(undefined)
+
+    await expect(starting).rejects.toMatchObject({ code: 'PREDICTION_CANCELLED' })
+    expect(
+      test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
+    ).toBe(false)
   })
 })
