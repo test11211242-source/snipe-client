@@ -53,6 +53,23 @@ def read_envelope(
     return Envelope(metadata, binary)
 
 
+def read_stream_envelope(
+    stream: BinaryIO, *, max_metadata_bytes: int = 65_536, max_binary_bytes: int
+) -> Envelope:
+    magic, metadata_length, binary_length = HEADER.unpack(_read_exact(stream, HEADER.size))
+    if magic != MAGIC:
+        raise ProtocolError("invalid envelope magic")
+    if metadata_length > max_metadata_bytes or binary_length > max_binary_bytes:
+        raise ProtocolError("envelope exceeds limits")
+    try:
+        metadata = json.loads(_read_exact(stream, metadata_length).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProtocolError("invalid envelope metadata") from error
+    if not isinstance(metadata, dict):
+        raise ProtocolError("metadata must be an object")
+    return Envelope(metadata, _read_exact(stream, binary_length))
+
+
 def encode_envelope(metadata: dict[str, Any], binary: bytes = b"") -> bytes:
     metadata_bytes = json.dumps(
         metadata, ensure_ascii=True, separators=(",", ":")

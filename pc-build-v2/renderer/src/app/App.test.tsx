@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { PreviewPayload } from '../../../shared/contracts/capture-ipc'
 import { App } from './App'
 
 describe('App shell', () => {
@@ -55,12 +56,16 @@ describe('App shell', () => {
           expiresAt: Date.now() + 30_000,
           sources: [],
         }),
-        getCapturePreview: vi.fn().mockResolvedValue({
-          sourceKey: 'a'.repeat(32),
-          revision: 'c'.repeat(32),
-          size: { width: 1280, height: 720 },
-          dataUrl: 'data:image/png;base64,AA==',
-        }),
+        prepareCaptureSource: vi
+          .fn()
+          .mockImplementation(({ sourceKey, revision }: PreviewPayload) =>
+            Promise.resolve({
+              preparationId: '00000000-0000-4000-8000-000000000020',
+              sourceKey,
+              revision,
+            }),
+          ),
+        releaseCaptureSource: vi.fn().mockResolvedValue({ released: true }),
         startCaptureSetup: vi.fn(),
         getMonitorView: vi.fn().mockResolvedValue({
           state: 'STOPPED',
@@ -327,6 +332,7 @@ describe('App shell', () => {
           detail: 'Основное окно',
           captureSupported: true,
           unavailableReason: null,
+          preview: null,
         },
         {
           sourceKey: 'b'.repeat(32),
@@ -336,6 +342,7 @@ describe('App shell', () => {
           detail: '1920 × 1080',
           captureSupported: true,
           unavailableReason: null,
+          preview: null,
         },
       ],
     })
@@ -344,17 +351,34 @@ describe('App shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
 
     fireEvent.click(await screen.findByRole('button', { name: /Clash Royale/ }))
-    expect(screen.getByRole('button', { name: 'Продолжить к настройке' })).toBeEnabled()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Продолжить к настройке' }),
+      ).toBeEnabled(),
+    )
+    expect(window.crTools.prepareCaptureSource).toHaveBeenCalledWith({
+      sourceKey: 'a'.repeat(32),
+      revision,
+    })
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Поиск источника' }), {
       target: { value: 'другое окно' },
     })
     expect(screen.getByRole('button', { name: 'Продолжить к настройке' })).toBeDisabled()
+    expect(window.crTools.releaseCaptureSource).toHaveBeenCalledWith({
+      sourceKey: 'a'.repeat(32),
+      revision,
+    })
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Поиск источника' }), {
       target: { value: '' },
     })
     fireEvent.click(screen.getByRole('button', { name: /Clash Royale/ }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Продолжить к настройке' }),
+      ).toBeEnabled(),
+    )
     fireEvent.click(screen.getByRole('tab', { name: /Мониторы/ }))
     expect(screen.getByRole('button', { name: 'Продолжить к настройке' })).toBeDisabled()
   })

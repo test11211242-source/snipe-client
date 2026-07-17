@@ -4,9 +4,7 @@ import { basename, win32 } from 'node:path'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
   type CapturePreference,
-  CaptureSourcePreviewSchema,
   CaptureSourceSnapshotSchema,
-  type CaptureSourcePreview,
   type CaptureSourceSnapshot,
   type CaptureSourceView,
 } from '../../../shared/models/capture'
@@ -15,14 +13,16 @@ import type {
   SetupCaptureSelector,
 } from '../domain/capture-source'
 
-const PREVIEW_WIDTH = 480
-const PREVIEW_HEIGHT = 270
-const MAX_PREVIEW_BYTES = 1024 * 1024
+const PREVIEW_WIDTH = 360
+const PREVIEW_HEIGHT = 203
+const MAX_PREVIEW_BYTES = 512 * 1024
+const MAX_TOTAL_PREVIEW_DATA_URL_BYTES = 24 * 1024 * 1024
 
 export interface CaptureThumbnail {
   isEmpty: () => boolean
   getSize: () => { width: number; height: number }
   toPNG: () => Buffer
+  toJPEG: (quality: number) => Buffer
 }
 
 export interface ElectronCaptureSource {
@@ -86,26 +86,35 @@ export class CaptureSourceRegistry {
   #expiresAt = 0
   #entries = new Map<string, RegistryEntry>()
   #enumerationGeneration = 0
-  #previewActive = 0
-  readonly #previewWaiters: (() => void)[] = []
 
   constructor(
     private readonly provider: CaptureSourceProvider,
     private readonly ttlMs = 30_000,
     private readonly now: () => number = Date.now,
-    private readonly maxPreviewConcurrency = 2,
   ) {}
 
   async enumerate(): Promise<CaptureSourceSnapshot> {
     const generation = ++this.#enumerationGeneration
     const [sources, displays] = await Promise.all([
-      this.provider.enumerate({ width: 0, height: 0 }),
+      this.provider.enumerate({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
       this.provider.displays(),
     ])
     const displayById = new Map(displays.map((display) => [display.id, display]))
     const ownHandles = this.provider.ownWindowHandles()
     const revision = opaqueKey()
     const entries = new Map<string, RegistryEntry>()
+    let previewDataUrlBytes = 0
+    const takePreview = (source: ElectronCaptureSource): CaptureSourceView['preview'] => {
+      const preview = this.preview(source)
+      if (
+        preview === null ||
+        previewDataUrlBytes + preview.dataUrl.length > MAX_TOTAL_PREVIEW_DATA_URL_BYTES
+      ) {
+        return null
+      }
+      previewDataUrlBytes += preview.dataUrl.length
+      return preview
+    }
 
     for (const source of sources.slice(0, 512)) {
       if (entries.size >= 256) break
@@ -129,6 +138,7 @@ export class CaptureSourceRegistry {
           detail: executableLabel,
           captureSupported: true,
           unavailableReason: null,
+          preview: takePreview(source),
         }
         entries.set(sourceKey, {
           rawId: source.id,
@@ -156,6 +166,7 @@ export class CaptureSourceRegistry {
         unavailableReason: mapped
           ? null
           : 'This display cannot be mapped safely to the Windows capture device.',
+        preview: takePreview(source),
       }
       entries.set(sourceKey, {
         rawId: source.id,
@@ -176,45 +187,6 @@ export class CaptureSourceRegistry {
       expiresAt: this.#expiresAt,
       sources: [...entries.values()].map((entry) => entry.view),
     })
-  }
-
-  async getPreview(sourceKey: string, revision: string): Promise<CaptureSourcePreview> {
-    const entry = this.getEntry(sourceKey, revision)
-    await this.acquirePreviewSlot()
-    try {
-      const sources = await this.provider.enumerate({
-        width: PREVIEW_WIDTH,
-        height: PREVIEW_HEIGHT,
-      })
-      this.assertCurrent(sourceKey, revision)
-      const source = sources.find((candidate) => candidate.id === entry.rawId)
-      if (source === undefined) throw this.staleError()
-      const size = source.thumbnail.getSize()
-      if (
-        source.thumbnail.isEmpty() ||
-        size.width <= 0 ||
-        size.height <= 0 ||
-        size.width > PREVIEW_WIDTH ||
-        size.height > PREVIEW_HEIGHT
-      ) {
-        throw new ApplicationError('CAPTURE_PREVIEW_INVALID', 'Source preview is invalid')
-      }
-      const bytes = source.thumbnail.toPNG()
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_PREVIEW_BYTES) {
-        throw new ApplicationError(
-          'CAPTURE_PREVIEW_TOO_LARGE',
-          'Source preview is too large',
-        )
-      }
-      return CaptureSourcePreviewSchema.parse({
-        sourceKey,
-        revision,
-        size,
-        dataUrl: `data:image/png;base64,${bytes.toString('base64')}`,
-      })
-    } finally {
-      this.releasePreviewSlot()
-    }
   }
 
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
@@ -372,17 +344,26 @@ export class CaptureSourceRegistry {
     )
   }
 
-  private async acquirePreviewSlot(): Promise<void> {
-    if (this.#previewActive < this.maxPreviewConcurrency) {
-      this.#previewActive += 1
-      return
+  private preview(source: ElectronCaptureSource): CaptureSourceView['preview'] {
+    try {
+      const size = source.thumbnail.getSize()
+      if (
+        source.thumbnail.isEmpty() ||
+        size.width <= 0 ||
+        size.height <= 0 ||
+        size.width > PREVIEW_WIDTH ||
+        size.height > PREVIEW_HEIGHT
+      ) {
+        return null
+      }
+      const bytes = source.thumbnail.toJPEG(76)
+      if (bytes.byteLength === 0 || bytes.byteLength > MAX_PREVIEW_BYTES) return null
+      return {
+        size,
+        dataUrl: `data:image/jpeg;base64,${bytes.toString('base64')}`,
+      }
+    } catch {
+      return null
     }
-    await new Promise<void>((resolve) => this.#previewWaiters.push(resolve))
-    this.#previewActive += 1
-  }
-
-  private releasePreviewSlot(): void {
-    this.#previewActive -= 1
-    this.#previewWaiters.shift()?.()
   }
 }

@@ -86,6 +86,7 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
   await Promise.all([
     access(python),
     access(join(resources, 'python', 'capture_once.py')),
+    access(join(resources, 'python', 'prepared_capture.py')),
     access(join(resources, 'python', 'monitor_engine.py')),
     access(join(resources, 'runtime-integrity.json')),
     access(join(resources, 'update-public-key.pem')),

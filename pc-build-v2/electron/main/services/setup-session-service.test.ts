@@ -180,6 +180,35 @@ describe('SetupSessionService', () => {
     )
   })
 
+  it('uses a prepared click-time frame and completes the final region in one command', async () => {
+    const { service, capture, repository } = harness()
+    let view = await service.start(selector, preference, 'capture', frame)
+    expect(capture.capture).not.toHaveBeenCalled()
+    view = service.setRegion(view.sessionId, view.generation, 'trigger', {
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.2,
+    })
+    view = service.setRegion(view.sessionId, view.generation, 'normal', {
+      x: 0.2,
+      y: 0.2,
+      width: 0.3,
+      height: 0.3,
+    })
+
+    const finished = await service.finish(view.sessionId, view.generation, 'precise', {
+      x: 0.15,
+      y: 0.15,
+      width: 0.6,
+      height: 0.6,
+    })
+
+    expect(finished.state).toBe('COMMITTED')
+    expect(capture.analyze).toHaveBeenCalledTimes(1)
+    expect(repository.save).toHaveBeenCalledTimes(1)
+  })
+
   it('reports partial remote result setup and does not activate local configuration', async () => {
     const capture = {
       capture: vi.fn().mockResolvedValue(frame),

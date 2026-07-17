@@ -4,16 +4,13 @@ import type { RealtimeStatus } from '../models/network'
 import type { ActivateInvitePayload, LoginPayload, RegisterPayload } from './auth-ipc'
 import type { AppSettingsView, HelloResult } from './app'
 import type {
+  CapturePreparationResult,
   PreviewPayload,
   SetRegionPayload,
   SetupCommand,
   StartSetupPayload,
 } from './capture-ipc'
-import type {
-  CaptureSourcePreview,
-  CaptureSourceSnapshot,
-  CaptureStatus,
-} from '../models/capture'
+import type { CaptureSourceSnapshot, CaptureStatus } from '../models/capture'
 import type { SetupFrame, SetupSessionView } from '../models/setup'
 import type { MonitorPreferences, MonitorView } from '../models/monitor'
 import type { WidgetSettings, WidgetStatus, WidgetView } from '../models/widget'
@@ -36,7 +33,8 @@ export interface CrToolsApi {
   logout: () => Promise<AuthView>
   getRealtimeStatus: () => Promise<RealtimeStatus>
   listCaptureSources: () => Promise<CaptureSourceSnapshot>
-  getCapturePreview: (payload: PreviewPayload) => Promise<CaptureSourcePreview>
+  prepareCaptureSource: (payload: PreviewPayload) => Promise<CapturePreparationResult>
+  releaseCaptureSource: (payload: PreviewPayload) => Promise<{ released: boolean }>
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>
   getCaptureStatus: () => Promise<CaptureStatus>
   getMonitorView: () => Promise<MonitorView>
@@ -84,6 +82,7 @@ export interface CrToolsSetupApi {
   getSession: () => Promise<SetupSessionView>
   getFrame: (payload: SetupCommand) => Promise<SetupFrame>
   setRegion: (payload: SetRegionPayload) => Promise<SetupSessionView>
+  finish: (payload: SetRegionPayload) => Promise<SetupSessionView>
   analyzeTrigger: (payload: SetupCommand) => Promise<SetupSessionView>
   review: (payload: SetupCommand) => Promise<SetupSessionView>
   commit: (payload: SetupCommand) => Promise<SetupSessionView>

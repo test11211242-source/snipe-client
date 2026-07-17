@@ -8,6 +8,51 @@ export interface BinaryEnvelope<T = unknown> {
   binary: Buffer
 }
 
+export class BinaryEnvelopeStreamDecoder {
+  #buffer = Buffer.alloc(0)
+
+  constructor(
+    private readonly limits: { maxMetadataBytes: number; maxBinaryBytes: number },
+  ) {}
+
+  push(input: Uint8Array): BinaryEnvelope[] {
+    this.#buffer = Buffer.concat([this.#buffer, Buffer.from(input)])
+    const envelopes: BinaryEnvelope[] = []
+    while (this.#buffer.byteLength >= HEADER_BYTES) {
+      if (!this.#buffer.subarray(0, 4).equals(MAGIC)) {
+        throw new ApplicationError(
+          'WORKER_RESULT_MALFORMED',
+          'Worker result has invalid framing',
+        )
+      }
+      const metadataLength = this.#buffer.readUInt32BE(4)
+      const binaryLength = this.#buffer.readUInt32BE(8)
+      if (
+        metadataLength > this.limits.maxMetadataBytes ||
+        binaryLength > this.limits.maxBinaryBytes
+      ) {
+        throw new ApplicationError(
+          'WORKER_RESULT_TOO_LARGE',
+          'Worker result exceeds limits',
+        )
+      }
+      const envelopeLength = HEADER_BYTES + metadataLength + binaryLength
+      if (this.#buffer.byteLength < envelopeLength) break
+      envelopes.push(
+        decodeBinaryEnvelope(this.#buffer.subarray(0, envelopeLength), this.limits),
+      )
+      this.#buffer = this.#buffer.subarray(envelopeLength)
+    }
+    return envelopes
+  }
+
+  finish(): void {
+    if (this.#buffer.byteLength !== 0) {
+      throw new ApplicationError('WORKER_RESULT_TRUNCATED', 'Worker result is truncated')
+    }
+  }
+}
+
 export function encodeBinaryEnvelope(
   metadata: unknown,
   binary: Uint8Array = new Uint8Array(),

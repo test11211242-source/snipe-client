@@ -153,15 +153,11 @@ body,
 .setup-steps li {
   min-width: 0;
   min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 13px;
   background: #101216;
   transition: background-color 160ms ease;
 }
 
-.setup-steps li > span {
+.setup-step-index {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
@@ -177,7 +173,7 @@ body,
     background-color 160ms ease;
 }
 
-.setup-steps li[data-complete='true'] > span {
+.setup-steps li[data-complete='true'] .setup-step-index {
   border-color: rgba(78, 174, 134, 0.45);
   color: #8bc9ad;
   background: rgba(78, 174, 134, 0.08);
@@ -187,15 +183,19 @@ body,
   background: #1b1e29;
 }
 
-.setup-steps li[data-active='true'] > span {
+.setup-steps li[data-active='true'] .setup-step-index {
   border-color: var(--setup-accent);
   color: #d8daf7;
 }
 
 .setup-steps button {
+  width: 100%;
   min-width: 0;
-  min-height: 34px;
-  padding: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
   overflow: hidden;
   border: 0;
   color: #c9cbd2;
@@ -206,6 +206,12 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 160ms ease;
+}
+
+.setup-step-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .setup-steps button:hover:not(:disabled),
@@ -522,6 +528,17 @@ body,
   margin-top: 9px;
 }
 
+.setup-autosave-hint {
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border: 1px solid var(--setup-border);
+  border-radius: 7px;
+  color: var(--setup-muted);
+  background: #101216;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .diagnostics {
   margin-top: 18px;
   border-top: 1px solid var(--setup-border);
@@ -634,6 +651,10 @@ body,
   }
 
   .setup-steps li {
+    min-height: 40px;
+  }
+
+  .setup-steps button {
     min-height: 40px;
   }
 

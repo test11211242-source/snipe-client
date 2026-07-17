@@ -2,7 +2,7 @@ import io
 
 import pytest
 
-from protocol.framing import ProtocolError, encode_envelope, read_envelope
+from protocol.framing import ProtocolError, encode_envelope, read_envelope, read_stream_envelope
 
 
 def test_binary_envelope_round_trip() -> None:
@@ -21,3 +21,13 @@ def test_rejects_truncated_frames(payload: bytes) -> None:
 def test_rejects_bounded_binary_overflow() -> None:
     with pytest.raises(ProtocolError, match="exceeds"):
         read_envelope(io.BytesIO(encode_envelope({}, b"123")), max_binary_bytes=2)
+
+
+def test_stream_reader_consumes_consecutive_envelopes() -> None:
+    stream = io.BytesIO(encode_envelope({"sequence": 1}) + encode_envelope({"sequence": 2}, b"PNG"))
+    first = read_stream_envelope(stream, max_binary_bytes=3)
+    second = read_stream_envelope(stream, max_binary_bytes=3)
+    assert first.metadata == {"sequence": 1}
+    assert first.binary == b""
+    assert second.metadata == {"sequence": 2}
+    assert second.binary == b"PNG"

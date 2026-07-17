@@ -51,6 +51,7 @@ describe('ApplicationController user context', () => {
       start: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     }
+    const capturePreparations = { stop: vi.fn().mockResolvedValue(undefined) }
     const controller = new ApplicationController(
       {} as never,
       windows as never,
@@ -67,6 +68,7 @@ describe('ApplicationController user context', () => {
       reprocessedResults as never,
       streamer as never,
       {} as never,
+      capturePreparations as never,
     )
     const syncWindows = (
       controller as unknown as { syncWindows: (view: AuthView) => Promise<void> }
@@ -90,6 +92,7 @@ describe('ApplicationController user context', () => {
     expect(notifications.stop).toHaveBeenCalled()
     expect(widget.start).toHaveBeenNthCalledWith(1, 'A')
     expect(widget.start).toHaveBeenNthCalledWith(2, 'B')
+    expect(capturePreparations.stop).toHaveBeenCalled()
     expect(reprocessedResults.start).toHaveBeenNthCalledWith(1, 'A')
     expect(reprocessedResults.start).toHaveBeenNthCalledWith(2, 'B')
   })

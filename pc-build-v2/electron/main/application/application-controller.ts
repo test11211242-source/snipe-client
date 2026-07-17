@@ -23,6 +23,7 @@ import type { UpdateService } from '../services/update-service'
 import type { AppSettingsController } from '../services/app-settings-controller'
 import type { NotificationService } from '../services/notification-service'
 import type { ReprocessedResultService } from '../services/reprocessed-result-service'
+import type { CapturePreparationService } from '../services/capture-preparation-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
 import { ApplicationLifecycle } from './lifecycle'
 import { installDenyAllSessionPermissions } from '../services/session-permissions'
@@ -52,6 +53,7 @@ export class ApplicationController {
     private readonly reprocessedResults: ReprocessedResultService,
     private readonly streamer: StreamerService,
     private readonly updater: UpdateService,
+    private readonly capturePreparations: CapturePreparationService,
   ) {}
 
   async start(): Promise<void> {
@@ -87,6 +89,7 @@ export class ApplicationController {
       windows: this.windows,
       logger: this.logger,
       registry: this.captureSources,
+      preparations: this.capturePreparations,
       setup: this.setup,
     })
     const disposeMonitorIpc = registerMonitorIpc({
@@ -186,6 +189,7 @@ export class ApplicationController {
       if (view.user === null) throw new Error('Authenticated view is missing its user')
       if (this.#activeUserId !== view.user.id) {
         if (this.#activeUserId !== null) {
+          await this.capturePreparations.stop()
           this.realtime.stop()
           this.reprocessedResults.stop()
           this.notifications.stop()
@@ -214,6 +218,7 @@ export class ApplicationController {
     }
 
     this.realtime.stop()
+    await this.capturePreparations.stop()
     this.reprocessedResults.stop()
     this.notifications.stop()
     this.images.stop()
@@ -263,6 +268,7 @@ export class ApplicationController {
     await this.streamer.stop()
     await this.widget.stop('shutdown')
     await this.monitor.stop()
+    await this.capturePreparations.stop()
     try {
       const setup = this.setup.getSession()
       this.setup.cancel(setup.sessionId, setup.generation)

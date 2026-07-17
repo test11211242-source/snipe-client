@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { NormalizedRectSchema } from '../models/capture'
-import { SetRegionPayloadSchema } from './capture-ipc'
+import { SetRegionPayloadSchema, StartSetupPayloadSchema } from './capture-ipc'
 
 describe('capture contracts', () => {
   it('accepts bounded normalized rectangles and rejects overflow', () => {
@@ -31,6 +31,12 @@ describe('capture contracts', () => {
         region: 'trigger',
         rect: { x: 0, y: 0, width: 1, height: 1 },
         hwnd: '123',
+      }),
+    ).toThrow()
+    expect(() =>
+      StartSetupPayloadSchema.parse({
+        preparationId: 'd52a21a9-3794-4a51-a292-60ec1ce9c238',
+        windowHwnd: '123',
       }),
     ).toThrow()
   })

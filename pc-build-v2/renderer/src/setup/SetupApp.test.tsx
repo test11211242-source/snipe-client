@@ -81,22 +81,34 @@ function installApi(initial: SetupSessionView, overrides: Partial<CrToolsSetupAp
     current = { ...current, generation: current.generation + 1 }
     return Promise.resolve(current)
   }
+  const finish = vi.fn<CrToolsSetupApi['finish']>((payload) => {
+    current = {
+      ...current,
+      generation: payload.generation + 4,
+      state: 'COMMITTED',
+      regions: { ...current.regions, [payload.region]: payload.rect },
+      triggerProfile: PROFILE,
+    }
+    return Promise.resolve(current)
+  })
+  const close = vi.fn<CrToolsSetupApi['close']>(advance)
   const api: CrToolsSetupApi = Object.freeze({
     getSession,
     getFrame,
     setRegion,
+    finish,
     analyzeTrigger: vi.fn(advance),
     review: vi.fn(advance),
     commit: vi.fn(advance),
     cancel: vi.fn(advance),
-    close: vi.fn(advance),
+    close,
     ...overrides,
   })
   Object.defineProperty(window, 'crToolsSetup', {
     configurable: true,
     value: api,
   })
-  return { getFrame, getSession, setRegion }
+  return { close, finish, getFrame, getSession, setRegion }
 }
 
 function deferred<T>() {
@@ -150,61 +162,58 @@ describe('SetupApp', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps undo history strictly per region', async () => {
+  it('auto-saves the current region when the user selects another full step tile', async () => {
     const { setRegion } = installApi(setupView())
     await renderSetup()
 
     fireEvent.change(screen.getByLabelText('X'), { target: { value: '12' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Применить координаты' }))
-    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^Быстрый поиск\./ })).toBeEnabled(),
-    )
-
     fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
-    fireEvent.change(screen.getByLabelText('X'), { target: { value: '35' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Применить координаты' }))
-    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(2))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^Триггер\./ })).toBeEnabled(),
-    )
 
-    fireEvent.click(screen.getByRole('button', { name: /^Триггер\./ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Отменить' }))
-    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(3))
-
-    expect(setRegion).toHaveBeenLastCalledWith({
+    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(1))
+    expect(setRegion).toHaveBeenCalledWith({
       sessionId: '00000000-0000-4000-8000-000000000001',
-      generation: 9,
+      generation: 7,
       region: 'trigger',
-      rect: TRIGGER,
+      rect: { ...TRIGGER, x: 0.12 },
     })
+    expect(screen.getByRole('heading', { name: 'Быстрый поиск' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Применить координаты' })).toBeNull()
   })
 
-  it('keeps pointer drawing local until the explicit apply action', async () => {
+  it('keeps edits local until navigation and preserves undo history per region', async () => {
     const initial = setupView({
-      regions: {
-        ...setupView().regions,
-        trigger: null,
-      },
+      regions: { ...setupView().regions, trigger: null },
     })
     const { setRegion } = installApi(initial)
     await renderSetup()
-    await screen.findByRole('img', { name: 'Кадр выбранного источника' })
-
-    const stage = screen.getByRole('group', {
-      name: 'Выделение области на рабочем кадре',
-    })
-    fireEvent.pointerDown(stage, { pointerId: 1, clientX: 80, clientY: 45 })
-    fireEvent.pointerMove(stage, { pointerId: 1, clientX: 320, clientY: 225 })
-    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 320, clientY: 225 })
-
+    for (const [label, value] of [
+      ['X', '10'],
+      ['Y', '10'],
+      ['WIDTH', '20'],
+      ['HEIGHT', '20'],
+    ] as const) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    }
     expect(setRegion).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('X')).toHaveValue(10)
-    const apply = screen.getByRole('button', { name: 'Применить координаты' })
-    expect(apply).toBeEnabled()
-    fireEvent.click(apply)
+
+    fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
     await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(1))
+    expect(setRegion).toHaveBeenLastCalledWith(
+      expect.objectContaining({ region: 'trigger', rect: TRIGGER }),
+    )
+
+    fireEvent.change(screen.getByLabelText('X'), { target: { value: '35' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Триггер\./ }))
+    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByLabelText('X'), { target: { value: '12' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
+    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(3))
+    fireEvent.click(screen.getByRole('button', { name: /^Триггер\./ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить' }))
+    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(4))
+    expect(setRegion).toHaveBeenLastCalledWith(
+      expect.objectContaining({ region: 'trigger', rect: TRIGGER }),
+    )
   })
 
   it('cancels pointer drafts and releases pointer capture', async () => {
@@ -235,7 +244,7 @@ describe('SetupApp', () => {
     expect(setRegion).not.toHaveBeenCalled()
   })
 
-  it('locks conflicting controls and ignores a stale persist response', async () => {
+  it('locks conflicting controls and ignores a stale auto-save response', async () => {
     const initial = setupView({ triggerProfile: PROFILE })
     const pending = deferred<SetupSessionView>()
     const setRegion = vi.fn<CrToolsSetupApi['setRegion']>(() => pending.promise)
@@ -243,11 +252,10 @@ describe('SetupApp', () => {
     await renderSetup()
 
     fireEvent.change(screen.getByLabelText('X'), { target: { value: '12' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Применить координаты' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
 
     expect(screen.getByRole('button', { name: /^Быстрый поиск\./ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Проверка\./ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Перейти к проверке' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Точный поиск\./ })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Отменить и закрыть' })).toBeDisabled()
     expect(screen.getByLabelText('X')).toBeDisabled()
     expect(
@@ -306,7 +314,7 @@ describe('SetupApp', () => {
     expect(getFrame).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps incomplete numeric input local until all coordinates are valid', async () => {
+  it('blocks navigation while numeric coordinates are incomplete', async () => {
     const initial = setupView({
       regions: {
         ...setupView().regions,
@@ -316,22 +324,23 @@ describe('SetupApp', () => {
     const { setRegion } = installApi(initial)
     await renderSetup()
 
-    const apply = screen.getByRole('button', { name: 'Применить координаты' })
     expect(screen.getByLabelText('X')).toHaveValue(null)
     fireEvent.change(screen.getByLabelText('X'), { target: { value: '10' } })
-    expect(screen.getByLabelText('X')).toHaveValue(10)
-    expect(apply).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
+    expect(
+      await screen.findByText(
+        'Завершите ввод координат перед переходом к другой области.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Триггер' })).toBeVisible()
     expect(setRegion).not.toHaveBeenCalled()
 
     fireEvent.change(screen.getByLabelText('Y'), { target: { value: '10' } })
     fireEvent.change(screen.getByLabelText('WIDTH'), { target: { value: '20' } })
     fireEvent.change(screen.getByLabelText('HEIGHT'), { target: { value: '20' } })
-    expect(apply).toBeEnabled()
-
-    fireEvent.change(screen.getByLabelText('WIDTH'), { target: { value: '' } })
-    expect(screen.getByLabelText('WIDTH')).toHaveValue(null)
-    expect(apply).toBeDisabled()
-    expect(setRegion).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
+    await waitFor(() => expect(setRegion).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('heading', { name: 'Быстрый поиск' })).toBeVisible()
   })
 
   it('disables coordinate fields and pointer editing in review', async () => {
@@ -342,8 +351,9 @@ describe('SetupApp', () => {
     expect(screen.getByLabelText('Y')).toBeDisabled()
     expect(screen.getByLabelText('WIDTH')).toBeDisabled()
     expect(screen.getByLabelText('HEIGHT')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Применить координаты' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Проверка\./ })).toHaveAttribute(
+    expect(screen.queryByRole('button', { name: 'Применить координаты' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Повторить сохранение' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Триггер\./ })).toHaveAttribute(
       'aria-current',
       'step',
     )
@@ -355,5 +365,34 @@ describe('SetupApp', () => {
     expect(
       screen.getByRole('group', { name: 'Выделение области на рабочем кадре' }),
     ).toHaveAttribute('data-editable', 'false')
+  })
+
+  it('finishes from the last region and closes automatically after success', async () => {
+    const initial = setupView({
+      regions: { ...setupView().regions, precise: null },
+    })
+    const { close, finish } = installApi(initial)
+    await renderSetup()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Точный поиск\./ }))
+    for (const [label, value] of [
+      ['X', '15'],
+      ['Y', '15'],
+      ['WIDTH', '60'],
+      ['HEIGHT', '60'],
+    ] as const) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Завершить настройку' }))
+
+    await waitFor(() => expect(finish).toHaveBeenCalledTimes(1))
+    expect(finish).toHaveBeenCalledWith({
+      sessionId: initial.sessionId,
+      generation: initial.generation,
+      region: 'precise',
+      rect: PRECISE,
+    })
+    expect(await screen.findByRole('heading', { name: 'Захват настроен' })).toBeVisible()
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1), { timeout: 1_200 })
   })
 })

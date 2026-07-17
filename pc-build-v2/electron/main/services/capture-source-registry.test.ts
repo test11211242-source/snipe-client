@@ -20,6 +20,7 @@ function thumbnail(bytes = Buffer.from('png')) {
     isEmpty: () => false,
     getSize: () => ({ width: 320, height: 180 }),
     toPNG: () => bytes,
+    toJPEG: () => bytes,
   }
 }
 
@@ -87,40 +88,58 @@ describe('CaptureSourceRegistry', () => {
     expect(resolved.selector).toEqual({ kind: 'window', windowHwnd: '9007199254740993' })
   })
 
-  it('rejects stale revisions, keys, expired entries, and oversized previews', async () => {
+  it('returns previews from one enumeration and fails closed for stale entries', async () => {
     let now = 100
-    let previewBytes = Buffer.from('png')
+    const enumerateSizes: { width: number; height: number }[] = []
     const provider: CaptureSourceProvider = {
       currentProcessId: 1,
-      enumerate: (size) =>
-        Promise.resolve([
+      enumerate: (size) => {
+        enumerateSizes.push(size)
+        return Promise.resolve([
           {
             ...source('window:12:0', 'Game'),
-            thumbnail: size.width === 0 ? thumbnail() : thumbnail(previewBytes),
           },
-        ]),
+        ])
+      },
       ownWindowHandles: () => new Set(),
       displays: () => Promise.resolve([]),
     }
     const registry = new CaptureSourceRegistry(provider, 10, () => now)
     const snapshot = await registry.enumerate()
     const item = required(snapshot.sources[0])
-    await expect(
-      registry.getPreview(item.sourceKey, '0'.repeat(32)),
-    ).rejects.toMatchObject({
-      code: 'CAPTURE_SOURCE_STALE',
+    expect(item.preview).toMatchObject({
+      size: { width: 320, height: 180 },
+      dataUrl: 'data:image/jpeg;base64,cG5n',
     })
-    previewBytes = Buffer.alloc(1024 * 1024 + 1)
-    await expect(
-      registry.getPreview(item.sourceKey, snapshot.revision),
-    ).rejects.toMatchObject({
-      code: 'CAPTURE_PREVIEW_TOO_LARGE',
+    expect(enumerateSizes).toEqual([{ width: 360, height: 203 }])
+    await expect(registry.resolve(item.sourceKey, '0'.repeat(32))).rejects.toMatchObject({
+      code: 'CAPTURE_SOURCE_STALE',
     })
     now = 111
     await expect(
       registry.resolve(item.sourceKey, snapshot.revision),
     ).rejects.toMatchObject({
       code: 'CAPTURE_SOURCE_STALE',
+    })
+  })
+
+  it('keeps a source usable when its preview is oversized', async () => {
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: () =>
+        Promise.resolve([
+          {
+            ...source('window:12:0', 'Game'),
+            thumbnail: thumbnail(Buffer.alloc(512 * 1024 + 1)),
+          },
+        ]),
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    }
+    const snapshot = await new CaptureSourceRegistry(provider).enumerate()
+    expect(snapshot.sources[0]).toMatchObject({
+      captureSupported: true,
+      preview: null,
     })
   })
 

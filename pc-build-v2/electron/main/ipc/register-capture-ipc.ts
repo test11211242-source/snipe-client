@@ -1,11 +1,12 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
+  CapturePreparationResultSchema,
   CaptureStatusResultSchema,
   EmptyCapturePayloadSchema,
   MAIN_CAPTURE_IPC_CHANNELS,
   PreviewPayloadSchema,
-  PreviewResultSchema,
+  ReleasePreparationResultSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
@@ -16,6 +17,7 @@ import {
 } from '../../../shared/contracts/capture-ipc'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
+import type { CapturePreparationService } from '../services/capture-preparation-service'
 import type { SetupSessionService } from '../services/setup-session-service'
 import type { WindowCoordinator, WindowKind } from '../windows/window-coordinator'
 import { verifyIpcSender } from './verify-ipc-sender'
@@ -24,6 +26,7 @@ interface CaptureIpcDependencies {
   windows: WindowCoordinator
   logger: StructuredLogger
   registry: CaptureSourceRegistry
+  preparations: CapturePreparationService
   setup: SetupSessionService
 }
 
@@ -37,21 +40,33 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     EmptyCapturePayloadSchema.parse(rawPayload)
     return SourceSnapshotResultSchema.parse(await dependencies.registry.enumerate())
   })
-  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.getPreview, async (event, rawPayload) => {
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.prepareSource, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = PreviewPayloadSchema.parse(rawPayload)
-    return PreviewResultSchema.parse(
-      await dependencies.registry.getPreview(payload.sourceKey, payload.revision),
+    return CapturePreparationResultSchema.parse(
+      await dependencies.preparations.prepare(payload.sourceKey, payload.revision),
     )
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.releaseSource, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = PreviewPayloadSchema.parse(rawPayload)
+    return ReleasePreparationResultSchema.parse({
+      released: await dependencies.preparations.release(
+        payload.sourceKey,
+        payload.revision,
+      ),
+    })
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.startSetup, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = StartSetupPayloadSchema.parse(rawPayload)
-    const source = await dependencies.registry.resolve(
-      payload.sourceKey,
-      payload.revision,
+    const prepared = await dependencies.preparations.freeze(payload.preparationId)
+    const view = await dependencies.setup.start(
+      prepared.source.selector,
+      prepared.source.preference,
+      'capture',
+      prepared.frame,
     )
-    const view = await dependencies.setup.start(source.selector, source.preference)
     if (view.state !== 'CANCELLED' && view.state !== 'COMMITTED') {
       await dependencies.windows.ensureSetupWindow()
     }
@@ -80,6 +95,18 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     const payload = SetRegionPayloadSchema.parse(rawPayload)
     return SetupSessionResultSchema.parse(
       dependencies.setup.setRegion(
+        payload.sessionId,
+        payload.generation,
+        payload.region,
+        payload.rect,
+      ),
+    )
+  })
+  ipcMain.handle(SETUP_IPC_CHANNELS.finish, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'setup')
+    const payload = SetRegionPayloadSchema.parse(rawPayload)
+    return SetupSessionResultSchema.parse(
+      await dependencies.setup.finish(
         payload.sessionId,
         payload.generation,
         payload.region,

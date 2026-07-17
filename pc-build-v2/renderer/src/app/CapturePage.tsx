@@ -1,8 +1,8 @@
 import { Check, ChevronRight, Monitor, RefreshCw, ScanLine, Search } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
+import type { CapturePreparationResult } from '../../../shared/contracts/capture-ipc'
 import type {
-  CaptureSourcePreview,
   CaptureSourceSnapshot,
   CaptureSourceView,
   CaptureStatus,
@@ -22,22 +22,40 @@ export function CapturePage({
   const [tab, setTab] = useState<SourceTab>('window')
   const [loading, setLoading] = useState(true)
   const [startingKey, setStartingKey] = useState<string | null>(null)
+  const [preparingKey, setPreparingKey] = useState<string | null>(null)
+  const [preparation, setPreparation] = useState<CapturePreparationResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [availableOnly, setAvailableOnly] = useState(true)
+  const selectedRef = useRef<CaptureSourceView | null>(null)
+  const selectionGeneration = useRef(0)
+  const applyStatus = useEffectEvent(onStatus)
+
+  const releaseSelection = (): void => {
+    selectionGeneration.current += 1
+    const selected = selectedRef.current
+    selectedRef.current = null
+    setSelectedKey(null)
+    setPreparation(null)
+    setPreparingKey(null)
+    if (selected !== null) {
+      void window.crTools
+        .releaseCaptureSource({
+          sourceKey: selected.sourceKey,
+          revision: selected.revision,
+        })
+        .catch(() => undefined)
+    }
+  }
 
   const refresh = async (): Promise<void> => {
+    releaseSelection()
     setLoading(true)
     setError(null)
     try {
       const nextSnapshot = await window.crTools.listCaptureSources()
       setSnapshot(nextSnapshot)
-      setSelectedKey((current) =>
-        nextSnapshot.sources.some((source) => source.sourceKey === current)
-          ? current
-          : null,
-      )
     } catch {
       setError('Не удалось получить источники. Захват доступен только в Windows.')
     } finally {
@@ -63,7 +81,26 @@ export function CapturePage({
       })
     return () => {
       active = false
+      selectionGeneration.current += 1
+      const selected = selectedRef.current
+      if (selected !== null) {
+        void window.crTools
+          .releaseCaptureSource({
+            sourceKey: selected.sourceKey,
+            revision: selected.revision,
+          })
+          .catch(() => undefined)
+      }
+      selectedRef.current = null
     }
+  }, [])
+
+  useEffect(() => {
+    const refreshStatus = (): void => {
+      void window.crTools.getCaptureStatus().then(applyStatus, () => undefined)
+    }
+    window.addEventListener('focus', refreshStatus)
+    return () => window.removeEventListener('focus', refreshStatus)
   }, [])
 
   const allSources = snapshot?.sources ?? []
@@ -79,15 +116,58 @@ export function CapturePage({
   const selectedSource =
     sources.find((source) => source.sourceKey === selectedKey) ?? null
 
+  const selectSource = async (source: CaptureSourceView): Promise<void> => {
+    if (!source.captureSupported || startingKey !== null) return
+    if (
+      selectedRef.current?.sourceKey === source.sourceKey &&
+      (preparation?.sourceKey === source.sourceKey || preparingKey === source.sourceKey)
+    ) {
+      return
+    }
+    const generation = ++selectionGeneration.current
+    selectedRef.current = source
+    setSelectedKey(source.sourceKey)
+    setPreparation(null)
+    setPreparingKey(source.sourceKey)
+    setError(null)
+    try {
+      const prepared = await window.crTools.prepareCaptureSource({
+        sourceKey: source.sourceKey,
+        revision: source.revision,
+      })
+      if (
+        generation !== selectionGeneration.current ||
+        selectedRef.current.sourceKey !== source.sourceKey
+      ) {
+        return
+      }
+      setPreparation(prepared)
+    } catch {
+      if (generation !== selectionGeneration.current) return
+      setError('Не удалось подготовить выбранный источник. Выберите его повторно.')
+    } finally {
+      if (generation === selectionGeneration.current) setPreparingKey(null)
+    }
+  }
+
   const start = async (source: CaptureSourceView): Promise<void> => {
-    if (!source.captureSupported || !sources.includes(source)) return
+    const prepared = preparation
+    if (
+      !source.captureSupported ||
+      !sources.includes(source) ||
+      prepared?.sourceKey !== source.sourceKey ||
+      prepared.revision !== source.revision
+    ) {
+      return
+    }
     setStartingKey(source.sourceKey)
     setError(null)
     try {
       await window.crTools.startCaptureSetup({
-        sourceKey: source.sourceKey,
-        revision: source.revision,
+        preparationId: prepared.preparationId,
       })
+      selectedRef.current = null
+      setPreparation(null)
       onStatus(await window.crTools.getCaptureStatus())
     } catch {
       setError(
@@ -130,7 +210,7 @@ export function CapturePage({
             placeholder="Поиск по названию"
             onChange={(event) => {
               setQuery(event.currentTarget.value)
-              setSelectedKey(null)
+              releaseSelection()
             }}
           />
         </label>
@@ -145,7 +225,7 @@ export function CapturePage({
           value={tab}
           onChange={(nextTab) => {
             setTab(nextTab)
-            setSelectedKey(null)
+            releaseSelection()
           }}
         />
         <Button
@@ -153,7 +233,7 @@ export function CapturePage({
           aria-pressed={availableOnly}
           onClick={() => {
             setAvailableOnly((value) => !value)
-            setSelectedKey(null)
+            releaseSelection()
           }}
         >
           Только доступные
@@ -203,8 +283,10 @@ export function CapturePage({
                   source={source}
                   selected={selectedKey === source.sourceKey}
                   disabled={startingKey !== null}
-                  busy={startingKey === source.sourceKey}
-                  onSelect={() => setSelectedKey(source.sourceKey)}
+                  busy={
+                    startingKey === source.sourceKey || preparingKey === source.sourceKey
+                  }
+                  onSelect={() => void selectSource(source)}
                 />
               ))}
             </div>
@@ -245,11 +327,17 @@ export function CapturePage({
             disabled={
               selectedSource === null ||
               !selectedSource.captureSupported ||
+              preparation === null ||
+              preparingKey !== null ||
               startingKey !== null
             }
             onClick={() => selectedSource !== null && void start(selectedSource)}
           >
-            {startingKey !== null ? 'Получаем кадр...' : 'Продолжить к настройке'}
+            {startingKey !== null
+              ? 'Фиксируем кадр...'
+              : preparingKey !== null
+                ? 'Подготовка захвата...'
+                : 'Продолжить к настройке'}
             {startingKey === null && <ChevronRight aria-hidden="true" size={15} />}
           </Button>
         </aside>
@@ -271,66 +359,21 @@ function SourceCard({
   busy: boolean
   onSelect: () => void
 }): React.JSX.Element {
-  const [preview, setPreview] = useState<CaptureSourcePreview | null>(null)
-  const [previewError, setPreviewError] = useState(false)
-  const [visible, setVisible] = useState(false)
-  const cardRef = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    const node = cardRef.current
-    if (node === null || typeof IntersectionObserver === 'undefined') {
-      setVisible(true)
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return
-        observer.disconnect()
-        setVisible(true)
-      },
-      { rootMargin: '120px' },
-    )
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    if (!visible || !source.captureSupported) return
-    let active = true
-    void window.crTools
-      .getCapturePreview({ sourceKey: source.sourceKey, revision: source.revision })
-      .then((value) => {
-        if (!active) return
-        setPreview(value)
-      })
-      .catch(() => {
-        if (active) setPreviewError(true)
-      })
-    return () => {
-      active = false
-    }
-  }, [source.captureSupported, source.revision, source.sourceKey, visible])
-
   const previewState = !source.captureSupported
     ? 'unavailable'
-    : previewError
-      ? 'error'
-      : preview !== null
-        ? 'ready'
-        : 'loading'
+    : source.preview !== null
+      ? 'ready'
+      : 'error'
 
   const previewLabel = !source.captureSupported
     ? 'Источник недоступен'
-    : previewState === 'error'
+    : source.preview === null
       ? 'Миниатюра недоступна'
-      : previewState === 'ready' && preview !== null
-        ? `${preview.size.width} × ${preview.size.height}`
-        : 'Загружаем миниатюру'
+      : `${source.preview.size.width} × ${source.preview.size.height}`
 
   return (
     <article
       className="source-card"
-      ref={cardRef}
       data-selected={selected}
       data-unavailable={!source.captureSupported}
       data-preview-state={previewState}
@@ -344,11 +387,11 @@ function SourceCard({
         onClick={onSelect}
       >
         <div className="source-preview">
-          {preview !== null ? (
-            <img src={preview.dataUrl} alt="" />
+          {source.preview !== null ? (
+            <img src={source.preview.dataUrl} alt="" />
           ) : (
             <ScanLine
-              className={previewState === 'loading' || busy ? 'is-spinning' : undefined}
+              className={busy ? 'is-spinning' : undefined}
               aria-hidden="true"
               size={25}
             />

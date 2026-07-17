@@ -35,6 +35,12 @@ const api: CrToolsSetupApi = Object.freeze({
       await ipcRenderer.invoke(SETUP_IPC_CHANNELS.setRegion, payload),
     )
   },
+  finish: async (rawPayload: unknown) => {
+    const payload = SetRegionPayloadSchema.parse(rawPayload)
+    return SetupSessionResultSchema.parse(
+      await ipcRenderer.invoke(SETUP_IPC_CHANNELS.finish, payload),
+    )
+  },
   analyzeTrigger: command(SETUP_IPC_CHANNELS.analyzeTrigger),
   review: command(SETUP_IPC_CHANNELS.review),
   commit: command(SETUP_IPC_CHANNELS.commit),

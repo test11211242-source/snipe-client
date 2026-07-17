@@ -132,6 +132,7 @@ export class SetupSessionService {
     selector: SetupCaptureSelector,
     preference: CapturePreference,
     kind: SetupSessionView['kind'] = 'capture',
+    preparedFrame?: CapturedFrame,
   ): Promise<SetupSessionView> {
     if (
       this.#session !== null &&
@@ -169,7 +170,8 @@ export class SetupSessionService {
     this.#session = session
     session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'CAPTURING' })
     try {
-      session.frame = await this.capture.capture(selector, controller.signal)
+      session.frame =
+        preparedFrame ?? (await this.capture.capture(selector, controller.signal))
       if (this.#session !== session || controller.signal.aborted) return session.view
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -256,6 +258,30 @@ export class SetupSessionService {
       error: null,
     })
     return session.view
+  }
+
+  async finish(
+    sessionId: string,
+    generation: number,
+    region: RegionKind,
+    rect: NormalizedRect,
+  ): Promise<SetupSessionView> {
+    const session = this.assertCommand(sessionId, generation)
+    const finalRegion = session.view.kind === 'capture' ? 'precise' : 'resultData'
+    if (region !== finalRegion) {
+      throw new ApplicationError(
+        'SETUP_REGION_INVALID',
+        'Only the final setup region can complete configuration',
+      )
+    }
+
+    let view = this.setRegion(sessionId, generation, region, rect)
+    if (view.triggerProfile === null) {
+      view = await this.analyzeTrigger(view.sessionId, view.generation)
+      if (view.state !== 'SELECTING' || view.triggerProfile === null) return view
+    }
+    view = this.review(view.sessionId, view.generation)
+    return this.commit(view.sessionId, view.generation)
   }
 
   async analyzeTrigger(sessionId: string, generation: number): Promise<SetupSessionView> {

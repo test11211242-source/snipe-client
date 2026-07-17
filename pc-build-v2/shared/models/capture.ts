@@ -34,6 +34,16 @@ export const NormalizedRectSchema = z
 
 export const CaptureSourceKindSchema = z.enum(['window', 'display'])
 
+export const CaptureSourcePreviewDataSchema = z
+  .object({
+    size: PixelSizeSchema,
+    dataUrl: z
+      .string()
+      .regex(/^data:image\/(?:jpeg|png);base64,/)
+      .max(699_100),
+  })
+  .strict()
+
 export const CaptureSourceViewSchema = z
   .object({
     sourceKey: z.string().regex(/^[a-f0-9]{32}$/),
@@ -43,6 +53,7 @@ export const CaptureSourceViewSchema = z
     detail: z.string().min(1).max(300).nullable(),
     captureSupported: z.boolean(),
     unavailableReason: z.string().min(1).max(300).nullable(),
+    preview: CaptureSourcePreviewDataSchema.nullable(),
   })
   .strict()
 
@@ -147,6 +158,7 @@ export const CaptureStatusSchema = z
 export type PixelSize = z.infer<typeof PixelSizeSchema>
 export type NormalizedRect = z.infer<typeof NormalizedRectSchema>
 export type CaptureSourceView = z.infer<typeof CaptureSourceViewSchema>
+export type CaptureSourcePreviewData = z.infer<typeof CaptureSourcePreviewDataSchema>
 export type CaptureSourceSnapshot = z.infer<typeof CaptureSourceSnapshotSchema>
 export type CaptureSourcePreview = z.infer<typeof CaptureSourcePreviewSchema>
 export type RegionKind = z.infer<typeof RegionKindSchema>

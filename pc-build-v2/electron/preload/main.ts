@@ -18,11 +18,12 @@ import {
   RealtimeStatusResultSchema,
 } from '../../shared/contracts/auth-ipc'
 import {
+  CapturePreparationResultSchema,
   CaptureStatusResultSchema,
   EmptyCapturePayloadSchema,
   MAIN_CAPTURE_IPC_CHANNELS,
   PreviewPayloadSchema,
-  PreviewResultSchema,
+  ReleasePreparationResultSchema,
   SourceSnapshotResultSchema,
   StartSetupPayloadSchema,
   SetupSessionResultSchema,
@@ -127,10 +128,16 @@ const api: CrToolsApi = Object.freeze({
         EmptyCapturePayloadSchema.parse({}),
       ),
     ),
-  getCapturePreview: async (rawPayload: unknown) => {
+  prepareCaptureSource: async (rawPayload: unknown) => {
     const payload = PreviewPayloadSchema.parse(rawPayload)
-    return PreviewResultSchema.parse(
-      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.getPreview, payload),
+    return CapturePreparationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.prepareSource, payload),
+    )
+  },
+  releaseCaptureSource: async (rawPayload: unknown) => {
+    const payload = PreviewPayloadSchema.parse(rawPayload)
+    return ReleasePreparationResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.releaseSource, payload),
     )
   },
   startCaptureSetup: async (rawPayload: unknown) => {

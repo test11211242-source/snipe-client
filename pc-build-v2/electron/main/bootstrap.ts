@@ -61,6 +61,8 @@ import { AppSettingsController } from './services/app-settings-controller'
 import { NotificationService } from './services/notification-service'
 import { launchVerifiedInstaller } from './services/launch-verified-installer'
 import { ReprocessedResultService } from './services/reprocessed-result-service'
+import { PreparedCaptureProcessService } from './services/prepared-capture-process-service'
+import { CapturePreparationService } from './services/capture-preparation-service'
 
 app.setName('CR Tools V2')
 
@@ -121,6 +123,18 @@ const capture = new CaptureService(
   join(pythonRoot, 'analyze_trigger.py'),
 )
 const captureSources = new CaptureSourceRegistry(new ElectronCaptureSourceProvider())
+const preparedCaptureProcess = new PreparedCaptureProcessService(
+  pythonExecutable,
+  join(pythonRoot, 'prepared_capture.py'),
+  logger,
+  undefined,
+  undefined,
+  verifyRuntime,
+)
+const capturePreparations = new CapturePreparationService(
+  captureSources,
+  preparedCaptureProcess,
+)
 const monitorPreferences = new MonitorPreferencesRepository(
   join(app.getPath('userData'), 'monitor-preferences.v1'),
   nodeMonitorPreferencesFileSystem,
@@ -230,6 +244,7 @@ const application = new ApplicationController(
   reprocessedResults,
   streamer,
   updater,
+  capturePreparations,
 )
 requestApplicationShutdown = () => application.requestShutdown()
 
