@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -71,11 +72,11 @@ function userHash(userId: string): string {
 }
 
 function legacyPath(directory: string, userId: string): string {
-  return `${directory}/${userHash(userId)}.json`
+  return join(directory, `${userHash(userId)}.json`)
 }
 
 function profilePath(directory: string, userId: string): string {
-  return `${directory}/${userHash(userId)}.profiles.v2.json`
+  return join(directory, `${userHash(userId)}.profiles.v2.json`)
 }
 
 function memoryFileSystem(initial: ReadonlyMap<string, string> = new Map()): {

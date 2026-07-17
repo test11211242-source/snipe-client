@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -81,14 +82,14 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     const hash = createHash('sha256').update(userId).digest('hex')
     const legacy = configuration(userId)
     const { files, fs } = memoryFileSystem(
-      new Map([[`/results/${hash}.json`, JSON.stringify(legacy)]]),
+      new Map([[join('/results', `${hash}.json`), JSON.stringify(legacy)]]),
     )
     const repository = new PredictionResultConfigurationRepository('/results', fs)
 
     await expect(repository.load(userId, SECOND_PROFILE)).resolves.toBeNull()
     await expect(repository.load(userId, FIRST_PROFILE)).resolves.toEqual(legacy)
-    expect(files.get(`/results/${hash}.json`)).toBe(JSON.stringify(legacy))
-    expect(files.has(`/results/${hash}.${FIRST_PROFILE}.json`)).toBe(true)
+    expect(files.get(join('/results', `${hash}.json`))).toBe(JSON.stringify(legacy))
+    expect(files.has(join('/results', `${hash}.${FIRST_PROFILE}.json`))).toBe(true)
   })
 
   it('keeps result calibration separate for each capture profile', async () => {
@@ -110,7 +111,7 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     const legacy = configuration(userId, 1)
     const secondary = configuration(userId, 2)
     const { fs } = memoryFileSystem(
-      new Map([[`/results/${hash}.json`, JSON.stringify(legacy)]]),
+      new Map([[join('/results', `${hash}.json`), JSON.stringify(legacy)]]),
     )
     const repository = new PredictionResultConfigurationRepository('/results', fs)
 
