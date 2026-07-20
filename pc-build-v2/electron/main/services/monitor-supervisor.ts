@@ -67,6 +67,7 @@ export class MonitorSupervisor {
   #ocrActive = false
   #pendingAction: MonitorAction | null = null
   #startPromise: Promise<MonitorView> | null = null
+  #cancelStart: ((value: MonitorView | PromiseLike<MonitorView>) => void) | null = null
   #stopPromise: Promise<MonitorView> | null = null
   #stopIntentGeneration = 0
   readonly #resultListeners = new Set<(result: MonitorResult) => void | Promise<void>>()
@@ -175,6 +176,18 @@ export class MonitorSupervisor {
     return this.#view.state === 'READY'
   }
 
+  invalidateCaptureTarget(): MonitorView {
+    this.patch({
+      readiness: {
+        ...this.#view.readiness,
+        captureConfigured: true,
+        sourceAvailable: null,
+      },
+      ...(['STOPPED', 'FAILED'].includes(this.#view.state) ? { error: null } : {}),
+    })
+    return this.#view
+  }
+
   setUserContext(userId: string | null): boolean {
     if (this.#userContextId === userId) return false
     if (this.#view.state !== 'STOPPED' && this.#view.state !== 'FAILED') {
@@ -240,9 +253,20 @@ export class MonitorSupervisor {
         sourceAvailable: null,
       },
     })
-    const operation = this.runStart(generation, userId, contextGeneration).finally(() => {
-      if (this.#startPromise === operation) this.#startPromise = null
+    let cancelStart!: (value: MonitorView | PromiseLike<MonitorView>) => void
+    const cancelled = new Promise<MonitorView>((resolve) => {
+      cancelStart = resolve
     })
+    const operation = Promise.race([
+      this.runStart(generation, userId, contextGeneration),
+      cancelled,
+    ]).finally(() => {
+      if (this.#startPromise === operation) {
+        this.#startPromise = null
+        this.#cancelStart = null
+      }
+    })
+    this.#cancelStart = cancelStart
     this.#startPromise = operation
     return operation
   }
@@ -251,6 +275,11 @@ export class MonitorSupervisor {
     ++this.#stopIntentGeneration
     if (this.#stopPromise !== null) return this.#stopPromise
     if (this.#view.state === 'STOPPED') return Promise.resolve(this.#view)
+    const cancelStart = this.#cancelStart
+    if (this.#view.state === 'PREFLIGHT' || this.#view.state === 'STARTING') {
+      this.#startPromise = null
+      this.#cancelStart = null
+    }
     const generation = ++this.#generation
     this.#runController.abort()
     this.#ocrController?.abort()
@@ -276,6 +305,7 @@ export class MonitorSupervisor {
         if (this.#stopPromise === operation) this.#stopPromise = null
       })
     this.#stopPromise = operation
+    cancelStart?.(operation)
     return operation
   }
 

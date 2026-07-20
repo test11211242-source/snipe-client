@@ -16,6 +16,7 @@ import {
 import type { PredictionPreferencesRepository } from '../infrastructure/prediction-preferences-repository'
 import { DEFAULT_PREDICTION_PREFERENCES } from '../infrastructure/prediction-preferences-repository'
 import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
+import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
@@ -314,6 +315,7 @@ export class StreamerService {
       refresh: { ...this.#view.refresh, state: 'refreshing', errors: [] },
     })
     const userId = authView.user.id
+    const predictionObservationGeneration = this.predictions.observationGeneration
     const captureProfiles = await this.captureConfigurations
       .list(userId)
       .catch(() => null)
@@ -332,12 +334,21 @@ export class StreamerService {
         : { ...DEFAULT_PREDICTION_PREFERENCES }
     if (local[0].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[0].reason))
-    const resultConfig = local[1].status === 'fulfilled' ? local[1].value : null
+    const loadedResultConfig = local[1].status === 'fulfilled' ? local[1].value : null
     if (local[1].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[1].reason))
     const captureConfig = local[2].status === 'fulfilled' ? local[2].value : null
     if (local[2].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[2].reason))
+    const activeCapture = captureProfiles?.profiles.find(
+      (profile) => profile.profileId === captureProfiles.activeProfileId,
+    )
+    const resultConfig =
+      loadedResultConfig !== null &&
+      activeCapture !== undefined &&
+      predictionResultMatchesCapture(loadedResultConfig, activeCapture)
+        ? loadedResultConfig
+        : null
     const monitorView =
       local[3].status === 'fulfilled' ? local[3].value : { state: 'FAILED' as const }
     if (local[3].status === 'rejected')
@@ -412,7 +423,11 @@ export class StreamerService {
         }
       else if (section === 'predictions') {
         const parsed = parsePredictions(value, localPreferences)
-        this.predictions.observeServerState(parsed.active)
+        this.predictions.observeServerState(
+          parsed.active,
+          userId,
+          predictionObservationGeneration,
+        )
         next = { ...next, predictions: { ...next.predictions, ...parsed } }
       } else if (section === 'title') next = { ...next, title: parseTitle(value) }
       else if (section === 'deckSharing') {

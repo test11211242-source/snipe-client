@@ -19,8 +19,7 @@ if (-not [CrToolsDpi]::SetProcessDpiAwarenessContext([IntPtr](-4))) { throw 'DPI
 Add-Type -AssemblyName System.Windows.Forms
 $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [ordered]@{ deviceName = $_.DeviceName; bounds = [ordered]@{ x = $_.Bounds.X; y = $_.Bounds.Y; width = $_.Bounds.Width; height = $_.Bounds.Height } } })
 ConvertTo-Json -InputObject $screens -Compress -Depth 4`
-const POWERSHELL_WINDOW_METADATA_COMMAND = String.raw`param([Parameter(Mandatory=$true)][string]$Handles)
-$ErrorActionPreference = 'Stop'
+const POWERSHELL_WINDOW_METADATA_BODY = String.raw`$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CrToolsWindowMetadata { [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId); }'
 $items = @()
 foreach ($rawHandle in $Handles.Split(',')) {
@@ -34,6 +33,19 @@ foreach ($rawHandle in $Handles.Split(',')) {
   $items += [ordered]@{ windowHwnd = $handle.ToString(); ownerProcessId = [int64]$processId; executableLabel = $executable }
 }
 ConvertTo-Json -InputObject @($items) -Compress -Depth 3`
+
+export function buildWindowsWindowMetadataCommand(
+  windowHandles: readonly string[],
+): string {
+  if (
+    windowHandles.length === 0 ||
+    windowHandles.length > 512 ||
+    windowHandles.some((handle) => !/^[1-9]\d{0,18}$/.test(handle))
+  ) {
+    throw new Error('Window metadata handles are invalid')
+  }
+  return `$Handles = '${windowHandles.join(',')}'\n${POWERSHELL_WINDOW_METADATA_BODY}`
+}
 
 interface PhysicalBounds {
   x: number
@@ -152,17 +164,16 @@ export const resolveWindowsWindowMetadata: WindowMetadataResolver = (windowHandl
       resolve([])
       return
     }
+    let command: string
+    try {
+      command = buildWindowsWindowMetadataCommand(windowHandles)
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error('Window metadata input failed'))
+      return
+    }
     nodeExecFile(
       'powershell.exe',
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        POWERSHELL_WINDOW_METADATA_COMMAND,
-        '-Handles',
-        windowHandles.join(','),
-      ],
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
       {
         encoding: 'utf8',
         timeout: WINDOW_METADATA_TIMEOUT_MS,

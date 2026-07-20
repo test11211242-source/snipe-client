@@ -95,11 +95,19 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
       load: vi.fn().mockResolvedValue({}),
       list: vi.fn().mockResolvedValue({
         activeProfileId: '00000000-0000-4000-8000-000000000001',
+        profiles: [
+          {
+            profileId: '00000000-0000-4000-8000-000000000001',
+            configurationRevision: 1,
+            configurationFingerprint: 'a'.repeat(64),
+          },
+        ],
       }),
     } as never,
     { getView: vi.fn().mockResolvedValue({ state: 'READY' }) } as never,
     {
       state: 'stopped',
+      observationGeneration: 0,
       observeServerState: vi.fn(),
       startLifecycle: vi.fn(),
       shutdown: vi.fn(),

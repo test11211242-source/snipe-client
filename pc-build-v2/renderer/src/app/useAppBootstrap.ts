@@ -106,12 +106,20 @@ export function useAppBootstrap(): {
   const [attempt, setAttempt] = useState(0)
   const monitorStateRef = useRef<MonitorView['state'] | null>(null)
   const updateStateRef = useRef<UpdateView['state'] | null>(null)
+  const captureGenerationRef = useRef(0)
+  const profilesGenerationRef = useRef(0)
+  const monitorGenerationRef = useRef(0)
+  const updateGenerationRef = useRef(0)
   const restartMonitorPollingRef = useRef<() => void>(() => undefined)
   const restartUpdatePollingRef = useRef<() => void>(() => undefined)
 
   useEffect(() => {
     let active = true
     const isActive = (): boolean => active
+    const captureGeneration = ++captureGenerationRef.current
+    const profilesGeneration = ++profilesGenerationRef.current
+    const monitorGeneration = ++monitorGenerationRef.current
+    const updateGeneration = ++updateGenerationRef.current
 
     beginLoading(setProtocolResource)
     beginLoading(setSnapshotResource)
@@ -134,27 +142,39 @@ export function useAppBootstrap(): {
       loadResource(window.crTools.getAppSnapshot(), setSnapshotResource, isActive),
       loadResource(window.crTools.getAuthView(), setAuthResource, isActive),
       loadResource(window.crTools.getRealtimeStatus(), setRealtimeResource, isActive),
-      loadResource(window.crTools.getCaptureStatus(), setCaptureResource, isActive),
-      loadResource(window.crTools.getCaptureProfiles(), setProfilesResource, isActive),
+      loadResource(
+        window.crTools.getCaptureStatus(),
+        setCaptureResource,
+        () => active && captureGeneration === captureGenerationRef.current,
+      ),
+      loadResource(
+        window.crTools.getCaptureProfiles(),
+        setProfilesResource,
+        () => active && profilesGeneration === profilesGenerationRef.current,
+      ),
       loadResource(
         window.crTools.getMonitorView().then((value) => {
-          monitorStateRef.current = value.state
-          restartMonitorPollingRef.current()
+          if (active && monitorGeneration === monitorGenerationRef.current) {
+            monitorStateRef.current = value.state
+            restartMonitorPollingRef.current()
+          }
           return value
         }),
         setMonitorResource,
-        isActive,
+        () => active && monitorGeneration === monitorGenerationRef.current,
       ),
       loadResource(window.crTools.getWidgetStatus(), setWidgetResource, isActive),
       loadResource(window.crTools.getAppSettings(), setSettingsResource, isActive),
       loadResource(
         window.crTools.getUpdateView().then((value) => {
-          updateStateRef.current = value.state
-          restartUpdatePollingRef.current()
+          if (active && updateGeneration === updateGenerationRef.current) {
+            updateStateRef.current = value.state
+            restartUpdatePollingRef.current()
+          }
           return value
         }),
         setUpdateResource,
-        isActive,
+        () => active && updateGeneration === updateGenerationRef.current,
       ),
     ])
 
@@ -197,6 +217,9 @@ export function useAppBootstrap(): {
       if (inFlight) return
       inFlight = true
       const pollGeneration = generation
+      const captureGeneration = ++captureGenerationRef.current
+      const profilesGeneration = ++profilesGenerationRef.current
+      const monitorGeneration = ++monitorGenerationRef.current
       const [nextRealtime, nextCapture, nextProfiles, nextMonitor] =
         await Promise.allSettled([
           window.crTools.getRealtimeStatus(),
@@ -205,12 +228,21 @@ export function useAppBootstrap(): {
           window.crTools.getMonitorView(),
         ])
       if (active) {
-        applySettlement(nextRealtime, setRealtimeResource)
-        applySettlement(nextCapture, setCaptureResource)
         if (pollGeneration === generation) {
-          applySettlement(nextProfiles, setProfilesResource)
-          applySettlement(nextMonitor, setMonitorResource)
-          if (nextMonitor.status === 'fulfilled') {
+          applySettlement(nextRealtime, setRealtimeResource)
+          if (captureGeneration === captureGenerationRef.current) {
+            applySettlement(nextCapture, setCaptureResource)
+          }
+          if (profilesGeneration === profilesGenerationRef.current) {
+            applySettlement(nextProfiles, setProfilesResource)
+          }
+          if (monitorGeneration === monitorGenerationRef.current) {
+            applySettlement(nextMonitor, setMonitorResource)
+          }
+          if (
+            monitorGeneration === monitorGenerationRef.current &&
+            nextMonitor.status === 'fulfilled'
+          ) {
             monitorStateRef.current = nextMonitor.value.state
           }
         }
@@ -277,9 +309,14 @@ export function useAppBootstrap(): {
       if (inFlight) return
       inFlight = true
       const pollGeneration = generation
+      const updateGeneration = ++updateGenerationRef.current
       const nextUpdate = await Promise.allSettled([window.crTools.getUpdateView()])
       const result = nextUpdate[0]
-      if (active && pollGeneration === generation) {
+      if (
+        active &&
+        pollGeneration === generation &&
+        updateGeneration === updateGenerationRef.current
+      ) {
         applySettlement(result, setUpdateResource)
         if (result.status === 'fulfilled') updateStateRef.current = result.value.state
       }
@@ -322,16 +359,30 @@ export function useAppBootstrap(): {
       settings,
       update,
     },
-    retry: () => setAttempt((current) => current + 1),
+    retry: () => {
+      captureGenerationRef.current += 1
+      profilesGenerationRef.current += 1
+      monitorGenerationRef.current += 1
+      updateGenerationRef.current += 1
+      restartMonitorPollingRef.current()
+      restartUpdatePollingRef.current()
+      setAttempt((current) => current + 1)
+    },
     setSnapshot: (value) => ready(setSnapshotResource, value),
     setAuth: (value) => ready(setAuthResource, value),
     setRealtime: (value) => ready(setRealtimeResource, value),
-    setCapture: (value) => ready(setCaptureResource, value),
+    setCapture: (value) => {
+      captureGenerationRef.current += 1
+      ready(setCaptureResource, value)
+      restartMonitorPollingRef.current()
+    },
     setProfiles: (value) => {
+      profilesGenerationRef.current += 1
       ready(setProfilesResource, value)
       restartMonitorPollingRef.current()
     },
     setMonitor: (value) => {
+      monitorGenerationRef.current += 1
       monitorStateRef.current = value.state
       ready(setMonitorResource, value)
       restartMonitorPollingRef.current()
@@ -339,6 +390,7 @@ export function useAppBootstrap(): {
     setWidget: (value) => ready(setWidgetResource, value),
     setSettings: (value) => ready(setSettingsResource, value),
     setUpdate: (value) => {
+      updateGenerationRef.current += 1
       updateStateRef.current = value.state
       ready(setUpdateResource, value)
       restartUpdatePollingRef.current()

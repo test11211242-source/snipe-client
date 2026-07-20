@@ -337,6 +337,35 @@ describe('CaptureConfigurationRepository profiles', () => {
     })
   })
 
+  it('updates an inactive profile without changing the active profile', async () => {
+    const { fs } = memoryFileSystem()
+    const target = repository('/profiles', fs)
+    await target.save(configuration('user', 1, 'First'))
+    const primaryId = required(await target.list('user')).activeProfileId
+    const secondaryId = '00000000-0000-4000-8000-000000000099'
+    await target.save(configuration('user', 1, 'Second'), {
+      profileId: secondaryId,
+      profileName: 'Second profile',
+      expectedRevision: 1,
+    })
+
+    await target.save(configuration('user', 2, 'First updated'), {
+      profileId: primaryId,
+      profileName: 'First profile',
+      expectedRevision: 2,
+      activate: false,
+    })
+
+    expect(await target.list('user')).toMatchObject({
+      revision: 3,
+      activeProfileId: secondaryId,
+      profiles: [
+        { profileId: primaryId, sourceLabel: 'First updated', isActive: false },
+        { profileId: secondaryId, sourceLabel: 'Second', isActive: true },
+      ],
+    })
+  })
+
   it('enforces optimistic collection revisions and changes collection fingerprints', async () => {
     const { fs, files } = memoryFileSystem()
     const target = repository('/profiles', fs)

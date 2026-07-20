@@ -35,6 +35,7 @@ describe('ApplicationController user context', () => {
         throw new Error('no setup')
       }),
       cancel: vi.fn(),
+      cancelForAuthTransition: vi.fn(),
     }
     const monitor = {
       stop: vi.fn().mockResolvedValue({ state: 'STOPPED' }),
@@ -96,5 +97,6 @@ describe('ApplicationController user context', () => {
     expect(capturePreparations.stop).toHaveBeenCalled()
     expect(reprocessedResults.start).toHaveBeenNthCalledWith(1, 'A')
     expect(reprocessedResults.start).toHaveBeenNthCalledWith(2, 'B')
+    expect(setup.cancelForAuthTransition).toHaveBeenCalledTimes(3)
   })
 })

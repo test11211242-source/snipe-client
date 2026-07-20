@@ -45,21 +45,31 @@ export interface CrToolsApi {
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>
   getCaptureStatus: () => Promise<CaptureStatus>
   getCaptureProfiles: () => Promise<CaptureProfilesView>
-  activateCaptureProfile: (
-    payload: CaptureProfileCommand,
-  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
-  renameCaptureProfile: (
-    payload: CaptureProfileNamePayload,
-  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
-  duplicateCaptureProfile: (
-    payload: CaptureProfileNamePayload,
-  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
-  deleteCaptureProfile: (
-    payload: CaptureProfileCommand,
-  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
-  rebindCaptureProfile: (
-    payload: RebindCaptureProfilePayload,
-  ) => Promise<{ profiles: CaptureProfilesView; monitor: MonitorView }>
+  activateCaptureProfile: (payload: CaptureProfileCommand) => Promise<{
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+    capture: CaptureStatus
+  }>
+  renameCaptureProfile: (payload: CaptureProfileNamePayload) => Promise<{
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+    capture: CaptureStatus
+  }>
+  duplicateCaptureProfile: (payload: CaptureProfileNamePayload) => Promise<{
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+    capture: CaptureStatus
+  }>
+  deleteCaptureProfile: (payload: CaptureProfileCommand) => Promise<{
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+    capture: CaptureStatus
+  }>
+  rebindCaptureProfile: (payload: RebindCaptureProfilePayload) => Promise<{
+    profiles: CaptureProfilesView
+    monitor: MonitorView
+    capture: CaptureStatus
+  }>
   getMonitorView: () => Promise<MonitorView>
   startMonitor: () => Promise<MonitorView>
   stopMonitor: () => Promise<MonitorView>

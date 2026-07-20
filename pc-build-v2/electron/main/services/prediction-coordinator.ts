@@ -2,7 +2,10 @@ import { z } from 'zod'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { hasStreamerRole } from '../../../shared/models/auth'
-import type { PredictionRuntimeProfile } from '../../../shared/models/prediction-result'
+import {
+  predictionResultMatchesCapture,
+  type PredictionRuntimeProfile,
+} from '../../../shared/models/prediction-result'
 import type { PredictionPreferences } from '../../../shared/models/streamer'
 import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
@@ -22,11 +25,15 @@ export type PredictionRuntimeState =
 export class PredictionCoordinator {
   #state: PredictionRuntimeState = 'stopped'
   #generation = 0
+  #observationGeneration = 0
+  #confirmedStopGeneration = -1
   #eventQueue: Promise<void> = Promise.resolve()
   #eventController = new AbortController()
   #pendingBattle = false
   #pendingResult: MonitorAction | null = null
   #monitorOwned = false
+  #ownerUserId: string | null = null
+  #ownerAuthGeneration: number | null = null
   #stopPromise: Promise<void> | null = null
   #disposeBattle: (() => void) | null = null
   #disposeResult: (() => void) | null = null
@@ -46,7 +53,23 @@ export class PredictionCoordinator {
     return this.#state
   }
 
-  observeServerState(active: boolean): void {
+  get observationGeneration(): number {
+    return this.#observationGeneration
+  }
+
+  observeServerState(
+    active: boolean,
+    userId: string,
+    generation = this.#observationGeneration,
+  ): void {
+    if (generation !== this.#observationGeneration) return
+    if (active) {
+      this.#ownerUserId = userId
+      this.#ownerAuthGeneration = this.auth.getContextGeneration()
+    } else if (this.#ownerUserId === userId) {
+      this.#ownerUserId = null
+      this.#ownerAuthGeneration = null
+    }
     if (active && this.#state === 'stopped') this.#state = 'unknown'
     else if (!active && this.#state === 'unknown' && !this.#monitorOwned)
       this.#state = 'stopped'
@@ -64,6 +87,7 @@ export class PredictionCoordinator {
 
   start(settings: PredictionPreferences): Promise<void> {
     const generation = ++this.#generation
+    this.#observationGeneration += 1
     return this.runLifecycle(() => {
       if (generation !== this.#generation) {
         throw new ApplicationError(
@@ -86,18 +110,23 @@ export class PredictionCoordinator {
       throw new ApplicationError('STREAMER_ROLE_REQUIRED', 'Streamer role is required')
     }
     const userId = view.user.id
+    const authGeneration = this.auth.getContextGeneration()
     this.#state = 'starting'
     try {
       const configurationRequest =
         this.captures === undefined
           ? this.results.load(userId)
-          : this.captures
-              .list(userId)
-              .then((profiles) =>
-                profiles === null
-                  ? null
-                  : this.results.load(userId, profiles.activeProfileId),
+          : this.captures.list(userId).then(async (profiles) => {
+              if (profiles === null) return null
+              const capture = profiles.profiles.find(
+                (profile) => profile.profileId === profiles.activeProfileId,
               )
+              if (capture === undefined) return null
+              const result = await this.results.load(userId, profiles.activeProfileId)
+              return result !== null && predictionResultMatchesCapture(result, capture)
+                ? result
+                : null
+            })
       const [configuration, twitch] = await Promise.all([
         configurationRequest,
         this.api.request({
@@ -105,12 +134,19 @@ export class PredictionCoordinator {
           path: '/api/streamer/auth/status',
           schema: TwitchSchema,
           signal: this.#eventController.signal,
+          authContextGuard: () => this.hasAuthContext(userId, authGeneration),
         }),
       ])
       if (generation !== this.#generation) {
         throw new ApplicationError(
           'PREDICTION_CANCELLED',
           'Prediction start was cancelled',
+        )
+      }
+      if (!this.hasAuthContext(userId, authGeneration)) {
+        throw new ApplicationError(
+          'PREDICTION_AUTH_CHANGED',
+          'The signed-in session changed while predictions were starting',
         )
       }
       if (configuration === null) {
@@ -138,9 +174,20 @@ export class PredictionCoordinator {
         },
         schema: SuccessSchema,
         signal: this.#eventController.signal,
+        authContextGuard: () => this.hasAuthContext(userId, authGeneration),
       })
       if (!started.ok) {
         throw new ApplicationError('PREDICTION_START_FAILED', started.error.message)
+      }
+      this.#ownerUserId = userId
+      this.#ownerAuthGeneration = authGeneration
+      this.#observationGeneration += 1
+      if (!this.hasAuthContext(userId, authGeneration)) {
+        this.#state = 'unknown'
+        throw new ApplicationError(
+          'PREDICTION_AUTH_CHANGED',
+          'The signed-in session changed after predictions started',
+        )
       }
       if (generation !== this.#generation) {
         await this.stopServer().catch(() => false)
@@ -167,7 +214,10 @@ export class PredictionCoordinator {
           if (monitorView.state !== 'READY')
             throw new Error('monitor did not become ready')
         }
-        if (generation !== this.#generation)
+        if (
+          generation !== this.#generation ||
+          !this.hasAuthContext(userId, authGeneration)
+        )
           throw new Error('prediction start became stale')
         this.#monitorOwned = !wasRunning
         this.#state = 'active'
@@ -207,7 +257,15 @@ export class PredictionCoordinator {
     if (this.#stopPromise !== null) {
       return bestEffort ? this.#stopPromise.catch(() => undefined) : this.#stopPromise
     }
-    const operation = this.performStop(bestEffort).finally(() => {
+    this.#observationGeneration += 1
+    const stopping = this.performStop(bestEffort)
+    const generation = this.#generation
+    const operation = stopping.finally(() => {
+      this.#observationGeneration += 1
+      if (this.#confirmedStopGeneration === generation) {
+        this.#ownerUserId = null
+        this.#ownerAuthGeneration = null
+      }
       if (this.#stopPromise === operation) this.#stopPromise = null
     })
     this.#stopPromise = operation
@@ -271,14 +329,31 @@ export class PredictionCoordinator {
   }
 
   private async stopServer(): Promise<boolean> {
+    const userId = this.#ownerUserId ?? this.auth.getView().user?.id
+    const authGeneration = this.#ownerAuthGeneration ?? this.auth.getContextGeneration()
+    if (userId === undefined || !this.hasAuthContext(userId, authGeneration)) return false
     const result = await this.api.request({
       method: 'POST',
       path: '/api/streamer/bot/stop',
       schema: SuccessSchema,
       timeoutMs: 10_000,
+      authContextGuard: () => this.hasAuthContext(userId, authGeneration),
     })
-    if (!result.ok) return result.error.status === 404
+    if (!result.ok) {
+      if (result.error.status !== 404) return false
+    }
+    this.#ownerUserId = null
+    this.#ownerAuthGeneration = null
+    this.#confirmedStopGeneration = this.#generation
+    this.#observationGeneration += 1
     return true
+  }
+
+  private hasAuthContext(userId: string, generation: number): boolean {
+    return (
+      this.auth.getContextGeneration() === generation &&
+      this.auth.getView().user?.id === userId
+    )
   }
 
   private enqueueBattleStart(): void {
@@ -288,13 +363,24 @@ export class PredictionCoordinator {
     this.#eventQueue = this.#eventQueue
       .then(async () => {
         this.#pendingBattle = false
-        if (generation !== this.#generation || this.#state !== 'active') return
+        if (
+          generation !== this.#generation ||
+          this.#state !== 'active' ||
+          this.#ownerUserId === null ||
+          this.#ownerAuthGeneration === null ||
+          !this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration)
+        )
+          return
         await this.api.request({
           method: 'POST',
           path: '/api/streamer/bot/battle-start',
           schema: SuccessSchema,
           timeoutMs: 15_000,
           signal: this.#eventController.signal,
+          authContextGuard: () =>
+            this.#ownerUserId !== null &&
+            this.#ownerAuthGeneration !== null &&
+            this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration),
         })
       })
       .catch(() => undefined)
@@ -314,6 +400,12 @@ export class PredictionCoordinator {
           this.#state !== 'active'
         )
           return
+        if (
+          this.#ownerUserId === null ||
+          this.#ownerAuthGeneration === null ||
+          !this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration)
+        )
+          return
         const body = new FormData()
         body.set(
           'screenshot',
@@ -327,6 +419,10 @@ export class PredictionCoordinator {
           schema: SuccessSchema,
           timeoutMs: 150_000,
           signal: this.#eventController.signal,
+          authContextGuard: () =>
+            this.#ownerUserId !== null &&
+            this.#ownerAuthGeneration !== null &&
+            this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration),
         })
       })
       .catch(() => undefined)

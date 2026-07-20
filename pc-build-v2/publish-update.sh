@@ -323,18 +323,53 @@ info "Setting package version to $VERSION"
 npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null
 
 RELEASE_PATHS=(
-  'pc-build-v2'
+  'pc-build-v2/electron'
+  'pc-build-v2/renderer'
+  'pc-build-v2/shared'
+  'pc-build-v2/python'
+  'pc-build-v2/tests'
+  'pc-build-v2/scripts'
+  'pc-build-v2/resources'
+  'pc-build-v2/docs'
+  'pc-build-v2/.gitattributes'
+  'pc-build-v2/.gitignore'
+  'pc-build-v2/.prettierignore'
+  'pc-build-v2/.prettierrc.json'
+  'pc-build-v2/electron-builder.yml'
+  'pc-build-v2/electron.vite.config.ts'
+  'pc-build-v2/eslint.config.js'
+  'pc-build-v2/package-lock.json'
+  'pc-build-v2/package.json'
+  'pc-build-v2/playwright.config.ts'
+  'pc-build-v2/publish-update.sh'
+  'pc-build-v2/README.md'
+  'pc-build-v2/tsconfig.json'
+  'pc-build-v2/vitest.config.ts'
   '.github/workflows/pc-build-v2-release.yml'
   'docs/CR_TOOLS_V2_IMPLEMENTATION_PLAN.md'
+)
+CLEANUP_PATHS=(
+  'pc-build-v2/CaptureConfigurationRepository'
+  'pc-build-v2/PredictionResultConfigurationRepository'
+  'pc-build-v2/can'
+  'pc-build-v2/does'
+  'pc-build-v2/enforces'
+  'pc-build-v2/migrates'
+  'pc-build-v2/retains'
 )
 
 info 'Staging only reviewed V2 release paths'
 git -C "$REPO_ROOT" add -- "${RELEASE_PATHS[@]}"
+for cleanup_path in "${CLEANUP_PATHS[@]}"; do
+  if git -C "$REPO_ROOT" ls-files --error-unmatch -- "$cleanup_path" >/dev/null 2>&1; then
+    git -C "$REPO_ROOT" add -u -- "$cleanup_path"
+  fi
+done
 mapfile -d '' staged_files < <(git -C "$REPO_ROOT" diff --cached --name-only -z)
 for staged_file in "${staged_files[@]}"; do
   case "$staged_file" in
     *.env | *.env.* | *.pfx | *.p12 | *.key | *private*.pem)
-      git -C "$REPO_ROOT" reset -q -- "${RELEASE_PATHS[@]}"
+      git -C "$REPO_ROOT" restore --staged -- "${staged_files[@]}"
       die "Sensitive file was selected for commit: $staged_file"
       ;;
   esac

@@ -205,7 +205,8 @@ captureProfiles = new CaptureProfileService(
 )
 setup.configureCaptureProfileLifecycle(
   () => captureProfiles.assertCanChangeProfile(),
-  () => captureProfiles.captureSetupCommitted(),
+  (activeChanged) =>
+    activeChanged ? captureProfiles.captureSetupCommitted() : Promise.resolve(),
   (operation) => captureProfiles.runCaptureCommit(operation),
 )
 const streamer = new StreamerService(

@@ -118,7 +118,7 @@ export function HomePage({
       })
       onProfiles(result.profiles)
       onMonitorView(result.monitor)
-      onCaptureStatus(await window.crTools.getCaptureStatus())
+      onCaptureStatus(result.capture)
     } catch {
       setCommandError(
         'Не удалось переключить профиль. Проверьте окно источника или откройте перепривязку.',

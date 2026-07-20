@@ -56,6 +56,7 @@ interface InternalSession {
   controller: AbortController
   commitLocked: boolean
   profileTarget: SetupCaptureProfileTarget | null
+  authGeneration: number
 }
 
 export interface SetupCaptureProfileTarget {
@@ -129,7 +130,7 @@ export class SetupSessionService {
   #session: InternalSession | null = null
   #startOperation: Promise<void> = Promise.resolve()
   #assertCaptureCommitAllowed: () => void = () => undefined
-  #captureCommitted: () => Promise<void> = () => Promise.resolve()
+  #captureCommitted: (activeChanged: boolean) => Promise<void> = () => Promise.resolve()
   #runCaptureCommit: (
     operation: () => Promise<SetupSessionView>,
   ) => Promise<SetupSessionView> = (operation) => operation()
@@ -147,7 +148,7 @@ export class SetupSessionService {
 
   configureCaptureProfileLifecycle(
     assertCommitAllowed: () => void,
-    captureCommitted: () => Promise<void>,
+    captureCommitted: (activeChanged: boolean) => Promise<void>,
     runCaptureCommit: (
       operation: () => Promise<SetupSessionView>,
     ) => Promise<SetupSessionView>,
@@ -185,18 +186,29 @@ export class SetupSessionService {
         'A capture setup is already active',
       )
     }
+    const authGeneration = this.auth.getContextGeneration()
     const user = this.auth.getView().user
     const profileTarget =
       kind === 'capture' || requestedProfile !== undefined
         ? await this.resolveProfileTarget(user?.id ?? null, requestedProfile)
         : null
     const controller = new AbortController()
+    if (
+      this.auth.getContextGeneration() !== authGeneration ||
+      this.auth.getView().user?.id !== user?.id
+    ) {
+      throw new ApplicationError(
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in session changed while setup was starting',
+      )
+    }
     const session: InternalSession = {
       selector,
       frame: null,
       controller,
       commitLocked: false,
       profileTarget,
+      authGeneration,
       view: SetupSessionViewSchema.parse({
         kind,
         sessionId: randomUUID(),
@@ -471,7 +483,12 @@ export class SetupSessionService {
     })
     const token = await this.auth.getAccessToken()
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (token === null || user?.id === undefined || user.id !== profileTarget?.userId) {
+    if (
+      token === null ||
+      user?.id === undefined ||
+      user.id !== profileTarget?.userId ||
+      !this.hasCurrentAuthContext(session)
+    ) {
       session.commitLocked = false
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -482,10 +499,21 @@ export class SetupSessionService {
       return session.view
     }
     const profileStatus = await this.repository.list(user.id)
-    if (
-      (profileStatus?.revision ?? 0) !== profileTarget.expectedRevision ||
-      !this.isCurrentOperation(session, generation, 'SAVING')
-    ) {
+    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (!this.hasCurrentAuthContext(session)) {
+      session.commitLocked = false
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'REVIEW',
+        generation: generation + 1,
+        error: {
+          code: 'AUTH_CONTEXT_CHANGED',
+          message: 'The signed-in session changed while capture setup was saving',
+        },
+      })
+      return session.view
+    }
+    if ((profileStatus?.revision ?? 0) !== profileTarget.expectedRevision) {
       session.commitLocked = false
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -527,6 +555,7 @@ export class SetupSessionService {
       })
       return session.view
     }
+    const activateProfile = existingProfile === undefined || existingProfile.isActive
     const timestamp = this.now().toISOString()
     const projection = buildLegacyProjection(
       frame,
@@ -535,16 +564,18 @@ export class SetupSessionService {
       session.view.source,
       timestamp,
     )
-    const remote = await this.api.request({
-      method: 'POST',
-      path: '/api/user/me/ocr-regions',
-      body: projection,
-      accessToken: token,
-      schema: SaveResponseSchema,
-      signal: session.controller.signal,
-    })
+    const remote = activateProfile
+      ? await this.api.request({
+          method: 'POST',
+          path: '/api/user/me/ocr-regions',
+          body: projection,
+          accessToken: token,
+          schema: SaveResponseSchema,
+          signal: session.controller.signal,
+        })
+      : ({ ok: true, status: 200, data: { success: true } } as const)
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (this.auth.getView().user?.id !== profileTarget.userId) {
+    if (!this.hasCurrentAuthContext(session)) {
       session.commitLocked = false
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -570,6 +601,10 @@ export class SetupSessionService {
 
     try {
       const previous = await this.repository.get(user.id, profileTarget.profileId)
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        return this.captureCommitAuthFailure(session, generation)
+      }
       const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
         schemaVersion: 1,
         userId: user.id,
@@ -588,9 +623,23 @@ export class SetupSessionService {
         profileId: profileTarget.profileId,
         profileName: profileTarget.profileName,
         expectedRevision: profileTarget.expectedRevision,
+        activate: activateProfile,
       })
-      await this.#captureCommitted().catch(() => undefined)
+      if (
+        !this.isCurrentOperation(session, generation, 'SAVING') ||
+        !this.hasCurrentAuthContext(session)
+      ) {
+        return session.view
+      }
+      await this.#captureCommitted(activateProfile).catch(() => undefined)
+      if (
+        !this.isCurrentOperation(session, generation, 'SAVING') ||
+        !this.hasCurrentAuthContext(session)
+      ) {
+        return session.view
+      }
     } catch (error) {
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
       session.frame = null
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -648,7 +697,7 @@ export class SetupSessionService {
     })
     const token = await this.auth.getAccessToken()
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (token === null || this.auth.getView().user?.id !== profileTarget.userId) {
+    if (token === null || !this.hasCurrentAuthContext(session)) {
       return this.resultCommitFailure(
         session,
         generation,
@@ -657,12 +706,21 @@ export class SetupSessionService {
       )
     }
     const profileStatus = await this.repository.list(profileTarget.userId)
-    if (
-      !this.isCurrentOperation(session, generation, 'SAVING') ||
-      profileStatus?.revision !== profileTarget.expectedRevision ||
-      !profileStatus.profiles.some(
-        (profileSummary) => profileSummary.profileId === profileTarget.profileId,
+    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (!this.hasCurrentAuthContext(session)) {
+      return this.resultCommitFailure(
+        session,
+        generation,
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in session changed while result setup was saving',
       )
+    }
+    const captureProfile = profileStatus?.profiles.find(
+      (profileSummary) => profileSummary.profileId === profileTarget.profileId,
+    )
+    if (
+      profileStatus?.revision !== profileTarget.expectedRevision ||
+      captureProfile === undefined
     ) {
       return this.resultCommitFailure(
         session,
@@ -722,7 +780,7 @@ export class SetupSessionService {
       signal: session.controller.signal,
     })
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (this.auth.getView().user?.id !== profileTarget.userId) {
+    if (!this.hasCurrentAuthContext(session)) {
       return this.resultCommitFailure(
         session,
         generation,
@@ -751,7 +809,7 @@ export class SetupSessionService {
       signal: session.controller.signal,
     })
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (this.auth.getView().user?.id !== profileTarget.userId) {
+    if (!this.hasCurrentAuthContext(session)) {
       return this.resultCommitFailure(
         session,
         generation,
@@ -770,9 +828,21 @@ export class SetupSessionService {
     try {
       const resultProfileId = profileTarget.profileId
       const previous = await this.resultRepository.load(user.id, resultProfileId)
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        return this.resultCommitFailure(
+          session,
+          generation,
+          'AUTH_CONTEXT_CHANGED',
+          'The signed-in session changed while result setup was saving',
+        )
+      }
       const unsigned: Omit<PredictionResultConfiguration, 'fingerprint'> = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         userId: user.id,
+        captureProfileId: resultProfileId,
+        captureConfigurationRevision: captureProfile.configurationRevision,
+        captureConfigurationFingerprint: captureProfile.configurationFingerprint,
         revision: (previous?.revision ?? 0) + 1,
         committedAt: timestamp,
         source: session.view.source,
@@ -788,7 +858,14 @@ export class SetupSessionService {
         }),
         resultProfileId,
       )
+      if (
+        !this.isCurrentOperation(session, generation, 'SAVING') ||
+        !this.hasCurrentAuthContext(session)
+      ) {
+        return session.view
+      }
     } catch {
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
       session.frame = null
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
@@ -828,6 +905,23 @@ export class SetupSessionService {
     return session.view
   }
 
+  private captureCommitAuthFailure(
+    session: InternalSession,
+    generation: number,
+  ): SetupSessionView {
+    session.commitLocked = false
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      state: 'REVIEW',
+      generation: generation + 1,
+      error: {
+        code: 'AUTH_CONTEXT_CHANGED',
+        message: 'The signed-in session changed while capture setup was saving',
+      },
+    })
+    return session.view
+  }
+
   cancel(sessionId: string, generation: number): SetupSessionView {
     const session = this.assertCommand(sessionId, generation)
     if (session.commitLocked) {
@@ -845,6 +939,25 @@ export class SetupSessionService {
       error: null,
     })
     return session.view
+  }
+
+  cancelForAuthTransition(): void {
+    const session = this.#session
+    if (
+      session === null ||
+      ['COMMITTED', 'CANCELLED', 'FAILED'].includes(session.view.state)
+    ) {
+      return
+    }
+    session.controller.abort()
+    session.frame = null
+    session.commitLocked = false
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      state: 'CANCELLED',
+      generation: session.view.generation + 1,
+      error: null,
+    })
   }
 
   close(sessionId: string, generation: number): SetupSessionView {
@@ -881,10 +994,23 @@ export class SetupSessionService {
     if (session.view.generation !== generation) {
       throw new ApplicationError('SETUP_GENERATION_STALE', 'Setup command is stale')
     }
+    if (!this.hasCurrentAuthContext(session)) {
+      throw new ApplicationError(
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in session changed while setup was open',
+      )
+    }
     if (['COMMITTED', 'CANCELLED', 'FAILED'].includes(session.view.state)) {
       throw new ApplicationError('SETUP_STATE_FINAL', 'Setup session has finished')
     }
     return session
+  }
+
+  private hasCurrentAuthContext(session: InternalSession): boolean {
+    return (
+      this.auth.getContextGeneration() === session.authGeneration &&
+      this.auth.getView().user?.id === session.profileTarget?.userId
+    )
   }
 
   private isCurrentOperation(

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import {
+  CaptureProfileIdSchema,
   CapturePreferenceSchema,
   NormalizedRectSchema,
   PixelSizeSchema,
@@ -9,8 +10,11 @@ import {
 
 export const PredictionResultConfigurationSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     userId: z.string().min(1).max(128),
+    captureProfileId: CaptureProfileIdSchema,
+    captureConfigurationRevision: z.number().int().positive(),
+    captureConfigurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     revision: z.number().int().positive(),
     committedAt: z.iso.datetime(),
     source: CapturePreferenceSchema,
@@ -35,3 +39,18 @@ export type PredictionResultConfiguration = z.infer<
   typeof PredictionResultConfigurationSchema
 >
 export type PredictionRuntimeProfile = z.infer<typeof PredictionRuntimeProfileSchema>
+
+export function predictionResultMatchesCapture(
+  result: PredictionResultConfiguration,
+  capture: {
+    profileId: string
+    configurationRevision: number
+    configurationFingerprint: string
+  },
+): boolean {
+  return (
+    result.captureProfileId === capture.profileId &&
+    result.captureConfigurationRevision === capture.configurationRevision &&
+    result.captureConfigurationFingerprint === capture.configurationFingerprint
+  )
+}

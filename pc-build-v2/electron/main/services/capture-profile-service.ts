@@ -4,8 +4,10 @@ import { ApplicationError } from '../../../shared/errors/application-error'
 import {
   CaptureProfileNameSchema,
   CaptureProfilesViewSchema,
+  CaptureStatusSchema,
   type CapturePreference,
   type CaptureProfilesView,
+  type CaptureStatus,
   type PixelSize,
 } from '../../../shared/models/capture'
 import {
@@ -16,7 +18,10 @@ import {
   CaptureProfileRevisionConflictError,
   type CaptureConfigurationRepository,
 } from '../infrastructure/capture-configuration-repository'
-import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
+import {
+  predictionResultFingerprint,
+  type PredictionResultConfigurationRepository,
+} from '../infrastructure/prediction-result-configuration-repository'
 import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorSupervisor } from './monitor-supervisor'
@@ -26,6 +31,7 @@ const ACTIVE_MONITOR_STATES = ['PREFLIGHT', 'STARTING', 'READY'] as const
 export interface CaptureProfileMutationResult {
   profiles: CaptureProfilesView
   monitor: Awaited<ReturnType<MonitorSupervisor['getView']>>
+  capture: CaptureStatus
 }
 
 export class CaptureProfileService {
@@ -41,9 +47,11 @@ export class CaptureProfileService {
   ) {}
 
   async getView(): Promise<CaptureProfilesView> {
+    const generation = this.auth.getContextGeneration()
     const user = this.auth.getView().user
     if (user === null) return CaptureProfilesViewSchema.parse(this.emptyView())
     const status = await this.repository.list(user.id)
+    this.assertAuthContext({ userId: user.id, generation })
     return CaptureProfilesViewSchema.parse(
       status === null
         ? this.emptyView()
@@ -60,6 +68,7 @@ export class CaptureProfileService {
   }
 
   async captureSetupCommitted(): Promise<void> {
+    this.monitor.invalidateCaptureTarget()
     const monitor = await this.monitor.getView()
     if (
       ACTIVE_MONITOR_STATES.includes(
@@ -82,8 +91,10 @@ export class CaptureProfileService {
     profileName: string,
     expectedRevision: number,
   ): Promise<CaptureProfileMutationResult> {
+    const context = this.requireAuthContext()
     return this.serialized(async () => {
-      const userId = this.requireUserId()
+      this.assertAuthContext(context)
+      const userId = context.userId
       try {
         await this.repository.rename(
           userId,
@@ -94,7 +105,8 @@ export class CaptureProfileService {
       } catch (error) {
         throw this.publicFailure(error)
       }
-      return this.result()
+      this.assertAuthContext(context)
+      return this.result(context)
     })
   }
 
@@ -103,14 +115,29 @@ export class CaptureProfileService {
     profileName: string,
     expectedRevision: number,
   ): Promise<CaptureProfileMutationResult> {
+    const context = this.requireAuthContext()
     return this.serialized(async () => {
-      const userId = this.requireUserId()
+      this.assertAuthContext(context)
+      const userId = context.userId
       const sourceResult = await this.resultRepository?.load(userId, profileId)
-      this.assertCurrentUser(userId)
+      this.assertAuthContext(context)
       const duplicateProfileId = randomUUID()
       try {
         if (sourceResult !== null && sourceResult !== undefined) {
-          await this.resultRepository?.save(sourceResult, duplicateProfileId)
+          const { fingerprint: _fingerprint, ...sourceUnsigned } = sourceResult
+          void _fingerprint
+          const duplicateUnsigned = {
+            ...sourceUnsigned,
+            captureProfileId: duplicateProfileId,
+          }
+          await this.resultRepository?.save(
+            {
+              ...duplicateUnsigned,
+              fingerprint: predictionResultFingerprint(duplicateUnsigned),
+            },
+            duplicateProfileId,
+          )
+          this.assertAuthContext(context)
         }
         await this.repository.duplicate(
           userId,
@@ -127,7 +154,8 @@ export class CaptureProfileService {
         }
         throw this.publicFailure(error)
       }
-      return this.result()
+      this.assertAuthContext(context)
+      return this.result(context)
     })
   }
 
@@ -135,26 +163,26 @@ export class CaptureProfileService {
     profileId: string,
     expectedRevision: number,
   ): Promise<CaptureProfileMutationResult> {
+    const context = this.requireAuthContext()
     return this.serialized(async () => {
+      this.assertAuthContext(context)
       this.assertPredictionsStopped()
-      const userId = this.requireUserId()
+      const userId = context.userId
       const current = await this.repository.list(userId)
-      if (current?.activeProfileId === profileId) return this.result()
-      await this.resolveProfile(profileId)
-      const monitor = await this.monitor.getView()
-      this.assertCurrentUser(userId)
-      const restart = ACTIVE_MONITOR_STATES.includes(
-        monitor.state as (typeof ACTIVE_MONITOR_STATES)[number],
-      )
+      const changingProfile = current?.activeProfileId !== profileId
+      if (changingProfile) await this.resolveProfile(profileId)
+      this.assertAuthContext(context)
       try {
         await this.repository.activate(userId, profileId, expectedRevision)
       } catch (error) {
         throw this.publicFailure(error)
       }
-      if (restart) {
+      this.assertAuthContext(context)
+      if (changingProfile) {
+        this.monitor.invalidateCaptureTarget()
         await this.monitor.restartIfActive()
       }
-      return this.result()
+      return this.result(context)
     })
   }
 
@@ -162,8 +190,10 @@ export class CaptureProfileService {
     profileId: string,
     expectedRevision: number,
   ): Promise<CaptureProfileMutationResult> {
+    const context = this.requireAuthContext()
     return this.serialized(async () => {
-      const userId = this.requireUserId()
+      this.assertAuthContext(context)
+      const userId = context.userId
       const current = await this.repository.list(userId)
       if (current === null)
         throw this.publicFailure(new CaptureProfileNotFoundError(profileId))
@@ -175,23 +205,20 @@ export class CaptureProfileService {
         )
         if (replacement !== undefined) await this.resolveProfile(replacement.profileId)
       }
-      const monitor = await this.monitor.getView()
-      this.assertCurrentUser(userId)
-      const restart =
-        deletingActive &&
-        ACTIVE_MONITOR_STATES.includes(
-          monitor.state as (typeof ACTIVE_MONITOR_STATES)[number],
-        )
+      this.assertAuthContext(context)
       try {
         await this.repository.delete(userId, profileId, expectedRevision)
-        await this.resultRepository?.delete(userId, profileId).catch(() => undefined)
       } catch (error) {
         throw this.publicFailure(error)
       }
-      if (restart) {
+      this.assertAuthContext(context)
+      if (deletingActive) {
+        this.monitor.invalidateCaptureTarget()
         await this.monitor.restartIfActive()
       }
-      return this.result()
+      await this.resultRepository?.delete(userId, profileId).catch(() => undefined)
+      this.assertAuthContext(context)
+      return this.result(context)
     })
   }
 
@@ -201,8 +228,10 @@ export class CaptureProfileService {
     frameSize: PixelSize,
     expectedRevision: number,
   ): Promise<CaptureProfileMutationResult> {
+    const context = this.requireAuthContext()
     return this.serialized(async () => {
-      const userId = this.requireUserId()
+      this.assertAuthContext(context)
+      const userId = context.userId
       const profile = await this.repository.get(userId, profileId)
       if (profile === null)
         throw this.publicFailure(new CaptureProfileNotFoundError(profileId))
@@ -218,13 +247,7 @@ export class CaptureProfileService {
       const current = await this.repository.list(userId)
       const rebindingActive = current?.activeProfileId === profileId
       if (rebindingActive) this.assertPredictionsStopped()
-      const monitor = await this.monitor.getView()
-      this.assertCurrentUser(userId)
-      const restart =
-        rebindingActive &&
-        ACTIVE_MONITOR_STATES.includes(
-          monitor.state as (typeof ACTIVE_MONITOR_STATES)[number],
-        )
+      this.assertAuthContext(context)
       try {
         await this.repository.rebind(
           userId,
@@ -236,15 +259,43 @@ export class CaptureProfileService {
       } catch (error) {
         throw this.publicFailure(error)
       }
-      if (restart) {
+      this.assertAuthContext(context)
+      if (rebindingActive) {
+        this.monitor.invalidateCaptureTarget()
         await this.monitor.restartIfActive()
       }
-      return this.result()
+      return this.result(context)
     })
   }
 
-  private async result(): Promise<CaptureProfileMutationResult> {
-    return { profiles: await this.getView(), monitor: await this.monitor.getView() }
+  private async result(context: {
+    userId: string
+    generation: number
+  }): Promise<CaptureProfileMutationResult> {
+    this.assertAuthContext(context)
+    const [configuration, status, monitor] = await Promise.all([
+      this.repository.load(context.userId),
+      this.repository.list(context.userId),
+      this.monitor.getView(),
+    ])
+    this.assertAuthContext(context)
+    return {
+      profiles: CaptureProfilesViewSchema.parse(
+        status === null
+          ? this.emptyView()
+          : {
+              revision: status.revision,
+              activeProfileId: status.activeProfileId,
+              profiles: status.profiles,
+            },
+      ),
+      monitor,
+      capture: CaptureStatusSchema.parse({
+        configured: configuration !== null,
+        revision: configuration?.revision ?? null,
+        sourceLabel: configuration?.source.label ?? null,
+      }),
+    }
   }
 
   private resolveProfile(profileId: string): Promise<unknown> {
@@ -265,11 +316,21 @@ export class CaptureProfileService {
     return user.id
   }
 
-  private assertCurrentUser(userId: string): void {
-    if (this.auth.getView().user?.id !== userId) {
+  private requireAuthContext(): { userId: string; generation: number } {
+    return {
+      userId: this.requireUserId(),
+      generation: this.auth.getContextGeneration(),
+    }
+  }
+
+  private assertAuthContext(context: { userId: string; generation: number }): void {
+    if (
+      this.auth.getContextGeneration() !== context.generation ||
+      this.auth.getView().user?.id !== context.userId
+    ) {
       throw new ApplicationError(
         'AUTH_CONTEXT_CHANGED',
-        'The signed-in user changed during the capture profile operation',
+        'The signed-in session changed during the capture profile operation',
       )
     }
   }

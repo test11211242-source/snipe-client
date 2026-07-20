@@ -148,4 +148,28 @@ describe('ApiClient', () => {
       'Bearer new',
     )
   })
+
+  it('does not refresh or retry when the owning auth context becomes stale', async () => {
+    let current = true
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => {
+      current = false
+      return Promise.resolve(new Response('{"detail":"expired"}', { status: 401 }))
+    })
+    const auth = { getAccessToken: vi.fn().mockResolvedValue('owner-token') }
+    const client = new AuthenticatedApiClient(
+      new ApiClient(createProductionServerConfig(), fetchMock, logger),
+      auth,
+    )
+
+    await expect(
+      client.request({
+        method: 'POST',
+        path: '/api/test',
+        schema,
+        authContextGuard: () => current,
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } })
+    expect(auth.getAccessToken).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })

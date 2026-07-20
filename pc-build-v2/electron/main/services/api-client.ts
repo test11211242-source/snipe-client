@@ -292,20 +292,30 @@ export class AuthenticatedApiClient {
     private readonly auth: AccessTokenProvider,
   ) {}
 
-  async request<T>(request: Omit<ApiRequest<T>, 'accessToken'>): Promise<ApiResult<T>> {
+  async request<T>(
+    request: Omit<ApiRequest<T>, 'accessToken'> & {
+      authContextGuard?: () => boolean
+    },
+  ): Promise<ApiResult<T>> {
+    const { authContextGuard, ...apiRequest } = request
     const token = await this.auth.getAccessToken()
-    if (token === null) {
+    if (token === null || authContextGuard?.() === false) {
       return {
         ok: false,
         error: createApiError('UNAUTHORIZED', 'Требуется повторный вход', false, 401),
       }
     }
-    const first = await this.api.request({ ...request, accessToken: token })
-    if (first.ok || first.error.code !== 'UNAUTHORIZED' || request.signal?.aborted) {
+    const first = await this.api.request({ ...apiRequest, accessToken: token })
+    if (
+      first.ok ||
+      first.error.code !== 'UNAUTHORIZED' ||
+      apiRequest.signal?.aborted ||
+      authContextGuard?.() === false
+    ) {
       return first
     }
     const refreshed = await this.auth.getAccessToken(true)
-    if (refreshed === null) return first
-    return this.api.request({ ...request, accessToken: refreshed })
+    if (refreshed === null || authContextGuard?.() === false) return first
+    return this.api.request({ ...apiRequest, accessToken: refreshed })
   }
 }

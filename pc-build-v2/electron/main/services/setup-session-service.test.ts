@@ -38,10 +38,17 @@ const resultTarget = {
 }
 const resultProfileStatus = {
   revision: 1,
-  profiles: [{ profileId: resultTarget.profileId }],
+  profiles: [
+    {
+      profileId: resultTarget.profileId,
+      configurationRevision: 2,
+      configurationFingerprint: 'a'.repeat(64),
+    },
+  ],
 }
 
 function harness(remoteOk = true) {
+  let authGeneration = 1
   const capture = {
     capture: vi.fn().mockResolvedValue(frame),
     analyze: vi.fn().mockResolvedValue(profile),
@@ -73,6 +80,7 @@ function harness(remoteOk = true) {
   }
   const auth = {
     getView: () => ({ user: { id: '42' } }),
+    getContextGeneration: () => authGeneration,
     getAccessToken: vi.fn().mockResolvedValue('secret'),
   }
   const service = new SetupSessionService(
@@ -82,7 +90,15 @@ function harness(remoteOk = true) {
     auth as unknown as AuthSession,
     () => new Date('2026-07-12T12:00:00.000Z'),
   )
-  return { service, capture, repository, apiRequests }
+  return {
+    service,
+    capture,
+    repository,
+    apiRequests,
+    changeAuthContext: () => {
+      authGeneration += 1
+    },
+  }
 }
 
 async function readyForCommit(
@@ -236,6 +252,94 @@ describe('SetupSessionService', () => {
     )
   })
 
+  it('keeps an edited inactive profile inactive and does not replace the remote active mirror', async () => {
+    const { service, repository, apiRequests } = harness()
+    repository.list.mockResolvedValue({
+      revision: 1,
+      profileCount: 2,
+      profiles: [
+        {
+          profileId: resultTarget.profileId,
+          profileName: resultTarget.profileName,
+          isActive: false,
+        },
+        {
+          profileId: '00000000-0000-4000-8000-000000000002',
+          profileName: 'Active',
+          isActive: true,
+        },
+      ],
+    })
+    const committed = vi.fn().mockResolvedValue(undefined)
+    service.configureCaptureProfileLifecycle(vi.fn(), committed, (operation) =>
+      operation(),
+    )
+    const view = await readyForCommit(service, resultTarget)
+
+    await expect(service.commit(view.sessionId, view.generation)).resolves.toMatchObject({
+      state: 'COMMITTED',
+    })
+    expect(apiRequests).toHaveLength(0)
+    expect(repository.save).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ profileId: resultTarget.profileId, activate: false }),
+    )
+    expect(committed).toHaveBeenCalledWith(false)
+  })
+
+  it('rejects setup commands after the auth generation changes', async () => {
+    const { service, repository, changeAuthContext } = harness()
+    const view = await readyForCommit(service)
+    changeAuthContext()
+
+    await expect(service.commit(view.sessionId, view.generation)).rejects.toMatchObject({
+      code: 'AUTH_CONTEXT_CHANGED',
+    })
+    expect(repository.save).not.toHaveBeenCalled()
+  })
+
+  it('does not resurrect a setup cancelled while a repository read is pending', async () => {
+    const { service, repository } = harness()
+    const view = await readyForCommit(service, resultTarget)
+    let resolveProfiles!: (value: typeof resultProfileStatus) => void
+    repository.list.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProfiles = resolve
+      }),
+    )
+    const committing = service.commit(view.sessionId, view.generation)
+    await vi.waitFor(() => expect(repository.list).toHaveBeenCalled())
+
+    service.cancelForAuthTransition()
+    resolveProfiles(resultProfileStatus)
+
+    await expect(committing).resolves.toMatchObject({ state: 'CANCELLED' })
+    await expect(
+      service.start(selector, preference, 'capture', undefined, resultTarget),
+    ).resolves.toMatchObject({ state: 'SELECTING' })
+    expect(repository.save).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a setup cancelled during monitor lifecycle refresh', async () => {
+    const { service } = harness()
+    let releaseLifecycle!: () => void
+    const lifecycle = new Promise<void>((resolve) => {
+      releaseLifecycle = resolve
+    })
+    const committed = vi.fn(() => lifecycle)
+    service.configureCaptureProfileLifecycle(vi.fn(), committed, (operation) =>
+      operation(),
+    )
+    const view = await readyForCommit(service)
+    const committing = service.commit(view.sessionId, view.generation)
+    await vi.waitFor(() => expect(committed).toHaveBeenCalled())
+
+    service.cancelForAuthTransition()
+    releaseLifecycle()
+
+    await expect(committing).resolves.toMatchObject({ state: 'CANCELLED' })
+  })
+
   it('uses a prepared click-time frame and completes the final region in one command', async () => {
     const { service, capture, repository } = harness()
     let view = await service.start(selector, preference, 'capture', frame)
@@ -292,6 +396,7 @@ describe('SetupSessionService', () => {
       rawApi as never,
       {
         getView: () => ({ user: { id: '42' } }),
+        getContextGeneration: () => 1,
         getAccessToken: vi.fn().mockResolvedValue('secret'),
       } as never,
       () => new Date('2026-07-12T12:00:00.000Z'),
@@ -354,6 +459,7 @@ describe('SetupSessionService', () => {
       rawApi as never,
       {
         getView: () => ({ user: { id: '42' } }),
+        getContextGeneration: () => 1,
         getAccessToken: vi.fn().mockResolvedValue('secret'),
       } as never,
       () => new Date('2026-07-12T12:00:00.000Z'),

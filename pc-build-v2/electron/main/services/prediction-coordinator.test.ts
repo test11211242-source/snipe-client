@@ -12,6 +12,7 @@ function deferred<T>() {
 }
 
 const auth = {
+  getContextGeneration: () => 1,
   getView: () => ({
     state: 'AUTHENTICATED',
     user: {
@@ -42,6 +43,8 @@ const settings = {
 function harness(
   failConfigure = false,
   runLifecycle?: (operation: () => Promise<void>) => Promise<void>,
+  captureRepository?: object,
+  resultConfiguration: object = configuration,
 ) {
   interface TestRequest {
     path: string
@@ -49,6 +52,15 @@ function harness(
   }
   let battleListener: ((timestamp: string) => void) | undefined
   let resultListener: ((action: MonitorAction) => void) | undefined
+  let currentUserId = '42'
+  let authGeneration = 1
+  const authSession = {
+    getContextGeneration: () => authGeneration,
+    getView: () => ({
+      ...auth.getView(),
+      user: { ...auth.getView().user, id: currentUserId },
+    }),
+  }
   const request = vi.fn(({ path }: TestRequest) => {
     if (path.endsWith('/auth/status'))
       return Promise.resolve({
@@ -76,11 +88,11 @@ function harness(
     }),
   }
   const coordinator = new PredictionCoordinator(
-    auth as never,
+    authSession as never,
     { request } as never,
-    { load: vi.fn().mockResolvedValue(configuration) } as never,
+    { load: vi.fn().mockResolvedValue(resultConfiguration) } as never,
     monitor as never,
-    undefined,
+    captureRepository as never,
     runLifecycle,
   )
   coordinator.startLifecycle()
@@ -90,6 +102,10 @@ function harness(
     monitor,
     battle: () => battleListener,
     result: () => resultListener,
+    changeAuthContext: (userId: string) => {
+      currentUserId = userId
+      authGeneration += 1
+    },
   }
 }
 
@@ -163,5 +179,111 @@ describe('PredictionCoordinator', () => {
     expect(
       test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
     ).toBe(false)
+  })
+
+  it('rejects result calibration bound to an older capture configuration', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const staleResult = {
+      ...configuration,
+      captureProfileId: profileId,
+      captureConfigurationRevision: 1,
+      captureConfigurationFingerprint: 'a'.repeat(64),
+    }
+    const test = harness(
+      false,
+      undefined,
+      {
+        list: vi.fn().mockResolvedValue({
+          activeProfileId: profileId,
+          profiles: [
+            {
+              profileId,
+              configurationRevision: 2,
+              configurationFingerprint: 'b'.repeat(64),
+            },
+          ],
+        }),
+      },
+      staleResult,
+    )
+
+    await expect(test.coordinator.start(settings)).rejects.toMatchObject({
+      code: 'RESULT_SETUP_REQUIRED',
+    })
+    expect(
+      test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
+    ).toBe(false)
+  })
+
+  it('does not stop a different user server after an auth transition', async () => {
+    const test = harness()
+    test.coordinator.observeServerState(true, '42')
+    test.changeAuthContext('84')
+
+    await test.coordinator.stop(true)
+    expect(
+      test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/stop'),
+    ).toBe(false)
+  })
+
+  it('ignores a server observation started before the current prediction command', async () => {
+    const test = harness()
+    const staleGeneration = test.coordinator.observationGeneration
+    await test.coordinator.start(settings)
+
+    test.coordinator.observeServerState(false, '42', staleGeneration)
+    test.battle()?.('2026-07-12T12:00:00.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.some(
+          ([value]) => value.path === '/api/streamer/bot/battle-start',
+        ),
+      ).toBe(true),
+    )
+  })
+
+  it('ignores a server observation captured while prediction start is in progress', async () => {
+    const test = harness()
+    const serverStart = deferred<{
+      ok: true
+      status: number
+      data: { success: true }
+    }>()
+    test.request.mockImplementation(({ path }) => {
+      if (path.endsWith('/auth/status')) {
+        return Promise.resolve({
+          ok: true as const,
+          status: 200,
+          data: { connected: true },
+        })
+      }
+      if (path === '/api/streamer/bot/start') return serverStart.promise
+      return Promise.resolve({
+        ok: true as const,
+        status: 200,
+        data: { success: true as const },
+      })
+    })
+    const starting = test.coordinator.start(settings)
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.some(
+          ([value]) => value.path === '/api/streamer/bot/start',
+        ),
+      ).toBe(true),
+    )
+    const staleGeneration = test.coordinator.observationGeneration
+    serverStart.resolve({ ok: true, status: 200, data: { success: true } })
+    await starting
+
+    test.coordinator.observeServerState(false, '42', staleGeneration)
+    test.battle()?.('2026-07-12T12:00:00.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.some(
+          ([value]) => value.path === '/api/streamer/bot/battle-start',
+        ),
+      ).toBe(true),
+    )
   })
 })

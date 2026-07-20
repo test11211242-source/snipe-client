@@ -146,6 +146,33 @@ describe('MonitorSupervisor concurrency', () => {
     expect(test.process.start).not.toHaveBeenCalled()
   })
 
+  it('allows a new start after a cancelled preflight never settles', async () => {
+    const stalled = deferred<{
+      configuration: typeof configuration
+      selector: { kind: 'window'; windowHwnd: string }
+    }>()
+    const test = harness()
+    test.targetResolver.resolve
+      .mockReturnValueOnce(stalled.promise)
+      .mockResolvedValueOnce({
+        configuration,
+        selector: { kind: 'window', windowHwnd: '12' },
+      })
+
+    const abandoned = test.supervisor.start()
+    await vi.waitFor(() => expect(test.targetResolver.resolve).toHaveBeenCalledOnce())
+    await test.supervisor.stop()
+    await expect(test.supervisor.start()).resolves.toMatchObject({ state: 'READY' })
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+
+    stalled.resolve({
+      configuration,
+      selector: { kind: 'window', windowHwnd: '12' },
+    })
+    await expect(abandoned).resolves.toMatchObject({ state: 'STOPPED' })
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+  })
+
   it('restarts an in-flight preflight when the prediction runtime changes', async () => {
     const target = deferred<{
       configuration: typeof configuration

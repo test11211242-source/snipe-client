@@ -50,6 +50,7 @@ export interface SaveCaptureConfigurationOptions {
   profileId?: string
   profileName?: string
   expectedRevision?: number
+  activate?: boolean
 }
 
 export class CaptureProfileNotFoundError extends Error {
@@ -354,7 +355,13 @@ export class CaptureConfigurationRepository {
         }
       }
 
-      await this.writeCollection(this.reviseCollection(collection, profiles, profileId))
+      await this.writeCollection(
+        this.reviseCollection(
+          collection,
+          profiles,
+          options.activate === false ? collection.activeProfileId : profileId,
+        ),
+      )
     })
   }
 

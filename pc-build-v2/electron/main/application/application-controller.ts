@@ -191,6 +191,7 @@ export class ApplicationController {
     if (view.state === 'AUTHENTICATED') {
       if (view.user === null) throw new Error('Authenticated view is missing its user')
       if (this.#activeUserId !== view.user.id) {
+        this.setup.cancelForAuthTransition()
         if (this.#activeUserId !== null) {
           await this.capturePreparations.stop()
           this.realtime.stop()
@@ -231,12 +232,7 @@ export class ApplicationController {
     this.monitor.setUserContext(null)
     this.#activeUserId = null
     this.windows.close('setup', 'auth-transition')
-    try {
-      const setup = this.setup.getSession()
-      this.setup.cancel(setup.sessionId, setup.generation)
-    } catch {
-      // No active setup.
-    }
+    this.setup.cancelForAuthTransition()
     if (this.lifecycle.state === 'READY') this.lifecycle.transitionTo('RECOVERING')
     await this.windows.ensureAuthWindow()
     this.windows.close('main', 'auth-transition')
@@ -272,12 +268,7 @@ export class ApplicationController {
     await this.widget.stop('shutdown')
     await this.monitor.stop()
     await this.capturePreparations.stop()
-    try {
-      const setup = this.setup.getSession()
-      this.setup.cancel(setup.sessionId, setup.generation)
-    } catch {
-      // No cancellable setup remains.
-    }
+    this.setup.cancelForAuthTransition()
     this.windows.closeAll('shutdown')
     this.lifecycle.transitionTo('STOPPED')
     this.logger.info('Application stopped cleanly')

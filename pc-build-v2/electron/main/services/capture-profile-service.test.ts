@@ -39,8 +39,14 @@ function status(
 }
 
 function harness(predictionState = 'stopped', resultRepository?: object) {
+  let userId = 'user-1'
+  let authGeneration = 1
   let current = status()
   const repository = {
+    load: vi.fn().mockResolvedValue({
+      revision: 1,
+      source: { label: 'Game' },
+    }),
     list: vi.fn(() => Promise.resolve(current)),
     get: vi.fn(),
     activate: vi.fn((_userId: string, profileId: string) => {
@@ -78,17 +84,30 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     stop: vi.fn().mockResolvedValue(monitorView),
     start: vi.fn().mockResolvedValue(monitorView),
     restartIfActive: vi.fn().mockResolvedValue(monitorView),
+    invalidateCaptureTarget: vi.fn().mockReturnValue(monitorView),
   }
   const targetResolver = { resolveProfile: vi.fn().mockResolvedValue({}) }
   const service = new CaptureProfileService(
-    { getView: () => ({ user: { id: 'user-1' } }) } as never,
+    {
+      getView: () => ({ user: { id: userId } }),
+      getContextGeneration: () => authGeneration,
+    } as never,
     repository as never,
     targetResolver as never,
     monitor as never,
     () => predictionState,
     resultRepository as never,
   )
-  return { service, repository, monitor, targetResolver }
+  return {
+    service,
+    repository,
+    monitor,
+    targetResolver,
+    changeAuthContext: (nextUserId: string) => {
+      userId = nextUserId
+      authGeneration += 1
+    },
+  }
 }
 
 describe('CaptureProfileService', () => {
@@ -140,6 +159,26 @@ describe('CaptureProfileService', () => {
     release?.()
     await Promise.all([commit, activation])
     expect(repository.activate).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a queued profile command bound to the caller auth context', async () => {
+    const { service, repository, changeAuthContext } = harness()
+    let release: (() => void) | undefined
+    const commit = service.runCaptureCommit(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
+    )
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+
+    const rename = service.rename(PRIMARY_ID, 'Renamed', 1)
+    changeAuthContext('user-2')
+    release?.()
+    await commit
+
+    await expect(rename).rejects.toMatchObject({ code: 'AUTH_CONTEXT_CHANGED' })
+    expect(repository.rename).not.toHaveBeenCalled()
   })
 
   it('restarts after deleting the active profile even if result cleanup fails', async () => {

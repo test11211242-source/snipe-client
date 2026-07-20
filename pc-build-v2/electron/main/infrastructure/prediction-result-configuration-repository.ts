@@ -65,6 +65,7 @@ export class PredictionResultConfigurationRepository {
         profileFileName(userId, validatedProfileId),
       )
       if (profileConfiguration !== null) {
+        if (profileConfiguration.captureProfileId !== validatedProfileId) return null
         if (
           validatedProfileId === migratedCaptureProfileId(userId) &&
           (await this.readMigration(userId)) === null
@@ -88,6 +89,9 @@ export class PredictionResultConfigurationRepository {
   save(value: PredictionResultConfiguration, profileId?: string): Promise<void> {
     return this.serialized(async () => {
       const parsed = this.validate(value)
+      if (profileId !== undefined && parsed.captureProfileId !== profileId) {
+        throw new Error('Result configuration capture profile is invalid')
+      }
       const destination =
         profileId === undefined
           ? fileName(parsed.userId)
@@ -109,9 +113,18 @@ export class PredictionResultConfigurationRepository {
     name: string,
   ): Promise<PredictionResultConfiguration | null> {
     try {
-      const parsed = PredictionResultConfigurationSchema.parse(
-        JSON.parse(await this.fs.readFile(join(this.directory, name), 'utf8')),
+      const raw: unknown = JSON.parse(
+        await this.fs.readFile(join(this.directory, name), 'utf8'),
       )
+      if (
+        raw !== null &&
+        typeof raw === 'object' &&
+        'schemaVersion' in raw &&
+        raw.schemaVersion === 1
+      ) {
+        return null
+      }
+      const parsed = PredictionResultConfigurationSchema.parse(raw)
       if (parsed.userId !== userId) return null
       const { fingerprint, ...unsigned } = parsed
       return predictionResultFingerprint(unsigned) === fingerprint ? parsed : null

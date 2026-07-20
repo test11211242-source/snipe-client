@@ -33,6 +33,18 @@ interface ProfileAction {
   expectedRevision: number
 }
 
+type ProfileDialogState =
+  | {
+      kind: 'create'
+      initialName: string
+    }
+  | {
+      kind: 'rename' | 'duplicate' | 'delete'
+      profileId: string
+      profileName: string
+      initialName: string
+    }
+
 export function CapturePage({
   status,
   profiles,
@@ -58,8 +70,15 @@ export function CapturePage({
   const [availableOnly, setAvailableOnly] = useState(true)
   const [profileAction, setProfileAction] = useState<ProfileAction | null>(null)
   const [profileBusy, setProfileBusy] = useState<string | null>(null)
+  const [profileDialog, setProfileDialog] = useState<ProfileDialogState | null>(null)
+  const [profileDialogName, setProfileDialogName] = useState('')
+  const [profileDialogError, setProfileDialogError] = useState<string | null>(null)
   const selectedRef = useRef<CaptureSourceView | null>(null)
   const selectionGeneration = useRef(0)
+  const sourceRefreshGeneration = useRef(0)
+  const profileRefreshGeneration = useRef(0)
+  const profileDialogRef = useRef<HTMLDialogElement | null>(null)
+  const profileDialogReturnFocus = useRef<HTMLElement | null>(null)
   const applyStatus = useEffectEvent(onStatus)
   const applyProfiles = useEffectEvent(onProfiles)
   const actionProfile =
@@ -112,37 +131,44 @@ export function CapturePage({
   }
 
   const refresh = async (): Promise<void> => {
+    const generation = ++sourceRefreshGeneration.current
     releaseSelection()
     setLoading(true)
     setError(null)
     try {
       const nextSnapshot = await window.crTools.listCaptureSources()
-      setSnapshot(nextSnapshot)
+      if (generation === sourceRefreshGeneration.current) setSnapshot(nextSnapshot)
     } catch {
-      setError('Не удалось получить источники. Захват доступен только в Windows.')
+      if (generation === sourceRefreshGeneration.current) {
+        setError('Не удалось получить источники. Захват доступен только в Windows.')
+      }
     } finally {
-      setLoading(false)
+      if (generation === sourceRefreshGeneration.current) setLoading(false)
     }
   }
 
   useEffect(() => {
     let active = true
+    const generation = ++sourceRefreshGeneration.current
     void window.crTools
       .listCaptureSources()
       .then(
         (value) => {
-          if (active) setSnapshot(value)
+          if (active && generation === sourceRefreshGeneration.current) {
+            setSnapshot(value)
+          }
         },
         () => {
-          if (active)
+          if (active && generation === sourceRefreshGeneration.current)
             setError('Не удалось получить источники. Захват доступен только в Windows.')
         },
       )
       .finally(() => {
-        if (active) setLoading(false)
+        if (active && generation === sourceRefreshGeneration.current) setLoading(false)
       })
     return () => {
       active = false
+      sourceRefreshGeneration.current += 1
       selectionGeneration.current += 1
       const selected = selectedRef.current
       if (selected !== null) {
@@ -159,12 +185,41 @@ export function CapturePage({
 
   useEffect(() => {
     const refreshStatus = (): void => {
-      void window.crTools.getCaptureStatus().then(applyStatus, () => undefined)
-      void window.crTools.getCaptureProfiles().then(applyProfiles, () => undefined)
+      const generation = ++profileRefreshGeneration.current
+      void Promise.all([
+        window.crTools.getCaptureStatus(),
+        window.crTools.getCaptureProfiles(),
+      ]).then(
+        ([nextStatus, nextProfiles]) => {
+          if (generation !== profileRefreshGeneration.current) return
+          applyStatus(nextStatus)
+          applyProfiles(nextProfiles)
+        },
+        () => undefined,
+      )
     }
     window.addEventListener('focus', refreshStatus)
-    return () => window.removeEventListener('focus', refreshStatus)
+    return () => {
+      profileRefreshGeneration.current += 1
+      window.removeEventListener('focus', refreshStatus)
+    }
   }, [])
+
+  useEffect(() => {
+    const dialog = profileDialogRef.current
+    if (profileDialog !== null && dialog !== null && !dialog.open) dialog.showModal()
+    if (profileDialog === null && profileDialogReturnFocus.current !== null) {
+      const trigger = profileDialogReturnFocus.current
+      const fallback = document.querySelector<HTMLElement>('.page-identity h1')
+      const target =
+        trigger.isConnected && !trigger.matches(':disabled') ? trigger : fallback
+      target?.focus()
+      profileDialogReturnFocus.current = null
+    }
+    return () => {
+      if (dialog?.open === true) dialog.close()
+    }
+  }, [profileDialog])
 
   const allSources = snapshot?.sources ?? []
   const normalizedQuery = query.trim().toLocaleLowerCase('ru-RU')
@@ -182,9 +237,12 @@ export function CapturePage({
   const applyMutation = (result: {
     profiles: CaptureProfilesView
     monitor: MonitorView
+    capture: CaptureStatus
   }): void => {
+    profileRefreshGeneration.current += 1
     onProfiles(result.profiles)
     onMonitor(result.monitor)
+    onStatus(result.capture)
   }
 
   const activateProfile = async (profileId: string): Promise<void> => {
@@ -206,7 +264,6 @@ export function CapturePage({
           expectedRevision: result.profiles.revision ?? 0,
         })
       }
-      onStatus(await window.crTools.getCaptureStatus())
     } catch {
       setError(
         'Не удалось включить профиль. Если окно изменилось, перепривяжите источник.',
@@ -216,46 +273,32 @@ export function CapturePage({
     }
   }
 
-  const addProfile = (): void => {
-    const name = window.prompt(
-      'Название нового профиля',
-      `Профиль ${(profiles?.profiles.length ?? 0) + 1}`,
-    )
-    const trimmed = name?.trim()
-    if (trimmed === undefined || trimmed.length === 0) return
-    if (trimmed.length > 80) {
-      setError('Название профиля должно быть короче 81 символа.')
-      return
-    }
-    if (
-      profiles?.profiles.some(
-        (profile) =>
-          profile.profileName.toLocaleLowerCase('ru-RU') ===
-          trimmed.toLocaleLowerCase('ru-RU'),
-      ) === true
-    ) {
-      setError('Профиль с таким названием уже существует.')
-      return
-    }
+  const beginProfileDialog = (dialog: ProfileDialogState): void => {
+    profileDialogReturnFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setProfileDialog(dialog)
+    setProfileDialogName(dialog.initialName)
+    setProfileDialogError(null)
+  }
+
+  const addProfile = (profileName: string): void => {
     releaseSelection()
     setProfileAction({
       kind: 'configure',
       profileId: null,
-      profileName: trimmed,
+      profileName,
       expectedRevision: profiles?.revision ?? 0,
     })
   }
 
-  const renameProfile = async (profileId: string, currentName: string): Promise<void> => {
+  const renameProfile = async (profileId: string, profileName: string): Promise<void> => {
     if (profiles?.revision === null || profiles?.revision === undefined) return
-    const name = window.prompt('Новое название профиля', currentName)?.trim()
-    if (name === undefined || name.length === 0 || name === currentName) return
     setProfileBusy(profileId)
     setError(null)
     try {
       const result = await window.crTools.renameCaptureProfile({
         profileId,
-        profileName: name,
+        profileName,
         expectedRevision: profiles.revision,
       })
       applyMutation(result)
@@ -263,7 +306,7 @@ export function CapturePage({
         current?.profileId === profileId
           ? {
               ...current,
-              profileName: name,
+              profileName,
               expectedRevision: result.profiles.revision ?? current.expectedRevision,
             }
           : current,
@@ -277,22 +320,20 @@ export function CapturePage({
 
   const duplicateProfile = async (
     profileId: string,
-    currentName: string,
+    profileName: string,
   ): Promise<void> => {
     if (profiles?.revision === null || profiles?.revision === undefined) return
-    const name = window.prompt('Название копии профиля', `${currentName} 2`)?.trim()
-    if (name === undefined || name.length === 0) return
     setProfileBusy(profileId)
     setError(null)
     try {
       const result = await window.crTools.duplicateCaptureProfile({
         profileId,
-        profileName: name,
+        profileName,
         expectedRevision: profiles.revision,
       })
       applyMutation(result)
       const duplicate = result.profiles.profiles.find(
-        (profile) => profile.profileName === name,
+        (profile) => profile.profileName === profileName,
       )
       if (duplicate !== undefined) {
         releaseSelection()
@@ -310,14 +351,8 @@ export function CapturePage({
     }
   }
 
-  const deleteProfile = async (profileId: string, profileName: string): Promise<void> => {
-    if (
-      profiles?.revision === null ||
-      profiles?.revision === undefined ||
-      !window.confirm(`Удалить профиль «${profileName}»?`)
-    ) {
-      return
-    }
+  const deleteProfile = async (profileId: string): Promise<void> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return
     setProfileBusy(profileId)
     setError(null)
     try {
@@ -337,7 +372,6 @@ export function CapturePage({
               expectedRevision: result.profiles.revision ?? 0,
             },
       )
-      onStatus(await window.crTools.getCaptureStatus())
     } catch {
       setError('Не удалось удалить профиль. Единственный профиль удалить нельзя.')
     } finally {
@@ -345,8 +379,51 @@ export function CapturePage({
     }
   }
 
+  const submitProfileDialog = async (): Promise<void> => {
+    const dialog = profileDialog
+    if (dialog === null || profileBusy !== null) return
+    if (dialog.kind === 'delete') {
+      await deleteProfile(dialog.profileId)
+      setProfileDialog(null)
+      return
+    }
+    const profileName = profileDialogName.trim()
+    if (profileName.length === 0) {
+      setProfileDialogError('Введите название профиля.')
+      return
+    }
+    if (profileName.length > 80) {
+      setProfileDialogError('Название профиля должно быть короче 81 символа.')
+      return
+    }
+    const duplicateName = profiles?.profiles.some(
+      (profile) =>
+        profile.profileId !== (dialog.kind === 'rename' ? dialog.profileId : null) &&
+        profile.profileName.toLocaleLowerCase('ru-RU') ===
+          profileName.toLocaleLowerCase('ru-RU'),
+    )
+    if (duplicateName === true) {
+      setProfileDialogError('Профиль с таким названием уже существует.')
+      return
+    }
+    if (dialog.kind === 'rename' && profileName === dialog.profileName) {
+      setProfileDialog(null)
+      return
+    }
+    if (dialog.kind === 'create') {
+      addProfile(profileName)
+      setProfileDialog(null)
+    } else if (dialog.kind === 'rename') {
+      await renameProfile(dialog.profileId, profileName)
+      setProfileDialog(null)
+    } else {
+      await duplicateProfile(dialog.profileId, profileName)
+      setProfileDialog(null)
+    }
+  }
+
   const selectSource = async (source: CaptureSourceView): Promise<void> => {
-    if (!source.captureSupported || startingKey !== null) return
+    if (loading || !source.captureSupported || startingKey !== null) return
     if (
       selectedRef.current?.sourceKey === source.sourceKey &&
       (preparation?.sourceKey === source.sourceKey || preparingKey === source.sourceKey)
@@ -390,6 +467,7 @@ export function CapturePage({
       return
     }
     setStartingKey(source.sourceKey)
+    setPreparation(null)
     setError(null)
     try {
       if (
@@ -403,7 +481,6 @@ export function CapturePage({
             expectedRevision: currentProfileAction.expectedRevision,
           }),
         )
-        onStatus(await window.crTools.getCaptureStatus())
       } else if (currentProfileAction !== null) {
         await window.crTools.startCaptureSetup({
           preparationId: prepared.preparationId,
@@ -414,7 +491,6 @@ export function CapturePage({
       }
       selectedRef.current = null
       setPreparation(null)
-      onStatus(await window.crTools.getCaptureStatus())
     } catch {
       setError(
         'Источник изменился или захват не запустился. Обновите список и повторите.',
@@ -456,10 +532,16 @@ export function CapturePage({
             <h3 id="capture-profiles-title">Сохранённые конфигурации</h3>
           </div>
           <Button
-            onClick={addProfile}
+            onClick={() =>
+              beginProfileDialog({
+                kind: 'create',
+                initialName: `Профиль ${(profiles?.profiles.length ?? 0) + 1}`,
+              })
+            }
             disabled={
+              profiles === null ||
               profileBusy !== null ||
-              (profiles?.profiles.length ?? 0) >= MAX_CAPTURE_PROFILES
+              profiles.profiles.length >= MAX_CAPTURE_PROFILES
             }
           >
             <Plus aria-hidden="true" size={15} />
@@ -534,9 +616,15 @@ export function CapturePage({
                   <Button
                     variant="icon"
                     aria-label={`Переименовать ${profile.profileName}`}
+                    title="Переименовать профиль"
                     disabled={profileBusy !== null}
                     onClick={() =>
-                      void renameProfile(profile.profileId, profile.profileName)
+                      beginProfileDialog({
+                        kind: 'rename',
+                        profileId: profile.profileId,
+                        profileName: profile.profileName,
+                        initialName: profile.profileName,
+                      })
                     }
                   >
                     <Pencil aria-hidden="true" size={13} />
@@ -544,9 +632,18 @@ export function CapturePage({
                   <Button
                     variant="icon"
                     aria-label={`Дублировать ${profile.profileName}`}
-                    disabled={profileBusy !== null}
+                    title="Дублировать профиль"
+                    disabled={
+                      profileBusy !== null ||
+                      profiles.profiles.length >= MAX_CAPTURE_PROFILES
+                    }
                     onClick={() =>
-                      void duplicateProfile(profile.profileId, profile.profileName)
+                      beginProfileDialog({
+                        kind: 'duplicate',
+                        profileId: profile.profileId,
+                        profileName: profile.profileName,
+                        initialName: `${profile.profileName} 2`,
+                      })
                     }
                   >
                     <Copy aria-hidden="true" size={13} />
@@ -554,9 +651,15 @@ export function CapturePage({
                   <Button
                     variant="icon"
                     aria-label={`Удалить ${profile.profileName}`}
+                    title="Удалить профиль"
                     disabled={profileBusy !== null || profiles.profiles.length === 1}
                     onClick={() =>
-                      void deleteProfile(profile.profileId, profile.profileName)
+                      beginProfileDialog({
+                        kind: 'delete',
+                        profileId: profile.profileId,
+                        profileName: profile.profileName,
+                        initialName: '',
+                      })
                     }
                   >
                     <Trash2 aria-hidden="true" size={13} />
@@ -580,6 +683,97 @@ export function CapturePage({
           </div>
         )}
       </section>
+
+      {profileDialog !== null && (
+        <dialog
+          aria-labelledby="profile-dialog-title"
+          className="profile-dialog-shell"
+          ref={profileDialogRef}
+          onCancel={(event) => {
+            if (profileBusy !== null) event.preventDefault()
+            else setProfileDialog(null)
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget && profileBusy === null) {
+              setProfileDialog(null)
+            }
+          }}
+        >
+          <section aria-labelledby="profile-dialog-title" className="profile-dialog">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submitProfileDialog()
+              }}
+            >
+              <span className="eyebrow">ПРОФИЛЬ ЗАХВАТА</span>
+              <h3 id="profile-dialog-title">
+                {profileDialog.kind === 'create'
+                  ? 'Новый профиль'
+                  : profileDialog.kind === 'rename'
+                    ? 'Переименовать профиль'
+                    : profileDialog.kind === 'duplicate'
+                      ? 'Дублировать профиль'
+                      : 'Удалить профиль'}
+              </h3>
+              {profileDialog.kind === 'delete' ? (
+                <p>
+                  Удалить профиль <strong>«{profileDialog.profileName}»</strong>? Это
+                  действие нельзя отменить.
+                </p>
+              ) : (
+                <label>
+                  <span>Название</span>
+                  <input
+                    autoFocus
+                    maxLength={80}
+                    value={profileDialogName}
+                    aria-invalid={profileDialogError !== null}
+                    aria-describedby={
+                      profileDialogError === null ? undefined : 'profile-dialog-error'
+                    }
+                    onChange={(event) => {
+                      setProfileDialogName(event.currentTarget.value)
+                      setProfileDialogError(null)
+                    }}
+                  />
+                </label>
+              )}
+              {profileDialogError !== null && (
+                <p
+                  className="profile-dialog-error"
+                  id="profile-dialog-error"
+                  role="alert"
+                >
+                  {profileDialogError}
+                </p>
+              )}
+              <div className="profile-dialog-actions">
+                <Button
+                  autoFocus={profileDialog.kind === 'delete'}
+                  disabled={profileBusy !== null}
+                  onClick={() => setProfileDialog(null)}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  variant={profileDialog.kind === 'delete' ? 'danger' : 'primary'}
+                  disabled={profileBusy !== null}
+                  type="submit"
+                >
+                  {profileDialog.kind === 'create'
+                    ? 'Продолжить'
+                    : profileDialog.kind === 'rename'
+                      ? 'Сохранить'
+                      : profileDialog.kind === 'duplicate'
+                        ? 'Создать копию'
+                        : 'Удалить'}
+                </Button>
+              </div>
+            </form>
+          </section>
+        </dialog>
+      )}
 
       <div className="source-toolbar">
         <label className="source-search">
@@ -663,7 +857,7 @@ export function CapturePage({
                   key={`${source.sourceKey}-${source.revision}`}
                   source={source}
                   selected={selectedKey === source.sourceKey}
-                  disabled={startingKey !== null}
+                  disabled={loading || startingKey !== null}
                   busy={
                     startingKey === source.sourceKey || preparingKey === source.sourceKey
                   }

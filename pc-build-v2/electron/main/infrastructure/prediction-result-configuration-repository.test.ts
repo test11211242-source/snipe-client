@@ -14,10 +14,17 @@ import { migratedCaptureProfileId } from './capture-configuration-repository'
 const FIRST_PROFILE = migratedCaptureProfileId('user-1')
 const SECOND_PROFILE = '00000000-0000-4000-8000-000000000002'
 
-function configuration(userId: string, revision = 1): PredictionResultConfiguration {
+function configuration(
+  userId: string,
+  revision = 1,
+  profileId = FIRST_PROFILE,
+): PredictionResultConfiguration {
   const unsigned: Omit<PredictionResultConfiguration, 'fingerprint'> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     userId,
+    captureProfileId: profileId,
+    captureConfigurationRevision: 3,
+    captureConfigurationFingerprint: 'a'.repeat(64),
     revision,
     committedAt: '2026-07-17T10:00:00.000Z',
     source: {
@@ -96,7 +103,7 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     const { fs } = memoryFileSystem()
     const repository = new PredictionResultConfigurationRepository('/results', fs)
     const first = configuration('user-1', 1)
-    const second = configuration('user-1', 2)
+    const second = configuration('user-1', 2, SECOND_PROFILE)
 
     await repository.save(first, FIRST_PROFILE)
     await repository.save(second, SECOND_PROFILE)
@@ -109,7 +116,7 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     const userId = 'user-1'
     const hash = createHash('sha256').update(userId).digest('hex')
     const legacy = configuration(userId, 1)
-    const secondary = configuration(userId, 2)
+    const secondary = configuration(userId, 2, SECOND_PROFILE)
     const { fs } = memoryFileSystem(
       new Map([[join('/results', `${hash}.json`), JSON.stringify(legacy)]]),
     )
@@ -118,5 +125,17 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     await repository.save(secondary, SECOND_PROFILE)
     await expect(repository.load(userId, SECOND_PROFILE)).resolves.toEqual(secondary)
     await expect(repository.load(userId, FIRST_PROFILE)).resolves.toEqual(legacy)
+  })
+
+  it('treats unbound schema v1 result calibration as inactive', async () => {
+    const userId = 'user-1'
+    const hash = createHash('sha256').update(userId).digest('hex')
+    const legacy = { ...configuration(userId), schemaVersion: 1 }
+    const { fs } = memoryFileSystem(
+      new Map([[join('/results', `${hash}.json`), JSON.stringify(legacy)]]),
+    )
+    const repository = new PredictionResultConfigurationRepository('/results', fs)
+
+    await expect(repository.load(userId, FIRST_PROFILE)).resolves.toBeNull()
   })
 })

@@ -46,6 +46,7 @@ export const CaptureProfileMutationResultSchema = z
   .object({
     profiles: CaptureProfilesViewSchema,
     monitor: MonitorViewSchema,
+    capture: CaptureStatusSchema,
   })
   .strict()
 export const PreviewPayloadSchema = z

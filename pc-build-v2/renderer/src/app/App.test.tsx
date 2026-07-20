@@ -6,6 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreviewPayload } from '../../../shared/contracts/capture-ipc'
 import { App } from './App'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 describe('App shell', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'crTools', {
@@ -198,6 +206,7 @@ describe('App shell', () => {
         ] as never,
       },
       monitor,
+      capture: { configured: true, revision: 1, sourceLabel: 'Emulator 2' },
     })
     render(<App />)
 
@@ -211,6 +220,158 @@ describe('App shell', () => {
         expectedRevision: 1,
       }),
     )
+  })
+
+  it('does not let an older focus refresh overwrite a profile mutation snapshot', async () => {
+    const primary = {
+      profileId: '00000000-0000-4000-8000-000000000001',
+      profileName: 'Основной',
+      isActive: true,
+      sourceLabel: 'Emulator 1',
+    }
+    const secondary = {
+      profileId: '00000000-0000-4000-8000-000000000002',
+      profileName: 'Второй',
+      isActive: false,
+      sourceLabel: 'Emulator 2',
+    }
+    const staleProfiles = {
+      revision: 1,
+      activeProfileId: primary.profileId,
+      profiles: [primary, secondary] as never,
+    }
+    const nextProfiles = {
+      revision: 2,
+      activeProfileId: secondary.profileId,
+      profiles: [
+        { ...primary, isActive: false },
+        { ...secondary, isActive: true },
+      ] as never,
+    }
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue(staleProfiles)
+    const monitor = await window.crTools.getMonitorView()
+    vi.mocked(window.crTools.activateCaptureProfile).mockResolvedValue({
+      profiles: nextProfiles,
+      monitor,
+      capture: { configured: true, revision: 2, sourceLabel: 'Emulator 2' },
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Захват' }))
+    await screen.findByText('Второй')
+
+    const statusRefresh = deferred<{
+      configured: boolean
+      revision: number | null
+      sourceLabel: string | null
+    }>()
+    const profilesRefresh = deferred<typeof staleProfiles>()
+    vi.mocked(window.crTools.getCaptureStatus).mockResolvedValue({
+      configured: true,
+      revision: 2,
+      sourceLabel: 'Emulator 2',
+    })
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue(nextProfiles)
+    vi.mocked(window.crTools.getCaptureStatus).mockReturnValueOnce(statusRefresh.promise)
+    vi.mocked(window.crTools.getCaptureProfiles).mockReturnValueOnce(
+      profilesRefresh.promise,
+    )
+    window.dispatchEvent(new Event('focus'))
+    fireEvent.click(screen.getByRole('button', { name: 'Использовать' }))
+    await waitFor(() => expect(window.crTools.activateCaptureProfile).toHaveBeenCalled())
+
+    statusRefresh.resolve({ configured: true, revision: 1, sourceLabel: 'Emulator 1' })
+    profilesRefresh.resolve(staleProfiles)
+    await Promise.resolve()
+
+    await waitFor(() =>
+      expect(screen.getByText('Второй').closest('article')).toHaveAttribute(
+        'data-active',
+        'true',
+      ),
+    )
+  })
+
+  it('creates a profile draft through an in-app dialog', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить профиль' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Новый профиль' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Название' }), {
+      target: { value: 'Второй аккаунт' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+
+    expect(dialog).not.toBeInTheDocument()
+    expect(screen.getByText(/Настройка:/)).toHaveTextContent('Второй аккаунт')
+  })
+
+  it('closes the profile dialog with Escape and restores trigger focus', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    const trigger = await screen.findByRole('button', { name: 'Добавить профиль' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: 'Новый профиль' })
+
+    fireEvent(dialog, new Event('cancel', { bubbles: false, cancelable: true }))
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
+  })
+
+  it('duplicates a profile and enters source rebinding without browser prompts', async () => {
+    const primary = {
+      profileId: '00000000-0000-4000-8000-000000000001',
+      profileName: 'Основной',
+      isActive: true,
+      sourceLabel: 'BlueStacks 1',
+    }
+    const duplicate = {
+      ...primary,
+      profileId: '00000000-0000-4000-8000-000000000002',
+      profileName: 'Второй аккаунт',
+      isActive: false,
+      sourceLabel: 'BlueStacks 1',
+    }
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
+      revision: 1,
+      activeProfileId: primary.profileId,
+      profiles: [primary] as never,
+    })
+    const monitor = await window.crTools.getMonitorView()
+    vi.mocked(window.crTools.duplicateCaptureProfile).mockResolvedValue({
+      profiles: {
+        revision: 2,
+        activeProfileId: primary.profileId,
+        profiles: [primary, duplicate] as never,
+      },
+      monitor,
+      capture: { configured: true, revision: 1, sourceLabel: 'BlueStacks 1' },
+    })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    const duplicateTrigger = await screen.findByRole('button', {
+      name: 'Дублировать Основной',
+    })
+    duplicateTrigger.focus()
+    fireEvent.click(duplicateTrigger)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Название' }), {
+      target: { value: duplicate.profileName },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Создать копию' }))
+
+    await waitFor(() =>
+      expect(window.crTools.duplicateCaptureProfile).toHaveBeenCalledWith({
+        profileId: primary.profileId,
+        profileName: duplicate.profileName,
+        expectedRevision: 1,
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByText(/Перепривязка:/)).toHaveTextContent(duplicate.profileName),
+    )
+    expect(duplicateTrigger).toHaveFocus()
   })
 
   it('shows update availability in the global shell', async () => {
@@ -239,7 +400,7 @@ describe('App shell', () => {
     })
     const view = render(<App />)
     await screen.findAllByText('operator')
-    expect(document.documentElement).toHaveClass('reduced-motion')
+    await waitFor(() => expect(document.documentElement).toHaveClass('reduced-motion'))
     view.unmount()
     expect(document.documentElement).not.toHaveClass('reduced-motion')
   })

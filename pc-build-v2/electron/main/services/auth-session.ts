@@ -79,6 +79,10 @@ export class AuthSession {
     return this.#view
   }
 
+  getContextGeneration(): number {
+    return this.#generation
+  }
+
   subscribe(listener: AuthViewListener): () => void {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)

@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  buildWindowsWindowMetadataCommand,
   ElectronCaptureSourceProvider,
   type WindowsPhysicalDisplay,
 } from './electron-capture-source-provider'
@@ -113,6 +114,15 @@ describe('ElectronCaptureSourceProvider display mapping', () => {
 })
 
 describe('ElectronCaptureSourceProvider window metadata', () => {
+  it('embeds validated handles in the PowerShell command instead of using trailing switches', () => {
+    const command = buildWindowsWindowMetadataCommand(['42', '9007199254740993'])
+    expect(command).toContain("$Handles = '42,9007199254740993'")
+    expect(command).not.toContain('param(')
+    expect(() => buildWindowsWindowMetadataCommand(["42'; exit"])).toThrow(
+      'Window metadata handles are invalid',
+    )
+  })
+
   it('enriches window sources with batch-resolved process identity', async () => {
     electron.sources = [
       {
