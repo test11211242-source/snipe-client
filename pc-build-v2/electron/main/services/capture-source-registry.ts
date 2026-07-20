@@ -58,6 +58,7 @@ interface RegistryEntry {
   displayDeviceName: string | null
   windowHwnd: string | null
   executableLabel: string | null
+  ownerProcessId: number | null
 }
 
 function opaqueKey(): string {
@@ -147,6 +148,7 @@ export class CaptureSourceRegistry {
           displayDeviceName: null,
           windowHwnd,
           executableLabel,
+          ownerProcessId: source.ownerProcessId ?? null,
         })
         continue
       }
@@ -175,6 +177,7 @@ export class CaptureSourceRegistry {
         displayDeviceName: display.deviceName ?? null,
         windowHwnd: null,
         executableLabel: null,
+        ownerProcessId: null,
       })
     }
 
@@ -191,8 +194,10 @@ export class CaptureSourceRegistry {
 
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
     const entry = this.getEntry(sourceKey, revision)
+    this.assertExpiredWindowHasIdentity(entry)
     const sources = await this.provider.enumerate({ width: 0, height: 0 })
     this.assertCurrent(sourceKey, revision)
+    this.assertExpiredWindowHasIdentity(entry)
     const currentSource = sources.find((source) => source.id === entry.rawId)
     if (currentSource === undefined) throw this.staleError()
 
@@ -201,6 +206,8 @@ export class CaptureSourceRegistry {
       if (
         parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
         currentSource.name !== entry.view.label ||
+        (entry.ownerProcessId !== null &&
+          currentSource.ownerProcessId !== entry.ownerProcessId) ||
         (entry.executableLabel !== null &&
           safeExecutableLabel(currentSource.executableLabel) !== entry.executableLabel)
       ) {
@@ -353,10 +360,16 @@ export class CaptureSourceRegistry {
   }
 
   private assertCurrent(sourceKey: string, revision: string): void {
+    if (revision !== this.#revision || !this.#entries.has(sourceKey)) {
+      throw this.staleError()
+    }
+  }
+
+  private assertExpiredWindowHasIdentity(entry: RegistryEntry): void {
     if (
-      revision !== this.#revision ||
-      this.now() > this.#expiresAt ||
-      !this.#entries.has(sourceKey)
+      this.now() > this.#expiresAt &&
+      entry.view.kind === 'window' &&
+      entry.ownerProcessId === null
     ) {
       throw this.staleError()
     }

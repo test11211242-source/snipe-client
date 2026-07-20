@@ -11,6 +11,7 @@ import {
 } from '../models/capture'
 import { MonitorViewSchema } from '../models/monitor'
 import { SetupFrameSchema, SetupSessionViewSchema } from '../models/setup'
+import { PublicErrorSchema } from '../errors/application-error'
 
 export const MAIN_CAPTURE_IPC_CHANNELS = Object.freeze({
   listSources: 'capture:list-sources',
@@ -58,6 +59,20 @@ export const PreviewPayloadSchema = z
 export const CapturePreparationResultSchema = PreviewPayloadSchema.extend({
   preparationId: z.uuid(),
 }).strict()
+export const CapturePreparationResponseSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      ok: z.literal(true),
+      preparation: CapturePreparationResultSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: PublicErrorSchema,
+    })
+    .strict(),
+])
 export const ReleasePreparationResultSchema = z.object({ released: z.boolean() }).strict()
 export const StartSetupPayloadSchema = z
   .object({
@@ -94,6 +109,7 @@ export const SetupFrameResultSchema = SetupFrameSchema
 
 export type PreviewPayload = z.infer<typeof PreviewPayloadSchema>
 export type CapturePreparationResult = z.infer<typeof CapturePreparationResultSchema>
+export type CapturePreparationResponse = z.infer<typeof CapturePreparationResponseSchema>
 export type StartSetupPayload = z.infer<typeof StartSetupPayloadSchema>
 export type CaptureProfileCommand = z.infer<typeof CaptureProfileCommandSchema>
 export type CaptureProfileNamePayload = z.infer<typeof CaptureProfileNamePayloadSchema>

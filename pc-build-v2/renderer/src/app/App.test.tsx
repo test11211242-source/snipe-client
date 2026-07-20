@@ -78,9 +78,12 @@ describe('App shell', () => {
           .fn()
           .mockImplementation(({ sourceKey, revision }: PreviewPayload) =>
             Promise.resolve({
-              preparationId: '00000000-0000-4000-8000-000000000020',
-              sourceKey,
-              revision,
+              ok: true as const,
+              preparation: {
+                preparationId: '00000000-0000-4000-8000-000000000020',
+                sourceKey,
+                revision,
+              },
             }),
           ),
         releaseCaptureSource: vi.fn().mockResolvedValue({ released: true }),
@@ -596,5 +599,198 @@ describe('App shell', () => {
     )
     fireEvent.click(screen.getByRole('tab', { name: /Мониторы/ }))
     expect(screen.getByRole('button', { name: 'Продолжить к настройке' })).toBeDisabled()
+  })
+
+  it('refreshes a genuinely stale source automatically and explains the retry', async () => {
+    const firstRevision = 'd'.repeat(32)
+    const nextRevision = 'e'.repeat(32)
+    vi.mocked(window.crTools.listCaptureSources)
+      .mockResolvedValueOnce({
+        revision: firstRevision,
+        expiresAt: Date.now() + 30_000,
+        sources: [
+          {
+            sourceKey: 'a'.repeat(32),
+            revision: firstRevision,
+            kind: 'window',
+            label: 'Clash Royale',
+            detail: 'HD-Player.exe',
+            captureSupported: true,
+            unavailableReason: null,
+            preview: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        revision: nextRevision,
+        expiresAt: Date.now() + 30_000,
+        sources: [
+          {
+            sourceKey: 'b'.repeat(32),
+            revision: nextRevision,
+            kind: 'window',
+            label: 'Clash Royale',
+            detail: 'HD-Player.exe',
+            captureSupported: true,
+            unavailableReason: null,
+            preview: null,
+          },
+        ],
+      })
+    vi.mocked(window.crTools.prepareCaptureSource).mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'CAPTURE_SOURCE_STALE',
+        message: 'Capture sources changed',
+      },
+    })
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Clash Royale/ }))
+
+    await waitFor(() =>
+      expect(window.crTools.listCaptureSources).toHaveBeenCalledTimes(2),
+    )
+    expect(
+      await screen.findByText(
+        'Источник изменился. Список обновлён, выберите нужный источник ещё раз.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Продолжить к настройке' })).toBeDisabled()
+  })
+
+  it('ignores a stale failure from a source superseded by a newer selection', async () => {
+    const revision = 'e'.repeat(32)
+    vi.mocked(window.crTools.listCaptureSources).mockResolvedValue({
+      revision,
+      expiresAt: Date.now() + 30_000,
+      sources: [
+        {
+          sourceKey: 'a'.repeat(32),
+          revision,
+          kind: 'window',
+          label: 'Первое окно',
+          detail: 'HD-Player.exe',
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+        {
+          sourceKey: 'b'.repeat(32),
+          revision,
+          kind: 'window',
+          label: 'Второе окно',
+          detail: 'HD-Player.exe',
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+      ],
+    })
+    const firstPreparation = deferred<{
+      ok: false
+      error: { code: string; message: string }
+    }>()
+    vi.mocked(window.crTools.prepareCaptureSource)
+      .mockReturnValueOnce(firstPreparation.promise)
+      .mockResolvedValueOnce({
+        ok: true,
+        preparation: {
+          preparationId: '00000000-0000-4000-8000-000000000021',
+          sourceKey: 'b'.repeat(32),
+          revision,
+        },
+      })
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Первое окно/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Второе окно/ }))
+    await waitFor(() =>
+      expect(window.crTools.prepareCaptureSource).toHaveBeenCalledTimes(2),
+    )
+    firstPreparation.resolve({
+      ok: false,
+      error: { code: 'CAPTURE_SOURCE_STALE', message: 'stale' },
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Продолжить к настройке' }),
+      ).toBeEnabled(),
+    )
+    expect(window.crTools.listCaptureSources).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/Источник изменился/)).not.toBeInTheDocument()
+  })
+
+  it('shows a capture timeout without suggesting a window-list refresh', async () => {
+    const revision = 'f'.repeat(32)
+    vi.mocked(window.crTools.listCaptureSources).mockResolvedValue({
+      revision,
+      expiresAt: Date.now() + 30_000,
+      sources: [
+        {
+          sourceKey: 'a'.repeat(32),
+          revision,
+          kind: 'window',
+          label: 'Clash Royale',
+          detail: 'HD-Player.exe',
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+      ],
+    })
+    vi.mocked(window.crTools.prepareCaptureSource).mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'CAPTURE_PREPARATION_TIMEOUT', message: 'timeout' },
+    })
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Clash Royale/ }))
+
+    expect(
+      await screen.findByText(
+        'Захват не запустился за 8 секунд. Убедитесь, что источник доступен и не свёрнут, затем повторите выбор.',
+      ),
+    ).toBeVisible()
+    expect(window.crTools.listCaptureSources).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses source-neutral wording when display capture cannot start', async () => {
+    const revision = '1'.repeat(32)
+    vi.mocked(window.crTools.listCaptureSources).mockResolvedValue({
+      revision,
+      expiresAt: Date.now() + 30_000,
+      sources: [
+        {
+          sourceKey: 'a'.repeat(32),
+          revision,
+          kind: 'display',
+          label: 'Монитор 2',
+          detail: '1920 x 1080',
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+      ],
+    })
+    vi.mocked(window.crTools.prepareCaptureSource).mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'CAPTURE_PREPARATION_START_FAILED', message: 'failed' },
+    })
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /Мониторы/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Монитор 2/ }))
+
+    expect(
+      await screen.findByText(
+        'Служба захвата не запустилась. Повторите выбор источника.',
+      ),
+    ).toBeVisible()
   })
 })

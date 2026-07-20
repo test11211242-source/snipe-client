@@ -4,7 +4,7 @@ import type { RealtimeStatus } from '../models/network'
 import type { ActivateInvitePayload, LoginPayload, RegisterPayload } from './auth-ipc'
 import type { AppSettingsView, HelloResult } from './app'
 import type {
-  CapturePreparationResult,
+  CapturePreparationResponse,
   CaptureProfileCommand,
   CaptureProfileNamePayload,
   PreviewPayload,
@@ -40,7 +40,7 @@ export interface CrToolsApi {
   logout: () => Promise<AuthView>
   getRealtimeStatus: () => Promise<RealtimeStatus>
   listCaptureSources: () => Promise<CaptureSourceSnapshot>
-  prepareCaptureSource: (payload: PreviewPayload) => Promise<CapturePreparationResult>
+  prepareCaptureSource: (payload: PreviewPayload) => Promise<CapturePreparationResponse>
   releaseCaptureSource: (payload: PreviewPayload) => Promise<{ released: boolean }>
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>
   getCaptureStatus: () => Promise<CaptureStatus>

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
+  CapturePreparationResponseSchema,
   CapturePreparationResultSchema,
   CaptureProfileCommandSchema,
   CaptureProfileMutationResultSchema,
@@ -22,6 +23,7 @@ import {
   SourceSnapshotResultSchema,
   StartSetupPayloadSchema,
 } from '../../../shared/contracts/capture-ipc'
+import { ApplicationError } from '../../../shared/errors/application-error'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
 import type { CapturePreparationService } from '../services/capture-preparation-service'
@@ -52,9 +54,28 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.prepareSource, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = PreviewPayloadSchema.parse(rawPayload)
-    return CapturePreparationResultSchema.parse(
-      await dependencies.preparations.prepare(payload.sourceKey, payload.revision),
-    )
+    try {
+      return CapturePreparationResponseSchema.parse({
+        ok: true,
+        preparation: CapturePreparationResultSchema.parse(
+          await dependencies.preparations.prepare(payload.sourceKey, payload.revision),
+        ),
+      })
+    } catch (error) {
+      if (!(error instanceof ApplicationError)) {
+        dependencies.logger.warn('Capture source preparation failed', { error })
+      }
+      return CapturePreparationResponseSchema.parse({
+        ok: false,
+        error:
+          error instanceof ApplicationError
+            ? error.toPublicError()
+            : {
+                code: 'CAPTURE_PREPARATION_FAILED',
+                message: 'The selected source could not be prepared',
+              },
+      })
+    }
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.releaseSource, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')

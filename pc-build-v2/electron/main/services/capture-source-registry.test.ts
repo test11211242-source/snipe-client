@@ -89,7 +89,7 @@ describe('CaptureSourceRegistry', () => {
     expect(resolved.preference).toMatchObject({ windowHwnd: '9007199254740993' })
   })
 
-  it('returns previews from one enumeration and fails closed for stale entries', async () => {
+  it('keeps an expired snapshot usable after live identity validation', async () => {
     let now = 100
     const enumerateSizes: { width: number; height: number }[] = []
     const provider: CaptureSourceProvider = {
@@ -98,7 +98,7 @@ describe('CaptureSourceRegistry', () => {
         enumerateSizes.push(size)
         return Promise.resolve([
           {
-            ...source('window:12:0', 'Game'),
+            ...source('window:12:0', 'Game', '', 20),
           },
         ])
       },
@@ -119,9 +119,59 @@ describe('CaptureSourceRegistry', () => {
     now = 111
     await expect(
       registry.resolve(item.sourceKey, snapshot.revision),
+    ).resolves.toMatchObject({
+      selector: { kind: 'window', windowHwnd: '12' },
+    })
+    expect(enumerateSizes).toEqual([
+      { width: 360, height: 203 },
+      { width: 0, height: 0 },
+    ])
+  })
+
+  it('rejects an expired window snapshot when HWND ownership changes', async () => {
+    let now = 100
+    let ownerProcessId = 20
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: () =>
+        Promise.resolve([source('window:12:0', 'Game', '', ownerProcessId)]),
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    }
+    const registry = new CaptureSourceRegistry(provider, 10, () => now)
+    const snapshot = await registry.enumerate()
+    const item = required(snapshot.sources[0])
+    now = 111
+    ownerProcessId = 21
+
+    await expect(
+      registry.resolve(item.sourceKey, snapshot.revision),
     ).rejects.toMatchObject({
       code: 'CAPTURE_SOURCE_STALE',
     })
+  })
+
+  it('rejects a PID-less snapshot when live enumeration crosses its expiry', async () => {
+    let now = 100
+    let enumerations = 0
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: () => {
+        enumerations += 1
+        if (enumerations === 2) now = 111
+        return Promise.resolve([source('window:12:0', 'Game')])
+      },
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    }
+    const registry = new CaptureSourceRegistry(provider, 10, () => now)
+    const snapshot = await registry.enumerate()
+    const item = required(snapshot.sources[0])
+    now = 110
+
+    await expect(
+      registry.resolve(item.sourceKey, snapshot.revision),
+    ).rejects.toMatchObject({ code: 'CAPTURE_SOURCE_STALE' })
   })
 
   it('keeps a source usable when its preview is oversized', async () => {

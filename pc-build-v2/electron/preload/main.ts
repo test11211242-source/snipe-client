@@ -18,7 +18,7 @@ import {
   RealtimeStatusResultSchema,
 } from '../../shared/contracts/auth-ipc'
 import {
-  CapturePreparationResultSchema,
+  CapturePreparationResponseSchema,
   CaptureProfileCommandSchema,
   CaptureProfileMutationResultSchema,
   CaptureProfileNamePayloadSchema,
@@ -135,7 +135,7 @@ const api: CrToolsApi = Object.freeze({
     ),
   prepareCaptureSource: async (rawPayload: unknown) => {
     const payload = PreviewPayloadSchema.parse(rawPayload)
-    return CapturePreparationResultSchema.parse(
+    return CapturePreparationResponseSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.prepareSource, payload),
     )
   },

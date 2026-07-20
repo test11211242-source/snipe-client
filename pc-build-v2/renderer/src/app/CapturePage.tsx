@@ -26,6 +26,26 @@ import type { MonitorView } from '../../../shared/models/monitor'
 import { Alert, Button, PageHeader, Tabs } from './ui'
 
 type SourceTab = 'window' | 'display'
+
+function preparationFailureMessage(code: string): string {
+  if (code === 'CAPTURE_PREPARATION_TIMEOUT') {
+    return 'Захват не запустился за 8 секунд. Убедитесь, что источник доступен и не свёрнут, затем повторите выбор.'
+  }
+  if (
+    code === 'CAPTURE_PREPARATION_START_FAILED' ||
+    code === 'CAPTURE_PREPARATION_EXITED'
+  ) {
+    return 'Служба захвата не запустилась. Повторите выбор источника.'
+  }
+  if (code === 'DISPLAY_MAPPING_UNSUPPORTED') {
+    return 'Выбранный монитор нельзя безопасно сопоставить с устройством Windows.'
+  }
+  if (code === 'CAPTURE_PREPARATION_CANCELLED') {
+    return 'Подготовка источника была отменена. Выберите его повторно.'
+  }
+  return 'Не удалось запустить захват выбранного источника. Повторите выбор.'
+}
+
 interface ProfileAction {
   kind: 'configure' | 'rebind'
   profileId: string | null
@@ -130,7 +150,7 @@ export function CapturePage({
     }
   }
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (): Promise<boolean> => {
     const generation = ++sourceRefreshGeneration.current
     releaseSelection()
     setLoading(true)
@@ -138,10 +158,12 @@ export function CapturePage({
     try {
       const nextSnapshot = await window.crTools.listCaptureSources()
       if (generation === sourceRefreshGeneration.current) setSnapshot(nextSnapshot)
+      return true
     } catch {
       if (generation === sourceRefreshGeneration.current) {
         setError('Не удалось получить источники. Захват доступен только в Windows.')
       }
+      return false
     } finally {
       if (generation === sourceRefreshGeneration.current) setLoading(false)
     }
@@ -437,7 +459,7 @@ export function CapturePage({
     setPreparingKey(source.sourceKey)
     setError(null)
     try {
-      const prepared = await window.crTools.prepareCaptureSource({
+      const response = await window.crTools.prepareCaptureSource({
         sourceKey: source.sourceKey,
         revision: source.revision,
       })
@@ -447,6 +469,20 @@ export function CapturePage({
       ) {
         return
       }
+      if (!response.ok) {
+        if (response.error.code === 'CAPTURE_SOURCE_STALE') {
+          const refreshed = await refresh()
+          if (refreshed) {
+            setError(
+              'Источник изменился. Список обновлён, выберите нужный источник ещё раз.',
+            )
+          }
+        } else {
+          setError(preparationFailureMessage(response.error.code))
+        }
+        return
+      }
+      const prepared = response.preparation
       setPreparation(prepared)
     } catch {
       if (generation !== selectionGeneration.current) return

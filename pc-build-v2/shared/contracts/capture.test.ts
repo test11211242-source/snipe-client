@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { NormalizedRectSchema } from '../models/capture'
-import { SetRegionPayloadSchema, StartSetupPayloadSchema } from './capture-ipc'
+import {
+  CapturePreparationResponseSchema,
+  SetRegionPayloadSchema,
+  StartSetupPayloadSchema,
+} from './capture-ipc'
 
 describe('capture contracts', () => {
   it('accepts bounded normalized rectangles and rejects overflow', () => {
@@ -37,6 +41,25 @@ describe('capture contracts', () => {
       StartSetupPayloadSchema.parse({
         preparationId: 'd52a21a9-3794-4a51-a292-60ec1ce9c238',
         windowHwnd: '123',
+      }),
+    ).toThrow()
+  })
+
+  it('returns bounded public preparation failures without rejecting IPC', () => {
+    expect(
+      CapturePreparationResponseSchema.parse({
+        ok: false,
+        error: {
+          code: 'CAPTURE_SOURCE_STALE',
+          message: 'Capture sources changed or expired; refresh the list',
+        },
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'CAPTURE_SOURCE_STALE' } })
+    expect(() =>
+      CapturePreparationResponseSchema.parse({
+        ok: false,
+        error: { code: 'CAPTURE_SOURCE_STALE', message: 'stale' },
+        internalPath: 'C:\\private',
       }),
     ).toThrow()
   })
