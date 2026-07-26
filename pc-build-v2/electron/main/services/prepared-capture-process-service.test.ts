@@ -76,14 +76,20 @@ function png(width: number, height: number): Buffer {
 describe('PreparedCaptureProcessService', () => {
   it('starts one selected source and freezes the latest validated PNG', async () => {
     const child = new FakeChild()
+    const spawn = vi.fn(() => child)
     const service = new PreparedCaptureProcessService(
       'python.exe',
       'prepared_capture.py',
       { warn: vi.fn() },
-      vi.fn(() => child),
+      spawn,
       vi.fn().mockResolvedValue(undefined),
     )
     const starting = service.start({ kind: 'window', windowHwnd: '123' })
+    expect(spawn).toHaveBeenCalledWith(
+      'python.exe',
+      ['-B', 'prepared_capture.py'],
+      expect.objectContaining({ shell: false, windowsHide: true }),
+    )
     expect(child.commands[0]?.metadata).toMatchObject({
       type: 'start',
       selector: { kind: 'window', windowHwnd: '123' },

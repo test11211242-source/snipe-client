@@ -28,7 +28,7 @@ npm run lint
 npm run typecheck
 npm test
 python -m pytest python/tests
-npm audit --audit-level=high
+npm run audit:release
 npm run build:app
 ```
 

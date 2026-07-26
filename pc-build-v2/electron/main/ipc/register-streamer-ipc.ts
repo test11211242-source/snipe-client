@@ -12,6 +12,7 @@ import {
   StreamerConfirmationPayloadSchema,
   StreamerPausedPayloadSchema,
   StreamerTagPayloadSchema,
+  StreamTitlePreviewResultSchema,
   StreamerViewResultSchema,
   StreamTitleSettingsPayloadSchema,
 } from '../../../shared/contracts/streamer-ipc'
@@ -82,6 +83,14 @@ export function registerStreamerIpc(dependencies: Dependencies): () => void {
     verify(event, dependencies.windows)
     return StreamerViewResultSchema.parse(
       await dependencies.streamer.updateTitle(
+        StreamTitleSettingsPayloadSchema.parse(raw),
+      ),
+    )
+  })
+  ipcMain.handle(STREAMER_IPC_CHANNELS.previewTitle, async (event, raw) => {
+    verify(event, dependencies.windows)
+    return StreamTitlePreviewResultSchema.parse(
+      await dependencies.streamer.previewTitle(
         StreamTitleSettingsPayloadSchema.parse(raw),
       ),
     )

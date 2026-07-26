@@ -96,6 +96,14 @@ export const StreamTitleSettingsSchema = z
   })
   .strict()
 
+export const StreamTitlePreviewSchema = z
+  .object({
+    previewTitle: z.string().max(300),
+    characterCount: z.number().int().nonnegative().max(300),
+    warnings: z.array(z.string().min(1).max(300)).max(8),
+  })
+  .strict()
+
 const SectionErrorSchema = z
   .object({
     section: z.enum(['twitch', 'predictions', 'title', 'deckSharing', 'overlay']),
@@ -214,5 +222,6 @@ export const StreamerConfirmationSchema = z
 export type PredictionPreferences = z.infer<typeof PredictionPreferencesSchema>
 export type OverlaySettings = z.infer<typeof OverlaySettingsSchema>
 export type StreamTitleSettings = z.infer<typeof StreamTitleSettingsSchema>
+export type StreamTitlePreview = z.infer<typeof StreamTitlePreviewSchema>
 export type StreamerView = z.infer<typeof StreamerViewSchema>
 export type OverlayUrlKind = z.infer<typeof OverlayUrlKindSchema>

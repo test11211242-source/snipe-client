@@ -233,7 +233,7 @@ export class MonitorProcessService {
     const sessionId = randomUUID()
     let child: MonitorChild
     try {
-      child = this.spawn(this.pythonExecutable, [this.scriptPath], {
+      child = this.spawn(this.pythonExecutable, ['-B', this.scriptPath], {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],

@@ -104,13 +104,13 @@ export function SettingsPage({
       ? opacityDraft
       : Math.round(status.settings.opacity * 100)
 
-  const showWidget = async (): Promise<void> => {
-    setBusy('show-widget')
+  const toggleLocalWidget = async (): Promise<void> => {
+    setBusy('toggle-widget')
     setMutationError(null)
     try {
-      onStatus(await window.crTools.showWidget())
+      onStatus(await window.crTools.toggleWidget())
     } catch {
-      setMutationError('Не удалось открыть окно виджета.')
+      setMutationError('Не удалось изменить состояние локального окна.')
     } finally {
       setBusy(null)
     }
@@ -167,7 +167,7 @@ export function SettingsPage({
       <PageHeader
         eyebrow="ПЕРСОНАЛИЗАЦИЯ"
         title="Настройки приложения"
-        description="Поведение виджета, системные параметры и обновления CR Tools."
+        description="Локальное окно соперника, системные параметры и обновления CR Tools."
       />
 
       <div className="settings-feedback" aria-live="polite">
@@ -178,19 +178,20 @@ export function SettingsPage({
       <div className="settings-layout">
         <Section
           className="settings-panel settings-widget-panel"
-          eyebrow="ОКНО СОПЕРНИКА"
-          title="Виджет соперника"
+          eyebrow="НЕ OBS"
+          title="Локальное окно соперника"
           actions={
             <Button
               disabled={controlsDisabled || status === null}
-              onClick={() => void showWidget()}
+              onClick={() => void toggleLocalWidget()}
             >
-              Открыть виджет
+              {status?.visible === true ? 'Скрыть окно' : 'Показать окно'}
             </Button>
           }
         >
           <p className="settings-intro">
-            Настройте поведение отдельного окна с последним найденным соперником.
+            Отдельное окно поверх игры с последним найденным соперником. Оно не связано с
+            browser sources OBS: они настраиваются в разделе «Стример → OBS».
           </p>
           {status === null ? (
             <AsyncState
@@ -221,13 +222,27 @@ export function SettingsPage({
                 disabled={controlsDisabled}
                 onChange={(locked) => void updateWidget({ locked })}
               />
-              <Toggle
-                label="Компактный режим"
-                detail="Уменьшает карточки, сохраняя основные сведения."
-                checked={status.settings.compactMode}
-                disabled={controlsDisabled}
-                onChange={(compactMode) => void updateWidget({ compactMode })}
-              />
+              <label className="setting-select">
+                <span>
+                  <strong>Режим отображения</strong>
+                  <small>
+                    «Только колода» показывает восемь карт 4×2 без лишней информации.
+                  </small>
+                </span>
+                <select
+                  aria-label="Режим отображения виджета"
+                  disabled={controlsDisabled}
+                  value={status.settings.displayMode}
+                  onChange={(event) =>
+                    void updateWidget({
+                      displayMode: event.currentTarget.value as 'deck' | 'detailed',
+                    })
+                  }
+                >
+                  <option value="deck">Только колода 4×2</option>
+                  <option value="detailed">Подробный</option>
+                </select>
+              </label>
               <label className="setting-range">
                 <span>
                   <strong>Прозрачность</strong>

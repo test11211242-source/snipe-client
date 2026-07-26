@@ -61,6 +61,16 @@ describe('RuntimeIntegrityService', () => {
     await expect(
       new RuntimeIntegrityService(missing.runtime, missing.inventory).verify(),
     ).rejects.toMatchObject({ code: 'RUNTIME_INTEGRITY_FAILED' })
+
+    const added = await fixture()
+    await mkdir(join(added.runtime, '__pycache__'))
+    await writeFile(
+      join(added.runtime, '__pycache__', 'worker.pyc'),
+      'generated-bytecode',
+    )
+    await expect(
+      new RuntimeIntegrityService(added.runtime, added.inventory).verify(),
+    ).rejects.toMatchObject({ code: 'RUNTIME_INTEGRITY_FAILED' })
   })
 
   it('rejects inventory traversal before reading outside the runtime', async () => {

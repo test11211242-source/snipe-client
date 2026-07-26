@@ -179,7 +179,7 @@ export class PythonWorkerService {
   private runChild(request: PythonWorkerRequest): Promise<PythonWorkerResult> {
     return new Promise((resolve, reject) => {
       const requestId = request.requestId ?? randomUUID()
-      const child = this.spawn(request.executable, [request.scriptPath], {
+      const child = this.spawn(request.executable, ['-B', request.scriptPath], {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],

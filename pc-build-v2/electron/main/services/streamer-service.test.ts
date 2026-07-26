@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { DEFAULT_TITLE_SETTINGS } from './streamer-adapters'
 import { StreamerService } from './streamer-service'
 
 const userView = {
@@ -22,6 +23,7 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
     async (input: {
       method: string
       path: string
+      body?: unknown
       schema?: { safeParse: (value: unknown) => { success: boolean } }
     }) => {
       if (input.path.endsWith('/auth/connect'))
@@ -134,6 +136,38 @@ describe('StreamerService', () => {
     expect(test.clipboard.writeText).toHaveBeenCalledWith(
       'https://api.artcsworld.xyz/opponent-widget?token=private-token',
     )
+  })
+
+  it('maps title drafts through the read-only preview endpoint', async () => {
+    const test = harness()
+    const previousView = test.service.getView()
+    test.request.mockImplementationOnce((input) => {
+      expect(input).toMatchObject({
+        method: 'POST',
+        path: '/api/streamer/title/preview',
+        body: {
+          prefix_template: DEFAULT_TITLE_SETTINGS.prefixTemplate,
+          include_rank: DEFAULT_TITLE_SETTINGS.includeRank,
+        },
+      })
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        data: {
+          success: true,
+          preview_title: '#12 | 2400 | 3W-1L | Championship',
+          character_count: 39,
+          warnings: ['Название достигло лимита Twitch.'],
+        },
+      } as never)
+    })
+
+    await expect(test.service.previewTitle(DEFAULT_TITLE_SETTINGS)).resolves.toEqual({
+      previewTitle: '#12 | 2400 | 3W-1L | Championship',
+      characterCount: 39,
+      warnings: ['Название достигло лимита Twitch.'],
+    })
+    expect(test.service.getView()).toBe(previousView)
   })
 
   it('serializes mutations and opens only an exact HTTPS Twitch host externally', async () => {

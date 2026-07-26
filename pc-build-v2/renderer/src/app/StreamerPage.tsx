@@ -1,5 +1,5 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import { hasStreamerRole, type AuthView } from '../../../shared/models/auth'
 import type { StreamerView } from '../../../shared/models/streamer'
@@ -13,20 +13,25 @@ import { Alert, AsyncState, Button, Tabs } from './ui'
 
 type StreamerTab = 'overview' | 'predictions' | 'title' | 'obs'
 
-const STREAMER_TABS = [
-  { id: 'overview', label: 'Обзор' },
-  { id: 'predictions', label: 'Twitch и прогнозы' },
-  { id: 'title', label: 'Название стрима' },
-  { id: 'obs', label: 'OBS' },
-] as const
-
 export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Element {
   const [tab, setTab] = useState<StreamerTab>('overview')
   const [view, setView] = useState<StreamerView | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [dirtyTabs, setDirtyTabs] = useState({ title: false, obs: false })
+  const viewGeneration = useRef(0)
   const roleAllowed = hasStreamerRole(auth)
+  const canPoll = useEffectEvent(() => busy === null && !document.hidden)
+  const streamerTabs = [
+    { id: 'overview' as const, label: 'Обзор' },
+    { id: 'predictions' as const, label: 'Twitch и прогнозы' },
+    {
+      id: 'title' as const,
+      label: dirtyTabs.title ? 'Название стрима •' : 'Название стрима',
+    },
+    { id: 'obs' as const, label: dirtyTabs.obs ? 'OBS •' : 'OBS' },
+  ]
 
   useEffect(() => {
     if (!roleAllowed) return
@@ -34,15 +39,16 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
     const isActive = (): boolean => active
 
     const load = async (): Promise<void> => {
+      const generation = ++viewGeneration.current
       setBusy('initial')
       setError(null)
       try {
         const initialView = await window.crTools.setStreamerSectionActive(true)
-        if (!isActive()) return
+        if (!isActive() || generation !== viewGeneration.current) return
         setView(initialView)
         try {
           const refreshedView = await window.crTools.refreshStreamer()
-          if (isActive()) setView(refreshedView)
+          if (isActive() && generation === viewGeneration.current) setView(refreshedView)
         } catch {
           if (isActive()) setError('Часть данных трансляции пока не обновилась.')
         }
@@ -60,15 +66,40 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
     }
   }, [attempt, roleAllowed])
 
+  useEffect(() => {
+    if (!roleAllowed) return
+    let active = true
+    let inFlight = false
+    const poll = async (): Promise<void> => {
+      if (inFlight || !canPoll()) return
+      inFlight = true
+      const generation = viewGeneration.current
+      try {
+        const nextView = await window.crTools.getStreamerView()
+        if (active && generation === viewGeneration.current) setView(nextView)
+      } catch {
+        // The explicit refresh surface remains responsible for user-facing errors.
+      } finally {
+        inFlight = false
+      }
+    }
+    const timer = window.setInterval(() => void poll(), 5_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [roleAllowed])
+
   const run: StreamerRunner = async (name, operation) => {
+    ++viewGeneration.current
     setBusy(name)
     setError(null)
     try {
       const nextView = await operation()
       setView(nextView)
       return nextView
-    } catch {
-      setError(operationError(name))
+    } catch (cause) {
+      setError(operationError(name, cause))
       return null
     } finally {
       setBusy(null)
@@ -144,7 +175,7 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
           className="streamer-tabs"
           id="streamer"
           label="Разделы стримера"
-          tabs={STREAMER_TABS}
+          tabs={streamerTabs}
           value={tab}
           onChange={setTab}
         />
@@ -204,7 +235,17 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
         role="tabpanel"
         aria-labelledby="streamer-tab-title"
       >
-        <TitleTab view={view} busy={busy} run={run} />
+        <TitleTab
+          view={view}
+          active={tab === 'title'}
+          busy={busy}
+          run={run}
+          onDirtyChange={(dirty) =>
+            setDirtyTabs((current) =>
+              current.title === dirty ? current : { ...current, title: dirty },
+            )
+          }
+        />
       </section>
       <section
         className="streamer-tab-content"
@@ -213,7 +254,16 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
         role="tabpanel"
         aria-labelledby="streamer-tab-obs"
       >
-        <ObsTab view={view} busy={busy} run={run} />
+        <ObsTab
+          view={view}
+          busy={busy}
+          run={run}
+          onDirtyChange={(dirty) =>
+            setDirtyTabs((current) =>
+              current.obs === dirty ? current : { ...current, obs: dirty },
+            )
+          }
+        />
       </section>
     </div>
   )
@@ -229,7 +279,14 @@ function refreshLabel(view: StreamerView): string {
   })}`
 }
 
-function operationError(name: string): string {
+function operationError(name: string, cause: unknown): string {
+  if (
+    name.startsWith('title-') &&
+    cause instanceof Error &&
+    cause.message.includes('Настройки сохранены')
+  ) {
+    return 'Настройки сохранены, но Twitch не обновил название. Повторите попытку.'
+  }
   if (name.startsWith('copy-')) return 'Не удалось скопировать ссылку OBS.'
   if (name.includes('save') || name.includes('overlay')) {
     return 'Не удалось сохранить настройки. Проверьте значения и повторите.'

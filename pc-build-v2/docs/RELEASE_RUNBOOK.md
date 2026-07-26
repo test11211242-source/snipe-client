@@ -78,7 +78,7 @@ placed in the git remote URL or a command argument.
 2. Run the publisher in `release` mode, or manually dispatch `CR Tools V2 Windows release` with
    that version, the critical flag, and `deploy=true`.
 3. The workflow uses Node 22 and `npm ci`, then gates lint, typecheck, Vitest, Python tests,
-   npm audit, portable Python runtime validation, unpacked NSIS build, packaged Electron
+   production npm dependencies plus an explicit dev-advisory allowlist, portable Python runtime validation, unpacked NSIS build, packaged Electron
    security smoke, unsigned installer build, manifest signing, and self-verification.
 4. Confirm the artifact is exactly `CR_Tools_V2_Setup_<version>.exe` and retain the uploaded
    installer/runtime artifact plus the separate signed-manifest artifact.

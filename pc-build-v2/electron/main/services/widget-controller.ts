@@ -1,6 +1,10 @@
 import { ApplicationError } from '../../../shared/errors/application-error'
 import type { MonitorResult } from '../../../shared/models/monitor'
 import {
+  WIDGET_DECK_HEIGHT,
+  WIDGET_DECK_WIDTH,
+  WIDGET_DETAILED_HEIGHT,
+  WIDGET_DETAILED_WIDTH,
   WidgetBoundsSchema,
   WidgetSettingsSchema,
   WidgetStatusSchema,
@@ -159,7 +163,21 @@ export class WidgetController {
   async updateSettings(rawSettings: WidgetSettings): Promise<WidgetSettings> {
     const userId = this.requireUserId()
     const generation = this.#generation
-    const settings = WidgetSettingsSchema.parse(rawSettings)
+    const parsed = WidgetSettingsSchema.parse(rawSettings)
+    const current = this.requireSettings()
+    const modeChanged = parsed.displayMode !== current.displayMode
+    const settings = modeChanged
+      ? {
+          ...parsed,
+          bounds: {
+            ...parsed.bounds,
+            width:
+              parsed.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
+            height:
+              parsed.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_DETAILED_HEIGHT,
+          },
+        }
+      : parsed
     const saved = await this.saveSettings(userId, settings)
     if (generation !== this.#generation || this.#userId !== userId) {
       throw new ApplicationError(

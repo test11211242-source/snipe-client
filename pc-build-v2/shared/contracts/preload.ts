@@ -28,6 +28,7 @@ import type {
   PredictionPreferences,
   StreamerView,
   StreamTitleSettings,
+  StreamTitlePreview,
 } from '../models/streamer'
 import type { UpdateView } from '../models/update'
 
@@ -90,6 +91,7 @@ export interface CrToolsApi {
   stopPredictions: () => Promise<StreamerView>
   startStreamerResultSetup: () => Promise<StreamerView>
   updateStreamTitle: (settings: StreamTitleSettings) => Promise<StreamerView>
+  previewStreamTitle: (settings: StreamTitleSettings) => Promise<StreamTitlePreview>
   setStreamTitleEnabled: (enabled: boolean) => Promise<StreamerView>
   setStreamTitlePaused: (paused: boolean) => Promise<StreamerView>
   addStreamTitleAccount: (payload: {

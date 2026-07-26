@@ -302,7 +302,11 @@ export class OcrApiClient {
     try {
       return await this.fetchImplementation(`${this.config.apiUrl}/api/ocr/process`, {
         method: 'POST',
-        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Client-Platform': 'pc',
+        },
         body: form,
         signal: controller.signal,
       })

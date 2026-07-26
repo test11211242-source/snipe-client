@@ -61,6 +61,8 @@ export function publicErrorMessage(code: string, fallback: string): string {
     MONITOR_START_FAILED: 'Не удалось запустить локальный мониторинг.',
     MONITOR_READY_TIMEOUT: 'Источник захвата не ответил вовремя.',
     MONITOR_PROCESS_EXITED: 'Локальный процесс мониторинга неожиданно завершился.',
+    RUNTIME_INTEGRITY_FAILED:
+      'Компоненты локального мониторинга повреждены. Обновите или переустановите приложение.',
     REQUEST_TIMEOUT: 'Сервис не ответил вовремя. Повторите операцию.',
     SERVER_ERROR: 'Сервис временно недоступен.',
     UPDATE_CHECK_FAILED: 'Не удалось проверить наличие обновления.',

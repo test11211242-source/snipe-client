@@ -178,6 +178,31 @@ describe('WidgetController', () => {
     )
   })
 
+  it('snaps the window to canonical bounds when display mode changes', async () => {
+    const test = harness()
+    await test.controller.start('user')
+
+    const detailed = await test.controller.updateSettings({
+      ...DEFAULT_WIDGET_SETTINGS,
+      displayMode: 'detailed',
+      bounds: { x: 80, y: 90, width: 600, height: 700 },
+    })
+    expect(detailed).toMatchObject({
+      displayMode: 'detailed',
+      bounds: { x: 80, y: 90, width: 420, height: 560 },
+    })
+    expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(detailed)
+
+    const deck = await test.controller.updateSettings({
+      ...detailed,
+      displayMode: 'deck',
+    })
+    expect(deck).toMatchObject({
+      displayMode: 'deck',
+      bounds: { x: 80, y: 90, width: 360, height: 300 },
+    })
+  })
+
   it('ignores bounds below the persisted schema minimum', async () => {
     vi.useFakeTimers()
     const test = harness()

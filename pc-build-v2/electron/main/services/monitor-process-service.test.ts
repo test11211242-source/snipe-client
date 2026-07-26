@@ -167,7 +167,7 @@ describe('MonitorProcessService', () => {
     const started = monitor.start(payload(), listener())
     expect(spawn).toHaveBeenCalledWith(
       'python.exe',
-      ['monitor_engine.py'],
+      ['-B', 'monitor_engine.py'],
       expect.objectContaining({ shell: false, windowsHide: true }),
     )
     expect(child.written.trim().split('\n')).toHaveLength(1)

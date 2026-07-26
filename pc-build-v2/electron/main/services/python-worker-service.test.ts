@@ -56,6 +56,21 @@ const request = {
 }
 
 describe('PythonWorkerService', () => {
+  it('disables bytecode writes for bundled worker execution', async () => {
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const worker = new PythonWorkerService(spawn)
+    const result = worker.execute(request)
+
+    expect(spawn).toHaveBeenCalledWith(
+      'python',
+      ['-B', 'worker.py'],
+      expect.objectContaining({ shell: false, windowsHide: true }),
+    )
+    child.emit('close', 0)
+    await expect(result).resolves.toBeDefined()
+  })
+
   it('kills timed out and aborted children deterministically', async () => {
     vi.useFakeTimers()
     const children: FakeChild[] = []

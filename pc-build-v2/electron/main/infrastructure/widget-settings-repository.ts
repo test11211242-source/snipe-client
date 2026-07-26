@@ -1,8 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as nodeFs } from 'node:fs'
 import { join } from 'node:path'
+import { z } from 'zod'
 
-import { WidgetSettingsSchema, type WidgetSettings } from '../../../shared/models/widget'
+import {
+  WIDGET_DECK_HEIGHT,
+  WIDGET_DECK_WIDTH,
+  WidgetBoundsSchema,
+  WidgetSettingsSchema,
+  type WidgetSettings,
+} from '../../../shared/models/widget'
 
 export interface WidgetSettingsFileSystem {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
@@ -25,9 +32,25 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = Object.freeze({
   alwaysOnTop: true,
   locked: false,
   opacity: 0.96,
-  compactMode: false,
-  bounds: { x: null, y: null, width: 420, height: 560 },
+  displayMode: 'deck',
+  bounds: {
+    x: null,
+    y: null,
+    width: WIDGET_DECK_WIDTH,
+    height: WIDGET_DECK_HEIGHT,
+  },
 })
+
+const LegacyWidgetSettingsSchema = z
+  .object({
+    autoOpen: z.boolean(),
+    alwaysOnTop: z.boolean(),
+    locked: z.boolean(),
+    opacity: z.number().min(0.55).max(1),
+    compactMode: z.boolean(),
+    bounds: WidgetBoundsSchema,
+  })
+  .strict()
 
 function fileName(userId: string): string {
   return `${createHash('sha256').update(userId).digest('hex')}.json`
@@ -51,7 +74,24 @@ export class WidgetSettingsRepository {
   async load(userId: string): Promise<WidgetSettings> {
     try {
       const value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
-      return WidgetSettingsSchema.parse(JSON.parse(value) as unknown)
+      const raw = JSON.parse(value) as unknown
+      const current = WidgetSettingsSchema.safeParse(raw)
+      if (current.success) return current.data
+      const legacy = LegacyWidgetSettingsSchema.parse(raw)
+      const migrated = WidgetSettingsSchema.parse({
+        autoOpen: legacy.autoOpen,
+        alwaysOnTop: legacy.alwaysOnTop,
+        locked: legacy.locked,
+        opacity: legacy.opacity,
+        displayMode: 'deck',
+        bounds: {
+          x: legacy.bounds.x,
+          y: legacy.bounds.y,
+          width: WIDGET_DECK_WIDTH,
+          height: WIDGET_DECK_HEIGHT,
+        },
+      })
+      return await this.save(userId, migrated)
     } catch (error) {
       if (isMissing(error)) return structuredClone(DEFAULT_WIDGET_SETTINGS)
       throw error

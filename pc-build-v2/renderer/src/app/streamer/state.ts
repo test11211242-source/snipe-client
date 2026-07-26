@@ -24,6 +24,7 @@ export function refreshSectionLabel(section: string): string {
 export function useDraft<T>(serverValue: T): {
   draft: T
   setDraft: (value: T) => void
+  reset: () => void
   dirty: boolean
 } {
   const serializedServerValue = JSON.stringify(serverValue)
@@ -31,6 +32,7 @@ export function useDraft<T>(serverValue: T): {
   const [draft, setDraft] = useState(serverValue)
 
   useEffect(() => {
+    if (previousServerValue.current === serializedServerValue) return
     setDraft((current) =>
       JSON.stringify(current) === previousServerValue.current ? serverValue : current,
     )
@@ -40,6 +42,7 @@ export function useDraft<T>(serverValue: T): {
   return {
     draft,
     setDraft,
+    reset: () => setDraft(serverValue),
     dirty: JSON.stringify(draft) !== serializedServerValue,
   }
 }

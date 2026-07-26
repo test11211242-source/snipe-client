@@ -5,6 +5,7 @@ import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
   PredictionPreferencesSchema,
+  StreamTitlePreviewSchema,
   StreamerViewSchema,
   StreamTitleSettingsSchema,
   type OverlaySettings,
@@ -12,6 +13,7 @@ import {
   type PredictionPreferences,
   type StreamerView,
   type StreamTitleSettings,
+  type StreamTitlePreview,
 } from '../../../shared/models/streamer'
 import type { PredictionPreferencesRepository } from '../infrastructure/prediction-preferences-repository'
 import { DEFAULT_PREDICTION_PREFERENCES } from '../infrastructure/prediction-preferences-repository'
@@ -36,6 +38,14 @@ import {
 
 const UnknownSchema = z.unknown()
 const CommandSuccessSchema = z.object({ success: z.literal(true) }).loose()
+const TitlePreviewResponseSchema = z
+  .object({
+    success: z.literal(true),
+    preview_title: z.string().max(300),
+    character_count: z.number().int().nonnegative().max(300),
+    warnings: z.array(z.string().min(1).max(300)).max(8),
+  })
+  .loose()
 const AuthConnectSchema = z
   .object({ auth_url: z.string().max(4096), success: z.boolean().optional() })
   .loose()
@@ -232,6 +242,25 @@ export class StreamerService {
     return this.mutate(async () => {
       const parsed = StreamTitleSettingsSchema.parse(settings)
       await this.request('POST', '/api/streamer/title/settings', titleToServer(parsed))
+    })
+  }
+
+  async previewTitle(settings: StreamTitleSettings): Promise<StreamTitlePreview> {
+    this.assertAccess()
+    const parsed = StreamTitleSettingsSchema.parse(settings)
+    const result = await this.api.request({
+      method: 'POST',
+      path: '/api/streamer/title/preview',
+      body: titleToServer(parsed),
+      schema: TitlePreviewResponseSchema,
+    })
+    if (!result.ok) {
+      throw new ApplicationError(result.error.code, result.error.message)
+    }
+    return StreamTitlePreviewSchema.parse({
+      previewTitle: result.data.preview_title,
+      characterCount: result.data.character_count,
+      warnings: result.data.warnings,
     })
   }
 

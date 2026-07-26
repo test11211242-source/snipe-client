@@ -108,7 +108,11 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
   await expect(
     executeFile(
       python,
-      ['-c', "import cv2, numpy, windows_capture; print('bundled imports verified')"],
+      [
+        '-B',
+        '-c',
+        "import cv2, numpy, windows_capture; print('bundled imports verified')",
+      ],
       { windowsHide: true, timeout: 30_000 },
     ),
   ).resolves.toMatchObject({

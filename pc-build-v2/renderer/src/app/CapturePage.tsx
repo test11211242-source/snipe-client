@@ -28,6 +28,9 @@ import { Alert, Button, PageHeader, Tabs } from './ui'
 type SourceTab = 'window' | 'display'
 
 function preparationFailureMessage(code: string): string {
+  if (code === 'RUNTIME_INTEGRITY_FAILED') {
+    return 'Компоненты локального мониторинга повреждены. Обновите или переустановите приложение.'
+  }
   if (code === 'CAPTURE_PREPARATION_TIMEOUT') {
     return 'Захват не запустился за 8 секунд. Убедитесь, что источник доступен и не свёрнут, затем повторите выбор.'
   }

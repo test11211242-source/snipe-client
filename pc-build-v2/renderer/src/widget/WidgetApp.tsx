@@ -139,9 +139,10 @@ export function WidgetApp(): React.JSX.Element {
   const result = view?.result ?? null
   const found = result?.kind === 'player_found' ? result : null
   const deck = found?.decks[selectedDeck] ?? null
+  const deckMode = view?.settings.displayMode !== 'detailed'
 
   return (
-    <main className="widget-shell" data-compact={view?.settings.compactMode ?? false}>
+    <main className="widget-shell" data-mode={deckMode ? 'deck' : 'detailed'}>
       <header className="widget-header">
         <div className="widget-brand">
           <span>CR TOOLS</span>
@@ -174,12 +175,16 @@ export function WidgetApp(): React.JSX.Element {
               )}
             </ControlButton>
             <ControlButton
-              active={view.settings.compactMode}
-              label="Компактный режим"
+              active={view.settings.displayMode === 'deck'}
+              label={
+                view.settings.displayMode === 'deck'
+                  ? 'Открыть подробный режим'
+                  : 'Показать только колоду'
+              }
               disabled={saving}
               onClick={() =>
                 void enqueueSettings({
-                  compactMode: !view.settings.compactMode,
+                  displayMode: view.settings.displayMode === 'deck' ? 'detailed' : 'deck',
                 })
               }
             >
@@ -198,7 +203,7 @@ export function WidgetApp(): React.JSX.Element {
         )}
       </header>
 
-      {view !== null && (
+      {view !== null && view.settings.displayMode === 'detailed' && (
         <label className="opacity-control">
           {displayedOpacity < 80 ? (
             <EyeOff aria-hidden="true" size={14} />
@@ -252,29 +257,34 @@ export function WidgetApp(): React.JSX.Element {
         <EmptyResult result={result} />
       ) : (
         <>
-          <section className="player-summary" aria-labelledby="player-name">
-            <div className="player-heading">
-              <div>
-                <span>НАЙДЕН ИГРОК</span>
-                <h1 id="player-name">{found.player.name}</h1>
+          {view.settings.displayMode === 'detailed' && (
+            <section className="player-summary" aria-labelledby="player-name">
+              <div className="player-heading">
+                <div>
+                  <span>НАЙДЕН ИГРОК</span>
+                  <h1 id="player-name">{found.player.name}</h1>
+                </div>
+                {found.player.rating !== null && (
+                  <strong
+                    className="rating"
+                    aria-label={`Рейтинг ${found.player.rating}`}
+                  >
+                    {found.player.rating}
+                  </strong>
+                )}
               </div>
-              {found.player.rating !== null && (
-                <strong className="rating" aria-label={`Рейтинг ${found.player.rating}`}>
-                  {found.player.rating}
-                </strong>
-              )}
-            </div>
-            <dl>
-              <div>
-                <dt>Тег</dt>
-                <dd>{found.player.tag ?? 'Не указан'}</dd>
-              </div>
-              <div>
-                <dt>Клан</dt>
-                <dd>{found.player.clan ?? 'Без клана'}</dd>
-              </div>
-            </dl>
-          </section>
+              <dl>
+                <div>
+                  <dt>Тег</dt>
+                  <dd>{found.player.tag ?? 'Не указан'}</dd>
+                </div>
+                <div>
+                  <dt>Клан</dt>
+                  <dd>{found.player.clan ?? 'Без клана'}</dd>
+                </div>
+              </dl>
+            </section>
+          )}
 
           {found.decks.length === 0 ? (
             <EmptyState
@@ -282,46 +292,76 @@ export function WidgetApp(): React.JSX.Element {
               detail="Профиль игрока получен без колод."
             />
           ) : (
-            <section className="deck-section" aria-label="Колоды игрока">
-              <div className="deck-tabs" role="tablist" aria-label="Выбор колоды">
-                {found.decks.map((item, index) => (
-                  <button
-                    key={`${item.label ?? 'deck'}-${index}`}
-                    type="button"
-                    role="tab"
-                    id={`deck-tab-${index}`}
-                    aria-controls={`deck-panel-${index}`}
-                    aria-selected={selectedDeck === index}
-                    tabIndex={selectedDeck === index ? 0 : -1}
-                    onClick={() => setDeckSelection({ resultId: found.id, index })}
-                    onKeyDown={(event) => {
-                      let nextIndex: number | null = null
-                      if (event.key === 'ArrowRight') {
-                        nextIndex = (index + 1) % found.decks.length
-                      }
-                      if (event.key === 'ArrowLeft') {
-                        nextIndex = (index - 1 + found.decks.length) % found.decks.length
-                      }
-                      if (event.key === 'Home') nextIndex = 0
-                      if (event.key === 'End') nextIndex = found.decks.length - 1
-                      if (nextIndex === null) return
-                      event.preventDefault()
-                      setDeckSelection({ resultId: found.id, index: nextIndex })
-                      deckTabRefs.current[nextIndex]?.focus()
-                    }}
-                    ref={(node) => {
-                      deckTabRefs.current[index] = node
-                    }}
-                  >
-                    {item.label ?? `Колода ${index + 1}`}
-                  </button>
-                ))}
-              </div>
+            <section
+              className="deck-section"
+              aria-label={`Колоды игрока ${found.player.name}`}
+            >
+              {(view.settings.displayMode === 'detailed' || found.decks.length > 1) && (
+                <div className="deck-tabs" role="tablist" aria-label="Выбор колоды">
+                  {found.decks.map((item, index) => {
+                    const label = item.label ?? `Колода ${index + 1}`
+                    return (
+                      <button
+                        key={`${item.label ?? 'deck'}-${index}`}
+                        type="button"
+                        role="tab"
+                        id={`deck-tab-${index}`}
+                        aria-controls={`deck-panel-${index}`}
+                        aria-label={
+                          view.settings.displayMode === 'deck'
+                            ? `Колода ${index + 1}: ${label}`
+                            : undefined
+                        }
+                        aria-selected={selectedDeck === index}
+                        tabIndex={selectedDeck === index ? 0 : -1}
+                        onClick={() => setDeckSelection({ resultId: found.id, index })}
+                        onKeyDown={(event) => {
+                          let nextIndex: number | null = null
+                          if (event.key === 'ArrowRight') {
+                            nextIndex = (index + 1) % found.decks.length
+                          }
+                          if (event.key === 'ArrowLeft') {
+                            nextIndex =
+                              (index - 1 + found.decks.length) % found.decks.length
+                          }
+                          if (event.key === 'Home') nextIndex = 0
+                          if (event.key === 'End') nextIndex = found.decks.length - 1
+                          if (nextIndex === null) return
+                          event.preventDefault()
+                          setDeckSelection({ resultId: found.id, index: nextIndex })
+                          deckTabRefs.current[nextIndex]?.focus()
+                        }}
+                        ref={(node) => {
+                          deckTabRefs.current[index] = node
+                        }}
+                      >
+                        <span className="deck-tab-label">{label}</span>
+                        <span className="deck-tab-number" aria-hidden="true">
+                          {index + 1}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <div
                 className="card-grid"
                 id={`deck-panel-${selectedDeck}`}
-                role="tabpanel"
-                aria-labelledby={`deck-tab-${selectedDeck}`}
+                role={
+                  view.settings.displayMode === 'detailed' || found.decks.length > 1
+                    ? 'tabpanel'
+                    : 'group'
+                }
+                aria-label={
+                  view.settings.displayMode === 'deck' && found.decks.length === 1
+                    ? 'Карты колоды'
+                    : undefined
+                }
+                aria-labelledby={
+                  view.settings.displayMode === 'detailed' || found.decks.length > 1
+                    ? `deck-tab-${selectedDeck}`
+                    : undefined
+                }
               >
                 {deck?.cards.map((card, cardIndex) => (
                   <Card
@@ -330,6 +370,7 @@ export function WidgetApp(): React.JSX.Element {
                     deckIndex={selectedDeck}
                     cardIndex={cardIndex}
                     card={card}
+                    imageOnly={view.settings.displayMode === 'deck'}
                   />
                 ))}
               </div>
@@ -437,11 +478,13 @@ function Card({
   deckIndex,
   cardIndex,
   card,
+  imageOnly,
 }: {
   resultId: string
   deckIndex: number
   cardIndex: number
   card: CardView
+  imageOnly: boolean
 }): React.JSX.Element {
   const [image, setImage] = useState<string | null>(null)
 
@@ -468,23 +511,25 @@ function Card({
     .toUpperCase()
 
   return (
-    <article className="deck-card">
+    <article className="deck-card" aria-label={imageOnly ? card.name : undefined}>
       <div className="card-art">
         {image === null ? (
-          <span>{initials}</span>
+          <span title={card.name}>{initials}</span>
         ) : (
           <img src={image} alt="" onError={() => setImage(null)} />
         )}
       </div>
-      <div className="card-copy">
-        <strong title={card.name}>{card.name}</strong>
-        <span>
-          {card.level === null ? 'Уровень неизвестен' : `Уровень ${card.level}`}
-        </span>
-        {card.evolutionLevel !== null && card.evolutionLevel > 0 && (
-          <small>Эволюция {card.evolutionLevel}</small>
-        )}
-      </div>
+      {!imageOnly && (
+        <div className="card-copy">
+          <strong title={card.name}>{card.name}</strong>
+          <span>
+            {card.level === null ? 'Уровень неизвестен' : `Уровень ${card.level}`}
+          </span>
+          {card.evolutionLevel !== null && card.evolutionLevel > 0 && (
+            <small>Эволюция {card.evolutionLevel}</small>
+          )}
+        </div>
+      )}
     </article>
   )
 }

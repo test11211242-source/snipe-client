@@ -114,6 +114,7 @@ describe('OcrApiClient', () => {
     )
     const secondInit = fetchImplementation.mock.calls[1]?.[1]
     expect(new Headers(secondInit?.headers).get('authorization')).toBe('Bearer new-token')
+    expect(new Headers(secondInit?.headers).get('x-client-platform')).toBe('pc')
     const form = secondInit?.body
     expect(form).toBeInstanceOf(FormData)
     if (!(form instanceof FormData)) throw new Error('missing form')

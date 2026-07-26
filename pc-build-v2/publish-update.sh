@@ -316,7 +316,7 @@ npm test
   cd python
   "$PYTHON_CACHE/bin/python" -m pytest tests
 )
-npm audit --audit-level=high
+npm run audit:release
 npm run build:app
 
 info "Setting package version to $VERSION"

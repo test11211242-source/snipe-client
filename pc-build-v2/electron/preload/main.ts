@@ -60,6 +60,7 @@ import {
   StreamerPausedPayloadSchema,
   StreamerTagPayloadSchema,
   StreamerViewResultSchema,
+  StreamTitlePreviewResultSchema,
   StreamTitleSettingsPayloadSchema,
 } from '../../shared/contracts/streamer-ipc'
 import {
@@ -286,6 +287,13 @@ const api: CrToolsApi = Object.freeze({
     StreamerViewResultSchema.parse(
       await ipcRenderer.invoke(
         STREAMER_IPC_CHANNELS.updateTitle,
+        StreamTitleSettingsPayloadSchema.parse(rawPayload),
+      ),
+    ),
+  previewStreamTitle: async (rawPayload: unknown) =>
+    StreamTitlePreviewResultSchema.parse(
+      await ipcRenderer.invoke(
+        STREAMER_IPC_CHANNELS.previewTitle,
         StreamTitleSettingsPayloadSchema.parse(rawPayload),
       ),
     ),

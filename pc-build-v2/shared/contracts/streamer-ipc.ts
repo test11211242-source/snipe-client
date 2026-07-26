@@ -6,6 +6,7 @@ import {
   PredictionPreferencesSchema,
   StreamerConfirmationSchema,
   StreamerViewSchema,
+  StreamTitlePreviewSchema,
   StreamTitleSettingsSchema,
 } from '../models/streamer'
 
@@ -19,6 +20,7 @@ export const STREAMER_IPC_CHANNELS = Object.freeze({
   stopPredictions: 'streamer:stop-predictions',
   startResultSetup: 'streamer:start-result-setup',
   updateTitle: 'streamer:update-title',
+  previewTitle: 'streamer:preview-title',
   setTitleEnabled: 'streamer:set-title-enabled',
   setTitlePaused: 'streamer:set-title-paused',
   addTitleAccount: 'streamer:add-title-account',
@@ -37,6 +39,7 @@ export const StreamerViewResultSchema = StreamerViewSchema
 export const StreamerActivePayloadSchema = z.object({ active: z.boolean() }).strict()
 export const PredictionPreferencesPayloadSchema = PredictionPreferencesSchema
 export const StreamTitleSettingsPayloadSchema = StreamTitleSettingsSchema
+export const StreamTitlePreviewResultSchema = StreamTitlePreviewSchema
 export const StreamerBooleanPayloadSchema = z.object({ enabled: z.boolean() }).strict()
 export const StreamerPausedPayloadSchema = z.object({ paused: z.boolean() }).strict()
 export const StreamerAccountPayloadSchema = z

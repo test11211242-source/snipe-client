@@ -5,6 +5,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $runtime = (Resolve-Path $RuntimeDirectory).Path
+$bytecodeFiles = @(Get-ChildItem $runtime -Recurse -File -Include '*.pyc','*.pyo')
+$bytecodeDirectories = @(Get-ChildItem $runtime -Recurse -Directory | Where-Object {
+  $_.Name -eq '__pycache__'
+})
+if ($bytecodeFiles.Count -ne 0 -or $bytecodeDirectories.Count -ne 0) {
+  throw 'Runtime inventory cannot include mutable Python bytecode caches.'
+}
 $files = Get-ChildItem $runtime -Recurse -File | Sort-Object FullName | ForEach-Object {
   $relative = [System.IO.Path]::GetRelativePath($runtime, $_.FullName).Replace('\', '/')
   [ordered]@{

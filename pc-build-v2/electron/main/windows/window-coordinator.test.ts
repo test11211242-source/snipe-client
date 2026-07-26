@@ -190,7 +190,7 @@ describe('WindowCoordinator auth shell', () => {
       alwaysOnTop: true,
       locked: false,
       opacity: 1,
-      compactMode: false,
+      displayMode: 'detailed' as const,
       bounds: { x: null, y: null, width: 420, height: 560 },
     }
     const first = coordinator.ensureWidgetWindow(settings)

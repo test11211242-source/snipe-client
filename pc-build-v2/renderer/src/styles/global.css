@@ -1796,6 +1796,35 @@ summary:focus-visible,
   text-align: right;
 }
 
+.setting-select {
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
+  gap: var(--space-5);
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.setting-select strong,
+.setting-select small {
+  display: block;
+}
+
+.setting-select strong {
+  font-size: 13px;
+}
+
+.setting-select small {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-secondary);
+}
+
+.setting-select select {
+  width: 100%;
+}
+
 .settings-panel .async-state {
   min-height: 220px;
   margin-top: var(--space-4);
@@ -2108,6 +2137,10 @@ summary:focus-visible,
 
   .setting-range > span {
     grid-column: 1 / -1;
+  }
+
+  .setting-select {
+    grid-template-columns: 1fr;
   }
 }
 

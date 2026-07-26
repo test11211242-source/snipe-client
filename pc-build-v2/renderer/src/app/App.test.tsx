@@ -121,8 +121,8 @@ describe('App shell', () => {
             alwaysOnTop: true,
             locked: false,
             opacity: 0.96,
-            compactMode: false,
-            bounds: { x: null, y: null, width: 420, height: 560 },
+            displayMode: 'deck',
+            bounds: { x: null, y: null, width: 360, height: 300 },
           },
           visible: false,
           hasResult: false,
@@ -476,7 +476,7 @@ describe('App shell', () => {
         alwaysOnTop: true,
         locked: false,
         opacity: 0.96,
-        compactMode: false,
+        displayMode: 'deck' as const,
         bounds: { x: null, y: null, width: 420, height: 560 },
       },
       visible: false,
@@ -521,6 +521,39 @@ describe('App shell', () => {
       ...statusBeforeMutation.settings,
       autoOpen: false,
     })
+  })
+
+  it('exposes the cards-only local widget mode as the default', async () => {
+    const latestStatus = {
+      settings: {
+        autoOpen: true,
+        alwaysOnTop: true,
+        locked: false,
+        opacity: 0.96,
+        displayMode: 'deck' as const,
+        bounds: { x: null, y: null, width: 360, height: 300 },
+      },
+      visible: false,
+      hasResult: true,
+    }
+    vi.mocked(window.crTools.getWidgetStatus).mockResolvedValue(latestStatus)
+
+    render(<App />)
+    await screen.findAllByText('operator')
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
+
+    const mode = await screen.findByRole('combobox', {
+      name: 'Режим отображения виджета',
+    })
+    expect(mode).toHaveValue('deck')
+    fireEvent.change(mode, { target: { value: 'detailed' } })
+
+    await waitFor(() =>
+      expect(window.crTools.updateWidgetSettings).toHaveBeenCalledWith({
+        ...latestStatus.settings,
+        displayMode: 'detailed',
+      }),
+    )
   })
 
   it('provides accessible names for compact navigation and logout controls', async () => {

@@ -6,6 +6,10 @@ export const WIDGET_MIN_WIDTH = 340
 export const WIDGET_MAX_WIDTH = 720
 export const WIDGET_MIN_HEIGHT = 300
 export const WIDGET_MAX_HEIGHT = 900
+export const WIDGET_DECK_WIDTH = 360
+export const WIDGET_DECK_HEIGHT = 300
+export const WIDGET_DETAILED_WIDTH = 420
+export const WIDGET_DETAILED_HEIGHT = 560
 
 export const WidgetBoundsSchema = z
   .object({
@@ -22,7 +26,7 @@ export const WidgetSettingsSchema = z
     alwaysOnTop: z.boolean(),
     locked: z.boolean(),
     opacity: z.number().min(0.55).max(1),
-    compactMode: z.boolean(),
+    displayMode: z.enum(['deck', 'detailed']),
     bounds: WidgetBoundsSchema,
   })
   .strict()
@@ -93,6 +97,7 @@ export const WidgetStatusSchema = z
   .strict()
 
 export type WidgetBounds = z.infer<typeof WidgetBoundsSchema>
+export type WidgetDisplayMode = WidgetSettings['displayMode']
 export type WidgetSettings = z.infer<typeof WidgetSettingsSchema>
 export type WidgetResult = z.infer<typeof WidgetResultSchema>
 export type WidgetView = z.infer<typeof WidgetViewSchema>

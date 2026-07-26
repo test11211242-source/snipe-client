@@ -1,6 +1,6 @@
 {
   "name": "cr-tools-v2",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Secure Windows capture and recognition client for CR Tools V2",
   "author": "Snipe",
   "private": true,
@@ -10,6 +10,7 @@
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",
+    "audit:release": "node scripts/verify-npm-audit.mjs",
     "test": "vitest run",
     "test:e2e:windows": "playwright test --config playwright.config.ts",
     "test:python": "cd python && python -m pytest tests",

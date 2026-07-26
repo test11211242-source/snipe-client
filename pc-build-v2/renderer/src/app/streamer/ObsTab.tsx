@@ -1,4 +1,4 @@
-import { AlertTriangle, Clipboard, Check } from 'lucide-react'
+import { AlertTriangle, Check, Clipboard } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import type { OverlaySettings, StreamerView } from '../../../../shared/models/streamer'
@@ -13,18 +13,23 @@ import {
 import { useDraft } from './state'
 import type { StreamerRunner } from './types'
 
+const WIDGET_ORIGIN = 'https://api.artcsworld.xyz'
+
 export function ObsTab({
   view,
   busy,
   run,
+  onDirtyChange,
 }: {
   view: StreamerView
   busy: string | null
   run: StreamerRunner
+  onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
   const {
     draft: settings,
     setDraft: setSettings,
+    reset,
     dirty,
   } = useDraft(view.overlay.settings)
   const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set())
@@ -37,7 +42,9 @@ export function ObsTab({
     settings.opponentSecondSlideEnabled &&
     settings.opponentSlideSeconds >= settings.opponentDisplaySeconds
   const invalid = invalidFields.size > 0 || manualTagInvalid || timingInvalid
+  const sizes = recommendedDraftSizes(settings)
 
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
   useEffect(
     () => () => {
       if (copiedTimer.current !== undefined) window.clearTimeout(copiedTimer.current)
@@ -63,146 +70,359 @@ export function ObsTab({
   }
 
   return (
-    <div className="obs-layout">
-      <div className="obs-main-column">
-        <section className="streamer-panel obs-control-panel">
-          <div className="streamer-section-heading">
-            <div>
-              <span className="eyebrow">ИСТОЧНИКИ OBS</span>
-              <h2>Адаптивные оверлеи</h2>
-            </div>
-            <StreamerToggle
-              label="Оверлеи"
-              checked={settings.enabled}
-              disabled={busy !== null}
-              onChange={(enabled) => setSettings({ ...settings, enabled })}
-            />
+    <div className="obs-workspace">
+      <section className="streamer-panel obs-master-panel">
+        <div className="streamer-section-heading">
+          <div>
+            <span className="eyebrow">OBS BROWSER SOURCES</span>
+            <h2>Виджеты трансляции</h2>
           </div>
-          <p className="streamer-lead">
-            Управление виджетами статистики и соперника для источников «Браузер» в OBS.
-          </p>
-          {settings.previewMode && (
-            <div className="preview-warning" role="status">
-              <AlertTriangle aria-hidden="true" size={17} />
-              <span>
-                Тестовый режим меняет серверное поведение. Выключите его перед эфиром.
-              </span>
-            </div>
-          )}
-          <OverlayFields
-            value={settings}
-            onChange={setSettings}
+          <StreamerToggle
+            label="Виджеты OBS"
+            checked={settings.enabled}
             disabled={busy !== null}
+            onChange={(enabled) => setSettings({ ...settings, enabled })}
+          />
+        </div>
+        <p className="streamer-lead">
+          Preview показывает реальный внешний вид на тестовых данных и не содержит вашего
+          ключа OBS. Тайминги и доступность применятся только после сохранения.
+        </p>
+        <div className="obs-state-strip">
+          <Status
+            label="Сохранено на сервере"
+            value={view.overlay.settings.enabled ? 'Включено' : 'Выключено'}
+            tone={view.overlay.settings.enabled ? 'success' : 'neutral'}
+          />
+          <Status
+            label="После сохранения"
+            value={settings.enabled ? 'Будет включено' : 'Будет выключено'}
+            tone={settings.enabled ? 'success' : 'neutral'}
+          />
+          <DraftStatus dirty={dirty} invalid={invalid} />
+        </div>
+        {view.overlay.settings.previewMode && (
+          <div className="preview-warning" role="status">
+            <AlertTriangle aria-hidden="true" size={17} />
+            <span>
+              Тестовый режим сейчас включён на сервере и влияет на источники OBS.
+            </span>
+          </div>
+        )}
+      </section>
+
+      <section className="streamer-panel obs-shared-panel">
+        <div className="streamer-section-heading compact">
+          <div>
+            <span className="eyebrow">ОБЩИЙ СТИЛЬ</span>
+            <h2>Оформление обоих виджетов</h2>
+          </div>
+        </div>
+        <div className="streamer-form obs-shared-form">
+          <Select
+            label="Стиль шрифта"
+            value={settings.widgetFontStyle}
+            options={[
+              ['gaming', 'Игровой'],
+              ['clean', 'Нейтральный'],
+              ['condensed', 'Узкий'],
+            ]}
+            disabled={busy !== null}
+            onChange={(widgetFontStyle) => setSettings({ ...settings, widgetFontStyle })}
+          />
+          <Select
+            label="Форма углов"
+            value={settings.widgetCornerStyle}
+            options={[
+              ['rounded', 'Скруглённые'],
+              ['square', 'Прямые'],
+              ['pill', 'Максимально круглые'],
+            ]}
+            disabled={busy !== null}
+            onChange={(widgetCornerStyle) =>
+              setSettings({ ...settings, widgetCornerStyle })
+            }
+          />
+          <StreamerToggle
+            label="Тестовый режим в OBS"
+            checked={settings.previewMode}
+            disabled={busy !== null}
+            onChange={(previewMode) => setSettings({ ...settings, previewMode })}
+          />
+          {settings.previewMode && (
+            <Select
+              label="Показывать в тестовом режиме"
+              value={settings.previewTarget}
+              options={[
+                ['stats', 'Только статистику'],
+                ['opponent', 'Только соперника'],
+                ['both', 'Оба виджета'],
+              ]}
+              disabled={busy !== null}
+              onChange={(previewTarget) => setSettings({ ...settings, previewTarget })}
+            />
+          )}
+        </div>
+      </section>
+
+      <div className="obs-widget-grid">
+        <WidgetCard
+          title="Статистика стримера"
+          description="Место, ELO, изменение рейтинга и счёт текущего эфира."
+          enabled={settings.streamerStatsEnabled}
+          savedEnabled={view.overlay.settings.streamerStatsEnabled}
+          previewUrl={widgetPreviewUrl('stats', settings)}
+          previewClassName="stats"
+          available={view.overlay.urlsAvailable.stats}
+          size={sizes.stats}
+          copied={copied === 'stats'}
+          busy={busy !== null}
+          toggle={(streamerStatsEnabled) =>
+            setSettings({ ...settings, streamerStatsEnabled })
+          }
+          copy={() => copyUrl('stats')}
+        >
+          <StatsSettings
+            value={settings}
+            disabled={busy !== null}
+            onChange={setSettings}
+            onValidityChange={setValidity}
+          />
+        </WidgetCard>
+
+        <WidgetCard
+          title="Карточка соперника"
+          description="Личные встречи, колоды и оценка матчапа после найденного соперника."
+          enabled={settings.opponentEnabled}
+          savedEnabled={view.overlay.settings.opponentEnabled}
+          previewUrl={widgetPreviewUrl('opponent', settings)}
+          previewClassName="opponent"
+          available={view.overlay.urlsAvailable.opponent}
+          size={sizes.opponent}
+          copied={copied === 'opponent'}
+          busy={busy !== null}
+          toggle={(opponentEnabled) => setSettings({ ...settings, opponentEnabled })}
+          copy={() => copyUrl('opponent')}
+        >
+          <OpponentSettings
+            value={settings}
+            disabled={busy !== null}
+            onChange={setSettings}
             onValidityChange={setValidity}
             manualTagInvalid={manualTagInvalid}
             timingInvalid={timingInvalid}
           />
-          <div className="draft-row">
-            <DraftStatus dirty={dirty} invalid={invalid} />
-          </div>
-          <div className="streamer-action-row">
-            <Button
-              variant="primary"
-              disabled={busy !== null || !dirty || invalid}
-              onClick={() =>
-                void run('overlay-save', () => window.crTools.updateOverlay(settings))
-              }
-            >
-              Сохранить настройки OBS
-            </Button>
-          </div>
-        </section>
-        <section className="streamer-panel obs-preview-panel">
-          <div className="streamer-section-heading compact">
-            <div>
-              <span className="eyebrow">ЛОКАЛЬНАЯ ПРОВЕРКА</span>
-              <h2>Композиция без секретных данных</h2>
-            </div>
-            <span className="preview-target-label">{previewTargetLabel(settings)}</span>
-          </div>
-          <div className="mock-preview-grid">
-            <MockStats settings={settings} />
-            <MockOpponent settings={settings} />
-          </div>
-        </section>
+        </WidgetCard>
       </div>
-      <aside className="streamer-context-stack obs-context" aria-label="Ссылки OBS">
-        <section className="streamer-panel obs-urls-panel">
-          <span className="eyebrow">ИСТОЧНИКИ</span>
-          <h2>Ссылки OBS</h2>
-          <p>Скопируйте URL и добавьте его в OBS как источник «Браузер».</p>
-          <UrlRow
-            label="Статистика стримера"
-            available={view.overlay.urlsAvailable.stats}
-            size={view.overlay.recommendedSizes.stats}
-            copied={copied === 'stats'}
-            copy={() => copyUrl('stats')}
-          />
-          <UrlRow
-            label="Соперник"
-            available={view.overlay.urlsAvailable.opponent}
-            size={view.overlay.recommendedSizes.opponent}
-            copied={copied === 'opponent'}
-            copy={() => copyUrl('opponent')}
-          />
-          <div className="copy-feedback" aria-live="polite">
-            {copied !== null && 'Ссылка скопирована в буфер обмена'}
-          </div>
-          <details className="streamer-disclosure token-disclosure">
-            <summary>
-              <span>Безопасность ссылок</span>
-              <small>Замена скрытого ключа доступа</small>
-            </summary>
-            <p>После замены текущие URL в OBS сразу перестанут работать.</p>
-            <ConfirmedButton
-              label="Сменить ключ доступа"
-              disabled={busy !== null}
-              prompt="Старые OBS URL сразу перестанут работать. Сменить ключ?"
-              action={() =>
-                run('overlay-token', () =>
-                  window.crTools.rotateOverlayToken({ confirmed: true }),
-                ).then(() => undefined)
-              }
-            />
-          </details>
-        </section>
-        <section className="streamer-panel obs-status-panel">
-          <span className="eyebrow">СОСТОЯНИЕ ВИДЖЕТОВ</span>
-          <h2>Эфирный контур</h2>
-          <div className="widget-status-list">
-            <Status
-              label="Статистика стримера"
-              tone={settings.streamerStatsEnabled ? 'success' : 'neutral'}
-              value={settings.streamerStatsEnabled ? 'Включена' : 'Выключена'}
-            />
-            <Status
-              label="Карточка соперника"
-              tone={settings.opponentEnabled ? 'success' : 'neutral'}
-              value={settings.opponentEnabled ? 'Включена' : 'Выключена'}
-            />
-            <Status
-              label="Тестовый режим"
-              tone={settings.previewMode ? 'warning' : 'success'}
-              value={settings.previewMode ? 'Активен' : 'Выключен'}
-            />
-          </div>
-        </section>
-      </aside>
+
+      <section className="streamer-panel obs-save-panel">
+        <div>
+          <strong>
+            {dirty ? 'Есть изменения, которые ещё не видит OBS' : 'Настройки сохранены'}
+          </strong>
+          <span>
+            Preview обновляется сразу. Источники OBS изменятся только после сохранения.
+          </span>
+        </div>
+        <div className="streamer-action-row">
+          <Button
+            variant="primary"
+            disabled={busy !== null || !dirty || invalid}
+            onClick={() =>
+              void run('overlay-save', () => window.crTools.updateOverlay(settings))
+            }
+          >
+            Сохранить настройки OBS
+          </Button>
+          <Button disabled={busy !== null || !dirty} onClick={reset}>
+            Отменить изменения
+          </Button>
+        </div>
+      </section>
+
+      <details className="streamer-panel streamer-disclosure obs-danger-zone">
+        <summary>
+          <span>Безопасность ссылок OBS</span>
+          <small>Замена ключа отключит уже добавленные browser sources</small>
+        </summary>
+        <p>
+          Используйте это только если ссылка попала к постороннему. Старые URL сразу
+          перестанут работать.
+        </p>
+        <ConfirmedButton
+          label="Сменить ключ доступа"
+          disabled={busy !== null}
+          prompt="Старые OBS URL сразу перестанут работать. Сменить ключ?"
+          action={() =>
+            run('overlay-token', () =>
+              window.crTools.rotateOverlayToken({ confirmed: true }),
+            ).then(() => undefined)
+          }
+        />
+      </details>
+
+      <div className="copy-feedback" aria-live="polite">
+        {copied !== null && 'Ссылка скопирована в буфер обмена'}
+      </div>
     </div>
   )
 }
 
-function OverlayFields({
+function WidgetCard({
+  title,
+  description,
+  enabled,
+  savedEnabled,
+  previewUrl,
+  previewClassName,
+  available,
+  size,
+  copied,
+  busy,
+  toggle,
+  copy,
+  children,
+}: {
+  title: string
+  description: string
+  enabled: boolean
+  savedEnabled: boolean
+  previewUrl: string
+  previewClassName: 'stats' | 'opponent'
+  available: boolean
+  size: string
+  copied: boolean
+  busy: boolean
+  toggle: (enabled: boolean) => void
+  copy: () => Promise<void>
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <article className="streamer-panel obs-widget-card" data-kind={previewClassName}>
+      <div className="obs-widget-card-heading">
+        <div>
+          <span className="eyebrow">OBS ВИДЖЕТ</span>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+        <StreamerToggle
+          label={`Показывать: ${title}`}
+          checked={enabled}
+          disabled={busy}
+          onChange={toggle}
+        />
+      </div>
+
+      <div className={`real-widget-preview real-widget-${previewClassName}`}>
+        <div className="real-widget-preview-toolbar">
+          <span>Preview внешнего вида</span>
+          <Status
+            label={savedEnabled ? 'Сейчас включён' : 'Сейчас выключен'}
+            tone={savedEnabled ? 'success' : 'neutral'}
+          />
+        </div>
+        <iframe
+          key={previewUrl}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts"
+          src={previewUrl}
+          title={`Предпросмотр: ${title}`}
+        />
+      </div>
+
+      <div className="obs-widget-source-row">
+        <span>
+          <strong>Источник «Браузер»</strong>
+          <small>
+            {size} · {available ? 'URL готов к копированию' : 'URL пока недоступен'}
+          </small>
+        </span>
+        <Button disabled={!available || busy} onClick={() => void copy()}>
+          {copied ? (
+            <Check aria-hidden="true" size={15} />
+          ) : (
+            <Clipboard aria-hidden="true" size={15} />
+          )}
+          {copied ? 'Скопировано' : 'Копировать URL'}
+        </Button>
+      </div>
+
+      <div className="obs-widget-settings">{children}</div>
+    </article>
+  )
+}
+
+function StatsSettings({
   value,
-  onChange,
   disabled,
+  onChange,
+  onValidityChange,
+}: {
+  value: OverlaySettings
+  disabled: boolean
+  onChange: (value: OverlaySettings) => void
+  onValidityChange: (fieldKey: string, invalid: boolean) => void
+}): React.JSX.Element {
+  const setNumber = (key: keyof OverlaySettings) => (next: number) =>
+    onChange({ ...value, [key]: next })
+  return (
+    <>
+      <Select
+        label="Компоновка"
+        value={value.statsLayout}
+        options={[
+          ['compact', 'Компактная'],
+          ['standard', 'Стандартная'],
+          ['detailed', 'Подробная'],
+        ]}
+        disabled={disabled}
+        onChange={(statsLayout) => onChange({ ...value, statsLayout })}
+      />
+      <details className="streamer-disclosure">
+        <summary>
+          <span>Тайминги статистики</span>
+          <small>Скорость смены ELO, дельты и W/L</small>
+        </summary>
+        <div className="streamer-form compact-form">
+          {(
+            [
+              ['statsMainSeconds', 'Основная статистика, сек', 5, 120],
+              ['statsDeltaSeconds', 'Изменение рейтинга, сек', 2, 30],
+              ['statsBetweenSeconds', 'Пауза между блоками, сек', 0, 30],
+              ['statsPollMs', 'Обновление данных, мс', 500, 5000],
+              ['statsTransitionMs', 'Переход, мс', 100, 3000],
+            ] as const
+          ).map(([key, label, min, max]) => (
+            <NumberField
+              fieldKey={key}
+              key={key}
+              label={label}
+              value={value[key]}
+              min={min}
+              max={max}
+              disabled={disabled}
+              onChange={setNumber(key)}
+              onValidityChange={onValidityChange}
+            />
+          ))}
+        </div>
+      </details>
+    </>
+  )
+}
+
+function OpponentSettings({
+  value,
+  disabled,
+  onChange,
   onValidityChange,
   manualTagInvalid,
   timingInvalid,
 }: {
   value: OverlaySettings
-  onChange: (value: OverlaySettings) => void
   disabled: boolean
+  onChange: (value: OverlaySettings) => void
   onValidityChange: (fieldKey: string, invalid: boolean) => void
   manualTagInvalid: boolean
   timingInvalid: boolean
@@ -211,57 +431,11 @@ function OverlayFields({
   const timingErrorId = useId()
   const setNumber = (key: keyof OverlaySettings) => (next: number) =>
     onChange({ ...value, [key]: next })
-
   return (
-    <div className="streamer-settings-block overlay-settings">
-      <span className="field-caption">Активные виджеты</span>
-      <div className="streamer-switch-grid overlay-switches">
-        <StreamerToggle
-          label="Статистика стримера"
-          checked={value.streamerStatsEnabled}
-          disabled={disabled}
-          onChange={(streamerStatsEnabled) =>
-            onChange({ ...value, streamerStatsEnabled })
-          }
-        />
-        <StreamerToggle
-          label="Карточка соперника"
-          checked={value.opponentEnabled}
-          disabled={disabled}
-          onChange={(opponentEnabled) => onChange({ ...value, opponentEnabled })}
-        />
-        <StreamerToggle
-          label="Тестовый режим"
-          checked={value.previewMode}
-          disabled={disabled}
-          onChange={(previewMode) => onChange({ ...value, previewMode })}
-        />
-      </div>
-      <div className="streamer-form overlay-primary-form">
+    <>
+      <div className="streamer-form compact-form">
         <Select
-          label="Проверяемые виджеты"
-          value={value.previewTarget}
-          options={[
-            ['stats', 'Только статистика'],
-            ['opponent', 'Только соперник'],
-            ['both', 'Оба виджета'],
-          ]}
-          disabled={disabled}
-          onChange={(previewTarget) => onChange({ ...value, previewTarget })}
-        />
-        <Select
-          label="Компоновка статистики"
-          value={value.statsLayout}
-          options={[
-            ['compact', 'Компактная'],
-            ['standard', 'Стандартная'],
-            ['detailed', 'Подробная'],
-          ]}
-          disabled={disabled}
-          onChange={(statsLayout) => onChange({ ...value, statsLayout })}
-        />
-        <Select
-          label="Компоновка соперника"
+          label="Компоновка"
           value={value.opponentLayout}
           options={[
             ['compact', 'Компактная'],
@@ -283,7 +457,7 @@ function OverlayFields({
         />
         {value.streamerAccountMode === 'manual' && (
           <label>
-            Тег аккаунта вручную
+            Тег аккаунта
             <input
               aria-describedby={manualTagInvalid ? manualTagErrorId : undefined}
               aria-invalid={manualTagInvalid}
@@ -301,45 +475,26 @@ function OverlayFields({
             )}
           </label>
         )}
+        <NumberField
+          fieldKey="recentLimit"
+          label="Последних личных встреч"
+          value={value.recentLimit}
+          min={1}
+          max={10}
+          disabled={disabled}
+          onChange={setNumber('recentLimit')}
+          onValidityChange={onValidityChange}
+        />
       </div>
-      <details className="streamer-disclosure">
-        <summary>
-          <span>Оформление виджетов</span>
-          <small>Шрифт и форма углов</small>
-        </summary>
-        <div className="streamer-form compact-form">
-          <Select
-            label="Стиль шрифта"
-            value={value.widgetFontStyle}
-            options={[
-              ['gaming', 'Игровой'],
-              ['clean', 'Нейтральный'],
-              ['condensed', 'Узкий'],
-            ]}
-            disabled={disabled}
-            onChange={(widgetFontStyle) => onChange({ ...value, widgetFontStyle })}
-          />
-          <Select
-            label="Форма углов"
-            value={value.widgetCornerStyle}
-            options={[
-              ['rounded', 'Скруглённые'],
-              ['square', 'Прямые'],
-              ['pill', 'Максимально круглые'],
-            ]}
-            disabled={disabled}
-            onChange={(widgetCornerStyle) => onChange({ ...value, widgetCornerStyle })}
-          />
-        </div>
-      </details>
+
       <details className="streamer-disclosure">
         <summary>
           <span>Тайминги и сравнение</span>
-          <small>Интервалы обновления и переходов</small>
+          <small>Второй слайд, матчап и длительность показа</small>
         </summary>
         <div className="streamer-switch-grid advanced-switches">
           <StreamerToggle
-            label="Второй слайд соперника"
+            label="Показывать колоды и матчап"
             checked={value.opponentSecondSlideEnabled}
             disabled={disabled}
             onChange={(opponentSecondSlideEnabled) =>
@@ -347,10 +502,13 @@ function OverlayFields({
             }
           />
           <StreamerToggle
-            label="Статистика сравнения"
+            label="Рассчитывать преимущество"
             checked={value.matchupEnabled}
-            disabled={disabled}
-            onChange={(matchupEnabled) => onChange({ ...value, matchupEnabled })}
+            disabled={disabled || !value.opponentSecondSlideEnabled}
+            onChange={(matchupEnabled) => {
+              if (!matchupEnabled) onValidityChange('matchupRankLimits', false)
+              onChange({ ...value, matchupEnabled })
+            }}
           />
         </div>
         {timingInvalid && (
@@ -361,16 +519,10 @@ function OverlayFields({
         <div className="streamer-form overlay-advanced-form">
           {(
             [
-              ['recentLimit', 'Последних боёв', 1, 10],
-              ['opponentDisplaySeconds', 'Показ соперника, сек', 5, 120],
+              ['opponentDisplaySeconds', 'Общее время показа, сек', 5, 120],
               ['opponentSlideSeconds', 'Второй слайд, сек', 3, 60],
-              ['opponentTransitionMs', 'Переход соперника, мс', 100, 3000],
-              ['statsMainSeconds', 'Основная статистика, сек', 5, 120],
-              ['statsDeltaSeconds', 'Изменение рейтинга, сек', 2, 30],
-              ['statsBetweenSeconds', 'Пауза статистики, сек', 0, 30],
-              ['statsPollMs', 'Опрос статистики, мс', 500, 5000],
-              ['statsTransitionMs', 'Переход статистики, мс', 100, 3000],
-              ['matchupMinGames', 'Минимум боёв для сравнения', 1, 100],
+              ['opponentTransitionMs', 'Переход между слайдами, мс', 100, 3000],
+              ['matchupMinGames', 'Минимум боёв для оценки', 1, 100],
             ] as const
           ).map(([key, label, min, max]) => (
             <NumberField
@@ -386,14 +538,17 @@ function OverlayFields({
             />
           ))}
           <RankLimitsField
+            key={value.matchupEnabled ? 'enabled' : 'disabled'}
             value={value.matchupRankLimits}
-            disabled={disabled}
+            disabled={disabled || !value.matchupEnabled}
             onChange={(matchupRankLimits) => onChange({ ...value, matchupRankLimits })}
-            onValidityChange={(invalid) => onValidityChange('matchupRankLimits', invalid)}
+            onValidityChange={(nextInvalid) =>
+              onValidityChange('matchupRankLimits', nextInvalid)
+            }
           />
         </div>
       </details>
-    </div>
+    </>
   )
 }
 
@@ -466,74 +621,29 @@ function RankLimitsField({
   )
 }
 
-function previewTargetLabel(settings: OverlaySettings): string {
-  if (settings.previewTarget === 'stats') return 'Только статистика'
-  if (settings.previewTarget === 'opponent') return 'Только соперник'
-  return 'Оба виджета'
+function widgetPreviewUrl(kind: 'stats' | 'opponent', settings: OverlaySettings): string {
+  const path = kind === 'stats' ? '/streamer-stats-widget' : '/opponent-widget'
+  const parameters = new URLSearchParams({
+    mock: '1',
+    layout: kind === 'stats' ? settings.statsLayout : settings.opponentLayout,
+    font: settings.widgetFontStyle,
+    shape: settings.widgetCornerStyle,
+  })
+  return `${WIDGET_ORIGIN}${path}?${parameters.toString()}`
 }
 
-function MockStats({ settings }: { settings: OverlaySettings }): React.JSX.Element {
-  return (
-    <div
-      className={`mock-widget mock-${settings.widgetCornerStyle} mock-${settings.widgetFontStyle}`}
-      data-visible={
-        settings.streamerStatsEnabled && settings.previewTarget !== 'opponent'
-      }
-    >
-      <small>СЕССИЯ СТРИМА</small>
-      <strong>12 побед · 7 поражений</strong>
-      <span>Место 284 · 1 942 ELO · +36</span>
-    </div>
-  )
-}
-
-function MockOpponent({ settings }: { settings: OverlaySettings }): React.JSX.Element {
-  return (
-    <div
-      className={`mock-widget mock-opponent mock-${settings.widgetCornerStyle} mock-${settings.widgetFontStyle}`}
-      data-visible={settings.opponentEnabled && settings.previewTarget !== 'stats'}
-    >
-      <small>СОПЕРНИК</small>
-      <strong>Пример игрока</strong>
-      <span>Личные встречи 8:5 · преимущество 54%</span>
-      <div className="mock-cards" aria-hidden="true">
-        {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((item) => (
-          <i key={item}>{item}</i>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function UrlRow({
-  label,
-  available,
-  size,
-  copied,
-  copy,
-}: {
-  label: string
-  available: boolean
-  size: string
-  copied: boolean
-  copy: () => Promise<void>
-}): React.JSX.Element {
-  return (
-    <div className="url-row" data-available={available}>
-      <span>
-        <strong>{label}</strong>
-        <small>
-          {size} · {available ? 'Ссылка готова' : 'Ссылка недоступна'}
-        </small>
-      </span>
-      <Button disabled={!available} onClick={() => void copy()}>
-        {copied ? (
-          <Check aria-hidden="true" size={15} />
-        ) : (
-          <Clipboard aria-hidden="true" size={15} />
-        )}
-        {copied ? 'Скопировано' : 'Копировать'}
-      </Button>
-    </div>
-  )
+function recommendedDraftSizes(settings: OverlaySettings): {
+  stats: string
+  opponent: string
+} {
+  const stats = { compact: '360 × 48', standard: '480 × 64', detailed: '720 × 96' }
+  const opponent = {
+    compact: '420 × 300',
+    standard: '560 × 380',
+    detailed: '760 × 500',
+  }
+  return {
+    stats: stats[settings.statsLayout],
+    opponent: opponent[settings.opponentLayout],
+  }
 }

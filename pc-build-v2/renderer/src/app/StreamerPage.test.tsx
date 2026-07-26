@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { StreamerView } from '../../../shared/models/streamer'
+import type { StreamerView, StreamTitleSettings } from '../../../shared/models/streamer'
 import {
   DEFAULT_OVERLAY_SETTINGS,
   DEFAULT_TITLE_SETTINGS,
@@ -98,6 +98,7 @@ describe('StreamerPage', () => {
       configurable: true,
       value: {
         setStreamerSectionActive: vi.fn().mockResolvedValue(view),
+        getStreamerView: vi.fn().mockResolvedValue(view),
         refreshStreamer: vi.fn().mockResolvedValue(view),
         startStreamerResultSetup: vi.fn().mockResolvedValue(view),
         setDeckSharing: vi.fn().mockResolvedValue(view),
@@ -105,7 +106,11 @@ describe('StreamerPage', () => {
         disconnectTwitch: vi.fn().mockResolvedValue(view),
         startPredictions: vi.fn().mockResolvedValue(view),
         stopPredictions: vi.fn().mockResolvedValue(view),
-        updateStreamTitle: vi.fn().mockResolvedValue(view),
+        updateStreamTitle: vi
+          .fn()
+          .mockImplementation((settings: StreamTitleSettings) =>
+            Promise.resolve({ ...view, title: { ...view.title, settings } }),
+          ),
         setStreamTitleEnabled: vi.fn().mockResolvedValue(view),
         setStreamTitlePaused: vi.fn().mockResolvedValue(view),
         addStreamTitleAccount: vi.fn().mockResolvedValue(view),
@@ -113,6 +118,16 @@ describe('StreamerPage', () => {
         resetStreamTitle: vi.fn().mockResolvedValue(view),
         undoStreamTitle: vi.fn().mockResolvedValue(view),
         restoreStreamTitle: vi.fn().mockResolvedValue(view),
+        previewStreamTitle: vi
+          .fn()
+          .mockImplementation((settings: StreamTitleSettings) => {
+            const previewTitle = `${settings.prefixTemplate} Safe title`.trim()
+            return Promise.resolve({
+              previewTitle,
+              characterCount: previewTitle.length,
+              warnings: [],
+            })
+          }),
         updateOverlay: vi.fn().mockResolvedValue(view),
         rotateOverlayToken: vi.fn().mockResolvedValue(view),
         copyOverlayUrl: vi.fn().mockResolvedValue(view),
@@ -120,13 +135,26 @@ describe('StreamerPage', () => {
     })
   })
 
-  it('renders all active tabs, local OBS mock previews, and tears down polling', async () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('renders all active tabs, sandboxed OBS previews, and tears down polling', async () => {
     const rendered = render(<StreamerPage auth={auth} />)
     expect(await screen.findByText('Twitch @caster')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'OBS' }))
-    expect(screen.getByText('Композиция без секретных данных')).toBeVisible()
-    expect(screen.getByText('Пример игрока')).toBeVisible()
-    expect(document.body.textContent).not.toContain('token=')
+    const statsPreview = screen.getByTitle('Предпросмотр: Статистика стримера')
+    const opponentPreview = screen.getByTitle('Предпросмотр: Карточка соперника')
+    expect(statsPreview).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(opponentPreview).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(statsPreview).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(opponentPreview).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(statsPreview.getAttribute('src')).toMatch(
+      /^https:\/\/api\.artcsworld\.xyz\/streamer-stats-widget\?.*mock=1/,
+    )
+    expect(opponentPreview.getAttribute('src')).toMatch(
+      /^https:\/\/api\.artcsworld\.xyz\/opponent-widget\?.*mock=1/,
+    )
+    expect(statsPreview.getAttribute('src')).not.toContain('token')
+    expect(opponentPreview.getAttribute('src')).not.toContain('token')
     rendered.unmount()
     expect(window.crTools.setStreamerSectionActive).toHaveBeenLastCalledWith(false)
   })
@@ -150,10 +178,78 @@ describe('StreamerPage', () => {
     expect(screen.getByText('Есть несохранённые изменения')).toBeVisible()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Обзор' }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^Название стрима/ }))
     expect(screen.getByRole('textbox', { name: 'Шаблон префикса' })).toHaveValue(
       'Черновик трансляции',
     )
+  })
+
+  it('previews a title draft without writing it until save', async () => {
+    render(<StreamerPage auth={auth} />)
+    await screen.findByText('Twitch @caster')
+    fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+    fireEvent.click(screen.getByText('Расширенный шаблон'))
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Шаблон префикса' }), {
+      target: { value: 'Live draft' },
+    })
+
+    await waitFor(() =>
+      expect(window.crTools.previewStreamTitle).toHaveBeenLastCalledWith(
+        expect.objectContaining({ prefixTemplate: 'Live draft' }),
+      ),
+    )
+    expect(await screen.findByText('Live draft Safe title')).toBeVisible()
+    expect(window.crTools.updateStreamTitle).not.toHaveBeenCalled()
+    expect(screen.getByRole('checkbox', { name: 'Автоматизация' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Поставить на паузу' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить и применить' }))
+    await waitFor(() =>
+      expect(window.crTools.updateStreamTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ prefixTemplate: 'Live draft' }),
+      ),
+    )
+  })
+
+  it('ignores a poll response that started before a newer mutation', async () => {
+    const stalePoll = deferred<StreamerView>()
+    const staleView = {
+      ...view,
+      twitch: { ...view.twitch, username: 'stale-caster' },
+    }
+    const freshView = {
+      ...view,
+      twitch: { ...view.twitch, username: 'fresh-caster' },
+    }
+    vi.mocked(window.crTools.getStreamerView).mockReturnValueOnce(stalePoll.promise)
+    vi.mocked(window.crTools.refreshStreamer)
+      .mockResolvedValueOnce(view)
+      .mockResolvedValueOnce(freshView)
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    const interval = vi
+      .spyOn(window, 'setInterval')
+      .mockReturnValue(1 as unknown as ReturnType<typeof window.setInterval>)
+
+    render(<StreamerPage auth={auth} />)
+    await screen.findByText('Twitch @caster')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Обновить' })).toBeEnabled(),
+    )
+    const poll = interval.mock.calls[0]?.[0]
+    if (poll === undefined) throw new Error('Polling interval was not registered')
+    act(() => poll())
+    expect(window.crTools.getStreamerView).toHaveBeenCalledOnce()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Обновить' }))
+    expect(await screen.findByText('Twitch @fresh-caster')).toBeVisible()
+    await act(() => {
+      stalePoll.resolve(staleView)
+      return stalePoll.promise
+    })
+
+    expect(screen.getByText('Twitch @fresh-caster')).toBeVisible()
+    expect(screen.queryByText('Twitch @stale-caster')).not.toBeInTheDocument()
   })
 
   it('syncs untouched numeric and rank drafts when refresh returns changed settings', async () => {
@@ -243,7 +339,7 @@ describe('StreamerPage', () => {
     expect(screen.getByRole('button', { name: 'Сохранить настройки OBS' })).toBeDisabled()
     fireEvent.change(rankLimits, { target: { value: '100, 200' } })
     expect(rankLimits).toHaveAttribute('aria-invalid', 'false')
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Оверлеи' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Виджеты OBS' }))
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить настройки OBS' }))
     expect(
       await screen.findByText(
@@ -257,7 +353,7 @@ describe('StreamerPage', () => {
     await screen.findByText('Twitch @caster')
     fireEvent.click(screen.getByRole('tab', { name: 'OBS' }))
 
-    const copyButton = screen.getAllByRole('button', { name: 'Копировать' })[0]
+    const copyButton = screen.getAllByRole('button', { name: 'Копировать URL' })[0]
     if (copyButton === undefined) throw new Error('Copy button is missing')
     fireEvent.click(copyButton)
 
