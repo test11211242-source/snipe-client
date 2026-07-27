@@ -5,8 +5,15 @@ const ALLOWED_DEV_ADVISORIES = new Set([
 ])
 
 function audit(arguments_) {
-  const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const result = spawnSync(executable, ['audit', '--json', ...arguments_], {
+  const npmCli = process.env.npm_execpath
+  const executable = npmCli === undefined ? 'npm' : process.execPath
+  const commandArguments = [
+    ...(npmCli === undefined ? [] : [npmCli]),
+    'audit',
+    '--json',
+    ...arguments_,
+  ]
+  const result = spawnSync(executable, commandArguments, {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     windowsHide: true,
