@@ -266,7 +266,7 @@ describe('WindowCoordinator auth shell', () => {
       locked: false,
       opacity: 0.96,
       displayMode: 'deck' as const,
-      bounds: { x: null, y: null, width: 480, height: 300 },
+      bounds: { x: null, y: null, width: 480, height: 354 },
     }
 
     await coordinator.ensureWidgetWindow(settings)
@@ -279,7 +279,7 @@ describe('WindowCoordinator auth shell', () => {
       frame: false,
       transparent: true,
       minWidth: 480,
-      minHeight: 300,
+      minHeight: 354,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
@@ -292,8 +292,8 @@ describe('WindowCoordinator auth shell', () => {
       setMinimumSize: ReturnType<typeof vi.fn>
       showInactive: ReturnType<typeof vi.fn>
     }
-    expect(window.setMinimumSize).toHaveBeenCalledWith(480, 300)
-    expect(window.setAspectRatio).toHaveBeenLastCalledWith(1.6)
+    expect(window.setMinimumSize).toHaveBeenCalledWith(480, 354)
+    expect(window.setAspectRatio).toHaveBeenLastCalledWith(480 / 354)
     expect(window.setAlwaysOnTop).toHaveBeenCalledWith(true, 'normal')
     expect(window.showInactive).toHaveBeenCalledOnce()
     expect(window.moveTop).toHaveBeenCalled()

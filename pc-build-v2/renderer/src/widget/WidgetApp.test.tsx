@@ -72,6 +72,7 @@ describe('WidgetApp', () => {
       'aria-pressed',
       'true',
     )
+    expect(screen.getByTitle('Перетащить виджет')).toBeVisible()
   })
 
   it('supports mini deck tabs and restores metadata in detailed mode', async () => {

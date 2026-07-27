@@ -199,7 +199,7 @@ describe('WidgetController', () => {
     })
     expect(deck).toMatchObject({
       displayMode: 'deck',
-      bounds: { x: 80, y: 90, width: 480, height: 300 },
+      bounds: { x: 80, y: 90, width: 480, height: 354 },
     })
   })
 

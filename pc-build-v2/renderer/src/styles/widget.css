@@ -105,7 +105,25 @@ input:focus-visible {
 
 .widget-controls {
   display: flex;
+  align-items: center;
   gap: 3px;
+}
+
+.widget-drag-handle {
+  width: 22px;
+  height: 30px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--widget-muted);
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+
+.widget-shell[data-locked='true'] .widget-drag-handle {
+  opacity: 0.35;
+  cursor: default;
+  -webkit-app-region: no-drag;
 }
 
 .widget-control {
@@ -531,6 +549,8 @@ input:focus-visible {
   min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   padding: 0;
   overflow: hidden;

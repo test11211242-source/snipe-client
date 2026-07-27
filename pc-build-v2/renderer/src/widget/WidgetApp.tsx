@@ -1,4 +1,4 @@
-import { Eye, EyeOff, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
+import { Eye, EyeOff, GripVertical, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { WidgetSettings, WidgetView } from '../../../shared/models/widget'
@@ -154,6 +154,12 @@ export function WidgetApp(): React.JSX.Element {
         </div>
         {view !== null && (
           <div className="widget-controls" aria-label="Настройки окна">
+            <span
+              className="widget-drag-handle"
+              title={view.settings.locked ? 'Позиция заблокирована' : 'Перетащить виджет'}
+            >
+              <GripVertical aria-hidden="true" size={15} />
+            </span>
             <ControlButton
               active={view.settings.alwaysOnTop}
               label="Поверх остальных окон"

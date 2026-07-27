@@ -78,7 +78,7 @@ describe('WidgetSettingsRepository', () => {
         locked: true,
         opacity: 0.7,
         displayMode: 'deck',
-        bounds: { x: 120, y: 80, width: 480, height: 300 },
+        bounds: { x: 120, y: 80, width: 480, height: 354 },
       })
       expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
       expect(JSON.parse(files.get(path) ?? '{}')).toHaveProperty('displayMode', 'deck')
@@ -96,10 +96,10 @@ describe('WidgetSettingsRepository', () => {
     if (path === undefined) throw new Error('Settings file was not created')
 
     await expect(repository.load('one')).resolves.toMatchObject({
-      bounds: { x: 120, y: 80, width: 720, height: 450 },
+      bounds: { x: 120, y: 80, width: 720, height: 531 },
     })
     expect(JSON.parse(files.get(path) ?? '{}')).toMatchObject({
-      bounds: { x: 120, y: 80, width: 720, height: 450 },
+      bounds: { x: 120, y: 80, width: 720, height: 531 },
     })
   })
 
