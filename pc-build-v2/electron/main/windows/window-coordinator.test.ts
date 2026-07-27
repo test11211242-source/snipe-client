@@ -30,6 +30,7 @@ vi.mock('electron', () => {
 
     show = vi.fn()
     focus = vi.fn()
+    showInactive = vi.fn()
     once = vi.fn()
     on = vi.fn()
     loadFile = vi.fn((path: string) => electronMocks.loadFile(path))
@@ -38,6 +39,15 @@ vi.mock('electron', () => {
       this.destroyed = true
     })
     getBounds = vi.fn(() => ({ x: 0, y: 0, width: 420, height: 560 }))
+    isAlwaysOnTop = vi.fn(() => true)
+    moveTop = vi.fn()
+    setAlwaysOnTop = vi.fn()
+    setAspectRatio = vi.fn()
+    setMinimumSize = vi.fn()
+    setMovable = vi.fn()
+    setResizable = vi.fn()
+    setOpacity = vi.fn()
+    setBounds = vi.fn()
   }
 
   return {
@@ -203,7 +213,21 @@ describe('WindowCoordinator auth shell', () => {
     const loadedWindow = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
       on: ReturnType<typeof vi.fn>
       getBounds: ReturnType<typeof vi.fn>
+      setAspectRatio: ReturnType<typeof vi.fn>
     }
+    const widgetOptions = electronMocks.browserWindowConstructed.mock.calls[0]?.[0] as {
+      frame: boolean
+      transparent: boolean
+      minimizable: boolean
+      maximizable: boolean
+    }
+    expect(widgetOptions).toMatchObject({
+      frame: false,
+      transparent: true,
+      minimizable: false,
+      maximizable: false,
+    })
+    expect(loadedWindow.setAspectRatio).toHaveBeenCalledWith(0)
     const observed = vi.fn()
     coordinator.onWidgetBoundsChanged(observed)
     coordinator.onWidgetBoundsChanged(() => {
@@ -232,6 +256,53 @@ describe('WindowCoordinator auth shell', () => {
 
     await expect(coordinator.ensureWidgetWindow(settings)).resolves.toBeUndefined()
     expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the frameless deck overlay proportional and topmost on blur', async () => {
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 0.96,
+      displayMode: 'deck' as const,
+      bounds: { x: null, y: null, width: 480, height: 300 },
+    }
+
+    await coordinator.ensureWidgetWindow(settings)
+    coordinator.applyWidgetSettings(settings)
+    coordinator.showWidgetInactive()
+
+    const [options, rawWindow] =
+      electronMocks.browserWindowConstructed.mock.calls[0] ?? []
+    expect(options).toMatchObject({
+      frame: false,
+      transparent: true,
+      minWidth: 480,
+      minHeight: 300,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+    })
+    const window = rawWindow as {
+      on: ReturnType<typeof vi.fn>
+      moveTop: ReturnType<typeof vi.fn>
+      setAlwaysOnTop: ReturnType<typeof vi.fn>
+      setAspectRatio: ReturnType<typeof vi.fn>
+      setMinimumSize: ReturnType<typeof vi.fn>
+      showInactive: ReturnType<typeof vi.fn>
+    }
+    expect(window.setMinimumSize).toHaveBeenCalledWith(480, 300)
+    expect(window.setAspectRatio).toHaveBeenLastCalledWith(1.6)
+    expect(window.setAlwaysOnTop).toHaveBeenCalledWith(true, 'normal')
+    expect(window.showInactive).toHaveBeenCalledOnce()
+    expect(window.moveTop).toHaveBeenCalled()
+
+    const blur = window.on.mock.calls.find(([event]) => event === 'blur')?.[1] as
+      (() => void) | undefined
+    const moveCount = window.moveTop.mock.calls.length
+    blur?.()
+    expect(window.moveTop).toHaveBeenCalledTimes(moveCount + 1)
   })
 
   it('normalizes encoded Windows file URLs without allowing a different renderer', () => {

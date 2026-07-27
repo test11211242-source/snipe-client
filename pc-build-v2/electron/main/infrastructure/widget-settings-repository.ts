@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   WIDGET_DECK_HEIGHT,
   WIDGET_DECK_WIDTH,
+  normalizeWidgetBoundsForMode,
   WidgetBoundsSchema,
   WidgetSettingsSchema,
   type WidgetSettings,
@@ -76,7 +77,22 @@ export class WidgetSettingsRepository {
       const value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
       const raw = JSON.parse(value) as unknown
       const current = WidgetSettingsSchema.safeParse(raw)
-      if (current.success) return current.data
+      if (current.success) {
+        const normalized = WidgetSettingsSchema.parse({
+          ...current.data,
+          bounds: normalizeWidgetBoundsForMode(
+            current.data.displayMode,
+            current.data.bounds,
+          ),
+        })
+        if (
+          normalized.bounds.width === current.data.bounds.width &&
+          normalized.bounds.height === current.data.bounds.height
+        ) {
+          return current.data
+        }
+        return await this.save(userId, normalized)
+      }
       const legacy = LegacyWidgetSettingsSchema.parse(raw)
       const migrated = WidgetSettingsSchema.parse({
         autoOpen: legacy.autoOpen,

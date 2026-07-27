@@ -78,12 +78,30 @@ describe('WidgetSettingsRepository', () => {
         locked: true,
         opacity: 0.7,
         displayMode: 'deck',
-        bounds: { x: 120, y: 80, width: 360, height: 300 },
+        bounds: { x: 120, y: 80, width: 480, height: 300 },
       })
       expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
       expect(JSON.parse(files.get(path) ?? '{}')).toHaveProperty('displayMode', 'deck')
     },
   )
+
+  it('normalizes existing deck windows to a card-friendly aspect ratio', async () => {
+    const { fs, files } = memoryFileSystem()
+    const repository = new WidgetSettingsRepository('/widget', fs)
+    await repository.save('one', {
+      ...DEFAULT_WIDGET_SETTINGS,
+      bounds: { x: 120, y: 80, width: 360, height: 900 },
+    })
+    const path = [...files.keys()][0]
+    if (path === undefined) throw new Error('Settings file was not created')
+
+    await expect(repository.load('one')).resolves.toMatchObject({
+      bounds: { x: 120, y: 80, width: 720, height: 450 },
+    })
+    expect(JSON.parse(files.get(path) ?? '{}')).toMatchObject({
+      bounds: { x: 120, y: 80, width: 720, height: 450 },
+    })
+  })
 
   it('rejects unsafe bounds and cleans a failed atomic write', async () => {
     const { fs } = memoryFileSystem()

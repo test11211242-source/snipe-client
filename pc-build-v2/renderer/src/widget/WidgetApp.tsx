@@ -142,7 +142,11 @@ export function WidgetApp(): React.JSX.Element {
   const deckMode = view?.settings.displayMode !== 'detailed'
 
   return (
-    <main className="widget-shell" data-mode={deckMode ? 'deck' : 'detailed'}>
+    <main
+      className="widget-shell"
+      data-locked={view?.settings.locked ?? false}
+      data-mode={deckMode ? 'deck' : 'detailed'}
+    >
       <header className="widget-header">
         <div className="widget-brand">
           <span>CR TOOLS</span>

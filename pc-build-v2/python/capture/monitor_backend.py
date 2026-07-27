@@ -17,7 +17,7 @@ class WindowsMonitorBackend:
         if selector.get("kind") == "window" and set(selector) == {"kind", "windowHwnd"}:
             self.capture = WindowsCapture(
                 cursor_capture=False,
-                draw_border=None,
+                draw_border=False,
                 monitor_index=None,
                 window_name=None,
                 window_hwnd=parse_window_hwnd(selector["windowHwnd"]),
@@ -29,7 +29,7 @@ class WindowsMonitorBackend:
         }:
             self.capture = WindowsCapture(
                 cursor_capture=False,
-                draw_border=None,
+                draw_border=False,
                 monitor_index=monitor_index_for_device(selector["displayDeviceName"]),
                 window_name=None,
                 window_hwnd=None,

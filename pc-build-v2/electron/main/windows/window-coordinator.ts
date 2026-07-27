@@ -5,6 +5,9 @@ import { BrowserWindow, screen, type WebContents } from 'electron'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
+  WIDGET_DECK_ASPECT_RATIO,
+  WIDGET_DECK_HEIGHT,
+  WIDGET_DECK_WIDTH,
   WIDGET_MAX_HEIGHT,
   WIDGET_MAX_WIDTH,
   WIDGET_MIN_HEIGHT,
@@ -322,16 +325,28 @@ export class WindowCoordinator {
     const bounds = clampWidgetBoundsToWorkAreas(settings.bounds, workAreas)
     const window = new BrowserWindow({
       ...bounds,
-      minWidth: Math.min(WIDGET_MIN_WIDTH, bounds.width),
-      minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
+      minWidth: Math.min(
+        settings.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_MIN_WIDTH,
+        bounds.width,
+      ),
+      minHeight: Math.min(
+        settings.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_MIN_HEIGHT,
+        bounds.height,
+      ),
       maxWidth: WIDGET_MAX_WIDTH,
       maxHeight: WIDGET_MAX_HEIGHT,
       show: false,
+      frame: false,
+      transparent: true,
       alwaysOnTop: settings.alwaysOnTop,
       movable: !settings.locked,
       resizable: !settings.locked,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
       opacity: settings.opacity,
-      backgroundColor: '#0d0f1c',
+      backgroundColor: '#00000000',
+      hasShadow: true,
       title: 'Opponent | CR Tools V2',
       autoHideMenuBar: true,
       skipTaskbar: true,
@@ -344,6 +359,7 @@ export class WindowCoordinator {
         devTools: !import.meta.env.PROD,
       },
     })
+    window.setAspectRatio(settings.displayMode === 'deck' ? WIDGET_DECK_ASPECT_RATIO : 0)
     this.register('widget', window, renderer.url)
     const operation = Promise.resolve()
       .then(() =>
@@ -372,12 +388,14 @@ export class WindowCoordinator {
     if (window === undefined || window.isDestroyed()) return
     window.show()
     window.focus()
+    this.restoreWidgetTopmost(window)
   }
 
   showWidgetInactive(): void {
     const window = this.#registry.get('widget')?.window
     if (window === undefined || window.isDestroyed()) return
     window.showInactive()
+    this.restoreWidgetTopmost(window)
   }
 
   hideWidget(): void {
@@ -395,9 +413,15 @@ export class WindowCoordinator {
     const registered = this.#registry.get('widget')
     if (registered === undefined || registered.window.isDestroyed()) return
     const window = registered.window
-    window.setAlwaysOnTop(settings.alwaysOnTop)
+    window.setAlwaysOnTop(settings.alwaysOnTop, 'normal')
+    if (settings.alwaysOnTop) window.moveTop()
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
+    window.setMinimumSize(
+      settings.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_MIN_WIDTH,
+      settings.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_MIN_HEIGHT,
+    )
+    window.setAspectRatio(settings.displayMode === 'deck' ? WIDGET_DECK_ASPECT_RATIO : 0)
     window.setOpacity(settings.opacity)
     registered.suppressBoundsEvents = true
     try {
@@ -414,6 +438,12 @@ export class WindowCoordinator {
   onWidgetBoundsChanged(listener: (bounds: WidgetBounds) => void): () => void {
     this.#widgetBoundsListeners.add(listener)
     return () => this.#widgetBoundsListeners.delete(listener)
+  }
+
+  private restoreWidgetTopmost(window: BrowserWindow): void {
+    if (!window.isAlwaysOnTop()) return
+    window.setAlwaysOnTop(true, 'normal')
+    window.moveTop()
   }
 
   focusMainWindow(): void {
@@ -512,6 +542,7 @@ export class WindowCoordinator {
       }
       window.on('move', notifyBounds)
       window.on('resize', notifyBounds)
+      window.on('blur', () => this.restoreWidgetTopmost(window))
     }
     window.on('closed', () => {
       const current = this.#registry.get(kind)
