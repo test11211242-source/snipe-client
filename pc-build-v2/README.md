@@ -230,7 +230,7 @@ are verified before READY and again immediately before launch. The renderer neve
 URL, signature, hash, or filesystem path.
 
 The checked production public key is `resources/update-public-key.pem`. Its SHA-256 SPKI
-fingerprint is `2a16488a2a16440e6c1ac19f82f9b262b7e9154d0851e3dbbac0be8d9b612d99`.
+fingerprint is `8be2a82e869112c3d67de63f0f60ee0d6beb057eb9b160d8effad92098a60b0d`.
 Manifest signing is not Authenticode. By product decision, releases have no Windows
 Authenticode certificate, so SmartScreen can show an unavoidable "Unknown publisher" warning.
 Neither the Ed25519 manifest nor electron-builder executable resource editing would remove

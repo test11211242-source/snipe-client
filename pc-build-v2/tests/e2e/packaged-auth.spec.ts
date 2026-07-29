@@ -103,7 +103,7 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
     .update(publicKey.export({ format: 'der', type: 'spki' }))
     .digest('hex')
   expect(publicKeyFingerprint).toBe(
-    '2a16488a2a16440e6c1ac19f82f9b262b7e9154d0851e3dbbac0be8d9b612d99',
+    '8be2a82e869112c3d67de63f0f60ee0d6beb057eb9b160d8effad92098a60b0d',
   )
   await expect(
     executeFile(

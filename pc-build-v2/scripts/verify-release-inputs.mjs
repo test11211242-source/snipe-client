@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const EXPECTED_PUBLIC_KEY_FINGERPRINT =
-  '2a16488a2a16440e6c1ac19f82f9b262b7e9154d0851e3dbbac0be8d9b612d99'
+  '8be2a82e869112c3d67de63f0f60ee0d6beb057eb9b160d8effad92098a60b0d'
 const publicKeyPath = resolve(import.meta.dirname, '../resources/update-public-key.pem')
 
 const publicKey = createPublicKey(await readFile(publicKeyPath, 'utf8'))

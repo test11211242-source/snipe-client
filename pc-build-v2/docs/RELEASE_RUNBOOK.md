@@ -12,13 +12,14 @@ The updater trusts only:
 - manifest: `https://updates.artcsworld.xyz/downloads/v2/manifest.json`
 - artifact: `https://updates.artcsworld.xyz/downloads/v2/CR_Tools_V2_Setup_<x.y.z>.exe`
 - public key: `resources/update-public-key.pem`
-- SHA-256 SPKI fingerprint: `2a16488a2a16440e6c1ac19f82f9b262b7e9154d0851e3dbbac0be8d9b612d99`
+- SHA-256 SPKI fingerprint: `8be2a82e869112c3d67de63f0f60ee0d6beb057eb9b160d8effad92098a60b0d`
 
 The release private key must never enter the repository, an artifact, a command argument,
-or logs. The temporary key currently outside the workspace at
-`/tmp/opencode/cr-tools-v2-update-private.pem` must be moved into the GitHub Actions secret
-`CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64`, then securely deleted from the temporary location
-before the first release. Do not print the decoded secret while transferring it.
+or logs. It belongs in the GitHub Actions secret
+`CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64`. During initial provisioning, the only local transfer
+copy may be kept at `~/.config/cr-tools-v2/update-signing-private.pem` with mode `600`; it
+must be securely deleted after the secret is registered. Do not print the decoded secret
+while transferring it.
 
 ## Required Secrets
 
