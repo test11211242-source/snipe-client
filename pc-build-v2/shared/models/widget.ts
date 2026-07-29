@@ -2,15 +2,14 @@ import { z } from 'zod'
 
 const SafeTextSchema = z.string().trim().min(1).max(160)
 
-export const WIDGET_MIN_WIDTH = 340
+export const WIDGET_MIN_WIDTH = 300
 export const WIDGET_MAX_WIDTH = 720
-export const WIDGET_MIN_HEIGHT = 300
-export const WIDGET_MAX_HEIGHT = 900
-export const WIDGET_DECK_WIDTH = 480
-export const WIDGET_DECK_HEIGHT = 354
-export const WIDGET_DECK_ASPECT_RATIO = WIDGET_DECK_WIDTH / WIDGET_DECK_HEIGHT
+export const WIDGET_MIN_HEIGHT = 280
+export const WIDGET_MAX_HEIGHT = 720
+export const WIDGET_DECK_WIDTH = 360
+export const WIDGET_DECK_HEIGHT = 300
 export const WIDGET_DETAILED_WIDTH = 420
-export const WIDGET_DETAILED_HEIGHT = 560
+export const WIDGET_DETAILED_HEIGHT = 360
 
 export const WidgetBoundsSchema = z
   .object({
@@ -96,26 +95,6 @@ export const WidgetStatusSchema = z
     hasResult: z.boolean(),
   })
   .strict()
-
-export function normalizeWidgetBoundsForMode(
-  displayMode: 'deck' | 'detailed',
-  bounds: WidgetBounds,
-): WidgetBounds {
-  if (displayMode === 'detailed') return bounds
-  const width = Math.min(
-    WIDGET_MAX_WIDTH,
-    Math.max(
-      WIDGET_DECK_WIDTH,
-      bounds.width,
-      Math.round(bounds.height * WIDGET_DECK_ASPECT_RATIO),
-    ),
-  )
-  return {
-    ...bounds,
-    width,
-    height: Math.round(width / WIDGET_DECK_ASPECT_RATIO),
-  }
-}
 
 export type WidgetBounds = z.infer<typeof WidgetBoundsSchema>
 export type WidgetDisplayMode = WidgetSettings['displayMode']

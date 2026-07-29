@@ -61,15 +61,16 @@ Settings use strict Zod schemas, contain no secrets, and are written atomically 
 system boundary make the repository testable.
 
 Local widget settings are strict per-user atomic files under
-`userData/widget-settings.v1/`. Defaults enable auto-open and always-on-top, leave the
-window movable, and use high opacity. Position and size are bounded for Windows and saved
-after user move/resize events.
+`userData/widget-settings.v2/`. Defaults enable auto-open and always-on-top, leave the
+window movable, and open the V1-style full layout at `420x360`. The compact layout uses
+`360x300`; both remain freely resizable between the bounded Windows limits. Position and
+size are saved after user move/resize events.
 
 Capture configuration is separate and per server user under
-`userData/capture-config.v1/`. It stores normalized regions, a compact trigger template,
-non-sensitive source preference metadata, revision, and fingerprint. It never stores
-screenshots, thumbnails, raw source IDs, HWNDs, tokens, or full executable paths. Setup
-posts the exact schema-version 2 legacy projection to
+`userData/capture-profiles.v3/`. It stores normalized regions, compact color-independent
+structural trigger maps, non-sensitive source preference metadata, revision, and
+fingerprint. It never stores screenshots, RGB templates, raw source IDs, HWNDs, tokens,
+or full executable paths. Setup posts a schema-version 2 compatibility projection to
 `/api/user/me/ocr-regions` first, then atomically commits the local configuration.
 
 The production origin is fixed to `https://api.artcsworld.xyz`; realtime uses

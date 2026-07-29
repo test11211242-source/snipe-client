@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { z } from 'zod'
 
 import {
+  WIDGET_DETAILED_HEIGHT,
+  WIDGET_DETAILED_WIDTH,
   WIDGET_DECK_HEIGHT,
   WIDGET_DECK_WIDTH,
-  normalizeWidgetBoundsForMode,
   WidgetBoundsSchema,
   WidgetSettingsSchema,
   type WidgetSettings,
@@ -33,12 +34,12 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = Object.freeze({
   alwaysOnTop: true,
   locked: false,
   opacity: 0.96,
-  displayMode: 'deck',
+  displayMode: 'detailed',
   bounds: {
     x: null,
     y: null,
-    width: WIDGET_DECK_WIDTH,
-    height: WIDGET_DECK_HEIGHT,
+    width: WIDGET_DETAILED_WIDTH,
+    height: WIDGET_DETAILED_HEIGHT,
   },
 })
 
@@ -77,22 +78,7 @@ export class WidgetSettingsRepository {
       const value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
       const raw = JSON.parse(value) as unknown
       const current = WidgetSettingsSchema.safeParse(raw)
-      if (current.success) {
-        const normalized = WidgetSettingsSchema.parse({
-          ...current.data,
-          bounds: normalizeWidgetBoundsForMode(
-            current.data.displayMode,
-            current.data.bounds,
-          ),
-        })
-        if (
-          normalized.bounds.width === current.data.bounds.width &&
-          normalized.bounds.height === current.data.bounds.height
-        ) {
-          return current.data
-        }
-        return await this.save(userId, normalized)
-      }
+      if (current.success) return current.data
       const legacy = LegacyWidgetSettingsSchema.parse(raw)
       const migrated = WidgetSettingsSchema.parse({
         autoOpen: legacy.autoOpen,

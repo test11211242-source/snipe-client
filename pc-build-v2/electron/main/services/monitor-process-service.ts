@@ -455,6 +455,8 @@ export class MonitorProcessService {
     }
     if (event.type === 'triggered') {
       owned.listener.onTriggered(event.payload.timestamp)
+    } else if (event.type === 'diagnostic') {
+      this.logger.info('Trigger diagnostic', event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)

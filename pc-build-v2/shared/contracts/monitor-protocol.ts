@@ -89,6 +89,22 @@ export const MonitorTriggeredEventSchema = ProtocolBaseSchema.extend({
     .strict(),
 }).strict()
 
+export const MonitorDiagnosticEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('diagnostic'),
+  payload: z
+    .object({
+      profile: z.enum(['primary', 'prediction']),
+      matched: z.boolean(),
+      score: z.number().min(0).max(1),
+      support: z.number().min(0).max(1),
+      orientation: z.number().min(0).max(1),
+      correlation: z.number().min(-1).max(1),
+      orbInliers: z.number().int().nonnegative().max(1_000),
+      reason: z.enum(['pass', 'structure_below_threshold', 'no_candidate']),
+    })
+    .strict(),
+}).strict()
+
 export const MonitorActionEventSchema = ProtocolBaseSchema.extend({
   type: z.literal('action'),
   payload: z
@@ -130,6 +146,7 @@ export const MonitorStoppedEventSchema = ProtocolBaseSchema.extend({
 
 export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorReadyEventSchema,
+  MonitorDiagnosticEventSchema,
   MonitorTriggeredEventSchema,
   MonitorActionEventSchema,
   MonitorPredictionResultEventSchema,

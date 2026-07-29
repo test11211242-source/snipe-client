@@ -6,6 +6,7 @@ import type { SetupSessionView } from '../../../shared/models/setup'
 import {
   containTransform,
   pointerToNormalized,
+  projectInnerRect,
   rectFromPoints,
   type ContainTransform,
 } from './geometry'
@@ -14,7 +15,7 @@ const STEPS: readonly { id: RegionKind; label: string; help: string }[] = [
   {
     id: 'trigger',
     label: 'Триггер',
-    help: 'Выделите устойчивый элемент экрана начала боя.',
+    help: 'Выделите примерную область вокруг устойчивого элемента. Система сама найдёт компактную структуру внутри.',
   },
   {
     id: 'normal',
@@ -31,7 +32,7 @@ const RESULT_STEPS: readonly { id: RegionKind; label: string; help: string }[] =
   {
     id: 'resultTrigger',
     label: 'Триггер результата',
-    help: 'Выделите устойчивый элемент экрана, который появляется после завершения боя.',
+    help: 'Выделите примерную область вокруг устойчивого элемента результата. Система сама уберёт лишний фон.',
   },
   {
     id: 'resultData',
@@ -321,6 +322,18 @@ export function SetupApp(): React.JSX.Element {
         const accepted = await persist(draft)
         if (!accepted) return
       }
+      const triggerStep =
+        current.kind === 'predictionResult' ? 'resultTrigger' : 'trigger'
+      if (
+        activeRegionRef.current === triggerStep &&
+        viewRef.current?.triggerProfile === null
+      ) {
+        const analyzed = await runCommand(
+          (request) => window.crToolsSetup.analyzeTrigger(request),
+          'Не удалось найти устойчивую структуру. Выберите область вместе с рамкой или окружающим интерфейсом.',
+        )
+        if (analyzed?.triggerProfile === null || analyzed === null) return
+      }
     }
 
     const latest = viewRef.current
@@ -435,6 +448,12 @@ export function SetupApp(): React.JSX.Element {
   const failed = view.state === 'FAILED' || frameUrl === null || view.frameSize === null
   const frameSizeLabel =
     view.frameSize === null ? '' : `${view.frameSize.width} × ${view.frameSize.height} px`
+  const triggerRegion =
+    view.regions[view.kind === 'predictionResult' ? 'resultTrigger' : 'trigger']
+  const analyzedInnerRegion =
+    triggerRegion === null || view.triggerProfile === null
+      ? null
+      : projectInnerRect(triggerRegion, view.triggerProfile.innerRect)
 
   return (
     <main className="setup-workspace" data-state={view.state} aria-busy={busy}>
@@ -655,6 +674,20 @@ export function SetupApp(): React.JSX.Element {
                       </div>
                     )
                   })}
+                  {analyzedInnerRegion !== null && (
+                    <div
+                      className="region-box region-auto-inner"
+                      data-testid="trigger-inner-region"
+                      style={{
+                        left: `${analyzedInnerRegion.x * 100}%`,
+                        top: `${analyzedInnerRegion.y * 100}%`,
+                        width: `${analyzedInnerRegion.width * 100}%`,
+                        height: `${analyzedInnerRegion.height * 100}%`,
+                      }}
+                    >
+                      <span>Найдена структура</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -745,14 +778,38 @@ export function SetupApp(): React.JSX.Element {
                     <dd>{view.triggerProfile.analyzer.version}</dd>
                   </div>
                   <div>
-                    <dt>Контрольный хэш</dt>
-                    <dd>{view.triggerProfile.ahash64}</dd>
+                    <dt>Режим сравнения</dt>
+                    <dd>
+                      {view.triggerProfile.matcherMode === 'edge_orb'
+                        ? 'Контуры + геометрия'
+                        : 'Контуры'}
+                    </dd>
                   </div>
                   <div>
-                    <dt>Ключевые точки</dt>
-                    <dd>{view.triggerProfile.keypointsCount}</dd>
+                    <dt>Качество</dt>
+                    <dd>
+                      {view.triggerProfile.quality.grade === 'high'
+                        ? 'Высокое'
+                        : 'Среднее'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Автообрезка</dt>
+                    <dd>
+                      {Math.round(view.triggerProfile.quality.cropAreaRatio * 100)}%
+                      исходной области
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Структурные точки</dt>
+                    <dd>{view.triggerProfile.quality.edgePixelCount}</dd>
                   </div>
                 </dl>
+                <img
+                  className="trigger-structure-preview"
+                  src={`data:image/png;base64,${view.triggerProfile.edgeTemplateBase64}`}
+                  alt="Структурная маска триггера"
+                />
               </details>
             )}
           </aside>

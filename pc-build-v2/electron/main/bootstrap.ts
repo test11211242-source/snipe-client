@@ -99,9 +99,8 @@ const settingsRepository = new SettingsRepository(
 )
 const settings = new AppSettingsController(settingsRepository, app, logger)
 const captureConfigurations = new CaptureConfigurationRepository(
-  join(app.getPath('userData'), 'capture-profiles.v2'),
+  join(app.getPath('userData'), 'capture-profiles.v3'),
   nodeCaptureConfigurationFileSystem,
-  { legacyDirectory: join(app.getPath('userData'), 'capture-config.v1') },
 )
 const pythonRoot = import.meta.env.PROD
   ? join(process.resourcesPath, 'python')
@@ -147,7 +146,7 @@ const targetResolver = new CaptureTargetResolver(
   captureSources,
 )
 const predictionResults = new PredictionResultConfigurationRepository(
-  join(app.getPath('userData'), 'prediction-result-config.v1'),
+  join(app.getPath('userData'), 'prediction-result-config.v3'),
   nodePredictionResultFileSystem,
 )
 const setup = new SetupSessionService(
@@ -221,7 +220,7 @@ const streamer = new StreamerService(
   clipboard,
 )
 const widgetSettings = new WidgetSettingsRepository(
-  join(app.getPath('userData'), 'widget-settings.v1'),
+  join(app.getPath('userData'), 'widget-settings.v2'),
   nodeWidgetSettingsFileSystem,
 )
 const widget = new WidgetController(monitor, widgetSettings, windows)

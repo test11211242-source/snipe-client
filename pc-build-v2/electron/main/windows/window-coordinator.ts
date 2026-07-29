@@ -5,9 +5,6 @@ import { BrowserWindow, screen, type WebContents } from 'electron'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
-  WIDGET_DECK_ASPECT_RATIO,
-  WIDGET_DECK_HEIGHT,
-  WIDGET_DECK_WIDTH,
   WIDGET_MAX_HEIGHT,
   WIDGET_MAX_WIDTH,
   WIDGET_MIN_HEIGHT,
@@ -325,14 +322,8 @@ export class WindowCoordinator {
     const bounds = clampWidgetBoundsToWorkAreas(settings.bounds, workAreas)
     const window = new BrowserWindow({
       ...bounds,
-      minWidth: Math.min(
-        settings.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_MIN_WIDTH,
-        bounds.width,
-      ),
-      minHeight: Math.min(
-        settings.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_MIN_HEIGHT,
-        bounds.height,
-      ),
+      minWidth: Math.min(WIDGET_MIN_WIDTH, bounds.width),
+      minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
       maxWidth: WIDGET_MAX_WIDTH,
       maxHeight: WIDGET_MAX_HEIGHT,
       show: false,
@@ -359,7 +350,7 @@ export class WindowCoordinator {
         devTools: !import.meta.env.PROD,
       },
     })
-    window.setAspectRatio(settings.displayMode === 'deck' ? WIDGET_DECK_ASPECT_RATIO : 0)
+    window.setAspectRatio(0)
     this.register('widget', window, renderer.url)
     const operation = Promise.resolve()
       .then(() =>
@@ -417,11 +408,8 @@ export class WindowCoordinator {
     if (settings.alwaysOnTop) window.moveTop()
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
-    window.setMinimumSize(
-      settings.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_MIN_WIDTH,
-      settings.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_MIN_HEIGHT,
-    )
-    window.setAspectRatio(settings.displayMode === 'deck' ? WIDGET_DECK_ASPECT_RATIO : 0)
+    window.setMinimumSize(WIDGET_MIN_WIDTH, WIDGET_MIN_HEIGHT)
+    window.setAspectRatio(0)
     window.setOpacity(settings.opacity)
     registered.suppressBoundsEvents = true
     try {

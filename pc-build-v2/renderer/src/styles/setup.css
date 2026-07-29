@@ -362,6 +362,14 @@ body,
   background: rgba(112, 119, 217, 0.12);
 }
 
+.region-auto-inner {
+  z-index: 2;
+  border-color: #79d8aa;
+  border-style: dashed;
+  background: rgba(78, 174, 134, 0.08);
+  opacity: 1;
+}
+
 .region-box span {
   position: absolute;
   top: 4px;
@@ -374,6 +382,18 @@ body,
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+}
+
+.trigger-structure-preview {
+  width: 100%;
+  max-height: 150px;
+  display: block;
+  margin-top: 10px;
+  border: 1px solid var(--setup-border);
+  border-radius: 6px;
+  background: #050608;
+  image-rendering: pixelated;
+  object-fit: contain;
 }
 
 .region-handle {

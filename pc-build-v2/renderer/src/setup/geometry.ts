@@ -51,3 +51,16 @@ export function rectFromPoints(
   const height = Math.abs(end.y - start.y)
   return width >= 0.001 && height >= 0.001 ? { x, y, width, height } : null
 }
+
+export function projectInnerRect(
+  outer: NormalizedRect,
+  inner: NormalizedRect,
+): NormalizedRect {
+  const precise = (value: number): number => Number(value.toFixed(8))
+  return {
+    x: precise(outer.x + inner.x * outer.width),
+    y: precise(outer.y + inner.y * outer.height),
+    width: precise(inner.width * outer.width),
+    height: precise(inner.height * outer.height),
+  }
+}

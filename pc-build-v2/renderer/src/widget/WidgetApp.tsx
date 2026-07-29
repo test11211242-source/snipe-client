@@ -1,7 +1,11 @@
-import { Eye, EyeOff, GripVertical, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
+import { GripVertical, LayoutGrid, Lock, Pin, Trophy, Unlock, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { WidgetSettings, WidgetView } from '../../../shared/models/widget'
+
+const OPACITY_STEP = 5
+const MIN_OPACITY_PERCENT = 55
+const MAX_OPACITY_PERCENT = 100
 
 export function WidgetApp(): React.JSX.Element {
   const [view, setView] = useState<WidgetView | null>(null)
@@ -10,11 +14,13 @@ export function WidgetApp(): React.JSX.Element {
   const [pendingMutations, setPendingMutations] = useState(0)
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const [opacityDraft, setOpacityDraft] = useState(95)
+  const [opacityDraft, setOpacityDraft] = useState(96)
   const [opacityDirty, setOpacityDirty] = useState(false)
   const deckTabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const pendingMutationsRef = useRef(0)
+  const opacityDraftRef = useRef(96)
+  const opacityDirtyRef = useRef(false)
   const mountedRef = useRef(true)
 
   const saving = pendingMutations > 0
@@ -67,8 +73,7 @@ export function WidgetApp(): React.JSX.Element {
         return
       }
       const hasResult = nextView?.result !== null && nextView?.result !== undefined
-      const delay = document.hidden ? 5_000 : hasResult ? 2_500 : 1_000
-      schedule(delay)
+      schedule(document.hidden ? 5_000 : hasResult ? 2_500 : 1_000)
     }
 
     const onVisibilityChange = (): void => restart()
@@ -80,9 +85,6 @@ export function WidgetApp(): React.JSX.Element {
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [])
-
-  const resultId = view?.result?.id ?? null
-  const selectedDeck = deckSelection.resultId === resultId ? deckSelection.index : 0
 
   const enqueueSettings = (patch: Partial<WidgetSettings>): Promise<boolean> => {
     pendingMutationsRef.current += 1
@@ -118,276 +120,299 @@ export function WidgetApp(): React.JSX.Element {
   const enqueueSettingsEvent = useEffectEvent(enqueueSettings)
 
   useEffect(() => {
+    if (view === null || opacityDirtyRef.current) return
+    const nextOpacity = Math.round(view.settings.opacity * 100)
+    opacityDraftRef.current = nextOpacity
+    setOpacityDraft(nextOpacity)
+  }, [view])
+
+  useEffect(() => {
     if (!opacityDirty) return
     let active = true
     const timer = window.setTimeout(() => {
       void enqueueSettingsEvent({ opacity: opacityDraft / 100 }).then((updated) => {
         if (!active) return
+        opacityDirtyRef.current = false
         setOpacityDirty(false)
         if (!updated) setMutationError('Не удалось сохранить прозрачность.')
       })
-    }, 300)
+    }, 250)
     return () => {
       active = false
       window.clearTimeout(timer)
     }
   }, [opacityDirty, opacityDraft])
 
-  const displayedOpacity =
-    opacityDirty || view === null ? opacityDraft : Math.round(view.settings.opacity * 100)
+  const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    const settings = view?.settings
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      void window.crToolsWidget.hide()
+      return
+    }
+    if (settings === undefined || !event.ctrlKey || pendingMutationsRef.current > 0) {
+      return
+    }
+
+    const key = event.key.toLowerCase()
+    let patch: Partial<WidgetSettings> | null = null
+    if (key === 'p') patch = { alwaysOnTop: !settings.alwaysOnTop }
+    if (key === 'l') patch = { locked: !settings.locked }
+    if (key === 'm') {
+      patch = { displayMode: settings.displayMode === 'deck' ? 'detailed' : 'deck' }
+    }
+    if (patch === null) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    void enqueueSettingsEvent(patch)
+  })
+
+  const handleWheel = useEffectEvent((event: WheelEvent) => {
+    if (!event.ctrlKey || event.deltaY === 0 || view === null) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const current = opacityDirtyRef.current
+      ? opacityDraftRef.current
+      : Math.round(view.settings.opacity * 100)
+    const next = Math.min(
+      MAX_OPACITY_PERCENT,
+      Math.max(
+        MIN_OPACITY_PERCENT,
+        current + (event.deltaY < 0 ? OPACITY_STEP : -OPACITY_STEP),
+      ),
+    )
+    opacityDirtyRef.current = true
+    opacityDraftRef.current = next
+    setOpacityDraft(next)
+    setOpacityDirty(true)
+    setSaved(false)
+  })
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => handleKeyDown(event)
+    const onWheel = (event: WheelEvent): void => handleWheel(event)
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('wheel', onWheel, true)
+    }
+  }, [])
 
   const result = view?.result ?? null
   const found = result?.kind === 'player_found' ? result : null
+  const resultId = result?.id ?? null
+  const requestedDeck = deckSelection.resultId === resultId ? deckSelection.index : 0
+  const selectedDeck = Math.min(
+    requestedDeck,
+    Math.max(0, (found?.decks.length ?? 1) - 1),
+  )
   const deck = found?.decks[selectedDeck] ?? null
-  const deckMode = view?.settings.displayMode !== 'detailed'
+  const compactMode = view?.settings.displayMode === 'deck'
+  const playerName =
+    found?.player.name ?? result?.searchedNickname ?? 'Ожидание соперника'
+  const feedback = saving
+    ? 'Сохраняем настройку...'
+    : (mutationError ?? (saved ? 'Настройка сохранена' : ''))
 
   return (
     <main
       className="widget-shell"
       data-locked={view?.settings.locked ?? false}
-      data-mode={deckMode ? 'deck' : 'detailed'}
+      data-mode={compactMode ? 'compact' : 'full'}
+      data-pinned={view?.settings.alwaysOnTop ?? false}
     >
       <header className="widget-header">
-        <div className="widget-brand">
-          <span>CR TOOLS</span>
-          <strong>Соперник</strong>
-        </div>
-        {view !== null && (
-          <div className="widget-controls" aria-label="Настройки окна">
-            <span
-              className="widget-drag-handle"
-              title={view.settings.locked ? 'Позиция заблокирована' : 'Перетащить виджет'}
-            >
-              <GripVertical aria-hidden="true" size={15} />
+        <span
+          className="widget-drag-handle"
+          title={
+            view?.settings.locked === true ? 'Позиция заблокирована' : 'Перетащить виджет'
+          }
+        >
+          <GripVertical aria-hidden="true" size={16} />
+        </span>
+        <div className="player-info">
+          <h1 title={playerName}>{playerName}</h1>
+          {found?.player.rating !== null && found?.player.rating !== undefined && (
+            <span className="player-rating" aria-label={`Рейтинг ${found.player.rating}`}>
+              <Trophy aria-hidden="true" size={13} />
+              {found.player.rating.toLocaleString('ru-RU')}
             </span>
-            <ControlButton
-              active={view.settings.alwaysOnTop}
-              label="Поверх остальных окон"
-              disabled={saving}
-              onClick={() =>
-                void enqueueSettings({
-                  alwaysOnTop: !view.settings.alwaysOnTop,
-                })
+          )}
+        </div>
+
+        <div className="widget-controls" aria-label="Управление виджетом">
+          <ControlButton
+            active={view?.settings.alwaysOnTop ?? false}
+            label={
+              view?.settings.alwaysOnTop === true
+                ? 'Открепить от переднего плана'
+                : 'Закрепить поверх окон'
+            }
+            disabled={view === null || saving}
+            onClick={() => {
+              if (view !== null) {
+                void enqueueSettings({ alwaysOnTop: !view.settings.alwaysOnTop })
               }
-            >
-              <Pin aria-hidden="true" size={15} />
-            </ControlButton>
-            <ControlButton
-              active={view.settings.locked}
-              label={view.settings.locked ? 'Разблокировать окно' : 'Заблокировать окно'}
-              disabled={saving}
-              onClick={() => void enqueueSettings({ locked: !view.settings.locked })}
-            >
-              {view.settings.locked ? (
-                <Lock aria-hidden="true" size={15} />
-              ) : (
-                <Unlock aria-hidden="true" size={15} />
-              )}
-            </ControlButton>
-            <ControlButton
-              active={view.settings.displayMode === 'deck'}
-              label={
-                view.settings.displayMode === 'deck'
-                  ? 'Открыть подробный режим'
-                  : 'Показать только колоду'
-              }
-              disabled={saving}
-              onClick={() =>
+            }}
+          >
+            <Pin aria-hidden="true" size={15} />
+          </ControlButton>
+          <ControlButton
+            active={view?.settings.locked ?? false}
+            label={
+              view?.settings.locked === true
+                ? 'Разблокировать позицию'
+                : 'Заблокировать позицию'
+            }
+            disabled={view === null || saving}
+            onClick={() => {
+              if (view !== null) void enqueueSettings({ locked: !view.settings.locked })
+            }}
+          >
+            {view?.settings.locked === true ? (
+              <Lock aria-hidden="true" size={15} />
+            ) : (
+              <Unlock aria-hidden="true" size={15} />
+            )}
+          </ControlButton>
+          <ControlButton
+            active={compactMode}
+            label={compactMode ? 'Полный вид' : 'Компактный вид'}
+            disabled={view === null || saving}
+            onClick={() => {
+              if (view !== null) {
                 void enqueueSettings({
                   displayMode: view.settings.displayMode === 'deck' ? 'detailed' : 'deck',
                 })
               }
-            >
-              <LayoutGrid aria-hidden="true" size={15} />
-            </ControlButton>
-            <button
-              className="widget-control"
-              type="button"
-              aria-label="Скрыть виджет"
-              title="Скрыть виджет"
-              onClick={() => void window.crToolsWidget.hide()}
-            >
-              <X aria-hidden="true" size={16} />
-            </button>
-          </div>
-        )}
+            }}
+          >
+            <LayoutGrid aria-hidden="true" size={15} />
+          </ControlButton>
+          <button
+            className="widget-control close-button"
+            type="button"
+            aria-label="Скрыть виджет"
+            title="Скрыть виджет"
+            onClick={() => void window.crToolsWidget.hide()}
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
+        </div>
       </header>
 
-      {view !== null && view.settings.displayMode === 'detailed' && (
-        <label className="opacity-control">
-          {displayedOpacity < 80 ? (
-            <EyeOff aria-hidden="true" size={14} />
-          ) : (
-            <Eye aria-hidden="true" size={14} />
-          )}
-          <span>Прозрачность</span>
-          <input
-            aria-label="Прозрачность виджета"
-            type="range"
-            min="55"
-            max="100"
-            step="5"
-            disabled={saving}
-            value={displayedOpacity}
-            onChange={(event) => {
-              setOpacityDraft(Number(event.currentTarget.value))
-              setOpacityDirty(true)
-              setSaved(false)
-            }}
+      <div className="widget-content">
+        {failed && view === null ? (
+          <EmptyState
+            tone="danger"
+            title="Виджет временно недоступен"
+            detail="Повторная проверка выполняется."
           />
-          <output>{displayedOpacity}%</output>
-        </label>
-      )}
-
-      <div className="widget-mutation-status" aria-live="polite">
-        {saving
-          ? 'Сохраняем настройку...'
-          : (mutationError ?? (saved ? 'Настройка сохранена' : ''))}
+        ) : view === null ? (
+          <EmptyState
+            loading
+            title="Загрузка результата"
+            detail="Подключение к локальному монитору."
+          />
+        ) : found === null ? (
+          <EmptyResult result={result} />
+        ) : found.decks.length === 0 ? (
+          <EmptyState
+            title="Колоды не найдены"
+            detail="Профиль игрока получен без колод."
+          />
+        ) : (
+          <section
+            className="deck-stage"
+            aria-label={`Колоды игрока ${found.player.name}`}
+          >
+            <div
+              className="card-grid"
+              id={`deck-panel-${selectedDeck}`}
+              role={found.decks.length > 1 ? 'tabpanel' : 'group'}
+              aria-label={found.decks.length === 1 ? 'Карты колоды' : undefined}
+              aria-labelledby={
+                found.decks.length > 1 ? `deck-tab-${selectedDeck}` : undefined
+              }
+            >
+              {deck?.cards.map((card, cardIndex) => (
+                <Card
+                  key={`${found.id}-${selectedDeck}-${cardIndex}`}
+                  resultId={found.id}
+                  deckIndex={selectedDeck}
+                  cardIndex={cardIndex}
+                  card={card}
+                />
+              ))}
+            </div>
+            {found.decks.length > 1 && (
+              <div className="deck-switcher" role="tablist" aria-label="Выбор колоды">
+                {found.decks.map((item, index) => {
+                  const label = item.label ?? `Колода ${index + 1}`
+                  return (
+                    <button
+                      key={`${item.label ?? 'deck'}-${index}`}
+                      type="button"
+                      role="tab"
+                      id={`deck-tab-${index}`}
+                      aria-controls={`deck-panel-${index}`}
+                      aria-label={`Колода ${index + 1}: ${label}`}
+                      aria-selected={selectedDeck === index}
+                      tabIndex={selectedDeck === index ? 0 : -1}
+                      onClick={() => setDeckSelection({ resultId: found.id, index })}
+                      onKeyDown={(event) => {
+                        let nextIndex: number | null = null
+                        if (event.key === 'ArrowRight') {
+                          nextIndex = (index + 1) % found.decks.length
+                        }
+                        if (event.key === 'ArrowLeft') {
+                          nextIndex =
+                            (index - 1 + found.decks.length) % found.decks.length
+                        }
+                        if (event.key === 'Home') nextIndex = 0
+                        if (event.key === 'End') nextIndex = found.decks.length - 1
+                        if (nextIndex === null) return
+                        event.preventDefault()
+                        setDeckSelection({ resultId: found.id, index: nextIndex })
+                        deckTabRefs.current[nextIndex]?.focus()
+                      }}
+                      ref={(node) => {
+                        deckTabRefs.current[index] = node
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        )}
       </div>
+
+      {!compactMode && found !== null && deck !== null && (
+        <footer className="deck-info">
+          <div>
+            <span>Колода</span>
+            <strong title={deck.label ?? undefined}>
+              {deck.label ?? `Колода ${selectedDeck + 1}`}
+            </strong>
+          </div>
+          <div>
+            <strong>{deck.cards.length} / 8</strong>
+            <span>карт</span>
+          </div>
+        </footer>
+      )}
 
       {failed && view !== null && (
         <div className="widget-stale-notice" role="status">
-          Не удалось обновить данные. Показан последний результат.
+          Показан последний результат
         </div>
       )}
-
-      {failed && view === null ? (
-        <EmptyState
-          tone="danger"
-          title="Виджет временно недоступен"
-          detail="Повторная проверка выполняется."
-        />
-      ) : view === null ? (
-        <EmptyState
-          loading
-          title="Загрузка результата"
-          detail="Подключение к локальному монитору."
-        />
-      ) : found === null ? (
-        <EmptyResult result={result} />
-      ) : (
-        <>
-          {view.settings.displayMode === 'detailed' && (
-            <section className="player-summary" aria-labelledby="player-name">
-              <div className="player-heading">
-                <div>
-                  <span>НАЙДЕН ИГРОК</span>
-                  <h1 id="player-name">{found.player.name}</h1>
-                </div>
-                {found.player.rating !== null && (
-                  <strong
-                    className="rating"
-                    aria-label={`Рейтинг ${found.player.rating}`}
-                  >
-                    {found.player.rating}
-                  </strong>
-                )}
-              </div>
-              <dl>
-                <div>
-                  <dt>Тег</dt>
-                  <dd>{found.player.tag ?? 'Не указан'}</dd>
-                </div>
-                <div>
-                  <dt>Клан</dt>
-                  <dd>{found.player.clan ?? 'Без клана'}</dd>
-                </div>
-              </dl>
-            </section>
-          )}
-
-          {found.decks.length === 0 ? (
-            <EmptyState
-              title="Колоды не найдены"
-              detail="Профиль игрока получен без колод."
-            />
-          ) : (
-            <section
-              className="deck-section"
-              aria-label={`Колоды игрока ${found.player.name}`}
-            >
-              {(view.settings.displayMode === 'detailed' || found.decks.length > 1) && (
-                <div className="deck-tabs" role="tablist" aria-label="Выбор колоды">
-                  {found.decks.map((item, index) => {
-                    const label = item.label ?? `Колода ${index + 1}`
-                    return (
-                      <button
-                        key={`${item.label ?? 'deck'}-${index}`}
-                        type="button"
-                        role="tab"
-                        id={`deck-tab-${index}`}
-                        aria-controls={`deck-panel-${index}`}
-                        aria-label={
-                          view.settings.displayMode === 'deck'
-                            ? `Колода ${index + 1}: ${label}`
-                            : undefined
-                        }
-                        aria-selected={selectedDeck === index}
-                        tabIndex={selectedDeck === index ? 0 : -1}
-                        onClick={() => setDeckSelection({ resultId: found.id, index })}
-                        onKeyDown={(event) => {
-                          let nextIndex: number | null = null
-                          if (event.key === 'ArrowRight') {
-                            nextIndex = (index + 1) % found.decks.length
-                          }
-                          if (event.key === 'ArrowLeft') {
-                            nextIndex =
-                              (index - 1 + found.decks.length) % found.decks.length
-                          }
-                          if (event.key === 'Home') nextIndex = 0
-                          if (event.key === 'End') nextIndex = found.decks.length - 1
-                          if (nextIndex === null) return
-                          event.preventDefault()
-                          setDeckSelection({ resultId: found.id, index: nextIndex })
-                          deckTabRefs.current[nextIndex]?.focus()
-                        }}
-                        ref={(node) => {
-                          deckTabRefs.current[index] = node
-                        }}
-                      >
-                        <span className="deck-tab-label">{label}</span>
-                        <span className="deck-tab-number" aria-hidden="true">
-                          {index + 1}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              <div
-                className="card-grid"
-                id={`deck-panel-${selectedDeck}`}
-                role={
-                  view.settings.displayMode === 'detailed' || found.decks.length > 1
-                    ? 'tabpanel'
-                    : 'group'
-                }
-                aria-label={
-                  view.settings.displayMode === 'deck' && found.decks.length === 1
-                    ? 'Карты колоды'
-                    : undefined
-                }
-                aria-labelledby={
-                  view.settings.displayMode === 'detailed' || found.decks.length > 1
-                    ? `deck-tab-${selectedDeck}`
-                    : undefined
-                }
-              >
-                {deck?.cards.map((card, cardIndex) => (
-                  <Card
-                    key={`${found.id}-${selectedDeck}-${cardIndex}`}
-                    resultId={found.id}
-                    deckIndex={selectedDeck}
-                    cardIndex={cardIndex}
-                    card={card}
-                    imageOnly={view.settings.displayMode === 'deck'}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-        </>
-      )}
+      <div className="widget-feedback" data-visible={feedback !== ''} aria-live="polite">
+        {feedback}
+      </div>
     </main>
   )
 }
@@ -426,7 +451,7 @@ function EmptyResult({ result }: { result: WidgetView['result'] }): React.JSX.El
     return (
       <EmptyState
         title="Ожидание соперника"
-        detail="Запустите монитор или дождитесь нового результата."
+        detail="Виджет обновится после найденного игрока."
       />
     )
   }
@@ -488,13 +513,11 @@ function Card({
   deckIndex,
   cardIndex,
   card,
-  imageOnly,
 }: {
   resultId: string
   deckIndex: number
   cardIndex: number
   card: CardView
-  imageOnly: boolean
 }): React.JSX.Element {
   const [image, setImage] = useState<string | null>(null)
 
@@ -521,24 +544,17 @@ function Card({
     .toUpperCase()
 
   return (
-    <article className="deck-card" aria-label={imageOnly ? card.name : undefined}>
-      <div className="card-art">
-        {image === null ? (
-          <span title={card.name}>{initials}</span>
-        ) : (
-          <img src={image} alt="" onError={() => setImage(null)} />
-        )}
-      </div>
-      {!imageOnly && (
-        <div className="card-copy">
-          <strong title={card.name}>{card.name}</strong>
-          <span>
-            {card.level === null ? 'Уровень неизвестен' : `Уровень ${card.level}`}
-          </span>
-          {card.evolutionLevel !== null && card.evolutionLevel > 0 && (
-            <small>Эволюция {card.evolutionLevel}</small>
-          )}
-        </div>
+    <article className="deck-card" aria-label={card.name} title={card.name}>
+      {image === null ? (
+        <span className="card-placeholder">{initials}</span>
+      ) : (
+        <img
+          src={image}
+          alt=""
+          draggable={false}
+          loading="eager"
+          onError={() => setImage(null)}
+        />
       )}
     </article>
   )

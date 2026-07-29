@@ -9,19 +9,25 @@ import { SetupSessionService, buildLegacyProjection } from './setup-session-serv
 import { LegacyOcrRegionsSchema } from '../../../shared/models/setup'
 
 const profile = {
-  schemaVersion: 2 as const,
-  analyzer: { name: 'cr-tools-trigger-analyzer' as const, version: '1.0.0' },
-  hashAlgorithm: 'ahash64-bitwise-v1' as const,
-  ahash64: '0123456789abcdef',
+  schemaVersion: 3 as const,
+  analyzer: { name: 'cr-tools-trigger-analyzer' as const, version: '2.0.0' },
   innerRect: { x: 0.1, y: 0.2, width: 0.8, height: 0.6 },
-  featureMode: 'ncc' as const,
-  keypointsCount: 3,
+  structureAlgorithm: 'max-channel-scharr-v1' as const,
+  structureHash64: '0123456789abcdef',
+  matcherMode: 'edge' as const,
   normalizedTemplateSize: { width: 128, height: 128 },
-  templateGrayBase64: 'AAAA',
-  hashMaxDistance: 18,
-  orbDistanceThreshold: 55,
-  orbMinGoodMatches: 10,
-  nccMinScore: 0.72,
+  structureTemplateBase64: 'AAAA',
+  edgeTemplateBase64: 'AAAA',
+  orientationTemplateBase64: 'AAAA',
+  quality: {
+    grade: 'medium' as const,
+    score: 0.65,
+    edgePixelCount: 120,
+    edgeCoverage: 0.5,
+    keypointsCount: 3,
+    cropConfidence: 0.8,
+    cropAreaRatio: 0.48,
+  },
 }
 const frame = { size: { width: 1000, height: 500 }, png: Buffer.from('png') }
 const preference = {
@@ -512,6 +518,13 @@ describe('SetupSessionService', () => {
       y: 0.2,
       width: 0.8,
       height: 0.6,
+    })
+    expect(projection.trigger_area.trigger_profile).toMatchObject({
+      schema_version: 2,
+      template_gray_base64: profile.structureTemplateBase64,
+      thumbnail_hash: profile.structureHash64,
+      feature_mode: 'ncc',
+      hash_threshold: 64,
     })
     expect(projection.capture_reference).toMatchObject({
       target_type: 'window',

@@ -1,36 +1,61 @@
-import base64
-
 import cv2
 import numpy as np
 import pytest
 
-from trigger_engine import PredictionTriggerEngine, TriggerEngine, ahash64, hamming64
+from analyze_trigger import analyze
+from trigger_engine import PredictionTriggerEngine, TriggerEngine
 
 
-def profile(template: np.ndarray, mode="ncc"):
-    ok, encoded = cv2.imencode(".png", template)
+def trigger_image(
+    background: tuple[int, int, int],
+    *,
+    include_ui: bool = True,
+    texture_seed: int | None = None,
+    label: str = "GO",
+) -> np.ndarray:
+    if texture_seed is None:
+        image = np.empty((128, 128, 3), dtype=np.uint8)
+        image[:] = background
+    else:
+        random = np.random.default_rng(texture_seed)
+        texture = random.integers(0, 100, (128, 128, 3), dtype=np.uint8)
+        image = np.clip(texture + np.array(background, dtype=np.uint8), 0, 255).astype(
+            np.uint8
+        )
+    if include_ui:
+        cv2.rectangle(image, (18, 22), (108, 100), (245, 245, 245), 3)
+        cv2.putText(
+            image,
+            label,
+            (28, 78),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.55,
+            (245, 245, 245),
+            4,
+        )
+    return image
+
+
+def frame_for(trigger: np.ndarray, data_color=(20, 100, 220)) -> np.ndarray:
+    frame = np.zeros((128, 256, 3), dtype=np.uint8)
+    frame[:, :128] = trigger
+    frame[:, 128:] = data_color
+    return frame
+
+
+def profile_for(trigger: np.ndarray) -> dict:
+    frame = frame_for(trigger)
+    ok, encoded = cv2.imencode(".png", frame)
     assert ok
-    return {
-        "schemaVersion": 2,
-        "analyzer": {"name": "cr-tools-trigger-analyzer", "version": "1.0.0"},
-        "hashAlgorithm": "ahash64-bitwise-v1",
-        "ahash64": ahash64(template),
-        "innerRect": {"x": 0, "y": 0, "width": 1, "height": 1},
-        "featureMode": mode,
-        "keypointsCount": 0,
-        "normalizedTemplateSize": {"width": 128, "height": 128},
-        "templateGrayBase64": base64.b64encode(encoded.tobytes()).decode(),
-        "hashMaxDistance": 18,
-        "orbDistanceThreshold": 55,
-        "orbMinGoodMatches": 10,
-        "nccMinScore": 0.72,
-    }
+    return analyze(
+        encoded.tobytes(), {"x": 0, "y": 0, "width": 128, "height": 128}
+    )
 
 
-def payload(template: np.ndarray, search_mode="fast", feature_mode="ncc", capture_delay=0):
+def payload(profile: dict, search_mode="fast", capture_delay=0):
     return {
         "configuredFrameSize": {"width": 256, "height": 128},
-        "triggerProfile": profile(template, feature_mode),
+        "triggerProfile": profile,
         "regions": {
             "trigger": {"x": 0, "y": 0, "width": 0.5, "height": 1},
             "normal": {"x": 0.5, "y": 0, "width": 0.25, "height": 1},
@@ -51,83 +76,94 @@ def payload(template: np.ndarray, search_mode="fast", feature_mode="ncc", captur
     }
 
 
-def synthetic_template():
-    image = np.zeros((128, 128), dtype=np.uint8)
-    cv2.rectangle(image, (12, 18), (110, 100), 220, -1)
-    cv2.line(image, (15, 20), (108, 98), 30, 5)
-    cv2.circle(image, (70, 45), 14, 80, -1)
-    return image
+@pytest.mark.parametrize(
+    "background",
+    [(180, 60, 20), (20, 160, 220), (30, 200, 30), (220, 220, 30)],
+)
+def test_same_arbitrary_ui_matches_across_background_colors(background) -> None:
+    configured = trigger_image((180, 60, 20))
+    engine = TriggerEngine(payload(profile_for(configured)))
+    candidate = frame_for(trigger_image(background))
+    assert engine.process(candidate, 0.0) is None
+    assert engine.process(candidate, 0.11) is not None
+    assert engine.last_match is not None
+    assert engine.last_match.matched is True
 
 
-def frame_for(template: np.ndarray):
-    frame = np.zeros((128, 256, 3), dtype=np.uint8)
-    frame[:, :128] = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
-    frame[:, 128:] = (20, 100, 220)
-    return frame
+def test_textured_background_requires_verified_ui_geometry() -> None:
+    configured = trigger_image((20, 20, 20), texture_seed=4)
+    profile = profile_for(configured)
+    assert profile["matcherMode"] == "edge_orb"
+    engine = TriggerEngine(payload(profile))
+    changed_arena = frame_for(trigger_image((80, 80, 80), texture_seed=8))
+    assert engine.process(changed_arena, 0.0) is None
+    assert engine.process(changed_arena, 0.11) is not None
+
+    negative = TriggerEngine(payload(profile))
+    texture_only = frame_for(
+        trigger_image((80, 80, 80), include_ui=False, texture_seed=12)
+    )
+    assert negative.process(texture_only, 0.0) is None
+    assert negative.process(texture_only, 0.11) is None
+    assert negative.last_match is not None
+    assert negative.last_match.matched is False
 
 
-def test_bitwise_hamming_not_hex_character_distance() -> None:
-    assert hamming64("0000000000000000", "ffffffffffffffff") == 64
-    assert hamming64("0f00000000000000", "f000000000000000") == 8
+def test_low_feature_icon_uses_edge_shape_without_color() -> None:
+    configured = np.full((128, 128, 3), (180, 40, 30), dtype=np.uint8)
+    cv2.circle(configured, (64, 64), 32, (245, 245, 245), 4)
+    profile = profile_for(configured)
+    assert profile["matcherMode"] == "edge"
+
+    candidate = np.full((128, 128, 3), (20, 190, 210), dtype=np.uint8)
+    cv2.circle(candidate, (64, 64), 32, (245, 245, 245), 4)
+    engine = TriggerEngine(payload(profile))
+    assert engine.process(frame_for(candidate), 0.0) is None
+    assert engine.process(frame_for(candidate), 0.11) is not None
+
+    negative = TriggerEngine(payload(profile))
+    square = np.full((128, 128, 3), (20, 190, 210), dtype=np.uint8)
+    cv2.rectangle(square, (32, 32), (96, 96), (245, 245, 245), 4)
+    assert negative.process(frame_for(square), 0.0) is None
+    assert negative.process(frame_for(square), 0.11) is None
 
 
-def test_ncc_requires_two_confirmations_uses_fast_crop_and_cooldown() -> None:
-    template = synthetic_template()
-    engine = TriggerEngine(payload(template, "fast"))
-    frame = frame_for(template)
-    assert engine.process(frame, 0.0) is None
-    action = engine.process(frame, 0.11)
-    assert action is not None
-    assert engine.take_triggered() is True
-    assert engine.take_triggered() is False
-    encoded, width, height = action
-    assert (width, height) == (64, 128)
-    assert encoded.startswith(b"\x89PNG\r\n\x1a\n")
-    assert engine.process(frame, 1.0) is None
-    assert engine.process(frame, 15.2) is None
-    assert engine.process(frame, 15.31) is not None
+def test_main_trigger_requires_consecutive_frames_and_release_before_rearm() -> None:
+    trigger = trigger_image((30, 100, 180))
+    engine = TriggerEngine(payload(profile_for(trigger)))
+    matching = frame_for(trigger)
+    wrong = frame_for(trigger_image((30, 100, 180), include_ui=False))
 
-
-def test_precise_crop_and_confirmation_decay() -> None:
-    template = synthetic_template()
-    engine = TriggerEngine(payload(template, "precise"))
-    matching = frame_for(template)
-    wrong = np.zeros_like(matching)
     assert engine.process(matching, 0.0) is None
     assert engine.process(wrong, 0.11) is None
     assert engine.process(matching, 0.22) is None
     action = engine.process(matching, 0.33)
     assert action is not None
-    _, width, height = action
-    assert (width, height) == (128, 128)
-
-
-def test_precise_capture_uses_a_later_data_frame_without_blocking_prediction() -> None:
-    template = synthetic_template()
-    configured = payload(template, "precise", capture_delay=2.2)
-    engine = TriggerEngine(configured)
-    prediction = PredictionTriggerEngine(
-        {
-            "configuredFrameSize": configured["configuredFrameSize"],
-            "trigger": configured["regions"]["trigger"],
-            "data": configured["regions"]["normal"],
-            "triggerProfile": configured["triggerProfile"],
-        },
-        configured["limits"],
-    )
-    trigger_frame = frame_for(template)
-    assert engine.process(trigger_frame, 0.0) is None
-    assert engine.take_triggered() is False
-    assert engine.process(trigger_frame, 0.11) is None
     assert engine.take_triggered() is True
-    assert prediction.process(trigger_frame, 0.12) is not None
-
-    later_frame = np.zeros_like(trigger_frame)
-    later_frame[:, 128:] = (7, 211, 33)
-    assert engine.process(later_frame, 2.3) is None
-    action = engine.process(later_frame, 2.42)
-    assert action is not None
     assert engine.take_triggered() is False
+    _, width, height = action
+    assert (width, height) == (64, 128)
+
+    assert engine.process(matching, 15.5) is None
+    assert engine.process(matching, 15.61) is None
+    assert engine.process(wrong, 15.72) is None
+    assert engine.process(wrong, 15.83) is None
+    assert engine.process(matching, 15.94) is None
+    assert engine.process(matching, 16.05) is not None
+
+
+def test_precise_capture_uses_a_later_data_frame() -> None:
+    trigger = trigger_image((120, 40, 80))
+    engine = TriggerEngine(payload(profile_for(trigger), "precise", capture_delay=2.2))
+    matching = frame_for(trigger)
+    assert engine.process(matching, 0.0) is None
+    assert engine.process(matching, 0.11) is None
+    assert engine.take_triggered() is True
+
+    later = frame_for(trigger, (7, 211, 33))
+    assert engine.process(later, 2.2) is None
+    action = engine.process(later, 2.31)
+    assert action is not None
     encoded, width, height = action
     decoded = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
     assert (width, height) == (128, 128)
@@ -135,26 +171,9 @@ def test_precise_capture_uses_a_later_data_frame_without_blocking_prediction() -
     assert tuple(int(value) for value in decoded[64, 64]) == (7, 211, 33)
 
 
-def test_orb_bf_hamming_crosscheck_thresholds_on_synthetic_frame() -> None:
-    template = synthetic_template()
-    configured = payload(template, feature_mode="orb")
-    engine = TriggerEngine(configured)
-    frame = frame_for(template)
-    assert engine.process(frame, 0.0) is None
-    assert engine.process(frame, 0.11) is not None
-
-
-def test_source_aspect_ratio_change_requires_new_setup() -> None:
-    template = synthetic_template()
-    engine = TriggerEngine(payload(template))
-    changed = np.zeros((256, 256, 3), dtype=np.uint8)
-    with pytest.raises(RuntimeError, match="aspect ratio changed"):
-        engine.process(changed, 0.0)
-
-
-def test_prediction_result_uses_one_confirmation_private_crop_and_60_second_cooldown() -> None:
-    template = synthetic_template()
-    configured = payload(template)
+def test_prediction_result_uses_shared_matcher_and_two_confirmations() -> None:
+    trigger = trigger_image((60, 30, 160), label="END")
+    configured = payload(profile_for(trigger))
     engine = PredictionTriggerEngine(
         {
             "configuredFrameSize": configured["configuredFrameSize"],
@@ -164,11 +183,17 @@ def test_prediction_result_uses_one_confirmation_private_crop_and_60_second_cool
         },
         configured["limits"],
     )
-    frame = frame_for(template)
-    result = engine.process(frame, 0.0)
+    frame = frame_for(trigger)
+    assert engine.process(frame, 0.0) is None
+    result = engine.process(frame, 0.11)
     assert result is not None
-    encoded, width, height = result
-    assert encoded.startswith(b"\x89PNG\r\n\x1a\n")
+    _, width, height = result
     assert (width, height) == (64, 128)
-    assert engine.process(frame, 59.99) is None
-    assert engine.process(frame, 60.1) is not None
+
+
+def test_source_aspect_ratio_change_requires_new_setup() -> None:
+    trigger = trigger_image((20, 80, 140))
+    engine = TriggerEngine(payload(profile_for(trigger)))
+    changed = np.zeros((256, 256, 3), dtype=np.uint8)
+    with pytest.raises(RuntimeError, match="aspect ratio changed"):
+        engine.process(changed, 0.0)

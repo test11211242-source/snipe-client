@@ -8,7 +8,7 @@ import uuid
 from typing import Any, BinaryIO
 
 PROTOCOL_VERSION = 2
-MAX_COMMAND_BYTES = 128 * 1024
+MAX_COMMAND_BYTES = 256 * 1024
 
 
 class MonitorProtocolError(ValueError):

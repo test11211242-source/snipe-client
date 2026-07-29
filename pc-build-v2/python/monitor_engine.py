@@ -41,6 +41,7 @@ def run(start: dict[str, Any]) -> int:
         if payload["prediction"] is not None
         else None
     )
+    diagnostic_times = {"primary": -float("inf"), "prediction": -float("inf")}
     backend = WindowsMonitorBackend(payload["selector"])
 
     def fail(code: str, message: str) -> None:
@@ -48,6 +49,24 @@ def run(start: dict[str, Any]) -> int:
             return
         terminal.set()
         writer.emit("fatal", {"code": code[:64], "message": message[:300]})
+
+    def emit_diagnostic(profile: str, match, now: float) -> None:
+        if match is None or now - diagnostic_times[profile] < 1.0:
+            return
+        diagnostic_times[profile] = now
+        writer.emit(
+            "diagnostic",
+            {
+                "profile": profile,
+                "matched": match.matched,
+                "score": round(match.score, 4),
+                "support": round(match.support, 4),
+                "orientation": round(match.orientation, 4),
+                "correlation": round(match.correlation, 4),
+                "orbInliers": match.orb_inliers,
+                "reason": match.reason,
+            },
+        )
 
     def on_frame(frame) -> None:
         if terminal.is_set() or stopping.is_set():
@@ -62,6 +81,7 @@ def run(start: dict[str, Any]) -> int:
                 ready.set()
             now = time.monotonic()
             action = engine.process(bgr, now)
+            emit_diagnostic("primary", engine.last_match, now)
             if engine.take_triggered():
                 writer.emit(
                     "triggered",
@@ -84,6 +104,8 @@ def run(start: dict[str, Any]) -> int:
                     },
                 )
             prediction_result = prediction_engine.process(bgr, now) if prediction_engine else None
+            if prediction_engine is not None:
+                emit_diagnostic("prediction", prediction_engine.last_match, now)
             if prediction_result is not None:
                 image, image_width, image_height = prediction_result
                 writer.emit(

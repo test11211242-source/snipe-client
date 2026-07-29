@@ -83,7 +83,7 @@ def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
     with pytest.raises(MonitorProtocolError, match="stale"):
         read_command(line(command), expected_session_id=str(uuid.uuid4()))
     with pytest.raises(MonitorProtocolError, match="oversized"):
-        read_command(io.BytesIO(b"x" * (128 * 1024 + 1)))
+        read_command(io.BytesIO(b"x" * (256 * 1024 + 1)))
 
 
 def test_rejects_non_exact_limits_and_invalid_ratios() -> None:

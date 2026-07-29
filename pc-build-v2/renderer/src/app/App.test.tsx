@@ -121,8 +121,8 @@ describe('App shell', () => {
             alwaysOnTop: true,
             locked: false,
             opacity: 0.96,
-            displayMode: 'deck',
-            bounds: { x: null, y: null, width: 480, height: 354 },
+            displayMode: 'detailed',
+            bounds: { x: null, y: null, width: 420, height: 360 },
           },
           visible: false,
           hasResult: false,
@@ -476,8 +476,8 @@ describe('App shell', () => {
         alwaysOnTop: true,
         locked: false,
         opacity: 0.96,
-        displayMode: 'deck' as const,
-        bounds: { x: null, y: null, width: 420, height: 560 },
+        displayMode: 'detailed' as const,
+        bounds: { x: null, y: null, width: 420, height: 360 },
       },
       visible: false,
       hasResult: false,
@@ -523,15 +523,15 @@ describe('App shell', () => {
     })
   })
 
-  it('exposes the cards-only local widget mode as the default', async () => {
+  it('exposes the V1 full local widget mode as the default', async () => {
     const latestStatus = {
       settings: {
         autoOpen: true,
         alwaysOnTop: true,
         locked: false,
         opacity: 0.96,
-        displayMode: 'deck' as const,
-        bounds: { x: null, y: null, width: 480, height: 354 },
+        displayMode: 'detailed' as const,
+        bounds: { x: null, y: null, width: 420, height: 360 },
       },
       visible: false,
       hasResult: true,
@@ -545,13 +545,13 @@ describe('App shell', () => {
     const mode = await screen.findByRole('combobox', {
       name: 'Режим отображения виджета',
     })
-    expect(mode).toHaveValue('deck')
-    fireEvent.change(mode, { target: { value: 'detailed' } })
+    expect(mode).toHaveValue('detailed')
+    fireEvent.change(mode, { target: { value: 'deck' } })
 
     await waitFor(() =>
       expect(window.crTools.updateWidgetSettings).toHaveBeenCalledWith({
         ...latestStatus.settings,
-        displayMode: 'detailed',
+        displayMode: 'deck',
       }),
     )
   })

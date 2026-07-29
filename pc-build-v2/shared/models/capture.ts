@@ -91,27 +91,45 @@ export const NormalizedRegionsSchema = z
 
 export const TriggerProfileSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     analyzer: z
       .object({
         name: z.literal('cr-tools-trigger-analyzer'),
         version: z.string().min(1).max(32),
       })
       .strict(),
-    hashAlgorithm: z.literal('ahash64-bitwise-v1'),
-    ahash64: z.string().regex(/^[a-f0-9]{16}$/),
     innerRect: NormalizedRectSchema,
-    featureMode: z.enum(['orb', 'ncc']),
-    keypointsCount: z.number().int().nonnegative().max(100_000),
+    structureAlgorithm: z.literal('max-channel-scharr-v1'),
+    structureHash64: z.string().regex(/^[a-f0-9]{16}$/),
+    matcherMode: z.enum(['edge', 'edge_orb']),
     normalizedTemplateSize: PixelSizeSchema,
-    templateGrayBase64: z
+    structureTemplateBase64: z
       .string()
       .min(1)
-      .max(128 * 128 * 2),
-    hashMaxDistance: z.number().int().min(0).max(64),
-    orbDistanceThreshold: z.number().int().positive().max(256),
-    orbMinGoodMatches: z.number().int().nonnegative().max(10_000),
-    nccMinScore: z.number().min(-1).max(1),
+      .max(32 * 1024),
+    edgeTemplateBase64: z
+      .string()
+      .min(1)
+      .max(32 * 1024),
+    orientationTemplateBase64: z
+      .string()
+      .min(1)
+      .max(32 * 1024),
+    quality: z
+      .object({
+        grade: z.enum(['high', 'medium']),
+        score: z.number().min(0).max(1),
+        edgePixelCount: z
+          .number()
+          .int()
+          .positive()
+          .max(128 * 128),
+        edgeCoverage: z.number().min(0).max(1),
+        keypointsCount: z.number().int().nonnegative().max(10_000),
+        cropConfidence: z.number().min(0).max(1),
+        cropAreaRatio: z.number().positive().max(1),
+      })
+      .strict(),
   })
   .strict()
 

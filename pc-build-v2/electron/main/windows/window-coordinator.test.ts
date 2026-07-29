@@ -38,7 +38,7 @@ vi.mock('electron', () => {
     destroy = vi.fn(() => {
       this.destroyed = true
     })
-    getBounds = vi.fn(() => ({ x: 0, y: 0, width: 420, height: 560 }))
+    getBounds = vi.fn(() => ({ x: 0, y: 0, width: 420, height: 360 }))
     isAlwaysOnTop = vi.fn(() => true)
     moveTop = vi.fn()
     setAlwaysOnTop = vi.fn()
@@ -183,7 +183,7 @@ describe('WindowCoordinator auth shell', () => {
     ).toEqual({ x: 80, y: 0, width: 720, height: 600 })
     expect(
       persistableWidgetBounds({ x: -50_000, y: 50_000, width: 200, height: 120 }),
-    ).toEqual({ x: -32_768, y: 32_767, width: 340, height: 300 })
+    ).toEqual({ x: -32_768, y: 32_767, width: 300, height: 280 })
   })
 
   it('coalesces widget loading, destroys failed loads, and allows retry', async () => {
@@ -201,7 +201,7 @@ describe('WindowCoordinator auth shell', () => {
       locked: false,
       opacity: 1,
       displayMode: 'detailed' as const,
-      bounds: { x: null, y: null, width: 420, height: 560 },
+      bounds: { x: null, y: null, width: 420, height: 360 },
     }
     const first = coordinator.ensureWidgetWindow(settings)
     const second = coordinator.ensureWidgetWindow(settings)
@@ -237,7 +237,7 @@ describe('WindowCoordinator auth shell', () => {
     const move = loadedWindow.on.mock.calls.find(([event]) => event === 'move')?.[1] as
       (() => void) | undefined
     expect(() => move?.()).not.toThrow()
-    expect(observed).toHaveBeenCalledWith({ x: 0, y: 0, width: 340, height: 300 })
+    expect(observed).toHaveBeenCalledWith({ x: 0, y: 0, width: 300, height: 280 })
     const warning = warn.mock.calls[0] as unknown as
       [string, { error: unknown }] | undefined
     expect(warning?.[0]).toBe('Widget bounds listener failed')
@@ -258,7 +258,7 @@ describe('WindowCoordinator auth shell', () => {
     expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps the frameless deck overlay proportional and topmost on blur', async () => {
+  it('keeps the frameless overlay freely resizable and topmost on blur', async () => {
     const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
     const settings = {
       autoOpen: true,
@@ -266,7 +266,7 @@ describe('WindowCoordinator auth shell', () => {
       locked: false,
       opacity: 0.96,
       displayMode: 'deck' as const,
-      bounds: { x: null, y: null, width: 480, height: 354 },
+      bounds: { x: null, y: null, width: 360, height: 300 },
     }
 
     await coordinator.ensureWidgetWindow(settings)
@@ -278,8 +278,8 @@ describe('WindowCoordinator auth shell', () => {
     expect(options).toMatchObject({
       frame: false,
       transparent: true,
-      minWidth: 480,
-      minHeight: 354,
+      minWidth: 300,
+      minHeight: 280,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
@@ -292,8 +292,8 @@ describe('WindowCoordinator auth shell', () => {
       setMinimumSize: ReturnType<typeof vi.fn>
       showInactive: ReturnType<typeof vi.fn>
     }
-    expect(window.setMinimumSize).toHaveBeenCalledWith(480, 354)
-    expect(window.setAspectRatio).toHaveBeenLastCalledWith(480 / 354)
+    expect(window.setMinimumSize).toHaveBeenCalledWith(300, 280)
+    expect(window.setAspectRatio).toHaveBeenLastCalledWith(0)
     expect(window.setAlwaysOnTop).toHaveBeenCalledWith(true, 'normal')
     expect(window.showInactive).toHaveBeenCalledOnce()
     expect(window.moveTop).toHaveBeenCalled()

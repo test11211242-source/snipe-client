@@ -20,19 +20,25 @@ function payload(): MonitorStartPayload {
       precise: { x: 0, y: 0, width: 1, height: 1 },
     },
     triggerProfile: {
-      schemaVersion: 2,
-      analyzer: { name: 'cr-tools-trigger-analyzer', version: '1.0.0' },
-      hashAlgorithm: 'ahash64-bitwise-v1',
-      ahash64: '0123456789abcdef',
+      schemaVersion: 3,
+      analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
       innerRect: { x: 0, y: 0, width: 1, height: 1 },
-      featureMode: 'ncc',
-      keypointsCount: 0,
+      structureAlgorithm: 'max-channel-scharr-v1',
+      structureHash64: '0123456789abcdef',
+      matcherMode: 'edge',
       normalizedTemplateSize: { width: 128, height: 128 },
-      templateGrayBase64: 'AAAA',
-      hashMaxDistance: 18,
-      orbDistanceThreshold: 55,
-      orbMinGoodMatches: 10,
-      nccMinScore: 0.72,
+      structureTemplateBase64: 'AAAA',
+      edgeTemplateBase64: 'AAAA',
+      orientationTemplateBase64: 'AAAA',
+      quality: {
+        grade: 'medium',
+        score: 0.65,
+        edgePixelCount: 120,
+        edgeCoverage: 0.5,
+        keypointsCount: 0,
+        cropConfidence: 0,
+        cropAreaRatio: 1,
+      },
     },
     searchMode: 'fast',
     captureDelaySeconds: 0,
@@ -100,12 +106,14 @@ function listener(): MonitorProcessListener {
 }
 
 function service(child: FakeChild, treeKill = vi.fn().mockResolvedValue(undefined)) {
+  const logger = { info: vi.fn(), warn: vi.fn() }
   return {
     treeKill,
+    logger,
     value: new MonitorProcessService(
       'python.exe',
       'monitor_engine.py',
-      { info: vi.fn(), warn: vi.fn() },
+      logger,
       vi.fn(() => child),
       treeKill,
     ),
@@ -241,11 +249,25 @@ describe('MonitorProcessService', () => {
     image.write('IHDR', 12, 'ascii')
     image.writeUInt32BE(20, 16)
     image.writeUInt32BE(10, 20)
-    child.event(2, 'triggered', {
+    child.event(2, 'diagnostic', {
+      profile: 'primary',
+      matched: false,
+      score: 0.61,
+      support: 0.65,
+      orientation: 0.7,
+      correlation: 0.2,
+      orbInliers: 3,
+      reason: 'structure_below_threshold',
+    })
+    expect(monitored.logger.info).toHaveBeenCalledWith(
+      'Trigger diagnostic',
+      expect.objectContaining({ profile: 'primary', score: 0.61 }),
+    )
+    child.event(3, 'triggered', {
       timestamp: '2026-07-12T12:00:00.000Z',
     })
     expect(processListener.onTriggered).toHaveBeenCalledWith('2026-07-12T12:00:00.000Z')
-    child.event(3, 'action', {
+    child.event(4, 'action', {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 20,
       height: 10,
@@ -255,7 +277,7 @@ describe('MonitorProcessService', () => {
     expect(processListener.onAction).toHaveBeenCalledWith(
       expect.objectContaining({ width: 20, height: 10, image }),
     )
-    child.event(4, 'prediction_result', {
+    child.event(5, 'prediction_result', {
       timestamp: '2026-07-12T12:00:01.000Z',
       width: 20,
       height: 10,

@@ -5,27 +5,16 @@ from __future__ import annotations
 import base64
 import binascii
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import cv2
 import numpy as np
 
+from analyze_trigger import structural_maps
 from monitor_protocol import MonitorProtocolError, validate_ratio
 
-
-def ahash64(gray: np.ndarray) -> str:
-    tiny = cv2.resize(gray, (8, 8), interpolation=cv2.INTER_AREA)
-    bits = tiny >= float(tiny.mean())
-    value = 0
-    for bit in bits.reshape(-1):
-        value = (value << 1) | int(bit)
-    return f"{value:016x}"
-
-
-def hamming64(left: str, right: str) -> int:
-    if len(left) != 16 or len(right) != 16:
-        raise ValueError("ahash values must be 64-bit hexadecimal strings")
-    return (int(left, 16) ^ int(right, 16)).bit_count()
+NORMALIZED_SIZE = 128
 
 
 def ratio_rect(ratio: dict[str, float], frame_width: int, frame_height: int, parent=None):
@@ -64,17 +53,15 @@ class TriggerProfile:
         required = {
             "schemaVersion",
             "analyzer",
-            "hashAlgorithm",
-            "ahash64",
             "innerRect",
-            "featureMode",
-            "keypointsCount",
+            "structureAlgorithm",
+            "structureHash64",
+            "matcherMode",
             "normalizedTemplateSize",
-            "templateGrayBase64",
-            "hashMaxDistance",
-            "orbDistanceThreshold",
-            "orbMinGoodMatches",
-            "nccMinScore",
+            "structureTemplateBase64",
+            "edgeTemplateBase64",
+            "orientationTemplateBase64",
+            "quality",
         }
         if not isinstance(value, dict) or set(value) != required:
             raise MonitorProtocolError("trigger profile fields are invalid")
@@ -88,59 +75,290 @@ class TriggerProfile:
             raise MonitorProtocolError("trigger analyzer is invalid")
         if not 1 <= len(analyzer["version"]) <= 32:
             raise MonitorProtocolError("trigger analyzer version is invalid")
-        if value["schemaVersion"] != 2 or value["hashAlgorithm"] != "ahash64-bitwise-v1":
+        if value["schemaVersion"] != 3 or value["structureAlgorithm"] != "max-channel-scharr-v1":
             raise MonitorProtocolError("trigger profile version is invalid")
-        self.hash = value["ahash64"]
-        if not isinstance(self.hash, str) or len(self.hash) != 16:
-            raise MonitorProtocolError("trigger hash is invalid")
+        structure_hash = value["structureHash64"]
+        if not isinstance(structure_hash, str) or len(structure_hash) != 16:
+            raise MonitorProtocolError("trigger structure hash is invalid")
         try:
-            int(self.hash, 16)
+            int(structure_hash, 16)
         except ValueError as error:
-            raise MonitorProtocolError("trigger hash is invalid") from error
+            raise MonitorProtocolError("trigger structure hash is invalid") from error
         self.inner_ratio = validate_ratio(value["innerRect"], "trigger inner rect")
-        self.feature_mode = value["featureMode"]
-        if self.feature_mode not in ("orb", "ncc"):
-            raise MonitorProtocolError("trigger feature mode is invalid")
+        self.matcher_mode = value["matcherMode"]
+        if self.matcher_mode not in ("edge", "edge_orb"):
+            raise MonitorProtocolError("trigger matcher mode is invalid")
         size = value["normalizedTemplateSize"]
-        if size != {"width": 128, "height": 128}:
+        if size != {"width": NORMALIZED_SIZE, "height": NORMALIZED_SIZE}:
             raise MonitorProtocolError("trigger normalized size must be 128x128")
-        encoded = value["templateGrayBase64"]
-        if not isinstance(encoded, str) or not 1 <= len(encoded) <= 32768:
-            raise MonitorProtocolError("trigger template is invalid")
-        try:
-            raw = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error) as error:
-            raise MonitorProtocolError("trigger template encoding is invalid") from error
-        self.template = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-        if self.template is None or self.template.shape != (128, 128):
-            raise MonitorProtocolError("trigger template image is invalid")
-        self.hash_max_distance = _bounded_int(value["hashMaxDistance"], 0, 64, "hash distance")
-        self.orb_distance = _bounded_int(value["orbDistanceThreshold"], 1, 256, "ORB distance")
-        self.orb_min_matches = _bounded_int(value["orbMinGoodMatches"], 0, 10000, "ORB matches")
-        self.ncc_min_score = _bounded_float(value["nccMinScore"], -1, 1, "NCC score")
-        _bounded_int(value["keypointsCount"], 0, 100000, "keypoints count")
-        if (
-            self.hash_max_distance != 18
-            or self.orb_distance != 55
-            or self.orb_min_matches != 10
-            or self.ncc_min_score != 0.72
-        ):
-            raise MonitorProtocolError("trigger thresholds are invalid")
+        self.template_structure = _decode_template(
+            value["structureTemplateBase64"], "structure"
+        )
+        self.template_edges = _decode_template(value["edgeTemplateBase64"], "edge")
+        self.template_orientation = _decode_template(
+            value["orientationTemplateBase64"], "orientation"
+        )
+        self.template_edges = np.where(self.template_edges > 0, 255, 0).astype(np.uint8)
+        quality = value["quality"]
+        if not isinstance(quality, dict) or set(quality) != {
+            "grade",
+            "score",
+            "edgePixelCount",
+            "edgeCoverage",
+            "keypointsCount",
+            "cropConfidence",
+            "cropAreaRatio",
+        }:
+            raise MonitorProtocolError("trigger quality fields are invalid")
+        self.quality_grade = quality["grade"]
+        if self.quality_grade not in ("high", "medium"):
+            raise MonitorProtocolError("trigger quality grade is invalid")
+        _bounded_float(quality["score"], 0, 1, "trigger quality score")
+        _bounded_int(quality["edgePixelCount"], 1, NORMALIZED_SIZE**2, "edge count")
+        _bounded_float(quality["edgeCoverage"], 0, 1, "edge coverage")
+        _bounded_int(quality["keypointsCount"], 0, 10000, "keypoints count")
+        _bounded_float(quality["cropConfidence"], 0, 1, "crop confidence")
+        _bounded_float(quality["cropAreaRatio"], 0.000001, 1, "crop area ratio")
+        self.template_weights = np.maximum(
+            self.template_structure.astype(np.float32) / 255.0, 0.2
+        )
+        self.template_edge_mask = self.template_edges > 0
+        if int(np.count_nonzero(self.template_edge_mask)) < 80:
+            raise MonitorProtocolError("trigger template has insufficient structure")
+        self.template_orientation_descriptor = _orientation_descriptor(
+            self.template_edges,
+            self.template_orientation,
+            self.template_structure,
+        )
+        self.template_edge_neighborhood = cv2.dilate(
+            self.template_edges, np.ones((5, 5), np.uint8)
+        )
+        self.template_correlation_mask = cv2.dilate(
+            self.template_edges, np.ones((7, 7), np.uint8)
+        ) > 0
         self.orb = cv2.ORB_create(nfeatures=400)
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        _, self.template_descriptors = self.orb.detectAndCompute(self.template, None)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+        self.template_keypoints, self.template_descriptors = self.orb.detectAndCompute(
+            self.template_structure, None
+        )
 
-    def matches(self, gray: np.ndarray) -> bool:
-        if hamming64(ahash64(gray), self.hash) > self.hash_max_distance:
+    def evaluate(self, image: np.ndarray) -> "MatchResult":
+        structure, edges, orientation = structural_maps(
+            image, (NORMALIZED_SIZE, NORMALIZED_SIZE)
+        )
+        best: MatchResult | None = None
+        best_maps: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+        transforms = [(1.0, x, y) for x in (-3, 0, 3) for y in (-3, 0, 3)]
+        transforms.extend(((0.97, 0, 0), (1.03, 0, 0)))
+        for scale, offset_x, offset_y in transforms:
+            candidate = _transform_maps(
+                structure, edges, orientation, scale, offset_x, offset_y
+            )
+            result = self._score_structure(*candidate)
+            if best is None or result.score > best.score:
+                best = result
+                best_maps = candidate
+        if best is None or best_maps is None:
+            return MatchResult(False, 0.0, 0.0, 0.0, 0.0, 0, "no_candidate")
+
+        orb_inliers = 0
+        orb_score = 0.0
+        if self.matcher_mode == "edge_orb":
+            orb_inliers, orb_score = self._score_orb(best_maps[0])
+        support_floor = 0.62 if self.quality_grade == "high" else 0.66
+        score_floor = 0.69 if self.quality_grade == "high" else 0.73
+        if self.matcher_mode == "edge_orb" and orb_inliers >= 6:
+            final_score = min(1.0, best.score * 0.85 + orb_score * 0.15)
+            matched = best.support >= support_floor and final_score >= score_floor
+        elif self.matcher_mode == "edge_orb":
+            final_score = best.score
+            matched = False
+        else:
+            final_score = best.score
+            matched = best.support >= support_floor and final_score >= score_floor
+        return MatchResult(
+            matched,
+            final_score,
+            best.support,
+            best.orientation,
+            best.correlation,
+            orb_inliers,
+            "pass" if matched else "structure_below_threshold",
+        )
+
+    def matches(self, image: np.ndarray) -> bool:
+        return self.evaluate(image).matched
+
+    def _score_structure(
+        self, structure: np.ndarray, edges: np.ndarray, orientation: np.ndarray
+    ) -> "MatchResult":
+        candidate_edges = edges > 0
+        distance = cv2.distanceTransform(
+            np.where(candidate_edges, 0, 1).astype(np.uint8), cv2.DIST_L2, 3
+        )
+        support_values = np.exp(-np.square(distance[self.template_edge_mask] / 2.2))
+        weights = self.template_weights[self.template_edge_mask]
+        support = float(np.average(support_values, weights=weights))
+        relevant_candidate = np.where(
+            self.template_edge_neighborhood > 0, edges, 0
+        ).astype(np.uint8)
+        candidate_descriptor = _orientation_descriptor(
+            relevant_candidate, orientation, structure
+        )
+        orientation_score = float(
+            np.clip(
+                np.dot(self.template_orientation_descriptor, candidate_descriptor), 0, 1
+            )
+        )
+        correlation = _masked_correlation(
+            self.template_structure.astype(np.float32),
+            structure.astype(np.float32),
+            self.template_correlation_mask,
+        )
+        score = 0.58 * support + 0.27 * orientation_score + 0.15 * max(0.0, correlation)
+        return MatchResult(
+            False, score, support, orientation_score, correlation, 0, "scored"
+        )
+
+    def _score_orb(self, structure: np.ndarray) -> tuple[int, float]:
+        if self.template_descriptors is None or len(self.template_keypoints) < 6:
+            return 0, 0.0
+        keypoints, descriptors = self.orb.detectAndCompute(structure, None)
+        if descriptors is None or len(keypoints) < 6:
+            return 0, 0.0
+        pairs = self.matcher.knnMatch(self.template_descriptors, descriptors, k=2)
+        good = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < 0.76 * pair[1].distance]
+        if len(good) < 6:
+            return 0, 0.0
+        source = np.float32([self.template_keypoints[match.queryIdx].pt for match in good])
+        target = np.float32([keypoints[match.trainIdx].pt for match in good])
+        matrix, inlier_mask = cv2.estimateAffinePartial2D(
+            source, target, method=cv2.RANSAC, ransacReprojThreshold=3.0
+        )
+        if matrix is None or inlier_mask is None:
+            return 0, 0.0
+        inliers = int(inlier_mask.sum())
+        inlier_ratio = inliers / len(good)
+        scale = float(math.hypot(matrix[0, 0], matrix[0, 1]))
+        rotation = abs(math.degrees(math.atan2(matrix[0, 1], matrix[0, 0])))
+        translation = float(math.hypot(matrix[0, 2], matrix[1, 2]))
+        if not 0.9 <= scale <= 1.1 or rotation > 6.0 or translation > 10.0:
+            return 0, 0.0
+        score = min(1.0, inliers / 12.0) * min(1.0, inlier_ratio / 0.6)
+        return inliers, score
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    matched: bool
+    score: float
+    support: float
+    orientation: float
+    correlation: float
+    orb_inliers: int
+    reason: str
+
+
+def _decode_template(encoded: Any, name: str) -> np.ndarray:
+    if not isinstance(encoded, str) or not 1 <= len(encoded) <= 32 * 1024:
+        raise MonitorProtocolError(f"trigger {name} template is invalid")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise MonitorProtocolError(f"trigger {name} template encoding is invalid") from error
+    template = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if template is None or template.shape != (NORMALIZED_SIZE, NORMALIZED_SIZE):
+        raise MonitorProtocolError(f"trigger {name} template image is invalid")
+    return template
+
+
+def _transform_maps(
+    structure: np.ndarray,
+    edges: np.ndarray,
+    orientation: np.ndarray,
+    scale: float,
+    offset_x: int,
+    offset_y: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    center = (NORMALIZED_SIZE - 1) / 2.0
+    matrix = np.array(
+        [
+            [scale, 0.0, offset_x + center * (1.0 - scale)],
+            [0.0, scale, offset_y + center * (1.0 - scale)],
+        ],
+        dtype=np.float32,
+    )
+    linear = cv2.warpAffine(
+        structure, matrix, (NORMALIZED_SIZE, NORMALIZED_SIZE), flags=cv2.INTER_LINEAR
+    )
+    edge = cv2.warpAffine(
+        edges, matrix, (NORMALIZED_SIZE, NORMALIZED_SIZE), flags=cv2.INTER_NEAREST
+    )
+    angle = cv2.warpAffine(
+        orientation, matrix, (NORMALIZED_SIZE, NORMALIZED_SIZE), flags=cv2.INTER_NEAREST
+    )
+    return linear, edge, angle
+
+
+def _orientation_descriptor(
+    edges: np.ndarray, orientation: np.ndarray, weights: np.ndarray
+) -> np.ndarray:
+    descriptor = np.zeros((4, 4, 9), dtype=np.float32)
+    for row in range(4):
+        for column in range(4):
+            row_slice = slice(row * 32, (row + 1) * 32)
+            column_slice = slice(column * 32, (column + 1) * 32)
+            mask = edges[row_slice, column_slice] > 0
+            if not np.any(mask):
+                continue
+            angles = orientation[row_slice, column_slice][mask].astype(np.float32)
+            values = weights[row_slice, column_slice][mask].astype(np.float32) / 255.0
+            bins = np.minimum(8, (angles / 20.0).astype(np.int32))
+            descriptor[row, column] = np.bincount(bins, weights=values, minlength=9)
+    flattened = descriptor.reshape(-1)
+    norm = float(np.linalg.norm(flattened))
+    return flattened / norm if norm > 0 else flattened
+
+
+def _masked_correlation(left: np.ndarray, right: np.ndarray, mask: np.ndarray) -> float:
+    left_values = left[mask]
+    right_values = right[mask]
+    left_values = left_values - float(left_values.mean())
+    right_values = right_values - float(right_values.mean())
+    denominator = float(np.linalg.norm(left_values) * np.linalg.norm(right_values))
+    if denominator <= 1e-6:
+        return 0.0
+    return float(np.clip(np.dot(left_values, right_values) / denominator, -1, 1))
+
+
+class TemporalGate:
+    def __init__(self, confirmations_needed: int, cooldown_seconds: float):
+        self.confirmations_needed = confirmations_needed
+        self.cooldown_seconds = cooldown_seconds
+        self.confirmations = 0
+        self.release_frames = 0
+        self.armed = True
+        self.last_trigger_time = -math.inf
+
+    def observe(self, matched: bool, now: float) -> bool:
+        if not matched:
+            self.confirmations = 0
+            if not self.armed:
+                self.release_frames += 1
+                if self.release_frames >= 2:
+                    self.armed = True
             return False
-        if self.feature_mode == "ncc":
-            score = float(cv2.matchTemplate(gray, self.template, cv2.TM_CCOEFF_NORMED)[0][0])
-            return math.isfinite(score) and score >= self.ncc_min_score
-        _, descriptors = self.orb.detectAndCompute(gray, None)
-        if self.template_descriptors is None or descriptors is None:
+        self.release_frames = 0
+        if not self.armed or now - self.last_trigger_time < self.cooldown_seconds:
+            self.confirmations = 0
             return False
-        matches = self.matcher.match(self.template_descriptors, descriptors)
-        return sum(match.distance <= self.orb_distance for match in matches) >= self.orb_min_matches
+        self.confirmations += 1
+        if self.confirmations < self.confirmations_needed:
+            return False
+        self.confirmations = 0
+        self.armed = False
+        self.last_trigger_time = now
+        return True
 
 
 def _bounded_int(value: Any, minimum: int, maximum: int, name: str) -> int:
@@ -189,15 +407,16 @@ class TriggerEngine:
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
-        self.last_trigger_time = -math.inf
-        self.confirmations = 0.0
+        self.gate = TemporalGate(
+            self.limits["confirmationsNeeded"], self.limits["cooldownSeconds"]
+        )
         self.capture_due_at: float | None = None
         self.triggered = False
+        self.last_match: MatchResult | None = None
         self.configured_aspect = (
             payload["configuredFrameSize"]["width"]
             / payload["configuredFrameSize"]["height"]
         )
-        self.frame_geometry_validated = False
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
@@ -208,34 +427,20 @@ class TriggerEngine:
         frame_height, frame_width = bgr.shape[:2]
         if frame_width <= 0 or frame_height <= 0 or frame_width * frame_height > 20_000_000:
             raise RuntimeError("capture frame dimensions are invalid")
-        if not self.frame_geometry_validated:
-            actual_aspect = frame_width / frame_height
-            if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-                raise RuntimeError("capture source aspect ratio changed; configure capture again")
-            self.frame_geometry_validated = True
+        actual_aspect = frame_width / frame_height
+        if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
+            raise RuntimeError("capture source aspect ratio changed; configure capture again")
         if self.capture_due_at is not None:
             if now < self.capture_due_at:
                 return None
             self.capture_due_at = None
             data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
             return encode_action_png(crop(bgr, data_rect), self.limits)
-        if now - self.last_trigger_time < self.limits["cooldownSeconds"]:
-            return None
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
-        gray = cv2.cvtColor(crop(bgr, inner), cv2.COLOR_BGR2GRAY)
-        normalized = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
-        if self.profile.matches(normalized):
-            self.confirmations = min(
-                float(self.limits["confirmationsNeeded"]), self.confirmations + 1.0
-            )
-        else:
-            self.confirmations = max(0.0, self.confirmations - self.limits["confirmationDecay"])
+        self.last_match = self.profile.evaluate(crop(bgr, inner))
+        if not self.gate.observe(self.last_match.matched, now):
             return None
-        if self.confirmations < self.limits["confirmationsNeeded"]:
-            return None
-        self.confirmations = 0.0
-        self.last_trigger_time = now
         self.triggered = True
         if self.capture_delay > 0:
             self.capture_due_at = now + self.capture_delay
@@ -259,9 +464,9 @@ class PredictionTriggerEngine:
         self.limits = limits
         self.frame_interval = 1.0 / limits["fps"]
         self.last_frame_time = -math.inf
-        self.last_trigger_time = -math.inf
+        self.gate = TemporalGate(2, 60.0)
+        self.last_match: MatchResult | None = None
         self.configured_aspect = value["configuredFrameSize"]["width"] / value["configuredFrameSize"]["height"]
-        self.frame_geometry_validated = False
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         if now - self.last_frame_time < self.frame_interval:
@@ -269,19 +474,13 @@ class PredictionTriggerEngine:
         self.last_frame_time = now
         bgr = ensure_bgr(frame)
         frame_height, frame_width = bgr.shape[:2]
-        if not self.frame_geometry_validated:
-            actual_aspect = frame_width / frame_height
-            if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-                raise RuntimeError("prediction capture aspect ratio changed")
-            self.frame_geometry_validated = True
-        if now - self.last_trigger_time < 60.0:
-            return None
+        actual_aspect = frame_width / frame_height
+        if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
+            raise RuntimeError("prediction capture aspect ratio changed")
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
-        gray = cv2.cvtColor(crop(bgr, inner), cv2.COLOR_BGR2GRAY)
-        normalized = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
-        if not self.profile.matches(normalized):
+        self.last_match = self.profile.evaluate(crop(bgr, inner))
+        if not self.gate.observe(self.last_match.matched, now):
             return None
-        self.last_trigger_time = now
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)

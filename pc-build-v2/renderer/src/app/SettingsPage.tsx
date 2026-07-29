@@ -226,7 +226,7 @@ export function SettingsPage({
                 <span>
                   <strong>Режим отображения</strong>
                   <small>
-                    «Только колода» показывает восемь карт 4×2 без лишней информации.
+                    Полный режим добавляет данные колоды, компактный оставляет карты 4×2.
                   </small>
                 </span>
                 <select
@@ -239,8 +239,8 @@ export function SettingsPage({
                     })
                   }
                 >
-                  <option value="deck">Только колода 4×2</option>
-                  <option value="detailed">Подробный</option>
+                  <option value="detailed">Полный V1</option>
+                  <option value="deck">Компактный V1</option>
                 </select>
               </label>
               <label className="setting-range">

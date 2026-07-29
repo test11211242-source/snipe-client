@@ -7,25 +7,32 @@ import type { CrToolsSetupApi } from '../../../shared/contracts/preload'
 import type { NormalizedRect, TriggerProfile } from '../../../shared/models/capture'
 import type { SetupFrame, SetupSessionView } from '../../../shared/models/setup'
 import { SetupApp } from './SetupApp'
+import { projectInnerRect } from './geometry'
 
 const TRIGGER: NormalizedRect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 }
 const NORMAL: NormalizedRect = { x: 0.3, y: 0.2, width: 0.2, height: 0.2 }
 const PRECISE: NormalizedRect = { x: 0.15, y: 0.15, width: 0.6, height: 0.6 }
 
 const PROFILE: TriggerProfile = {
-  schemaVersion: 2,
-  analyzer: { name: 'cr-tools-trigger-analyzer', version: '1.0.0' },
-  hashAlgorithm: 'ahash64-bitwise-v1',
-  ahash64: '0123456789abcdef',
+  schemaVersion: 3,
+  analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
   innerRect: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
-  featureMode: 'orb',
-  keypointsCount: 12,
-  normalizedTemplateSize: { width: 64, height: 64 },
-  templateGrayBase64: 'dGVzdA==',
-  hashMaxDistance: 8,
-  orbDistanceThreshold: 40,
-  orbMinGoodMatches: 4,
-  nccMinScore: 0.8,
+  structureAlgorithm: 'max-channel-scharr-v1',
+  structureHash64: '0123456789abcdef',
+  matcherMode: 'edge_orb',
+  normalizedTemplateSize: { width: 128, height: 128 },
+  structureTemplateBase64: 'dGVzdA==',
+  edgeTemplateBase64: 'dGVzdA==',
+  orientationTemplateBase64: 'dGVzdA==',
+  quality: {
+    grade: 'high',
+    score: 0.88,
+    edgePixelCount: 512,
+    edgeCoverage: 0.75,
+    keypointsCount: 12,
+    cropConfidence: 0.9,
+    cropAreaRatio: 0.64,
+  },
 }
 
 function setupView(overrides: Partial<SetupSessionView> = {}): SetupSessionView {
@@ -93,13 +100,22 @@ function installApi(initial: SetupSessionView, overrides: Partial<CrToolsSetupAp
     }
     return Promise.resolve(current)
   })
+  const analyzeTrigger = vi.fn<CrToolsSetupApi['analyzeTrigger']>((payload) => {
+    current = {
+      ...current,
+      generation: payload.generation + 1,
+      triggerProfile: PROFILE,
+      error: null,
+    }
+    return Promise.resolve(current)
+  })
   const close = vi.fn<CrToolsSetupApi['close']>(advance)
   const api: CrToolsSetupApi = Object.freeze({
     getSession,
     getFrame,
     setRegion,
     finish,
-    analyzeTrigger: vi.fn(advance),
+    analyzeTrigger,
     review: vi.fn(advance),
     commit: vi.fn(advance),
     cancel: vi.fn(advance),
@@ -110,7 +126,7 @@ function installApi(initial: SetupSessionView, overrides: Partial<CrToolsSetupAp
     configurable: true,
     value: api,
   })
-  return { close, finish, getFrame, getSession, setRegion }
+  return { analyzeTrigger, close, finish, getFrame, getSession, setRegion }
 }
 
 function deferred<T>() {
@@ -253,6 +269,19 @@ describe('SetupApp', () => {
     installApi(initial, { setRegion })
     await renderSetup()
 
+    expect(projectInnerRect(TRIGGER, PROFILE.innerRect)).toEqual({
+      x: 0.12,
+      y: 0.12,
+      width: 0.16,
+      height: 0.16,
+    })
+    expect(screen.getByText('Контуры + геометрия')).toBeInTheDocument()
+    expect(screen.getByText('64% исходной области')).toBeInTheDocument()
+    expect(screen.getByAltText('Структурная маска триггера')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,dGVzdA==',
+    )
+
     fireEvent.change(screen.getByLabelText('X'), { target: { value: '12' } })
     fireEvent.click(screen.getByRole('button', { name: /^Быстрый поиск\./ }))
 
@@ -373,10 +402,12 @@ describe('SetupApp', () => {
     const initial = setupView({
       regions: { ...setupView().regions, precise: null },
     })
-    const { close, finish } = installApi(initial)
+    const { analyzeTrigger, close, finish } = installApi(initial)
     await renderSetup()
 
     fireEvent.click(screen.getByRole('button', { name: /^Точный поиск\./ }))
+    expect(await screen.findByRole('heading', { name: 'Точный поиск' })).toBeVisible()
+    expect(analyzeTrigger).toHaveBeenCalledOnce()
     for (const [label, value] of [
       ['X', '15'],
       ['Y', '15'],
@@ -390,7 +421,7 @@ describe('SetupApp', () => {
     await waitFor(() => expect(finish).toHaveBeenCalledTimes(1))
     expect(finish).toHaveBeenCalledWith({
       sessionId: initial.sessionId,
-      generation: initial.generation,
+      generation: initial.generation + 1,
       region: 'precise',
       rect: PRECISE,
     })

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/widget-settings-repository'
 import type { WidgetView } from '../../../shared/models/widget'
@@ -55,28 +55,37 @@ describe('WidgetApp', () => {
     })
   })
 
-  it('renders the default mode as an image-only 4x2 deck', async () => {
-    render(<WidgetApp />)
+  afterEach(() => vi.useRealTimers())
 
-    expect(await screen.findByRole('article', { name: 'Knight' })).toBeVisible()
+  it('renders the V1 full mode as a direct image-only 4x2 grid', async () => {
+    const { container } = render(<WidgetApp />)
+
+    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
+    expect(screen.getByLabelText('Рейтинг 2000')).toBeVisible()
     expect(screen.getAllByRole('article')).toHaveLength(8)
-    expect(screen.queryByRole('heading', { name: 'Opponent' })).not.toBeInTheDocument()
     expect(screen.queryByText('Knight')).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('slider', { name: 'Прозрачность виджета' }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Открыть подробный режим' }),
-    ).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Поверх остальных окон' })).toHaveAttribute(
+    expect(screen.getByText('PoL')).toBeVisible()
+    expect(screen.getByText('8 / 8')).toBeVisible()
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Компактный вид' })).toHaveAttribute(
       'aria-pressed',
-      'true',
+      'false',
     )
-    expect(screen.getByTitle('Перетащить виджет')).toBeVisible()
+    expect(screen.getByLabelText('Управление виджетом')).toHaveClass('widget-controls')
+    expect(screen.getByTitle('Перетащить виджет')).toHaveClass('widget-drag-handle')
+
+    const shell = container.querySelector('.widget-shell')
+    const grid = container.querySelector('.card-grid')
+    expect(shell).toHaveAttribute('data-mode', 'full')
+    expect(grid?.children).toHaveLength(8)
+    expect(
+      [...Array.from(grid?.children ?? [])].every((card) => card.matches('.deck-card')),
+    ).toBe(true)
+    expect(container.querySelector('.card-copy')).not.toBeInTheDocument()
   })
 
-  it('supports mini deck tabs and restores metadata in detailed mode', async () => {
-    render(<WidgetApp />)
+  it('switches decks with compact dots and hides only the footer in compact mode', async () => {
+    const { container } = render(<WidgetApp />)
     await screen.findByRole('article', { name: 'Knight' })
 
     const firstTab = screen.getByRole('tab', { name: 'Колода 1: PoL' })
@@ -84,14 +93,26 @@ describe('WidgetApp', () => {
     fireEvent.keyDown(firstTab, { key: 'ArrowRight' })
     expect(screen.getByRole('tab', { name: 'Колода 2: Турнир' })).toHaveFocus()
     expect(screen.getByRole('article', { name: 'Archer' })).toBeVisible()
+    expect(screen.getByText('Турнир')).toBeVisible()
+    expect(screen.getByText('1 / 8')).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Открыть подробный режим' }))
-    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
-    expect(screen.getByText('Archer')).toBeVisible()
-    expect(screen.getByRole('slider', { name: 'Прозрачность виджета' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
+    await waitFor(() =>
+      expect(container.querySelector('.widget-shell')).toHaveAttribute(
+        'data-mode',
+        'compact',
+      ),
+    )
+    expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
+    expect(screen.getByRole('article', { name: 'Archer' })).toBeVisible()
+    expect(screen.queryByText('1 / 8')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Полный вид' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
   })
 
-  it('does not add navigation chrome when only one deck is available', async () => {
+  it('does not add deck navigation chrome when only one deck is available', async () => {
     if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
     vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
       ...widgetView,
@@ -106,56 +127,83 @@ describe('WidgetApp', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('shows mutation errors without hiding the current deck', async () => {
+  it('shows mutation errors without hiding or replacing the current deck', async () => {
     vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(
       new Error('failed'),
     )
     render(<WidgetApp />)
     await screen.findByRole('article', { name: 'Knight' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Открыть подробный режим' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
 
     expect(await screen.findByText('Не удалось сохранить настройку.')).toBeVisible()
     expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
   })
 
-  it('serializes rapid mode and debounced opacity updates against latest settings', async () => {
-    let serverView: WidgetView = {
-      ...widgetView,
-      settings: {
-        ...widgetView.settings,
-        displayMode: 'detailed',
-        bounds: { x: null, y: null, width: 420, height: 560 },
-      },
+  it('supports V1 keyboard shortcuts without exposing generic IPC', async () => {
+    render(<WidgetApp />)
+    await screen.findByRole('article', { name: 'Knight' })
+
+    fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ alwaysOnTop: false }),
+      ),
+    )
+    await screen.findByRole('button', { name: 'Закрепить поверх окон' })
+
+    fireEvent.keyDown(document, { key: 'l', ctrlKey: true })
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ locked: true }),
+      ),
+    )
+    await screen.findByRole('button', { name: 'Разблокировать позицию' })
+
+    fireEvent.keyDown(document, { key: 'm', ctrlKey: true })
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ displayMode: 'deck' }),
+      ),
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(window.crToolsWidget.hide).toHaveBeenCalledOnce()
+  })
+
+  it('debounces Ctrl+wheel opacity and clamps it to the V2 safety range', async () => {
+    render(<WidgetApp />)
+    await screen.findByRole('article', { name: 'Knight' })
+
+    fireEvent.wheel(document, { ctrlKey: false, deltaY: 100 })
+    expect(window.crToolsWidget.updateSettings).not.toHaveBeenCalled()
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.wheel(document, { ctrlKey: true, deltaY: 100 })
     }
+
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledOnce(),
+    )
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ opacity: 0.55 }),
+    )
+  })
+
+  it('serializes mode and wheel updates against the latest settings', async () => {
+    let serverView: WidgetView = { ...widgetView }
     vi.mocked(window.crToolsWidget.getView).mockImplementation(() =>
       Promise.resolve(serverView),
     )
-    let mutationCount = 0
-    let resolveSecond: () => void = () => {
-      throw new Error('Second mutation was not initialized')
-    }
-    const secondMutation = new Promise<void>((resolve) => {
-      resolveSecond = resolve
-    })
     vi.mocked(window.crToolsWidget.updateSettings).mockImplementation((settings) => {
-      mutationCount += 1
-      if (mutationCount === 1) {
-        serverView = { ...serverView, settings }
-        return Promise.resolve(settings)
-      }
-      return secondMutation.then(() => {
-        serverView = { ...serverView, settings }
-        return settings
-      })
+      serverView = { ...serverView, settings }
+      return Promise.resolve(settings)
     })
 
     render(<WidgetApp />)
-    await screen.findByRole('heading', { name: 'Opponent' })
-    const opacity = screen.getByRole('slider', { name: 'Прозрачность виджета' })
-    fireEvent.change(opacity, { target: { value: '80' } })
-    fireEvent.change(opacity, { target: { value: '85' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Показать только колоду' }))
+    await screen.findByRole('article', { name: 'Knight' })
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
+    fireEvent.wheel(document, { ctrlKey: true, deltaY: 100 })
 
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2),
@@ -166,14 +214,8 @@ describe('WidgetApp', () => {
     )
     expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ displayMode: 'deck', opacity: 0.85 }),
+      expect.objectContaining({ displayMode: 'deck', opacity: 0.91 }),
     )
-    expect(screen.getByText('Сохраняем настройку...')).toBeVisible()
-
-    await act(async () => {
-      resolveSecond()
-      await secondMutation
-    })
     expect(await screen.findByText('Настройка сохранена')).toBeVisible()
   })
 })

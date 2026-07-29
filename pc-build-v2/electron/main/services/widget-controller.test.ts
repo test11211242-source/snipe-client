@@ -182,24 +182,24 @@ describe('WidgetController', () => {
     const test = harness()
     await test.controller.start('user')
 
-    const detailed = await test.controller.updateSettings({
-      ...DEFAULT_WIDGET_SETTINGS,
-      displayMode: 'detailed',
-      bounds: { x: 80, y: 90, width: 600, height: 700 },
-    })
-    expect(detailed).toMatchObject({
-      displayMode: 'detailed',
-      bounds: { x: 80, y: 90, width: 420, height: 560 },
-    })
-    expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(detailed)
-
     const deck = await test.controller.updateSettings({
-      ...detailed,
+      ...DEFAULT_WIDGET_SETTINGS,
       displayMode: 'deck',
+      bounds: { x: 80, y: 90, width: 600, height: 700 },
     })
     expect(deck).toMatchObject({
       displayMode: 'deck',
-      bounds: { x: 80, y: 90, width: 480, height: 354 },
+      bounds: { x: 80, y: 90, width: 360, height: 300 },
+    })
+    expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(deck)
+
+    const detailed = await test.controller.updateSettings({
+      ...deck,
+      displayMode: 'detailed',
+    })
+    expect(detailed).toMatchObject({
+      displayMode: 'detailed',
+      bounds: { x: 80, y: 90, width: 420, height: 360 },
     })
   })
 
