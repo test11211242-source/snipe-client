@@ -630,7 +630,14 @@ artifact_zip="$TMP_DIR/artifact.zip"
 extract_dir="$TMP_DIR/artifact"
 mkdir -p -- "$extract_dir"
 info 'Downloading the verified Windows artifact'
-github_download "/repos/$REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" "$artifact_zip"
+for download_attempt in {1..3}; do
+  if github_download "/repos/$REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" "$artifact_zip"; then
+    break
+  fi
+  [[ "$download_attempt" -lt 3 ]] || die 'Windows artifact download failed after 3 attempts.'
+  printf 'Download attempt %d/3 failed, retrying in 5 seconds...\n' "$download_attempt"
+  sleep 5
+done
 unzip -q "$artifact_zip" -d "$extract_dir"
 
 ARTIFACT_NAME="CR_Tools_V2_Setup_$VERSION.exe"
