@@ -7,6 +7,7 @@ import {
   PublicErrorSchema,
 } from '../../../shared/errors/application-error'
 import {
+  NormalizedRectSchema,
   PixelSizeSchema,
   TriggerProfileSchema,
   type NormalizedRect,
@@ -19,6 +20,33 @@ import type { PythonWorkerService } from './python-worker-service'
 
 const MAX_PNG_BYTES = 32 * 1024 * 1024
 const MAX_PIXELS = 20_000_000
+
+export const LegacyTriggerAnalysisSchema = z
+  .object({
+    templateGrayBase64: z
+      .string()
+      .min(1)
+      .max(32 * 1024),
+    thumbnailHash: z.string().regex(/^[a-f0-9]{16}$/),
+    featureMode: z.enum(['orb', 'ncc']),
+    keypointsCount: z.number().int().nonnegative().max(10_000),
+    normalizedTemplateSize: z
+      .object({ width: z.literal(128), height: z.literal(128) })
+      .strict(),
+    hashThreshold: z.literal(5),
+    orbDistanceThreshold: z.literal(55),
+    orbMinGoodMatches: z.literal(10),
+    nccThreshold: z.literal(0.72),
+    analyzerVersion: z.literal('trigger-profile-v2'),
+  })
+  .strict()
+
+export type LegacyTriggerAnalysis = z.infer<typeof LegacyTriggerAnalysisSchema>
+
+export interface TriggerAnalysis {
+  profile: TriggerProfile
+  legacyProfile: LegacyTriggerAnalysis
+}
 
 const CaptureResultSchema = z.discriminatedUnion('ok', [
   z
@@ -49,6 +77,7 @@ const AnalysisResultSchema = z.discriminatedUnion('ok', [
       requestId: z.uuid(),
       ok: z.literal(true),
       profile: TriggerProfileSchema,
+      legacyProfile: LegacyTriggerAnalysisSchema,
     })
     .strict(),
   z
@@ -77,16 +106,35 @@ function toWorkerSelector(selector: SetupCaptureSelector): unknown {
 }
 
 export function normalizedToPixelRect(rect: NormalizedRect, size: PixelSize) {
-  const x = Math.round(rect.x * size.width)
-  const y = Math.round(rect.y * size.height)
-  const right = Math.round((rect.x + rect.width) * size.width)
-  const bottom = Math.round((rect.y + rect.height) * size.height)
+  const x = Math.min(size.width - 1, Math.max(0, Math.round(rect.x * size.width)))
+  const y = Math.min(size.height - 1, Math.max(0, Math.round(rect.y * size.height)))
+  const right = Math.min(
+    size.width,
+    Math.max(x + 1, Math.round((rect.x + rect.width) * size.width)),
+  )
+  const bottom = Math.min(
+    size.height,
+    Math.max(y + 1, Math.round((rect.y + rect.height) * size.height)),
+  )
   return {
     x,
     y,
     width: Math.max(1, right - x),
     height: Math.max(1, bottom - y),
   }
+}
+
+export function canonicalizeNormalizedRect(
+  rect: NormalizedRect,
+  size: PixelSize,
+): NormalizedRect {
+  const pixels = normalizedToPixelRect(rect, size)
+  return NormalizedRectSchema.parse({
+    x: pixels.x / size.width,
+    y: pixels.y / size.height,
+    width: pixels.width / size.width,
+    height: pixels.height / size.height,
+  })
 }
 
 export class CaptureService {
@@ -148,7 +196,7 @@ export class CaptureService {
     frame: CapturedFrame,
     triggerRect: NormalizedRect,
     signal?: AbortSignal,
-  ): Promise<TriggerProfile> {
+  ): Promise<TriggerAnalysis> {
     const requestId = randomUUID()
     const result = await this.worker.execute({
       requestId,
@@ -176,6 +224,6 @@ export class CaptureService {
     }
     if (!metadata.ok)
       throw new ApplicationError(metadata.error.code, metadata.error.message)
-    return metadata.profile
+    return { profile: metadata.profile, legacyProfile: metadata.legacyProfile }
   }
 }

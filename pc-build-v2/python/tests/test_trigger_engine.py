@@ -3,7 +3,13 @@ import numpy as np
 import pytest
 
 from analyze_trigger import analyze
-from trigger_engine import PredictionTriggerEngine, TriggerEngine
+from monitor_protocol import MonitorProtocolError
+from trigger_engine import (
+    PredictionTriggerEngine,
+    TriggerEngine,
+    TriggerProfile,
+    encode_action_png,
+)
 
 
 def trigger_image(
@@ -126,6 +132,43 @@ def test_low_feature_icon_uses_edge_shape_without_color() -> None:
     cv2.rectangle(square, (32, 32), (96, 96), (245, 245, 245), 4)
     assert negative.process(frame_for(square), 0.0) is None
     assert negative.process(frame_for(square), 0.11) is None
+
+
+@pytest.mark.parametrize("cell_size", [8, 16])
+def test_repetitive_checkerboard_profile_matches_its_source(cell_size: int) -> None:
+    y, x = np.indices((128, 128))
+    gray = (((x // cell_size + y // cell_size) % 2) * 255).astype(np.uint8)
+    configured = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    profile = profile_for(configured)
+
+    assert profile["quality"]["keypointsCount"] >= 20
+    assert profile["matcherMode"] == "edge"
+    result = TriggerProfile(profile).evaluate(configured)
+    assert result.matched is True
+
+
+def test_rejects_profiles_that_predate_orb_viability_checks() -> None:
+    profile = profile_for(trigger_image((20, 20, 20), texture_seed=4))
+    profile["analyzer"]["version"] = "2.0.0"
+
+    with pytest.raises(MonitorProtocolError, match="re-analyzed"):
+        TriggerProfile(profile)
+
+
+def test_noisy_4k_action_is_adaptively_encoded_within_byte_limit() -> None:
+    random = np.random.default_rng(20260729)
+    image = random.integers(0, 256, (2160, 3840, 3), dtype=np.uint8)
+    limits = payload(profile_for(trigger_image((20, 20, 20))))["limits"]
+
+    encoded, width, height = encode_action_png(image, limits)
+
+    assert len(encoded) <= 10 * 1024 * 1024
+    assert len(encoded) >= int(9.5 * 1024 * 1024)
+    assert 1 < width < 3840
+    assert 1 < height < 2160
+    decoded = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None
+    assert decoded.shape[:2] == (height, width)
 
 
 def test_main_trigger_requires_consecutive_frames_and_release_before_rearm() -> None:

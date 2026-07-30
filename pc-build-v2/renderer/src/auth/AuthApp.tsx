@@ -2,6 +2,7 @@ import { KeyRound, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react'
 import { useEffect, useState, type SyntheticEvent } from 'react'
 
 import type { AuthView } from '../../../shared/models/auth'
+import type { UpdateView } from '../../../shared/models/update'
 
 type FormMode = 'login' | 'register'
 type FormSubmitEvent = SyntheticEvent<HTMLFormElement, SubmitEvent>
@@ -29,6 +30,9 @@ export function AuthApp(): React.JSX.Element {
   const [view, setView] = useState<AuthView | null>(null)
   const [mode, setMode] = useState<FormMode>('login')
   const [pending, setPending] = useState(false)
+  const [updateView, setUpdateView] = useState<UpdateView | null>(null)
+  const [updateUnavailable, setUpdateUnavailable] = useState(false)
+  const [updatePending, setUpdatePending] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -52,6 +56,30 @@ export function AuthApp(): React.JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refreshUpdate = async (): Promise<void> => {
+      let delay = 5_000
+      try {
+        const next = await window.crToolsAuth.getUpdateView()
+        if (!active) return
+        setUpdateView(next)
+        setUpdateUnavailable(false)
+        if (next.state === 'CHECKING' || next.state === 'DOWNLOADING') delay = 1_000
+      } catch {
+        if (!active) return
+        setUpdateUnavailable(true)
+      }
+      timer = setTimeout(() => void refreshUpdate(), delay)
+    }
+    void refreshUpdate()
+    return () => {
+      active = false
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [])
+
   const run = async (operation: () => Promise<AuthView>): Promise<void> => {
     setPending(true)
     try {
@@ -60,6 +88,32 @@ export function AuthApp(): React.JSX.Element {
       setView(ipcErrorView())
     } finally {
       setPending(false)
+    }
+  }
+
+  const runUpdate = async (
+    operation: () => Promise<UpdateView>,
+    background: boolean,
+  ): Promise<void> => {
+    setUpdatePending(true)
+    try {
+      const completion = operation()
+      if (background) {
+        setUpdateView(await window.crToolsAuth.getUpdateView())
+        void completion
+          .then((next) => {
+            setUpdateView(next)
+            setUpdateUnavailable(false)
+          })
+          .catch(() => setUpdateUnavailable(true))
+      } else {
+        setUpdateView(await completion)
+      }
+      setUpdateUnavailable(false)
+    } catch {
+      setUpdateUnavailable(true)
+    } finally {
+      setUpdatePending(false)
     }
   }
 
@@ -116,50 +170,117 @@ export function AuthApp(): React.JSX.Element {
       </section>
 
       <section className="auth-panel" aria-labelledby="auth-form-title">
-        <div className="auth-panel-inner">
-          {state === 'INVITE_REQUIRED' ? (
-            <InviteForm
-              pending={pending}
-              deviceHint={view?.deviceHint ?? null}
-              error={view?.error?.message ?? null}
-              onSubmit={submitInvite}
-            />
-          ) : state === 'BLOCKED' ? (
-            <StateMessage
-              tone="danger"
-              title="Доступ заблокирован"
-              description={
-                view?.error?.message ?? 'Сервер запретил доступ для этой учётной записи.'
-              }
-            />
-          ) : state === 'ERROR' ? (
-            <StateMessage
-              tone="danger"
-              title="Не удалось продолжить"
-              description={view?.error?.message ?? 'Произошла ошибка авторизации.'}
-              actionLabel={
-                view?.error?.retryable === true ? 'Повторить проверку' : undefined
-              }
-              onAction={() => void run(() => window.crToolsAuth.retryBootstrap())}
-            />
-          ) : isLoading ? (
-            <div className="auth-loading" role="status" aria-live="polite">
-              <span className="auth-spinner" aria-hidden="true" />
-              <h2 id="auth-form-title">Проверяем защищённый сеанс</h2>
-              <p>Соединение с production API и проверка устройства.</p>
-            </div>
-          ) : (
-            <CredentialsForm
-              mode={mode}
-              pending={pending}
-              error={view?.error?.message ?? null}
-              onModeChange={setMode}
-              onSubmit={submitCredentials}
-            />
-          )}
+        <div className="auth-panel-stack">
+          <div className="auth-panel-inner">
+            {state === 'INVITE_REQUIRED' ? (
+              <InviteForm
+                pending={pending}
+                deviceHint={view?.deviceHint ?? null}
+                error={view?.error?.message ?? null}
+                onSubmit={submitInvite}
+              />
+            ) : state === 'BLOCKED' ? (
+              <StateMessage
+                tone="danger"
+                title="Доступ заблокирован"
+                description={
+                  view?.error?.message ??
+                  'Сервер запретил доступ для этой учётной записи.'
+                }
+              />
+            ) : state === 'ERROR' ? (
+              <StateMessage
+                tone="danger"
+                title="Не удалось продолжить"
+                description={view?.error?.message ?? 'Произошла ошибка авторизации.'}
+                actionLabel={
+                  view?.error?.retryable === true ? 'Повторить проверку' : undefined
+                }
+                onAction={() => void run(() => window.crToolsAuth.retryBootstrap())}
+              />
+            ) : isLoading ? (
+              <div className="auth-loading" role="status" aria-live="polite">
+                <span className="auth-spinner" aria-hidden="true" />
+                <h2 id="auth-form-title">Проверяем защищённый сеанс</h2>
+                <p>Соединение с production API и проверка устройства.</p>
+              </div>
+            ) : (
+              <CredentialsForm
+                mode={mode}
+                pending={pending}
+                error={view?.error?.message ?? null}
+                onModeChange={setMode}
+                onSubmit={submitCredentials}
+              />
+            )}
+          </div>
+          <AuthUpdatePanel
+            view={updateView}
+            unavailable={updateUnavailable}
+            pending={updatePending}
+            onRun={runUpdate}
+          />
         </div>
       </section>
     </main>
+  )
+}
+
+function AuthUpdatePanel({
+  view,
+  unavailable,
+  pending,
+  onRun,
+}: {
+  view: UpdateView | null
+  unavailable: boolean
+  pending: boolean
+  onRun: (operation: () => Promise<UpdateView>, background: boolean) => Promise<void>
+}): React.JSX.Element {
+  let status = 'Получаем состояние обновлений...'
+  let actionLabel = 'Проверить обновления'
+  let operation = () => window.crToolsAuth.checkForUpdate()
+
+  if (unavailable) {
+    status = 'Не удалось получить состояние обновлений.'
+  } else if (view !== null) {
+    if (view.state === 'CHECKING') {
+      status = 'Проверяем наличие новой версии...'
+    } else if (view.state === 'AVAILABLE') {
+      status = `${view.critical ? 'Важное обновление' : 'Доступно обновление'} ${view.availableVersion ?? ''}`
+      actionLabel = 'Скачать обновление'
+      operation = () => window.crToolsAuth.downloadUpdate()
+    } else if (view.state === 'DOWNLOADING') {
+      status = `Загрузка ${Math.round(view.progress?.percent ?? 0)}%`
+      actionLabel = 'Отменить загрузку'
+      operation = () => window.crToolsAuth.cancelUpdate()
+    } else if (view.state === 'READY') {
+      status = `Версия ${view.availableVersion ?? ''} готова к установке`
+      actionLabel = 'Установить обновление'
+      operation = () => window.crToolsAuth.installUpdate()
+    } else if (view.state === 'UP_TO_DATE') {
+      status = `Установлена актуальная версия ${view.currentVersion}`
+    } else if (view.state === 'FAILED') {
+      status = view.error?.message ?? 'Проверка обновлений завершилась ошибкой.'
+    } else {
+      status = `Текущая версия ${view.currentVersion}`
+    }
+  }
+
+  return (
+    <aside className="auth-update" aria-label="Обновление приложения">
+      <div aria-live="polite">
+        <strong>Обновление приложения</strong>
+        <span>{status}</span>
+      </div>
+      <button
+        type="button"
+        disabled={pending || view?.state === 'CHECKING'}
+        onClick={() => void onRun(operation, view?.state === 'AVAILABLE')}
+      >
+        {pending ? 'Выполняем...' : actionLabel}
+      </button>
+    </aside>
   )
 }
 

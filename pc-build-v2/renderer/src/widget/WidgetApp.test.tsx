@@ -1,18 +1,29 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/widget-settings-repository'
 import type { WidgetView } from '../../../shared/models/widget'
 import { WidgetApp } from './WidgetApp'
 
-const primaryCards = Array.from({ length: 8 }, (_, index) => ({
-  name: index === 0 ? 'Knight' : `Card ${index + 1}`,
+const primaryCard = {
+  name: 'Knight',
   level: 14,
-  evolutionLevel: index === 0 ? 1 : null,
+  evolutionLevel: 1,
   hasImage: true,
-}))
+}
+
+const primaryCards = [
+  primaryCard,
+  ...Array.from({ length: 7 }, (_, index) => ({
+    name: `Card ${index + 2}`,
+    level: 14,
+    evolutionLevel: null,
+    hasImage: true,
+  })),
+]
 
 const widgetView: WidgetView = {
   settings: DEFAULT_WIDGET_SETTINGS,
@@ -40,16 +51,23 @@ const widgetView: WidgetView = {
   },
 }
 
+async function loadWidgetWithFakeTimers(): Promise<void> {
+  await act(async () => vi.advanceTimersByTimeAsync(0))
+}
+
 describe('WidgetApp', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'crToolsWidget', {
       configurable: true,
       value: Object.freeze({
+        rendererReady: vi.fn().mockResolvedValue(undefined),
         getView: vi.fn().mockResolvedValue(widgetView),
         getCardAsset: vi.fn().mockResolvedValue({ kind: 'unavailable' }),
         updateSettings: vi
           .fn()
-          .mockImplementation((settings) => Promise.resolve(settings)),
+          .mockImplementation((patch) =>
+            Promise.resolve({ ...widgetView.settings, ...patch }),
+          ),
         hide: vi.fn(),
       }),
     })
@@ -73,6 +91,7 @@ describe('WidgetApp', () => {
     )
     expect(screen.getByLabelText('Управление виджетом')).toHaveClass('widget-controls')
     expect(screen.getByTitle('Перетащить виджет')).toHaveClass('widget-drag-handle')
+    expect(window.crToolsWidget.rendererReady).toHaveBeenCalledOnce()
 
     const shell = container.querySelector('.widget-shell')
     const grid = container.querySelector('.card-grid')
@@ -82,6 +101,23 @@ describe('WidgetApp', () => {
       [...Array.from(grid?.children ?? [])].every((card) => card.matches('.deck-card')),
     ).toBe(true)
     expect(container.querySelector('.card-copy')).not.toBeInTheDocument()
+  })
+
+  it('completes settings mutations under the real StrictMode lifecycle', async () => {
+    render(
+      <StrictMode>
+        <WidgetApp />
+      </StrictMode>,
+    )
+    const pin = await screen.findByRole('button', {
+      name: 'Открепить от переднего плана',
+    })
+
+    fireEvent.click(pin)
+
+    await waitFor(() => expect(window.crToolsWidget.updateSettings).toHaveBeenCalled())
+    await waitFor(() => expect(pin).not.toBeDisabled())
+    expect(screen.queryByText('Сохраняем настройку...')).not.toBeInTheDocument()
   })
 
   it('switches decks with compact dots and hides only the footer in compact mode', async () => {
@@ -146,25 +182,25 @@ describe('WidgetApp', () => {
 
     fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
     await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ alwaysOnTop: false }),
-      ),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        alwaysOnTop: false,
+      }),
     )
     await screen.findByRole('button', { name: 'Закрепить поверх окон' })
 
     fireEvent.keyDown(document, { key: 'l', ctrlKey: true })
     await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ locked: true }),
-      ),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        locked: true,
+      }),
     )
     await screen.findByRole('button', { name: 'Разблокировать позицию' })
 
     fireEvent.keyDown(document, { key: 'm', ctrlKey: true })
     await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ displayMode: 'deck' }),
-      ),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        displayMode: 'deck',
+      }),
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -185,9 +221,7 @@ describe('WidgetApp', () => {
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenCalledOnce(),
     )
-    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ opacity: 0.55 }),
-    )
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith({ opacity: 0.55 })
   })
 
   it('serializes mode and wheel updates against the latest settings', async () => {
@@ -195,7 +229,8 @@ describe('WidgetApp', () => {
     vi.mocked(window.crToolsWidget.getView).mockImplementation(() =>
       Promise.resolve(serverView),
     )
-    vi.mocked(window.crToolsWidget.updateSettings).mockImplementation((settings) => {
+    vi.mocked(window.crToolsWidget.updateSettings).mockImplementation((patch) => {
+      const settings = { ...serverView.settings, ...patch }
       serverView = { ...serverView, settings }
       return Promise.resolve(settings)
     })
@@ -208,14 +243,131 @@ describe('WidgetApp', () => {
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2),
     )
-    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ displayMode: 'deck' }),
-    )
-    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ displayMode: 'deck', opacity: 0.91 }),
-    )
+    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(1, {
+      displayMode: 'deck',
+    })
+    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(2, {
+      opacity: 0.91,
+    })
     expect(await screen.findByText('Настройка сохранена')).toBeVisible()
+  })
+
+  it('auto-dismisses successful save feedback while retaining errors', async () => {
+    vi.useFakeTimers()
+    render(<WidgetApp />)
+    await loadWidgetWithFakeTimers()
+    expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Настройка сохранена')).toBeVisible()
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_500))
+    expect(screen.queryByText('Настройка сохранена')).not.toBeInTheDocument()
+
+    vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(
+      new Error('failed'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать позицию' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Не удалось сохранить настройку.')).toBeVisible()
+    await act(async () => vi.advanceTimersByTimeAsync(10_000))
+    expect(screen.getByText('Не удалось сохранить настройку.')).toBeVisible()
+  })
+
+  it('retries rejected and temporarily unavailable card assets with bounded backoff', async () => {
+    vi.useFakeTimers()
+    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
+    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+      ...widgetView,
+      result: {
+        ...widgetView.result,
+        decks: [{ label: 'PoL', cards: [primaryCard] }],
+      },
+    })
+    vi.mocked(window.crToolsWidget.getCardAsset)
+      .mockRejectedValueOnce(new Error('not retained yet'))
+      .mockResolvedValueOnce({ kind: 'unavailable' })
+      .mockResolvedValueOnce({
+        kind: 'available',
+        dataUrl: 'data:image/png;base64,AA==',
+      })
+
+    const { container } = render(<WidgetApp />)
+    await loadWidgetWithFakeTimers()
+    expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    await act(async () => vi.advanceTimersByTimeAsync(750))
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(3)
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,AA==',
+    )
+  })
+
+  it('stops retrying a persistently unavailable card after four attempts', async () => {
+    vi.useFakeTimers()
+    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
+    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+      ...widgetView,
+      result: {
+        ...widgetView.result,
+        decks: [{ label: 'PoL', cards: [primaryCard] }],
+      },
+    })
+
+    render(<WidgetApp />)
+    await loadWidgetWithFakeTimers()
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    await act(async () => vi.advanceTimersByTimeAsync(750))
+    await act(async () => vi.advanceTimersByTimeAsync(1_500))
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(4)
+  })
+
+  it('backs off after image decode failure and cancels retries on deck change', async () => {
+    vi.useFakeTimers()
+    vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValue({
+      kind: 'available',
+      dataUrl: 'data:image/png;base64,AA==',
+    })
+    const { container, unmount } = render(<WidgetApp />)
+    await loadWidgetWithFakeTimers()
+    const image = container.querySelector('img')
+    if (image === null) throw new Error('Card image was not rendered')
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
+
+    fireEvent.error(image)
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(9)
+
+    const retriedImage = container.querySelector('img')
+    if (retriedImage === null) throw new Error('Retried card image was not rendered')
+    fireEvent.error(retriedImage)
+    fireEvent.click(screen.getByRole('tab', { name: 'Колода 2: Турнир' }))
+    await act(async () => vi.advanceTimersByTimeAsync(10_000))
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(9)
+
+    vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValueOnce({
+      kind: 'unavailable',
+    })
+    fireEvent.click(screen.getByRole('tab', { name: 'Колода 1: PoL' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(17)
+    unmount()
+    await act(async () => vi.advanceTimersByTimeAsync(10_000))
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(17)
   })
 })

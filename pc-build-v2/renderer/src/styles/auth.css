@@ -123,12 +123,75 @@
   padding: 30px;
 }
 
-.auth-panel-inner {
+.auth-panel-stack {
   width: min(100%, 430px);
+}
+
+.auth-panel-inner {
+  width: 100%;
   padding: clamp(28px, 4vw, 38px);
   border: 1px solid var(--auth-border);
   border-radius: 10px;
   background: var(--auth-panel);
+}
+
+.auth-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--auth-border);
+  border-radius: 8px;
+  background: #0f1115;
+}
+
+.auth-update div {
+  min-width: 0;
+}
+
+.auth-update strong,
+.auth-update span {
+  display: block;
+}
+
+.auth-update strong {
+  color: #d7d9df;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auth-update span {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--auth-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.auth-update button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #454a6f;
+  border-radius: 6px;
+  color: #d8daf6;
+  background: #191c28;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.auth-update button:hover:not(:disabled) {
+  border-color: #60669b;
+  background: #202435;
+}
+
+.auth-update button:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .auth-form {
@@ -374,6 +437,12 @@
 
   .auth-panel-inner {
     padding: 24px 20px;
+  }
+
+  .auth-update {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
   }
 }
 

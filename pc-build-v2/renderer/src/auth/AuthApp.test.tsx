@@ -16,6 +16,19 @@ describe('AuthApp', () => {
         activateInvite: vi.fn(),
         login: vi.fn(),
         register: vi.fn(),
+        getUpdateView: vi.fn().mockResolvedValue({
+          state: 'IDLE',
+          currentVersion: '1.0.0',
+          availableVersion: null,
+          critical: false,
+          releaseNotes: [],
+          progress: null,
+          error: null,
+        }),
+        checkForUpdate: vi.fn(),
+        downloadUpdate: vi.fn(),
+        cancelUpdate: vi.fn(),
+        installUpdate: vi.fn(),
       }),
     })
 
@@ -52,6 +65,19 @@ describe('AuthApp', () => {
         activateInvite: vi.fn(),
         login: vi.fn(),
         register: vi.fn(),
+        getUpdateView: vi.fn().mockResolvedValue({
+          state: 'IDLE',
+          currentVersion: '1.0.0',
+          availableVersion: null,
+          critical: false,
+          releaseNotes: [],
+          progress: null,
+          error: null,
+        }),
+        checkForUpdate: vi.fn(),
+        downloadUpdate: vi.fn(),
+        cancelUpdate: vi.fn(),
+        installUpdate: vi.fn(),
       }),
     })
 
@@ -82,6 +108,19 @@ describe('AuthApp', () => {
         activateInvite,
         login: vi.fn(),
         register: vi.fn(),
+        getUpdateView: vi.fn().mockResolvedValue({
+          state: 'IDLE',
+          currentVersion: '1.0.0',
+          availableVersion: null,
+          critical: false,
+          releaseNotes: [],
+          progress: null,
+          error: null,
+        }),
+        checkForUpdate: vi.fn(),
+        downloadUpdate: vi.fn(),
+        cancelUpdate: vi.fn(),
+        installUpdate: vi.fn(),
       }),
     })
     render(<AuthApp />)
@@ -93,5 +132,107 @@ describe('AuthApp', () => {
     expect(await screen.findByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
     expect(screen.getByLabelText('Email')).toBeVisible()
     expect(activateInvite).toHaveBeenCalledWith({ inviteCode: 'INVITE_123' })
+  })
+
+  it('downloads and installs an update without an authenticated session', async () => {
+    const available = {
+      state: 'AVAILABLE' as const,
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      critical: true,
+      releaseNotes: ['Login compatibility fix'],
+      progress: null,
+      error: null,
+    }
+    const ready = { ...available, state: 'READY' as const }
+    const downloadUpdate = vi.fn().mockResolvedValue(ready)
+    const installUpdate = vi.fn().mockResolvedValue(ready)
+    Object.defineProperty(window, 'crToolsAuth', {
+      configurable: true,
+      value: Object.freeze({
+        getView: vi.fn().mockResolvedValue({
+          state: 'UNAUTHENTICATED',
+          user: null,
+          deviceHint: '12345678...abcd',
+          error: null,
+        }),
+        retryBootstrap: vi.fn(),
+        checkInvite: vi.fn(),
+        activateInvite: vi.fn(),
+        login: vi.fn(),
+        register: vi.fn(),
+        getUpdateView: vi.fn().mockResolvedValue(available),
+        checkForUpdate: vi.fn(),
+        downloadUpdate,
+        cancelUpdate: vi.fn(),
+        installUpdate,
+      }),
+    })
+
+    render(<AuthApp />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Скачать обновление' }))
+    expect(await screen.findByText('Версия 1.1.0 готова к установке')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Установить обновление' }))
+    await vi.waitFor(() => expect(installUpdate).toHaveBeenCalledOnce())
+    expect(downloadUpdate).toHaveBeenCalledOnce()
+  })
+
+  it('shows download progress and permits cancellation from the auth screen', async () => {
+    const available = {
+      state: 'AVAILABLE' as const,
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      critical: false,
+      releaseNotes: [],
+      progress: null,
+      error: null,
+    }
+    const downloading = {
+      ...available,
+      state: 'DOWNLOADING' as const,
+      progress: { downloadedBytes: 25, totalBytes: 100, percent: 25 },
+    }
+    let completeDownload: ((view: typeof available) => void) | undefined
+    const downloadUpdate = vi.fn(
+      () =>
+        new Promise<typeof available>((resolve) => {
+          completeDownload = resolve
+        }),
+    )
+    const cancelUpdate = vi.fn(() => {
+      completeDownload?.(available)
+      return Promise.resolve(available)
+    })
+    Object.defineProperty(window, 'crToolsAuth', {
+      configurable: true,
+      value: Object.freeze({
+        getView: vi.fn().mockResolvedValue({
+          state: 'UNAUTHENTICATED',
+          user: null,
+          deviceHint: '12345678...abcd',
+          error: null,
+        }),
+        retryBootstrap: vi.fn(),
+        checkInvite: vi.fn(),
+        activateInvite: vi.fn(),
+        login: vi.fn(),
+        register: vi.fn(),
+        getUpdateView: vi
+          .fn()
+          .mockResolvedValueOnce(available)
+          .mockResolvedValue(downloading),
+        checkForUpdate: vi.fn(),
+        downloadUpdate,
+        cancelUpdate,
+        installUpdate: vi.fn(),
+      }),
+    })
+
+    render(<AuthApp />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Скачать обновление' }))
+    expect(await screen.findByText('Загрузка 25%')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить загрузку' }))
+    await vi.waitFor(() => expect(cancelUpdate).toHaveBeenCalledOnce())
+    expect(downloadUpdate).toHaveBeenCalledOnce()
   })
 })

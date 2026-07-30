@@ -43,7 +43,7 @@ import {
 import {
   EmptyWidgetPayloadSchema,
   MAIN_WIDGET_IPC_CHANNELS,
-  WidgetSettingsPayloadSchema,
+  WidgetSettingsPatchPayloadSchema,
   WidgetSettingsResultSchema,
   WidgetStatusResultSchema,
 } from '../../shared/contracts/widget-ipc'
@@ -252,7 +252,7 @@ const api: CrToolsApi = Object.freeze({
       ),
     ),
   updateWidgetSettings: async (rawPayload: unknown) => {
-    const payload = WidgetSettingsPayloadSchema.parse(rawPayload)
+    const payload = WidgetSettingsPatchPayloadSchema.parse(rawPayload)
     return WidgetSettingsResultSchema.parse(
       await ipcRenderer.invoke(MAIN_WIDGET_IPC_CHANNELS.updateSettings, payload),
     )

@@ -20,7 +20,12 @@ import type {
 } from '../models/capture'
 import type { SetupFrame, SetupSessionView } from '../models/setup'
 import type { MonitorPreferences, MonitorView } from '../models/monitor'
-import type { WidgetSettings, WidgetStatus, WidgetView } from '../models/widget'
+import type {
+  WidgetSettings,
+  WidgetSettingsPatch,
+  WidgetStatus,
+  WidgetView,
+} from '../models/widget'
 import type { CardAssetRequest, CardAssetResult } from './widget-ipc'
 import type {
   OverlaySettings,
@@ -81,7 +86,7 @@ export interface CrToolsApi {
   getWidgetStatus: () => Promise<WidgetStatus>
   showWidget: () => Promise<WidgetStatus>
   toggleWidget: () => Promise<WidgetStatus>
-  updateWidgetSettings: (settings: WidgetSettings) => Promise<WidgetSettings>
+  updateWidgetSettings: (patch: WidgetSettingsPatch) => Promise<WidgetSettings>
   getStreamerView: () => Promise<StreamerView>
   refreshStreamer: () => Promise<StreamerView>
   setStreamerSectionActive: (active: boolean) => Promise<StreamerView>
@@ -132,11 +137,17 @@ export interface CrToolsAuthApi {
   activateInvite: (payload: ActivateInvitePayload) => Promise<AuthView>
   login: (payload: LoginPayload) => Promise<AuthView>
   register: (payload: RegisterPayload) => Promise<AuthView>
+  getUpdateView: () => Promise<UpdateView>
+  checkForUpdate: () => Promise<UpdateView>
+  downloadUpdate: () => Promise<UpdateView>
+  cancelUpdate: () => Promise<UpdateView>
+  installUpdate: () => Promise<UpdateView>
 }
 
 export interface CrToolsWidgetApi {
+  rendererReady: () => Promise<void>
   getView: () => Promise<WidgetView>
   getCardAsset: (request: CardAssetRequest) => Promise<CardAssetResult>
-  updateSettings: (settings: WidgetSettings) => Promise<WidgetSettings>
+  updateSettings: (patch: WidgetSettingsPatch) => Promise<WidgetSettings>
   hide: () => Promise<WidgetStatus>
 }

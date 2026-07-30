@@ -52,38 +52,79 @@ describe('WidgetSettingsRepository', () => {
     await expect(repository.load('one')).resolves.toMatchObject({ opacity: 0.7 })
   })
 
-  it.each([false, true])(
-    'migrates legacy compactMode=%s to the card grid and preserves window position',
-    async (compactMode) => {
-      const { fs, files } = memoryFileSystem()
-      const repository = new WidgetSettingsRepository('/widget', fs)
-      await repository.save('one', DEFAULT_WIDGET_SETTINGS)
-      const path = [...files.keys()][0]
-      if (path === undefined) throw new Error('Settings file was not created')
-      files.set(
-        path,
-        JSON.stringify({
-          autoOpen: false,
-          alwaysOnTop: false,
-          locked: true,
-          opacity: 0.7,
-          compactMode,
-          bounds: { x: 120, y: 80, width: 620, height: 700 },
-        }),
-      )
+  it.each([
+    ['malformed JSON', '{not-json'],
+    [
+      'out-of-range settings',
+      JSON.stringify({
+        ...DEFAULT_WIDGET_SETTINGS,
+        opacity: 0.1,
+        bounds: { x: 120, y: 80, width: 10, height: 700 },
+      }),
+    ],
+  ])('quarantines %s and loads defaults', async (_label, invalidValue) => {
+    const { fs, files } = memoryFileSystem()
+    const repository = new WidgetSettingsRepository('/widget', fs)
+    await repository.save('one', DEFAULT_WIDGET_SETTINGS)
+    const path = [...files.keys()][0]
+    if (path === undefined) throw new Error('Settings file was not created')
+    files.set(path, invalidValue)
 
-      await expect(repository.load('one')).resolves.toEqual({
+    await expect(repository.load('one')).resolves.toEqual(DEFAULT_WIDGET_SETTINGS)
+    expect(files.has(path)).toBe(false)
+    expect([...files.keys()]).toEqual([expect.stringMatching(/\.invalid-/)])
+    expect(files.values().next().value).toBe(invalidValue)
+  })
+
+  it('migrates valid compactMode settings without discarding user preferences', async () => {
+    const { fs, files } = memoryFileSystem()
+    const repository = new WidgetSettingsRepository('/widget', fs)
+    await repository.save('one', DEFAULT_WIDGET_SETTINGS)
+    const path = [...files.keys()][0]
+    if (path === undefined) throw new Error('Settings file was not created')
+    files.set(
+      path,
+      JSON.stringify({
         autoOpen: false,
         alwaysOnTop: false,
         locked: true,
         opacity: 0.7,
-        displayMode: 'deck',
-        bounds: { x: 120, y: 80, width: 360, height: 300 },
-      })
-      expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
-      expect(JSON.parse(files.get(path) ?? '{}')).toHaveProperty('displayMode', 'deck')
-    },
-  )
+        compactMode: true,
+        bounds: { x: 120, y: 80, width: 620, height: 700 },
+      }),
+    )
+
+    await expect(repository.load('one')).resolves.toEqual({
+      autoOpen: false,
+      alwaysOnTop: false,
+      locked: true,
+      opacity: 0.7,
+      displayMode: 'deck',
+      bounds: { x: 120, y: 80, width: 360, height: 300 },
+    })
+    expect([...files.keys()]).toEqual([path])
+    expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
+  })
+
+  it('preserves operational read and quarantine errors', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    const rename = vi.fn()
+    const readFailure = new WidgetSettingsRepository('/widget', {
+      ...memoryFileSystem().fs,
+      readFile: vi.fn().mockRejectedValue(denied),
+      rename,
+    })
+    await expect(readFailure.load('one')).rejects.toBe(denied)
+    expect(rename).not.toHaveBeenCalled()
+
+    const quarantineFailure = new Error('rename failed')
+    const invalid = new WidgetSettingsRepository('/widget', {
+      ...memoryFileSystem().fs,
+      readFile: vi.fn().mockResolvedValue('{bad-json'),
+      rename: vi.fn().mockRejectedValue(quarantineFailure),
+    })
+    await expect(invalid.load('one')).rejects.toBe(quarantineFailure)
+  })
 
   it('preserves freely resized valid widget bounds', async () => {
     const { fs, files } = memoryFileSystem()

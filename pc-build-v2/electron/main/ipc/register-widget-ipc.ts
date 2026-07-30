@@ -6,11 +6,13 @@ import {
   EmptyWidgetPayloadSchema,
   MAIN_WIDGET_IPC_CHANNELS,
   WIDGET_IPC_CHANNELS,
-  WidgetSettingsPayloadSchema,
+  WidgetRendererReadyResultSchema,
+  WidgetSettingsPatchPayloadSchema,
   WidgetSettingsResultSchema,
   WidgetStatusResultSchema,
   WidgetViewResultSchema,
 } from '../../../shared/contracts/widget-ipc'
+import type { WidgetSettingsPatch } from '../../../shared/models/widget'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { ImageAssetService } from '../services/image-asset-service'
 import type { WidgetController } from '../services/widget-controller'
@@ -50,10 +52,18 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
   })
   ipcMain.handle(MAIN_WIDGET_IPC_CHANNELS.updateSettings, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
-    const settings = WidgetSettingsPayloadSchema.parse(rawPayload)
+    const settings = WidgetSettingsPatchPayloadSchema.parse(
+      rawPayload,
+    ) as WidgetSettingsPatch
     return WidgetSettingsResultSchema.parse(
       await dependencies.widget.updateSettings(settings),
     )
+  })
+  ipcMain.handle(WIDGET_IPC_CHANNELS.rendererReady, (event, rawPayload) => {
+    verify(event, dependencies.windows, 'widget')
+    EmptyWidgetPayloadSchema.parse(rawPayload)
+    dependencies.windows.markWidgetRendererReady()
+    return WidgetRendererReadyResultSchema.parse(true)
   })
   ipcMain.handle(WIDGET_IPC_CHANNELS.getView, (event, rawPayload) => {
     verify(event, dependencies.windows, 'widget')
@@ -67,7 +77,9 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
   })
   ipcMain.handle(WIDGET_IPC_CHANNELS.updateSettings, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'widget')
-    const settings = WidgetSettingsPayloadSchema.parse(rawPayload)
+    const settings = WidgetSettingsPatchPayloadSchema.parse(
+      rawPayload,
+    ) as WidgetSettingsPatch
     return WidgetSettingsResultSchema.parse(
       await dependencies.widget.updateSettings(settings),
     )

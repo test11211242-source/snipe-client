@@ -44,9 +44,11 @@ import {
   type PredictionResultConfiguration,
 } from '../../../shared/models/prediction-result'
 import {
+  canonicalizeNormalizedRect,
   normalizedToPixelRect,
   type CapturedFrame,
   type CaptureService,
+  type LegacyTriggerAnalysis,
 } from './capture-service'
 
 interface InternalSession {
@@ -55,6 +57,7 @@ interface InternalSession {
   frame: CapturedFrame | null
   controller: AbortController
   commitLocked: boolean
+  legacyTriggerProfile: LegacyTriggerAnalysis | null
   profileTarget: SetupCaptureProfileTarget | null
   authGeneration: number
 }
@@ -78,6 +81,7 @@ export function buildLegacyProjection(
   frame: CapturedFrame,
   regionsInput: unknown,
   profile: TriggerProfile,
+  legacyProfile: LegacyTriggerAnalysis,
   source: CapturePreference,
   timestamp: string,
 ): LegacyOcrRegions {
@@ -102,28 +106,36 @@ export function buildLegacyProjection(
     trigger_area: {
       ...trigger,
       ratio: regions.trigger,
-      trigger_profile: {
-        schema_version: 2,
-        outer_ratio: regions.trigger,
-        inner_ratio: profile.innerRect,
-        template_gray_base64: profile.structureTemplateBase64,
-        thumbnail_hash: profile.structureHash64,
-        hash_algorithm: 'ahash64-bitwise-v1',
-        feature_mode: profile.matcherMode === 'edge_orb' ? 'orb' : 'ncc',
-        keypoints_count: profile.quality.keypointsCount,
-        normalized_template_size: profile.normalizedTemplateSize,
-        hash_threshold: 64,
-        orb_distance_threshold: 64,
-        orb_min_good_matches: 6,
-        ncc_threshold: 0.65,
-        analyzer_version: profile.analyzer.version,
-      },
+      trigger_profile: buildLegacyTriggerProfile(regions.trigger, profile, legacyProfile),
     },
     normal_data_area: { ...normal, ratio: regions.normal },
     precise_data_area: { ...precise, ratio: regions.precise },
     screen_resolution: frame.size,
     updated_at: timestamp,
   })
+}
+
+function buildLegacyTriggerProfile(
+  outerRatio: NormalizedRect,
+  profile: TriggerProfile,
+  legacy: LegacyTriggerAnalysis,
+) {
+  return {
+    schema_version: 2 as const,
+    outer_ratio: outerRatio,
+    inner_ratio: profile.innerRect,
+    template_gray_base64: legacy.templateGrayBase64,
+    thumbnail_hash: legacy.thumbnailHash,
+    hash_algorithm: 'ahash64-hex-char-v1' as const,
+    feature_mode: legacy.featureMode,
+    keypoints_count: legacy.keypointsCount,
+    normalized_template_size: legacy.normalizedTemplateSize,
+    hash_threshold: legacy.hashThreshold,
+    orb_distance_threshold: legacy.orbDistanceThreshold,
+    orb_min_good_matches: legacy.orbMinGoodMatches,
+    ncc_threshold: legacy.nccThreshold,
+    analyzer_version: legacy.analyzerVersion,
+  }
 }
 
 export class SetupSessionService {
@@ -207,6 +219,7 @@ export class SetupSessionService {
       frame: null,
       controller,
       commitLocked: false,
+      legacyTriggerProfile: null,
       profileTarget,
       authGeneration,
       view: SetupSessionViewSchema.parse({
@@ -323,6 +336,9 @@ export class SetupSessionService {
       )
     }
     const validated = NormalizedRectSchema.parse(rect)
+    if (region === 'trigger' || region === 'resultTrigger') {
+      session.legacyTriggerProfile = null
+    }
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       generation: generation + 1,
@@ -364,21 +380,22 @@ export class SetupSessionService {
     if (session.view.state !== 'SELECTING' || session.frame === null) {
       throw new ApplicationError('SETUP_STATE_INVALID', 'Trigger cannot be analyzed now')
     }
-    const trigger =
-      session.view.kind === 'predictionResult'
-        ? session.view.regions.resultTrigger
-        : session.view.regions.trigger
+    const triggerRegion =
+      session.view.kind === 'predictionResult' ? 'resultTrigger' : 'trigger'
+    const trigger = session.view.regions[triggerRegion]
     if (trigger === null)
       throw new ApplicationError(
         'SETUP_REGION_MISSING',
         'Select the trigger region first',
       )
     session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'ANALYZING' })
+    session.legacyTriggerProfile = null
     const operationGeneration = generation
     try {
-      const profile = await this.capture.analyze(
+      const canonicalTrigger = canonicalizeNormalizedRect(trigger, session.frame.size)
+      const analysis = await this.capture.analyze(
         session.frame,
-        trigger,
+        canonicalTrigger,
         session.controller.signal,
       )
       if (
@@ -388,11 +405,13 @@ export class SetupSessionService {
       ) {
         return session.view
       }
+      session.legacyTriggerProfile = analysis.legacyProfile
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'SELECTING',
         generation: generation + 1,
-        triggerProfile: profile,
+        regions: { ...session.view.regions, [triggerRegion]: canonicalTrigger },
+        triggerProfile: analysis.profile,
         error: null,
       })
     } catch (error) {
@@ -410,7 +429,11 @@ export class SetupSessionService {
 
   review(sessionId: string, generation: number): SetupSessionView {
     const session = this.assertCommand(sessionId, generation)
-    if (session.view.state !== 'SELECTING' || session.view.triggerProfile === null) {
+    if (
+      session.view.state !== 'SELECTING' ||
+      session.view.triggerProfile === null ||
+      session.legacyTriggerProfile === null
+    ) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Analyze the trigger before review')
     }
     if (session.view.kind === 'capture')
@@ -439,7 +462,8 @@ export class SetupSessionService {
     if (
       session.view.state !== 'REVIEW' ||
       session.frame === null ||
-      session.view.triggerProfile === null
+      session.view.triggerProfile === null ||
+      session.legacyTriggerProfile === null
     ) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
     }
@@ -464,7 +488,8 @@ export class SetupSessionService {
     }
     const frame = session.frame
     const triggerProfile = session.view.triggerProfile
-    if (frame === null || triggerProfile === null) {
+    const legacyTriggerProfile = session.legacyTriggerProfile
+    if (frame === null || triggerProfile === null || legacyTriggerProfile === null) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
     }
     const regions = NormalizedRegionsSchema.parse({
@@ -561,6 +586,7 @@ export class SetupSessionService {
       frame,
       regions,
       triggerProfile,
+      legacyTriggerProfile,
       session.view.source,
       timestamp,
     )
@@ -641,6 +667,7 @@ export class SetupSessionService {
     } catch (error) {
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
       session.frame = null
+      session.legacyTriggerProfile = null
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'FAILED',
@@ -650,6 +677,7 @@ export class SetupSessionService {
       return session.view
     }
     session.frame = null
+    session.legacyTriggerProfile = null
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       state: 'COMMITTED',
@@ -673,6 +701,7 @@ export class SetupSessionService {
     if (
       session.frame === null ||
       session.view.triggerProfile === null ||
+      session.legacyTriggerProfile === null ||
       session.view.regions.resultTrigger === null ||
       session.view.regions.resultData === null ||
       this.resultRepository === undefined ||
@@ -688,6 +717,7 @@ export class SetupSessionService {
     const trigger = session.view.regions.resultTrigger
     const data = session.view.regions.resultData
     const profile = session.view.triggerProfile
+    const legacyProfile = session.legacyTriggerProfile
     const timestamp = this.now().toISOString()
     session.commitLocked = true
     session.view = SetupSessionViewSchema.parse({
@@ -754,22 +784,7 @@ export class SetupSessionService {
       ratio: trigger,
       screen_resolution: frame.size,
       capture_reference: captureReference,
-      trigger_profile: {
-        schema_version: 2,
-        outer_ratio: trigger,
-        inner_ratio: profile.innerRect,
-        template_gray_base64: profile.structureTemplateBase64,
-        thumbnail_hash: profile.structureHash64,
-        hash_algorithm: 'ahash64-bitwise-v1',
-        feature_mode: profile.matcherMode === 'edge_orb' ? 'orb' : 'ncc',
-        keypoints_count: profile.quality.keypointsCount,
-        normalized_template_size: profile.normalizedTemplateSize,
-        hash_threshold: 64,
-        orb_distance_threshold: 64,
-        orb_min_good_matches: 6,
-        ncc_threshold: 0.65,
-        analyzer_version: profile.analyzer.version,
-      },
+      trigger_profile: buildLegacyTriggerProfile(trigger, profile, legacyProfile),
     }
     const triggerRemote = await this.api.request({
       method: 'POST',
@@ -867,6 +882,7 @@ export class SetupSessionService {
     } catch {
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
       session.frame = null
+      session.legacyTriggerProfile = null
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'FAILED',
@@ -880,6 +896,7 @@ export class SetupSessionService {
       return session.view
     }
     session.frame = null
+    session.legacyTriggerProfile = null
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       state: 'COMMITTED',
@@ -932,6 +949,7 @@ export class SetupSessionService {
     }
     session.controller.abort()
     session.frame = null
+    session.legacyTriggerProfile = null
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       state: 'CANCELLED',
@@ -951,6 +969,7 @@ export class SetupSessionService {
     }
     session.controller.abort()
     session.frame = null
+    session.legacyTriggerProfile = null
     session.commitLocked = false
     session.view = SetupSessionViewSchema.parse({
       ...session.view,

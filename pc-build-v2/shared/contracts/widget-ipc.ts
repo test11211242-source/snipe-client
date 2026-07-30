@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import {
+  WidgetSettingsPatchSchema,
   WidgetSettingsSchema,
   WidgetStatusSchema,
   WidgetViewSchema,
@@ -14,6 +15,7 @@ export const MAIN_WIDGET_IPC_CHANNELS = Object.freeze({
 })
 
 export const WIDGET_IPC_CHANNELS = Object.freeze({
+  rendererReady: 'widget:renderer-ready',
   getView: 'widget:get-view',
   getCardAsset: 'widget:get-card-asset',
   updateSettings: 'widget:update-settings',
@@ -21,10 +23,11 @@ export const WIDGET_IPC_CHANNELS = Object.freeze({
 })
 
 export const EmptyWidgetPayloadSchema = z.object({}).strict()
-export const WidgetSettingsPayloadSchema = WidgetSettingsSchema
+export const WidgetSettingsPatchPayloadSchema = WidgetSettingsPatchSchema
 export const WidgetSettingsResultSchema = WidgetSettingsSchema
 export const WidgetStatusResultSchema = WidgetStatusSchema
 export const WidgetViewResultSchema = WidgetViewSchema
+export const WidgetRendererReadyResultSchema = z.literal(true)
 
 export const CardAssetRequestSchema = z
   .object({

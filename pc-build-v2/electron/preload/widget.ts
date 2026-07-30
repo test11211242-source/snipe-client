@@ -6,13 +6,22 @@ import {
   CardAssetResultSchema,
   EmptyWidgetPayloadSchema,
   WIDGET_IPC_CHANNELS,
-  WidgetSettingsPayloadSchema,
+  WidgetRendererReadyResultSchema,
+  WidgetSettingsPatchPayloadSchema,
   WidgetSettingsResultSchema,
   WidgetStatusResultSchema,
   WidgetViewResultSchema,
 } from '../../shared/contracts/widget-ipc'
 
 const api: CrToolsWidgetApi = Object.freeze({
+  rendererReady: async () => {
+    WidgetRendererReadyResultSchema.parse(
+      await ipcRenderer.invoke(
+        WIDGET_IPC_CHANNELS.rendererReady,
+        EmptyWidgetPayloadSchema.parse({}),
+      ),
+    )
+  },
   getView: async () =>
     WidgetViewResultSchema.parse(
       await ipcRenderer.invoke(
@@ -27,7 +36,7 @@ const api: CrToolsWidgetApi = Object.freeze({
     )
   },
   updateSettings: async (rawSettings: unknown) => {
-    const settings = WidgetSettingsPayloadSchema.parse(rawSettings)
+    const settings = WidgetSettingsPatchPayloadSchema.parse(rawSettings)
     return WidgetSettingsResultSchema.parse(
       await ipcRenderer.invoke(WIDGET_IPC_CHANNELS.updateSettings, settings),
     )

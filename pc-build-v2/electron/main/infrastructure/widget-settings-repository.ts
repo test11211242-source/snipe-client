@@ -74,30 +74,42 @@ export class WidgetSettingsRepository {
   ) {}
 
   async load(userId: string): Promise<WidgetSettings> {
+    const source = join(this.directory, fileName(userId))
+    let value: string
     try {
-      const value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
-      const raw = JSON.parse(value) as unknown
-      const current = WidgetSettingsSchema.safeParse(raw)
-      if (current.success) return current.data
-      const legacy = LegacyWidgetSettingsSchema.parse(raw)
-      const migrated = WidgetSettingsSchema.parse({
-        autoOpen: legacy.autoOpen,
-        alwaysOnTop: legacy.alwaysOnTop,
-        locked: legacy.locked,
-        opacity: legacy.opacity,
-        displayMode: 'deck',
-        bounds: {
-          x: legacy.bounds.x,
-          y: legacy.bounds.y,
-          width: WIDGET_DECK_WIDTH,
-          height: WIDGET_DECK_HEIGHT,
-        },
-      })
-      return await this.save(userId, migrated)
+      value = await this.fs.readFile(source, 'utf8')
     } catch (error) {
       if (isMissing(error)) return structuredClone(DEFAULT_WIDGET_SETTINGS)
       throw error
     }
+
+    let raw: unknown
+    try {
+      raw = JSON.parse(value) as unknown
+    } catch {
+      await this.quarantine(source)
+      return structuredClone(DEFAULT_WIDGET_SETTINGS)
+    }
+    const current = WidgetSettingsSchema.safeParse(raw)
+    if (current.success) return current.data
+    const legacy = LegacyWidgetSettingsSchema.safeParse(raw)
+    if (legacy.success) {
+      return this.save(userId, {
+        autoOpen: legacy.data.autoOpen,
+        alwaysOnTop: legacy.data.alwaysOnTop,
+        locked: legacy.data.locked,
+        opacity: legacy.data.opacity,
+        displayMode: legacy.data.compactMode ? 'deck' : 'detailed',
+        bounds: {
+          x: legacy.data.bounds.x,
+          y: legacy.data.bounds.y,
+          width: legacy.data.compactMode ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
+          height: legacy.data.compactMode ? WIDGET_DECK_HEIGHT : WIDGET_DETAILED_HEIGHT,
+        },
+      })
+    }
+    await this.quarantine(source)
+    return structuredClone(DEFAULT_WIDGET_SETTINGS)
   }
 
   async save(userId: string, value: WidgetSettings): Promise<WidgetSettings> {
@@ -113,5 +125,9 @@ export class WidgetSettingsRepository {
       throw error
     }
     return settings
+  }
+
+  private async quarantine(source: string): Promise<void> {
+    await this.fs.rename(source, `${source}.invalid-${Date.now()}-${randomUUID()}`)
   }
 }

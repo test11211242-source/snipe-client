@@ -3,10 +3,7 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { AppSettingsView } from '../../../shared/contracts/app'
 import type { UpdateView } from '../../../shared/models/update'
-import type {
-  WidgetSettings as WidgetSettingsData,
-  WidgetStatus,
-} from '../../../shared/models/widget'
+import type { WidgetSettingsPatch, WidgetStatus } from '../../../shared/models/widget'
 import { publicErrorMessage, updateStateLabel } from './format'
 import { Alert, AsyncState, Button, PageHeader, Section, Status, Toggle } from './ui'
 
@@ -33,7 +30,12 @@ export function SettingsPage({
   )
   const [opacityDirty, setOpacityDirty] = useState(false)
   const savedTimer = useRef<number | undefined>(undefined)
+  const statusRef = useRef(status)
   const applyWidgetStatus = useEffectEvent(onStatus)
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
 
   useEffect(() => {
     let active = true
@@ -63,16 +65,14 @@ export function SettingsPage({
     savedTimer.current = window.setTimeout(() => setSavedMessage(null), 2_500)
   }
 
-  const updateWidget = async (patch: Partial<WidgetSettingsData>): Promise<boolean> => {
+  const updateWidget = async (patch: WidgetSettingsPatch): Promise<boolean> => {
+    if (status === null) return false
     setBusy('widget')
     setMutationError(null)
     try {
-      const latestStatus = await window.crTools.getWidgetStatus()
-      const settings = await window.crTools.updateWidgetSettings({
-        ...latestStatus.settings,
-        ...patch,
-      })
-      onStatus({ ...latestStatus, settings })
+      const settings = await window.crTools.updateWidgetSettings(patch)
+      const latestStatus = statusRef.current
+      if (latestStatus !== null) onStatus({ ...latestStatus, settings })
       showSaved('Настройки виджета сохранены')
       return true
     } catch {

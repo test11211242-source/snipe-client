@@ -24,7 +24,19 @@ interface RegisteredWindow {
   rendererUrl: string
   closeReason: WindowCloseReason
   suppressBoundsEvents: boolean
+  widgetRendererReady: boolean
+  widgetReadiness: WidgetReadiness | null
+  widgetInitialNavigationPending: boolean
 }
+
+interface WidgetReadiness {
+  settled: boolean
+  timer: ReturnType<typeof setTimeout> | null
+  resolve: () => void
+  reject: (error: unknown) => void
+}
+
+export const WIDGET_RENDERER_READY_TIMEOUT_MS = 10_000
 
 export interface WorkAreaBounds {
   x: number
@@ -351,20 +363,21 @@ export class WindowCoordinator {
       },
     })
     window.setAspectRatio(0)
-    this.register('widget', window, renderer.url)
-    const operation = Promise.resolve()
+    const registeredWidget = this.register('widget', window, renderer.url)
+    const ready = this.armWidgetReadiness(registeredWidget)
+    const load = Promise.resolve()
       .then(() =>
         renderer.development
           ? window.loadURL(renderer.url)
           : window.loadFile(join(import.meta.dirname, '../renderer/widget.html')),
       )
+      .finally(() => {
+        registeredWidget.widgetInitialNavigationPending = false
+      })
+    const operation = Promise.all([load, ready])
+      .then(() => undefined)
       .catch((error: unknown) => {
-        const current = this.#registry.get('widget')
-        if (current?.window === window) {
-          current.closeReason = 'auth-transition'
-          this.#registry.delete('widget')
-        }
-        if (!window.isDestroyed()) window.destroy()
+        this.failWidgetWindow(window, error)
         throw error
       })
       .finally(() => {
@@ -375,16 +388,30 @@ export class WindowCoordinator {
   }
 
   showWidget(): void {
-    const window = this.#registry.get('widget')?.window
-    if (window === undefined || window.isDestroyed()) return
+    const registered = this.#registry.get('widget')
+    const window = registered?.window
+    if (
+      registered?.widgetRendererReady !== true ||
+      window === undefined ||
+      window.isDestroyed()
+    ) {
+      return
+    }
     window.show()
     window.focus()
     this.restoreWidgetTopmost(window)
   }
 
   showWidgetInactive(): void {
-    const window = this.#registry.get('widget')?.window
-    if (window === undefined || window.isDestroyed()) return
+    const registered = this.#registry.get('widget')
+    const window = registered?.window
+    if (
+      registered?.widgetRendererReady !== true ||
+      window === undefined ||
+      window.isDestroyed()
+    ) {
+      return
+    }
     window.showInactive()
     this.restoreWidgetTopmost(window)
   }
@@ -428,6 +455,26 @@ export class WindowCoordinator {
     return () => this.#widgetBoundsListeners.delete(listener)
   }
 
+  markWidgetRendererReady(): void {
+    const registered = this.#registry.get('widget')
+    if (registered === undefined || registered.window.isDestroyed()) {
+      throw new ApplicationError('WIDGET_NOT_AVAILABLE', 'Widget window is not available')
+    }
+    if (registered.widgetRendererReady) return
+    const readiness = registered.widgetReadiness
+    if (readiness === null || readiness.settled) {
+      throw new ApplicationError('WIDGET_NOT_LOADING', 'Widget renderer is not loading')
+    }
+    try {
+      registered.window.setIgnoreMouseEvents(false)
+    } catch (error) {
+      this.failWidgetWindow(registered.window, error)
+      throw error
+    }
+    registered.widgetRendererReady = true
+    this.resolveWidgetReadiness(readiness)
+  }
+
   private restoreWidgetTopmost(window: BrowserWindow): void {
     if (!window.isAlwaysOnTop()) return
     window.setAlwaysOnTop(true, 'normal')
@@ -464,22 +511,38 @@ export class WindowCoordinator {
     const registered = this.#registry.get(kind)
     if (registered === undefined || registered.window.isDestroyed()) return
     registered.closeReason = reason
+    if (kind === 'widget') {
+      this.rejectWidgetReadiness(
+        registered,
+        new ApplicationError('WIDGET_CLOSED', 'Widget window was closed while loading'),
+      )
+    }
     registered.window.destroy()
   }
 
-  assertSender(sender: WebContents, senderUrl: string, expectedKind: WindowKind): void {
-    const registered = this.#registry.get(expectedKind)
-    const valid =
-      registered !== undefined &&
-      !registered.window.isDestroyed() &&
-      registered.window.webContents.id === sender.id &&
-      isAllowedRendererUrl(senderUrl, registered.rendererUrl)
+  assertSender(
+    sender: WebContents,
+    senderUrl: string,
+    expectedKind: WindowKind | readonly WindowKind[],
+  ): void {
+    const expectedKinds: readonly WindowKind[] = Array.isArray(expectedKind)
+      ? (expectedKind as readonly WindowKind[])
+      : [expectedKind as WindowKind]
+    const valid = expectedKinds.some((kind) => {
+      const registered = this.#registry.get(kind)
+      return (
+        registered !== undefined &&
+        !registered.window.isDestroyed() &&
+        registered.window.webContents.id === sender.id &&
+        isAllowedRendererUrl(senderUrl, registered.rendererUrl)
+      )
+    })
 
     if (!valid) {
       this.logger.warn('Rejected IPC sender', {
         senderWebContentsId: sender.id,
         senderUrl,
-        expectedKind,
+        expectedKinds,
       })
       throw new ApplicationError('IPC_SENDER_REJECTED', 'IPC sender is not authorized')
     }
@@ -488,12 +551,20 @@ export class WindowCoordinator {
   closeAll(reason: Exclude<WindowCloseReason, 'user'> = 'shutdown'): void {
     for (const registered of this.#registry.values()) {
       registered.closeReason = reason
+      this.rejectWidgetReadiness(
+        registered,
+        new ApplicationError('WIDGET_CLOSED', 'Widget window was closed while loading'),
+      )
       if (!registered.window.isDestroyed()) registered.window.destroy()
     }
     this.#registry.clear()
   }
 
-  private register(kind: WindowKind, window: BrowserWindow, rendererUrl: string): void {
+  private register(
+    kind: WindowKind,
+    window: BrowserWindow,
+    rendererUrl: string,
+  ): RegisteredWindow {
     if (this.#registry.has(kind)) {
       throw new ApplicationError(
         'WINDOW_ALREADY_REGISTERED',
@@ -506,6 +577,9 @@ export class WindowCoordinator {
       rendererUrl,
       closeReason: 'user',
       suppressBoundsEvents: false,
+      widgetRendererReady: kind !== 'widget',
+      widgetReadiness: null,
+      widgetInitialNavigationPending: kind === 'widget',
     }
     this.#registry.set(kind, registered)
 
@@ -517,6 +591,23 @@ export class WindowCoordinator {
       }
     })
     if (kind === 'widget') {
+      window.webContents.on(
+        'did-start-navigation',
+        (_event, navigationUrl, isInPlace, isMainFrame) => {
+          if (
+            !isMainFrame ||
+            isInPlace ||
+            !isAllowedRendererUrl(navigationUrl, rendererUrl)
+          ) {
+            return
+          }
+          if (registered.widgetInitialNavigationPending) {
+            registered.widgetInitialNavigationPending = false
+            return
+          }
+          void this.armWidgetReadiness(registered).catch(() => undefined)
+        },
+      )
       const notifyBounds = (): void => {
         if (registered.suppressBoundsEvents || window.isDestroyed()) return
         const bounds = persistableWidgetBounds(window.getBounds())
@@ -531,12 +622,111 @@ export class WindowCoordinator {
       window.on('move', notifyBounds)
       window.on('resize', notifyBounds)
       window.on('blur', () => this.restoreWidgetTopmost(window))
+      window.webContents.on(
+        'did-fail-load',
+        (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+          if (!isMainFrame) return
+          this.logger.warn('Widget renderer failed to load', {
+            errorCode,
+            errorDescription,
+            validatedUrl,
+          })
+          this.failWidgetWindow(
+            window,
+            new ApplicationError('WIDGET_LOAD_FAILED', 'Widget renderer failed to load'),
+          )
+        },
+      )
+      window.webContents.on('render-process-gone', (_event, details) => {
+        this.logger.warn('Widget renderer process exited', { reason: details.reason })
+        this.failWidgetWindow(
+          window,
+          new ApplicationError('WIDGET_RENDERER_GONE', 'Widget renderer process exited'),
+        )
+      })
+      window.on('unresponsive', () => {
+        this.logger.warn('Widget renderer became unresponsive')
+        this.failWidgetWindow(
+          window,
+          new ApplicationError(
+            'WIDGET_RENDERER_UNRESPONSIVE',
+            'Widget renderer became unresponsive',
+          ),
+        )
+      })
     }
     window.on('closed', () => {
+      this.rejectWidgetReadiness(
+        registered,
+        new ApplicationError('WIDGET_CLOSED', 'Widget window was closed while loading'),
+      )
       const current = this.#registry.get(kind)
       if (current?.window === window) this.#registry.delete(kind)
       for (const listener of this.#closedListeners) listener(kind, registered.closeReason)
     })
+    return registered
+  }
+
+  private armWidgetReadiness(registered: RegisteredWindow): Promise<void> {
+    const window = registered.window
+    this.rejectWidgetReadiness(
+      registered,
+      new ApplicationError(
+        'WIDGET_RENDERER_SUPERSEDED',
+        'Widget renderer navigation was superseded',
+      ),
+    )
+    registered.widgetRendererReady = false
+    window.setIgnoreMouseEvents(true)
+    const ready = new Promise<void>((resolve, reject) => {
+      registered.widgetReadiness = {
+        settled: false,
+        timer: null,
+        resolve,
+        reject,
+      }
+    })
+    const readiness = registered.widgetReadiness
+    if (readiness === null) throw new Error('Widget readiness was not initialized')
+    readiness.timer = setTimeout(() => {
+      this.failWidgetWindow(
+        window,
+        new ApplicationError(
+          'WIDGET_RENDERER_TIMEOUT',
+          'Widget renderer did not become ready in time',
+        ),
+      )
+    }, WIDGET_RENDERER_READY_TIMEOUT_MS)
+    return ready
+  }
+
+  private resolveWidgetReadiness(readiness: WidgetReadiness): void {
+    if (readiness.settled) return
+    readiness.settled = true
+    if (readiness.timer !== null) clearTimeout(readiness.timer)
+    readiness.timer = null
+    readiness.resolve()
+  }
+
+  private rejectWidgetReadiness(registered: RegisteredWindow, error: unknown): void {
+    const readiness = registered.widgetReadiness
+    if (readiness === null || readiness.settled) return
+    readiness.settled = true
+    if (readiness.timer !== null) clearTimeout(readiness.timer)
+    readiness.timer = null
+    readiness.reject(error)
+  }
+
+  private failWidgetWindow(window: BrowserWindow, error: unknown): void {
+    const registered = this.#registry.get('widget')
+    if (registered?.window === window) {
+      registered.closeReason = 'auth-transition'
+      this.rejectWidgetReadiness(registered, error)
+      this.#registry.delete('widget')
+    }
+    if (window.isDestroyed()) return
+    window.hide()
+    window.destroy()
   }
 
   private getRenderer(entryPoint: string): {

@@ -198,13 +198,38 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
           bridge: typeof (window as unknown as { crToolsAuth?: unknown }).crToolsAuth,
           getView: typeof (window as unknown as { crToolsAuth?: { getView?: unknown } })
             .crToolsAuth?.getView,
+          getUpdateView: typeof window.crToolsAuth.getUpdateView,
         })),
       )
-      .toEqual({ bridge: 'object', getView: 'function' })
+      .toEqual({ bridge: 'object', getView: 'function', getUpdateView: 'function' })
 
     const view = await page.evaluate(() => window.crToolsAuth.getView())
     expect(view.state).toMatch(
       /^(BOOTSTRAPPING|INVITE_REQUIRED|UNAUTHENTICATED|AUTHENTICATED|BLOCKED|ERROR)$/,
+    )
+    await expect(
+      page.evaluate(() => window.crToolsAuth.getUpdateView()),
+    ).resolves.toMatchObject({
+      currentVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/),
+      state: expect.stringMatching(
+        /^(IDLE|CHECKING|AVAILABLE|DOWNLOADING|READY|UP_TO_DATE|FAILED)$/,
+      ),
+    })
+    const bridgeKeys = await page.evaluate(() => Object.keys(window.crToolsAuth).sort())
+    expect(bridgeKeys).toEqual(
+      [
+        'activateInvite',
+        'cancelUpdate',
+        'checkForUpdate',
+        'checkInvite',
+        'downloadUpdate',
+        'getUpdateView',
+        'getView',
+        'installUpdate',
+        'login',
+        'register',
+        'retryBootstrap',
+      ].sort(),
     )
   } finally {
     await electronApp?.close().catch(() => undefined)

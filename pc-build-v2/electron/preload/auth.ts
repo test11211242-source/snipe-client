@@ -14,10 +14,20 @@ import type {
   LoginPayload,
   RegisterPayload,
 } from '../../shared/contracts/auth-ipc'
+import {
+  EmptyUpdatePayloadSchema,
+  UPDATE_IPC_CHANNELS,
+  UpdateViewResultSchema,
+} from '../../shared/contracts/update'
 
 const emptyInvoke = async (channel: string) =>
   AuthViewResultSchema.parse(
     await ipcRenderer.invoke(channel, EmptyPayloadSchema.parse({})),
+  )
+
+const updateInvoke = async (channel: string) =>
+  UpdateViewResultSchema.parse(
+    await ipcRenderer.invoke(channel, EmptyUpdatePayloadSchema.parse({})),
   )
 
 const api: CrToolsAuthApi = Object.freeze({
@@ -45,6 +55,11 @@ const api: CrToolsAuthApi = Object.freeze({
         RegisterPayloadSchema.parse(payload),
       ),
     ),
+  getUpdateView: () => updateInvoke(UPDATE_IPC_CHANNELS.getView),
+  checkForUpdate: () => updateInvoke(UPDATE_IPC_CHANNELS.check),
+  downloadUpdate: () => updateInvoke(UPDATE_IPC_CHANNELS.download),
+  cancelUpdate: () => updateInvoke(UPDATE_IPC_CHANNELS.cancel),
+  installUpdate: () => updateInvoke(UPDATE_IPC_CHANNELS.install),
 })
 
 contextBridge.exposeInMainWorld('crToolsAuth', api)

@@ -2,8 +2,10 @@ import { createHash, randomUUID, verify, type Hash } from 'node:crypto'
 import { promises as nodeFileSystem } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
+import { z } from 'zod'
 
 import {
+  StrictSemverSchema,
   UPDATE_ARTIFACT_MAX_BYTES,
   UPDATE_MANIFEST_MAX_BYTES,
   UPDATE_MANIFEST_URL,
@@ -16,12 +18,16 @@ import {
   type UpdatePublicError,
   type UpdateView,
 } from '../../../shared/models/update'
-import { UpdateValidationError, verifyUpdateManifest } from './update-manifest-verifier'
+import {
+  compareSemver,
+  UpdateValidationError,
+  verifyUpdateManifest,
+} from './update-manifest-verifier'
 import type { VerifiedInstallerLauncher } from './launch-verified-installer'
 
 type UpdateFileSystem = Pick<
   typeof nodeFileSystem,
-  'chmod' | 'mkdir' | 'open' | 'opendir' | 'rename' | 'rm' | 'stat'
+  'chmod' | 'mkdir' | 'open' | 'opendir' | 'readFile' | 'rename' | 'rm' | 'stat'
 >
 
 interface UpdateCrypto {
@@ -56,11 +62,21 @@ interface ReadyArtifact {
   generation: number
 }
 
+const UpdateTrustStateSchema = z
+  .object({
+    version: StrictSemverSchema,
+    manifestSha512: z.string().regex(/^[A-Za-z0-9+/]{86}==$/),
+  })
+  .strict()
+
+type UpdateTrustState = z.infer<typeof UpdateTrustStateSchema>
+
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const REQUEST_TIMEOUT_MS = 10_000
 const DOWNLOAD_INACTIVITY_MS = 30_000
 const STALE_ARTIFACT_AGE_MS = 24 * 60 * 60 * 1_000
 const MAX_STARTUP_SWEEP_ENTRIES = 256
+const MAX_TRUST_STATE_BYTES = 4 * 1024
 const UUID_PATTERN =
   '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const OWNED_PART_PATTERN = new RegExp(
@@ -131,6 +147,7 @@ export class UpdateService {
   #downloadPromise: Promise<UpdateView> | undefined
   #installPromise: Promise<UpdateView> | undefined
   #startupTimer: ReturnType<typeof setTimeout> | undefined
+  #trustState: UpdateTrustState | null | undefined
   #stopped = false
 
   constructor(private readonly dependencies: UpdateServiceDependencies) {
@@ -216,6 +233,10 @@ export class UpdateService {
     return this.dependencies.isPackaged() && this.dependencies.platform() === 'win32'
   }
 
+  private isCurrentGeneration(generation: number): boolean {
+    return generation === this.#generation && !this.#stopped
+  }
+
   private unsupportedView(): UpdateView {
     this.setView({
       state: 'FAILED',
@@ -263,6 +284,8 @@ export class UpdateService {
         this.dependencies.crypto.verify,
       )
       if (generation !== this.#generation || this.#stopped) return this.getView()
+      await this.verifyTrustedManifest(result.manifest)
+      if (generation !== this.#generation) return this.getView()
       if (!result.updateAvailable) {
         this.setView({ state: 'UP_TO_DATE', error: null })
         return this.getView()
@@ -411,6 +434,11 @@ export class UpdateService {
         await this.dependencies.fileSystem.rm(finalPath, { force: true })
         return this.getView()
       }
+      await this.advanceTrust(candidate)
+      if (!this.isCurrentGeneration(generation)) {
+        await this.dependencies.fileSystem.rm(finalPath, { force: true })
+        return this.getView()
+      }
       this.#ready = ready
       this.setView({ state: 'READY', progress: null, error: null })
     } catch (error) {
@@ -449,8 +477,9 @@ export class UpdateService {
     }
     try {
       await this.verifyArtifact(ready)
+      let launchControl: Awaited<ReturnType<VerifiedInstallerLauncher>>
       try {
-        await this.dependencies.launchVerifiedInstaller({
+        launchControl = await this.dependencies.launchVerifiedInstaller({
           path: ready.path,
           size: ready.size,
           sha512: ready.sha512,
@@ -462,7 +491,16 @@ export class UpdateService {
           true,
         )
       }
-      await this.dependencies.requestShutdown()
+      try {
+        await this.dependencies.requestShutdown()
+      } catch {
+        launchControl.cancel()
+        throw new UpdateValidationError(
+          'UPDATE_SHUTDOWN_FAILED',
+          'The application could not shut down for the update',
+          true,
+        )
+      }
     } catch (error) {
       this.setView({ state: 'FAILED', error: publicError(error) })
     }
@@ -512,6 +550,99 @@ export class UpdateService {
       throw new UpdateValidationError(
         'ARTIFACT_CHANGED',
         'The downloaded installer changed before installation',
+      )
+    }
+  }
+
+  private async verifyTrustedManifest(manifest: SignedUpdateManifest): Promise<void> {
+    const trusted = await this.loadTrustState()
+    if (trusted !== null) {
+      const comparison = compareSemver(manifest.version, trusted.version)
+      if (comparison < 0) {
+        throw new UpdateValidationError(
+          'MANIFEST_REPLAYED',
+          'Update metadata is older than a previously trusted release',
+        )
+      }
+      if (comparison === 0 && this.manifestDigest(manifest) !== trusted.manifestSha512) {
+        throw new UpdateValidationError(
+          'MANIFEST_VERSION_CONFLICT',
+          'Update metadata conflicts with a previously trusted release',
+        )
+      }
+    }
+  }
+
+  private async advanceTrust(manifest: SignedUpdateManifest): Promise<void> {
+    const trusted = await this.loadTrustState()
+    if (trusted === null || compareSemver(manifest.version, trusted.version) > 0) {
+      await this.persistTrustState({
+        version: manifest.version,
+        manifestSha512: this.manifestDigest(manifest),
+      })
+    }
+  }
+
+  private manifestDigest(manifest: SignedUpdateManifest): string {
+    return this.dependencies.crypto
+      .createHash('sha512')
+      .update(JSON.stringify(manifest))
+      .digest('base64')
+  }
+
+  private async loadTrustState(): Promise<UpdateTrustState | null> {
+    if (this.#trustState !== undefined) return this.#trustState
+    const path = join(this.dependencies.userDataPath(), 'update-trust.v1.json')
+    try {
+      const status = await this.dependencies.fileSystem.stat(path)
+      if (!status.isFile() || status.size > MAX_TRUST_STATE_BYTES) {
+        throw new Error('Invalid trust-state file')
+      }
+      const parsed = UpdateTrustStateSchema.safeParse(
+        JSON.parse(await this.dependencies.fileSystem.readFile(path, 'utf8')),
+      )
+      if (!parsed.success) throw new Error('Invalid trust-state data')
+      this.#trustState = parsed.data
+      return this.#trustState
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        this.#trustState = null
+        return null
+      }
+      throw new UpdateValidationError(
+        'UPDATE_TRUST_STATE_INVALID',
+        'The local update trust state could not be verified',
+      )
+    }
+  }
+
+  private async persistTrustState(state: UpdateTrustState): Promise<void> {
+    const path = join(this.dependencies.userDataPath(), 'update-trust.v1.json')
+    const temporaryPath = `${path}.${this.dependencies.crypto.randomUUID()}.tmp`
+    let handle: FileHandle | undefined
+    try {
+      handle = await this.dependencies.fileSystem.open(temporaryPath, 'wx', 0o600)
+      await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
+      await handle.sync()
+      await handle.close()
+      handle = undefined
+      await this.dependencies.fileSystem.chmod(temporaryPath, 0o600)
+      await this.dependencies.fileSystem.rename(temporaryPath, path)
+      this.#trustState = state
+    } catch {
+      await handle?.close().catch(() => undefined)
+      await this.dependencies.fileSystem
+        .rm(temporaryPath, { force: true })
+        .catch(() => undefined)
+      throw new UpdateValidationError(
+        'UPDATE_TRUST_STATE_WRITE_FAILED',
+        'The local update trust state could not be saved',
+        true,
       )
     }
   }

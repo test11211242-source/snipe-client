@@ -18,7 +18,7 @@ interface UpdateIpcDependencies {
 
 export function registerUpdateIpc(dependencies: UpdateIpcDependencies): () => void {
   const verify = (event: IpcMainInvokeEvent, rawPayload: unknown): void => {
-    verifyIpcSender(event, dependencies.windows, 'main')
+    verifyIpcSender(event, dependencies.windows, ['main', 'auth'])
     EmptyUpdatePayloadSchema.parse(rawPayload)
   }
   ipcMain.handle(UPDATE_IPC_CHANNELS.getView, (event, payload) => {

@@ -140,11 +140,12 @@ class StrictJsonParser {
 }
 
 export function compareSemver(left: string, right: string): number {
-  const leftParts = left.split('.').map(Number)
-  const rightParts = right.split('.').map(Number)
+  const leftParts = left.split('.').map(BigInt)
+  const rightParts = right.split('.').map(BigInt)
   for (let index = 0; index < 3; index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
-    if (difference !== 0) return Math.sign(difference)
+    const leftPart = leftParts[index] ?? 0n
+    const rightPart = rightParts[index] ?? 0n
+    if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1
   }
   return 0
 }

@@ -65,6 +65,8 @@ Local widget settings are strict per-user atomic files under
 window movable, and open the V1-style full layout at `420x360`. The compact layout uses
 `360x300`; both remain freely resizable between the bounded Windows limits. Position and
 size are saved after user move/resize events.
+Valid legacy `compactMode` settings are migrated; malformed or out-of-range files are
+quarantined before defaults are loaded.
 
 Capture configuration is separate and per server user under
 `userData/capture-profiles.v3/`. It stores normalized regions, compact color-independent
@@ -137,10 +139,13 @@ has an 8-second deadline; stop is graceful first and then uses Windows process-t
 termination. Stdout lines, stderr diagnostics, image dimensions/bytes, event ordering, and
 session generations are bounded and validated.
 
-The local trigger engine checks at 10 FPS with bitwise 64-bit aHash distance 18, normalized
-128x128 grayscale, ORB BF/Hamming cross-check at distance 55 and 10 matches or NCC at 0.72,
-soft `+1/-0.5` confirmations to 2, and a 15-second cooldown. It crops the configured fast or
-precise source-local physical-pixel region and emits a bounded PNG. OCR uses only
+The local Trigger V3 engine checks color-independent structural maps at 10 FPS and uses
+bounded edge/orientation correlation with ORB alignment only when the analyzed template
+supports it. Setup also generates a transient V1 grayscale projection using V1's actual
+hex-character aHash distance semantics; it rejects selections without enough luminance
+contrast to be safe in V1. Trigger rectangles are canonicalized to source pixels before
+analysis and persistence. The monitor crops the configured fast or precise source-local
+physical-pixel region and emits a bounded PNG. OCR uses only
 `POST https://api.artcsworld.xyz/api/ocr/process`, a 150-second deadline, owner
 cancellation, and one auth refresh after 401. Player found, player not found, recognition
 failure, service/network failure, and blocked auth remain distinct.
@@ -229,6 +234,19 @@ Redirects remain on that origin/path, downloads are bounded and atomic, and size
 are verified before READY and again immediately before launch. The renderer never receives a
 URL, signature, hash, or filesystem path.
 
+Both the authenticated main renderer and the unauthenticated auth renderer receive only the five
+typed update commands. This lets a user install a login-compatibility update without exposing the
+main preload surface. After a newer manifest's installer is downloaded and passes exact size and
+SHA-512 checks, the client atomically persists its highest trusted version and complete manifest
+digest. It rejects lower versions or changed signed metadata for that version on the same
+installation.
+
+Schema version 1 remains unchanged so already-built 0.1.18 clients can consume the next release.
+The local version floor and monotonic deployment checks reduce replay risk, but they are not a
+complete anti-replay protocol: a fresh or reset client has no local history, and schema v1 has no
+signed expiry or sequence. Those properties require a staged future schema migration after a
+transition client that understands both schemas has been deployed through schema v1.
+
 The checked production public key is `resources/update-public-key.pem`. Its SHA-256 SPKI
 fingerprint is `8be2a82e869112c3d67de63f0f60ee0d6beb057eb9b160d8effad92098a60b0d`.
 Manifest signing is not Authenticode. By product decision, releases have no Windows
@@ -236,10 +254,12 @@ Authenticode certificate, so SmartScreen can show an unavoidable "Unknown publis
 Neither the Ed25519 manifest nor electron-builder executable resource editing would remove
 that warning.
 
-Run `./publish-update.sh` for the interactive one-command Windows build flow. Test mode downloads a
-verified installer artifact without deployment; release mode signs and publishes only after an
-explicit confirmation. See `docs/RELEASE_RUNBOOK.md` for setup, key rotation, artifact verification,
-deployment, and rollback procedures.
+After changing V2 code, run `./publish-update.sh`. It selects or reuses the release version, runs
+all gates, stages only the V2 allowlist, commits, securely pushes `main`, dispatches the correlated
+Windows workflow, and downloads the verified result. Release mode signs and publishes only after
+the explicit `PUBLISH` confirmation. GitHub artifacts expire after one day; durable installers and
+the manifest stay on the existing update server. See `docs/RELEASE_RUNBOOK.md` for key rotation,
+artifact verification, deployment, and rollback procedures.
 
 ## Remaining Release Gates
 

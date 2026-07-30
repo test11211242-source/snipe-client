@@ -1,11 +1,18 @@
 import { GripVertical, LayoutGrid, Lock, Pin, Trophy, Unlock, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
-import type { WidgetSettings, WidgetView } from '../../../shared/models/widget'
+import type { WidgetSettingsPatch, WidgetView } from '../../../shared/models/widget'
 
 const OPACITY_STEP = 5
 const MIN_OPACITY_PERCENT = 55
 const MAX_OPACITY_PERCENT = 100
+const SAVE_FEEDBACK_DURATION_MS = 2_500
+const CARD_ASSET_RETRY_DELAYS_MS = [250, 750, 1_500] as const
+const CARD_ASSET_MAX_ATTEMPTS = CARD_ASSET_RETRY_DELAYS_MS.length + 1
+
+function isCancelled(signal: AbortSignal): boolean {
+  return signal.aborted
+}
 
 export function WidgetApp(): React.JSX.Element {
   const [view, setView] = useState<WidgetView | null>(null)
@@ -25,12 +32,22 @@ export function WidgetApp(): React.JSX.Element {
 
   const saving = pendingMutations > 0
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
       mountedRef.current = false
-    },
-    [],
-  )
+    }
+  }, [])
+
+  useEffect(() => {
+    void window.crToolsWidget.rendererReady().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (!saved) return
+    const timer = window.setTimeout(() => setSaved(false), SAVE_FEEDBACK_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [saved])
 
   useEffect(() => {
     let active = true
@@ -86,19 +103,17 @@ export function WidgetApp(): React.JSX.Element {
     }
   }, [])
 
-  const enqueueSettings = (patch: Partial<WidgetSettings>): Promise<boolean> => {
+  const enqueueSettings = (patch: WidgetSettingsPatch): Promise<boolean> => {
     pendingMutationsRef.current += 1
     setPendingMutations((current) => current + 1)
     setMutationError(null)
     setSaved(false)
 
     const mutation = mutationQueueRef.current.then(async () => {
-      const latestView = await window.crToolsWidget.getView()
-      const settings = await window.crToolsWidget.updateSettings({
-        ...latestView.settings,
-        ...patch,
-      })
-      if (mountedRef.current) setView({ ...latestView, settings })
+      const settings = await window.crToolsWidget.updateSettings(patch)
+      if (mountedRef.current) {
+        setView((current) => (current === null ? current : { ...current, settings }))
+      }
     })
     const result = mutation.then(
       () => true,
@@ -156,7 +171,7 @@ export function WidgetApp(): React.JSX.Element {
     }
 
     const key = event.key.toLowerCase()
-    let patch: Partial<WidgetSettings> | null = null
+    let patch: WidgetSettingsPatch | null = null
     if (key === 'p') patch = { alwaysOnTop: !settings.alwaysOnTop }
     if (key === 'l') patch = { locked: !settings.locked }
     if (key === 'm') {
@@ -339,7 +354,7 @@ export function WidgetApp(): React.JSX.Element {
             >
               {deck?.cards.map((card, cardIndex) => (
                 <Card
-                  key={`${found.id}-${selectedDeck}-${cardIndex}`}
+                  key={`${found.id}-${selectedDeck}-${cardIndex}-${card.name}-${card.hasImage}`}
                   resultId={found.id}
                   deckIndex={selectedDeck}
                   cardIndex={cardIndex}
@@ -520,19 +535,66 @@ function Card({
   card: CardView
 }): React.JSX.Element {
   const [image, setImage] = useState<string | null>(null)
+  const retryRef = useRef<() => void>(() => undefined)
 
   useEffect(() => {
-    let active = true
-    if (card.hasImage) {
-      void window.crToolsWidget
-        .getCardAsset({ resultId, deckIndex, cardIndex })
-        .then((asset) => {
-          if (active && asset.kind === 'available') setImage(asset.dataUrl)
-        })
-        .catch(() => undefined)
+    const cancellation = new AbortController()
+    let inFlight = false
+    let attempts = 0
+    let timer: number | undefined
+
+    const scheduleRetry = (): void => {
+      if (
+        cancellation.signal.aborted ||
+        inFlight ||
+        timer !== undefined ||
+        attempts >= CARD_ASSET_MAX_ATTEMPTS
+      ) {
+        return
+      }
+      const delay = CARD_ASSET_RETRY_DELAYS_MS[attempts - 1]
+      if (delay === undefined) return
+      timer = window.setTimeout(() => {
+        timer = undefined
+        void load()
+      }, delay)
     }
+
+    const load = async (): Promise<void> => {
+      if (
+        cancellation.signal.aborted ||
+        inFlight ||
+        attempts >= CARD_ASSET_MAX_ATTEMPTS
+      ) {
+        return
+      }
+      inFlight = true
+      attempts += 1
+      try {
+        const asset = await window.crToolsWidget.getCardAsset({
+          resultId,
+          deckIndex,
+          cardIndex,
+        })
+        if (isCancelled(cancellation.signal)) return
+        if (asset.kind === 'available') {
+          setImage(asset.dataUrl)
+          return
+        }
+      } catch {
+        if (isCancelled(cancellation.signal)) return
+      } finally {
+        inFlight = false
+      }
+      scheduleRetry()
+    }
+
+    retryRef.current = scheduleRetry
+    if (card.hasImage) void load()
     return () => {
-      active = false
+      cancellation.abort()
+      retryRef.current = () => undefined
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [card.hasImage, cardIndex, deckIndex, resultId])
 
@@ -545,7 +607,7 @@ function Card({
 
   return (
     <article className="deck-card" aria-label={card.name} title={card.name}>
-      {image === null ? (
+      {!card.hasImage || image === null ? (
         <span className="card-placeholder">{initials}</span>
       ) : (
         <img
@@ -553,7 +615,10 @@ function Card({
           alt=""
           draggable={false}
           loading="eager"
-          onError={() => setImage(null)}
+          onError={() => {
+            setImage(null)
+            retryRef.current()
+          }}
         />
       )}
     </article>

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { MonitorResult } from '../../../shared/models/monitor'
+import type { WidgetSettings } from '../../../shared/models/widget'
 import { DEFAULT_WIDGET_SETTINGS } from '../infrastructure/widget-settings-repository'
 import { WidgetController } from './widget-controller'
 
@@ -162,7 +163,7 @@ describe('WidgetController', () => {
     const test = harness()
     await test.controller.start('user')
     const updated = { ...DEFAULT_WIDGET_SETTINGS, locked: true, opacity: 0.75 }
-    await test.controller.updateSettings(updated)
+    await test.controller.updateSettings({ locked: true, opacity: 0.75 })
     expect(test.windows.applyWidgetSettings).toHaveBeenCalledWith(updated)
 
     test.bounds({ x: 10, y: 20, width: 500, height: 600 })
@@ -179,28 +180,75 @@ describe('WidgetController', () => {
   })
 
   it('snaps the window to canonical bounds when display mode changes', async () => {
+    vi.useFakeTimers()
     const test = harness()
     await test.controller.start('user')
+    test.bounds({ x: 80, y: 90, width: 600, height: 700 })
 
-    const deck = await test.controller.updateSettings({
-      ...DEFAULT_WIDGET_SETTINGS,
-      displayMode: 'deck',
-      bounds: { x: 80, y: 90, width: 600, height: 700 },
-    })
+    const deck = await test.controller.updateSettings({ displayMode: 'deck' })
     expect(deck).toMatchObject({
       displayMode: 'deck',
       bounds: { x: 80, y: 90, width: 360, height: 300 },
     })
     expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(deck)
 
-    const detailed = await test.controller.updateSettings({
-      ...deck,
-      displayMode: 'detailed',
-    })
+    const detailed = await test.controller.updateSettings({ displayMode: 'detailed' })
     expect(detailed).toMatchObject({
       displayMode: 'detailed',
       bounds: { x: 80, y: 90, width: 420, height: 360 },
     })
+  })
+
+  it('preserves native bounds that change while a settings patch is saving', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.controller.start('user')
+    let releaseSave!: () => void
+    test.repository.save.mockImplementationOnce(
+      (userId, settings: WidgetSettings) =>
+        new Promise((resolve) => {
+          expect(userId).toBe('user')
+          releaseSave = () => resolve(settings)
+        }),
+    )
+
+    const update = test.controller.updateSettings({ locked: true })
+    await vi.waitFor(() => expect(test.repository.save).toHaveBeenCalledOnce())
+    test.bounds({ x: 44, y: 55, width: 510, height: 610 })
+    releaseSave()
+
+    await expect(update).resolves.toMatchObject({
+      locked: true,
+      bounds: { x: 44, y: 55, width: 510, height: 610 },
+    })
+    expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        locked: true,
+        bounds: { x: 44, y: 55, width: 510, height: 610 },
+      }),
+    )
+
+    await vi.advanceTimersByTimeAsync(300)
+    expect(test.repository.save).toHaveBeenLastCalledWith(
+      'user',
+      expect.objectContaining({
+        locked: true,
+        bounds: { x: 44, y: 55, width: 510, height: 610 },
+      }),
+    )
+  })
+
+  it('rejects renderer-supplied bounds even when other patch fields are valid', async () => {
+    const test = harness()
+    await test.controller.start('user')
+
+    await expect(
+      test.controller.updateSettings({
+        locked: true,
+        bounds: { x: 1, y: 2, width: 500, height: 500 },
+      } as never),
+    ).rejects.toThrow()
+    expect(test.repository.save).not.toHaveBeenCalled()
   })
 
   it('ignores bounds below the persisted schema minimum', async () => {

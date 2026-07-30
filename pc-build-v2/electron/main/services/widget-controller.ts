@@ -6,12 +6,14 @@ import {
   WIDGET_DETAILED_HEIGHT,
   WIDGET_DETAILED_WIDTH,
   WidgetBoundsSchema,
+  WidgetSettingsPatchSchema,
   WidgetSettingsSchema,
   WidgetStatusSchema,
   WidgetViewSchema,
   type WidgetBounds,
   type WidgetResult,
   type WidgetSettings,
+  type WidgetSettingsPatch,
   type WidgetStatus,
   type WidgetView,
 } from '../../../shared/models/widget'
@@ -96,14 +98,19 @@ export class WidgetController {
     this.#disposeMonitor = null
     this.#disposeBounds?.()
     this.#disposeBounds = null
+    const flushBounds = this.#boundsTimer !== null
     if (this.#boundsTimer !== null) {
       clearTimeout(this.#boundsTimer)
       this.#boundsTimer = null
-      if (this.#userId !== null && this.#settings !== null) {
-        await this.saveSettings(this.#userId, this.#settings)
-      }
     }
     await this.#settingsMutation
+    if (flushBounds && this.#userId !== null && this.#settings !== null) {
+      const userId = this.#userId
+      const settings = this.#settings
+      await this.enqueueSettingsMutation(async () => {
+        await this.repository.save(userId, settings)
+      })
+    }
     this.windows.close('widget', reason)
     this.#userId = null
     this.#settings = null
@@ -160,34 +167,43 @@ export class WidgetController {
     return this.getStatus()
   }
 
-  async updateSettings(rawSettings: WidgetSettings): Promise<WidgetSettings> {
+  async updateSettings(rawPatch: WidgetSettingsPatch): Promise<WidgetSettings> {
     const userId = this.requireUserId()
     const generation = this.#generation
-    const parsed = WidgetSettingsSchema.parse(rawSettings)
-    const current = this.requireSettings()
-    const modeChanged = parsed.displayMode !== current.displayMode
-    const settings = modeChanged
-      ? {
-          ...parsed,
-          bounds: {
-            ...parsed.bounds,
-            width:
-              parsed.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
-            height:
-              parsed.displayMode === 'deck' ? WIDGET_DECK_HEIGHT : WIDGET_DETAILED_HEIGHT,
-          },
-        }
-      : parsed
-    const saved = await this.saveSettings(userId, settings)
-    if (generation !== this.#generation || this.#userId !== userId) {
-      throw new ApplicationError(
-        'WIDGET_CANCELLED',
-        'Widget settings update was cancelled',
-      )
-    }
-    this.#settings = saved
-    this.windows.applyWidgetSettings(this.#settings)
-    return this.#settings
+    const patch = WidgetSettingsPatchSchema.parse(rawPatch) as WidgetSettingsPatch
+    return this.enqueueSettingsMutation(async () => {
+      this.assertSession(userId, generation)
+      const current = this.requireSettings()
+      const modeChanged =
+        patch.displayMode !== undefined && patch.displayMode !== current.displayMode
+      const settings = WidgetSettingsSchema.parse({
+        ...current,
+        ...patch,
+        bounds: modeChanged
+          ? {
+              ...current.bounds,
+              width:
+                patch.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
+              height:
+                patch.displayMode === 'deck'
+                  ? WIDGET_DECK_HEIGHT
+                  : WIDGET_DETAILED_HEIGHT,
+            }
+          : current.bounds,
+      })
+      const saved = await this.repository.save(userId, settings)
+      this.assertSession(userId, generation)
+
+      const latestBounds = this.requireSettings().bounds
+      this.#settings = {
+        ...saved,
+        bounds: modeChanged
+          ? { ...saved.bounds, x: latestBounds.x, y: latestBounds.y }
+          : latestBounds,
+      }
+      this.windows.applyWidgetSettings(this.#settings)
+      return this.#settings
+    })
   }
 
   private acceptResult(result: MonitorResult): void {
@@ -219,9 +235,9 @@ export class WidgetController {
     this.#boundsTimer = setTimeout(() => {
       this.#boundsTimer = null
       const userId = this.#userId
-      const settings = this.#settings
-      if (userId !== null && settings !== null) {
-        void this.saveSettings(userId, settings).catch(() => undefined)
+      const generation = this.#generation
+      if (userId !== null) {
+        void this.persistCurrentSettings(userId, generation).catch(() => undefined)
       }
     }, BOUNDS_SAVE_DELAY_MS)
   }
@@ -243,19 +259,29 @@ export class WidgetController {
     }
   }
 
-  private saveSettings(
-    userId: string,
-    settings: WidgetSettings,
-  ): Promise<WidgetSettings> {
-    const result = this.#settingsMutation.then(
-      () => this.repository.save(userId, settings),
-      () => this.repository.save(userId, settings),
-    )
+  private persistCurrentSettings(userId: string, generation: number): Promise<void> {
+    return this.enqueueSettingsMutation(async () => {
+      if (generation !== this.#generation || this.#userId !== userId) return
+      await this.repository.save(userId, this.requireSettings())
+    })
+  }
+
+  private enqueueSettingsMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#settingsMutation.then(operation, operation)
     this.#settingsMutation = result.then(
       () => undefined,
       () => undefined,
     )
     return result
+  }
+
+  private assertSession(userId: string, generation: number): void {
+    if (generation !== this.#generation || this.#userId !== userId) {
+      throw new ApplicationError(
+        'WIDGET_CANCELLED',
+        'Widget settings update was cancelled',
+      )
+    }
   }
 
   private requireSettings(): WidgetSettings {

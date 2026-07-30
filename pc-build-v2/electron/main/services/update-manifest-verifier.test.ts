@@ -119,6 +119,7 @@ describe('update manifest verification', () => {
 
   it('uses numeric semver and does not accept equal or downgrade manifests', () => {
     expect(compareSemver('1.10.0', '1.9.9')).toBe(1)
+    expect(compareSemver('9007199254740993.0.0', '9007199254740992.0.0')).toBe(1)
     expect(
       verifyUpdateManifest(bytes(signed(payload('1.2.3'))), publicKey, '1.2.3'),
     ).toMatchObject({ updateAvailable: false })

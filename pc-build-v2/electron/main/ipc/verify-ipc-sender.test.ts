@@ -14,15 +14,15 @@ function createEvent(
 }
 
 describe('resolveIpcSenderUrl', () => {
-  it('falls back to the registered web contents URL when senderFrame is missing', () => {
+  it('rejects a missing senderFrame instead of trusting web contents state', () => {
     const event = createEvent(undefined, 'file:///app/auth.html')
 
-    expect(resolveIpcSenderUrl(event)).toBe('file:///app/auth.html')
+    expect(() => resolveIpcSenderUrl(event)).toThrow('IPC sender frame is unavailable')
   })
 
-  it('falls back to the registered web contents URL when senderFrame URL is empty', () => {
-    expect(resolveIpcSenderUrl(createEvent('', 'file:///app/auth.html'))).toBe(
-      'file:///app/auth.html',
+  it('rejects an empty senderFrame URL', () => {
+    expect(() => resolveIpcSenderUrl(createEvent('', 'file:///app/auth.html'))).toThrow(
+      'IPC sender frame is unavailable',
     )
   })
 

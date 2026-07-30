@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
+import { win32 } from 'node:path'
 import type { Readable } from 'node:stream'
 
 export interface VerifiedInstaller {
@@ -7,11 +8,18 @@ export interface VerifiedInstaller {
   sha512: string
 }
 
-export type VerifiedInstallerLauncher = (installer: VerifiedInstaller) => Promise<void>
+export interface VerifiedInstallerLaunchControl {
+  cancel(): void
+}
+
+export type VerifiedInstallerLauncher = (
+  installer: VerifiedInstaller,
+) => Promise<VerifiedInstallerLaunchControl>
 
 interface InstallerProcess {
   stdout: Readable
   stderr: Readable
+  unref(): void
   once(event: 'error', listener: (error: Error) => void): this
   once(
     event: 'close',
@@ -29,6 +37,7 @@ interface InstallerSpawnOptions extends SpawnOptions {
 
 export interface VerifiedInstallerLauncherDependencies {
   platform: () => NodeJS.Platform
+  parentProcessId: () => number
   environment: () => NodeJS.ProcessEnv
   spawn: (
     executable: string,
@@ -40,6 +49,7 @@ export interface VerifiedInstallerLauncherDependencies {
 
 const PROCESS_TIMEOUT_MS = 30_000
 const MAX_OUTPUT_BYTES = 16 * 1024
+const READY_MARKER = 'CR_TOOLS_INSTALLER_READY'
 const POWERSHELL_ARGS = [
   '-NoLogo',
   '-NoProfile',
@@ -50,11 +60,17 @@ $ErrorActionPreference = 'Stop'
 $installerPath = [Environment]::GetEnvironmentVariable('CR_TOOLS_INSTALLER_PATH', 'Process')
 $expectedHash = [Environment]::GetEnvironmentVariable('CR_TOOLS_INSTALLER_SHA512', 'Process')
 $expectedSizeText = [Environment]::GetEnvironmentVariable('CR_TOOLS_INSTALLER_SIZE', 'Process')
+$parentProcessIdText = [Environment]::GetEnvironmentVariable('CR_TOOLS_PARENT_PROCESS_ID', 'Process')
 $expectedSize = 0L
+$parentProcessId = 0
 if ([string]::IsNullOrWhiteSpace($installerPath) -or
+    -not [System.IO.Path]::IsPathFullyQualified($installerPath) -or
+    [System.IO.Path]::GetExtension($installerPath) -cne '.exe' -or
     $expectedHash -notmatch '^[A-Za-z0-9+/]{86}==$' -or
     -not [long]::TryParse($expectedSizeText, [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$expectedSize) -or
-    $expectedSize -lt 1) {
+    $expectedSize -lt 1 -or
+    -not [int]::TryParse($parentProcessIdText, [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$parentProcessId) -or
+    $parentProcessId -lt 1 -or $parentProcessId -eq $PID) {
   throw 'Invalid trusted installer metadata'
 }
 
@@ -77,7 +93,15 @@ try {
   if ($actualHash -cne $expectedHash) {
     throw 'Installer hash mismatch'
   }
-  $installerProcess = Start-Process -FilePath $installerPath -Verb Open -PassThru
+  Write-Output 'CR_TOOLS_INSTALLER_READY'
+  $parentExitDeadline = [DateTime]::UtcNow.AddMinutes(5)
+  while ($null -ne (Get-Process -Id $parentProcessId -ErrorAction SilentlyContinue)) {
+    if ([DateTime]::UtcNow -ge $parentExitDeadline) {
+      throw 'Application did not exit before installer deadline'
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  $installerProcess = Start-Process -FilePath $installerPath -PassThru
   if ($null -eq $installerProcess) {
     throw 'Installer process was not created'
   }
@@ -89,6 +113,7 @@ try {
 
 const nodeDependencies: VerifiedInstallerLauncherDependencies = {
   platform: () => process.platform,
+  parentProcessId: () => process.pid,
   environment: () => process.env,
   spawn: (executable, args, options) => spawn(executable, [...args], options),
   timers: { setTimeout, clearTimeout },
@@ -96,13 +121,22 @@ const nodeDependencies: VerifiedInstallerLauncherDependencies = {
 
 function validateInstaller(installer: VerifiedInstaller): void {
   if (
-    installer.path.length === 0 ||
+    !win32.isAbsolute(installer.path) ||
+    win32.extname(installer.path).toLowerCase() !== '.exe' ||
     !Number.isSafeInteger(installer.size) ||
     installer.size < 1 ||
     !/^[A-Za-z0-9+/]{86}==$/.test(installer.sha512)
   ) {
     throw new Error('Invalid trusted installer metadata')
   }
+}
+
+function powershellPath(environment: NodeJS.ProcessEnv): string {
+  const root = environment['SystemRoot'] ?? environment['WINDIR']
+  if (root === undefined || !win32.isAbsolute(root)) {
+    throw new Error('Windows system directory is unavailable')
+  }
+  return win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 }
 
 export function createVerifiedInstallerLauncher(
@@ -113,16 +147,19 @@ export function createVerifiedInstallerLauncher(
       return Promise.reject(new Error('Verified installer launch requires Windows'))
     }
     validateInstaller(installer)
+    const environment = dependencies.environment()
+    const executable = powershellPath(environment)
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<VerifiedInstallerLaunchControl>((resolve, reject) => {
       let child: InstallerProcess
       try {
-        child = dependencies.spawn('powershell.exe', POWERSHELL_ARGS, {
+        child = dependencies.spawn(executable, POWERSHELL_ARGS, {
           env: {
-            ...dependencies.environment(),
+            ...environment,
             CR_TOOLS_INSTALLER_PATH: installer.path,
             CR_TOOLS_INSTALLER_SIZE: String(installer.size),
             CR_TOOLS_INSTALLER_SHA512: installer.sha512,
+            CR_TOOLS_PARENT_PROCESS_ID: String(dependencies.parentProcessId()),
           },
           shell: false,
           windowsHide: true,
@@ -135,33 +172,53 @@ export function createVerifiedInstallerLauncher(
 
       let settled = false
       let outputBytes = 0
+      let stdout = ''
       const settle = (error?: Error): void => {
         if (settled) return
         settled = true
         dependencies.timers.clearTimeout(timeout)
-        if (error === undefined) resolve()
-        else reject(error)
+        if (error === undefined) {
+          child.stdout.destroy()
+          child.stderr.destroy()
+          child.unref()
+          resolve({
+            cancel: () => {
+              child.kill('SIGKILL')
+            },
+          })
+        } else reject(error)
       }
-      const countOutput = (chunk: Buffer | string): void => {
+      const countOutput = (chunk: Buffer | string, isStdout: boolean): void => {
         outputBytes += Buffer.byteLength(chunk)
         if (outputBytes > MAX_OUTPUT_BYTES && !settled) {
           child.kill('SIGKILL')
           settle(new Error('Verified installer launcher exceeded its output limit'))
+          return
         }
+        if (!isStdout || settled) return
+        stdout = `${stdout}${String(chunk)}`.slice(-READY_MARKER.length * 2)
+        if (stdout.includes(READY_MARKER)) settle()
       }
       const timeout = dependencies.timers.setTimeout(() => {
         if (!settled) child.kill('SIGKILL')
         settle(new Error('Verified installer launcher timed out'))
       }, PROCESS_TIMEOUT_MS)
 
-      child.stdout.on('data', countOutput)
-      child.stderr.on('data', countOutput)
+      child.stdout.on('data', (chunk: Buffer | string) => countOutput(chunk, true))
+      child.stderr.on('data', (chunk: Buffer | string) => countOutput(chunk, false))
       child.once('error', () =>
         settle(new Error('Verified installer launcher failed to execute')),
       )
       child.once('close', (code) => {
-        if (code === 0) settle()
-        else settle(new Error('Verified installer launcher exited unsuccessfully'))
+        if (!settled) {
+          settle(
+            new Error(
+              code === 0
+                ? 'Verified installer launcher exited before readiness'
+                : 'Verified installer launcher exited unsuccessfully',
+            ),
+          )
+        }
       })
     })
   }

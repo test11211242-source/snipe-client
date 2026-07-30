@@ -12,7 +12,10 @@ TMP_DIR="$(mktemp -d)"
 MODE=""
 VERSION=""
 CRITICAL=false
+BOOTSTRAP=false
 ASSUME_YES=false
+PLAN_ONLY=false
+CORRELATION_ID=''
 
 cleanup() {
   rm -rf -- "$TMP_DIR"
@@ -37,17 +40,20 @@ usage() {
 Usage:
   ./publish-update.sh
   ./publish-update.sh test [x.y.z] [--yes]
-  ./publish-update.sh release [x.y.z] [--critical] [--yes]
+  ./publish-update.sh release [x.y.z] [--critical] [--bootstrap] [--yes]
+  ./publish-update.sh release --plan
 
 Modes:
-  test     Build and download a Windows installer without production deployment.
-  release  Build, sign, deploy, and verify a production update.
+  release  Validate, commit, push, build, sign, deploy, and verify an update.
+  test     Validate, commit, push, and download a Windows installer without deployment.
+
+Without a version, the publisher reuses an unpublished package version or offers
+patch/minor/major after the current version. First-release bootstrap is automatic.
 
 Authentication:
   Set GH_TOKEN/GITHUB_TOKEN, or create ~/.config/cr-tools-v2/publisher.env
   with GH_TOKEN=... and chmod 600. Required repository permissions are
-  Contents write, Actions write, and Workflows write. The old pc-build/.env
-  is never read.
+  Contents read/write, Actions read/write, and Secrets read. The old pc-build/.env is never read.
 EOF
 }
 
@@ -60,8 +66,14 @@ while (($# > 0)); do
     --critical)
       CRITICAL=true
       ;;
+    --bootstrap)
+      BOOTSTRAP=true
+      ;;
     --yes | -y)
       ASSUME_YES=true
+      ;;
+    --plan)
+      PLAN_ONLY=true
       ;;
     --help | -h)
       usage
@@ -80,18 +92,19 @@ done
 
 if [[ -z "$MODE" ]]; then
   [[ -t 0 ]] || die 'Specify test or release in non-interactive mode.'
-  printf '\nSelect build mode:\n'
-  printf '  [1] test    Build and download only (recommended)\n'
-  printf '  [2] release Build, sign, and publish to users\n'
+  printf '\nSelect publish mode:\n'
+  printf '  [1] release Validate, commit, build, and publish\n'
+  printf '  [2] test    Validate, commit, and build without publishing\n'
   read -r -p 'Choice [1]: ' mode_choice
   case "${mode_choice:-1}" in
-    1) MODE=test ;;
-    2) MODE=release ;;
+    1) MODE=release ;;
+    2) MODE=test ;;
     *) die 'Invalid build mode.' ;;
   esac
 fi
 
 [[ "$MODE" == release || "$CRITICAL" == false ]] || die '--critical requires release mode.'
+[[ "$MODE" == release || "$BOOTSTRAP" == false ]] || die '--bootstrap requires release mode.'
 
 require_command git
 require_command node
@@ -102,46 +115,91 @@ require_command unzip
 require_command sha512sum
 require_command stat
 require_command install
+CORRELATION_ID="$(node -e 'process.stdout.write(require("crypto").randomUUID())')"
 
 cd "$SCRIPT_DIR"
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 [[ "$CURRENT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
   die "package.json contains an invalid version: $CURRENT_VERSION"
 
+semver_compare() {
+  node -e '
+  const [left, right] = process.argv.slice(1).map((value) => value.split(".").map(BigInt));
+  let result = 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) { result = left[i] > right[i] ? 1 : -1; break; }
+  }
+  process.stdout.write(String(result));
+  ' "$1" "$2"
+}
+
+published_manifest="$TMP_DIR/published-manifest.json"
+published_status="$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+  --output "$published_manifest" --write-out '%{http_code}' \
+  'https://updates.artcsworld.xyz/downloads/v2/manifest.json')" ||
+  die 'The production update manifest could not be checked.'
+PUBLISHED_VERSION=''
+if [[ "$published_status" == 200 ]]; then
+  PUBLISHED_VERSION="$(node -e '
+    const fs = require("fs");
+    try {
+      const version = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version;
+      if (typeof version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) process.exit(2);
+      process.stdout.write(version);
+    } catch { process.exit(2); }
+  ' "$published_manifest")" || die 'Published manifest could not be parsed.'
+elif [[ "$published_status" == 404 ]]; then
+  if [[ "$MODE" == release ]]; then BOOTSTRAP=true; fi
+else
+  die "Production manifest preflight returned HTTP $published_status."
+fi
+
 if [[ -z "$VERSION" ]]; then
-  IFS='.' read -r major minor patch <<<"$CURRENT_VERSION"
-  patch_version="$major.$minor.$((patch + 1))"
-  minor_version="$major.$((minor + 1)).0"
-  major_version="$((major + 1)).0.0"
-  if [[ -t 0 ]]; then
-    printf '\nCurrent version: %s\n' "$CURRENT_VERSION"
-    printf '  [1] patch %s\n' "$patch_version"
-    printf '  [2] minor %s\n' "$minor_version"
-    printf '  [3] major %s\n' "$major_version"
-    read -r -p 'Choice [1]: ' version_choice
-    case "${version_choice:-1}" in
-      1) VERSION="$patch_version" ;;
-      2) VERSION="$minor_version" ;;
-      3) VERSION="$major_version" ;;
-      *) die 'Invalid version choice.' ;;
-    esac
+  if [[ -z "$PUBLISHED_VERSION" || "$(semver_compare "$CURRENT_VERSION" "$PUBLISHED_VERSION")" -gt 0 ]]; then
+    VERSION="$CURRENT_VERSION"
+  elif [[ "$(semver_compare "$CURRENT_VERSION" "$PUBLISHED_VERSION")" -lt 0 ]]; then
+    die "package.json $CURRENT_VERSION is older than published $PUBLISHED_VERSION."
   else
-    VERSION="$patch_version"
+    IFS='.' read -r major minor patch <<<"$CURRENT_VERSION"
+    patch_version="$major.$minor.$((patch + 1))"
+    minor_version="$major.$((minor + 1)).0"
+    major_version="$((major + 1)).0.0"
+    if [[ -t 0 && "$ASSUME_YES" == false ]]; then
+      printf '\nPublished version: %s\n' "$PUBLISHED_VERSION"
+      printf '  [1] patch %s\n' "$patch_version"
+      printf '  [2] minor %s\n' "$minor_version"
+      printf '  [3] major %s\n' "$major_version"
+      read -r -p 'Choice [1]: ' version_choice
+      case "${version_choice:-1}" in
+        1) VERSION="$patch_version" ;;
+        2) VERSION="$minor_version" ;;
+        3) VERSION="$major_version" ;;
+        *) die 'Invalid version choice.' ;;
+      esac
+    else
+      VERSION="$patch_version"
+    fi
   fi
 fi
 
 [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
   die "Version must use strict x.y.z semver: $VERSION"
+((${#VERSION} <= 32)) || die 'Version is too long.'
+[[ "$(semver_compare "$VERSION" "$CURRENT_VERSION")" -ge 0 ]] ||
+  die 'Build version cannot be lower than package.json.'
+if [[ "$MODE" == release && -n "$PUBLISHED_VERSION" ]]; then
+  [[ "$(semver_compare "$VERSION" "$PUBLISHED_VERSION")" -gt 0 ]] ||
+    die "Release $VERSION must be newer than published $PUBLISHED_VERSION."
+fi
 
-comparison="$(node -e '
-  const [left, right] = process.argv.slice(1).map((value) => value.split(".").map(Number));
-  let result = 0;
-  for (let i = 0; i < 3; i += 1) {
-    if (left[i] !== right[i]) { result = Math.sign(left[i] - right[i]); break; }
-  }
-  process.stdout.write(String(result));
-' "$VERSION" "$CURRENT_VERSION")"
-[[ "$comparison" -ge 0 ]] || die 'Build version cannot be lower than package.json.'
+if [[ "$PLAN_ONLY" == true ]]; then
+  printf 'Mode: %s\n' "$MODE"
+  printf 'Package version: %s\n' "$CURRENT_VERSION"
+  printf 'Published version: %s\n' "${PUBLISHED_VERSION:-none}"
+  printf 'Selected version: %s\n' "$VERSION"
+  printf 'Bootstrap: %s\n' "$BOOTSTRAP"
+  exit 0
+fi
 
 if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" && -f "$PUBLISHER_CONFIG" ]]; then
   config_mode="$(stat -c '%a' "$PUBLISHER_CONFIG")"
@@ -159,7 +217,7 @@ fi
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [[ -z "$TOKEN" && -t 0 ]]; then
   printf '\nA fine-grained GitHub token is required once.\n'
-  printf 'Required repository permissions: Contents write, Actions write, Workflows write.\n'
+  printf 'Required repository permissions: Contents read/write, Actions read/write, Secrets read.\n'
   read -r -s -p 'GitHub token: ' TOKEN
   printf '\n'
   [[ -n "$TOKEN" ]] || die 'GitHub token was not provided.'
@@ -187,17 +245,53 @@ BRANCH="$(git -C "$REPO_ROOT" branch --show-current)"
 [[ -n "$BRANCH" ]] || die 'Detached HEAD is not supported.'
 [[ "$BRANCH" == main ]] || die "Publisher must run from main, current branch: $BRANCH"
 
+RELEASE_PATHS=(
+  'pc-build-v2/electron'
+  'pc-build-v2/renderer'
+  'pc-build-v2/shared'
+  'pc-build-v2/python'
+  'pc-build-v2/tests'
+  'pc-build-v2/scripts'
+  'pc-build-v2/resources'
+  'pc-build-v2/docs'
+  'pc-build-v2/.gitattributes'
+  'pc-build-v2/.gitignore'
+  'pc-build-v2/.prettierignore'
+  'pc-build-v2/.prettierrc.json'
+  'pc-build-v2/electron-builder.yml'
+  'pc-build-v2/electron.vite.config.ts'
+  'pc-build-v2/eslint.config.js'
+  'pc-build-v2/package-lock.json'
+  'pc-build-v2/package.json'
+  'pc-build-v2/playwright.config.ts'
+  'pc-build-v2/publish-update.sh'
+  'pc-build-v2/README.md'
+  'pc-build-v2/tsconfig.json'
+  'pc-build-v2/vitest.config.ts'
+  '.github/workflows/pc-build-v2-release.yml'
+  'docs/CR_TOOLS_V2_IMPLEMENTATION_PLAN.md'
+  'ops/nginx/snipe-artcsworld.conf'
+)
+
 git -C "$REPO_ROOT" diff --cached --quiet ||
   die 'The git index already contains staged changes. Commit or unstage them first.'
-git -C "$REPO_ROOT" config user.name >/dev/null || die 'git user.name is not configured.'
-git -C "$REPO_ROOT" config user.email >/dev/null || die 'git user.email is not configured.'
+mapfile -d '' dirty_release_paths < <(
+  git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all -z -- "${RELEASE_PATHS[@]}"
+)
+if ((${#dirty_release_paths[@]} == 0)) && [[ "$VERSION" != "$CURRENT_VERSION" ]]; then
+  die 'There are no V2 changes to commit for a new release version.'
+fi
+if ((${#dirty_release_paths[@]} > 0)); then
+  printf '\nV2 changes that will be validated and committed:\n'
+  printf '  %s\n' "${dirty_release_paths[@]}"
+fi
 
 if [[ "$MODE" == release && "$ASSUME_YES" == false ]]; then
-  printf '\nWARNING: release mode publishes an update to production users.\n'
+  printf '\nWARNING: this will validate, commit, push, and publish CR Tools V2 %s.\n' "$VERSION"
   read -r -p 'Type PUBLISH to continue: ' confirmation
   [[ "$confirmation" == PUBLISH ]] || die 'Production publication was cancelled.'
 elif [[ "$MODE" == test && "$ASSUME_YES" == false ]]; then
-  read -r -p "Build test version $VERSION and commit/push V2 changes? [Y/n]: " confirmation
+  read -r -p "Build test version $VERSION from the reviewed main commit? [Y/n]: " confirmation
   [[ "${confirmation:-Y}" =~ ^[Yy]$ ]] || die 'Test build was cancelled.'
 fi
 
@@ -255,45 +349,80 @@ github_download() {
   } | curl --config - --url "https://api.github.com$path" --output "$output"
 }
 
+push_main() {
+  local askpass="$TMP_DIR/git-askpass.sh"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'case "$1" in' \
+    '  *Username*) printf "x-access-token\\n" ;;' \
+    '  *Password*) printf "%s\\n" "$CR_TOOLS_GITHUB_TOKEN" ;;' \
+    '  *) exit 1 ;;' \
+    'esac' >"$askpass"
+  chmod 700 "$askpass"
+  CR_TOOLS_GITHUB_TOKEN="$TOKEN" \
+    GIT_ASKPASS="$askpass" \
+    GIT_TERMINAL_PROMPT=0 \
+    git -C "$REPO_ROOT" -c credential.helper= push origin HEAD:main
+}
+
 info 'Validating GitHub repository access'
 repository_json="$(github_api GET "/repos/$REPOSITORY")"
-can_push="$(printf '%s' "$repository_json" | node -e '
+can_read="$(printf '%s' "$repository_json" | node -e '
   let input = "";
   process.stdin.on("data", (chunk) => input += chunk);
   process.stdin.on("end", () => {
     const repository = JSON.parse(input);
-    process.stdout.write(repository.permissions?.push === true ? "true" : "false");
+    process.stdout.write(repository.permissions?.pull === true && repository.permissions?.push === true ? "true" : "false");
   });
 ')"
-[[ "$can_push" == true ]] || die 'GitHub token does not have Contents write access to this repository.'
+[[ "$can_read" == true ]] || die 'GitHub token does not have Contents read/write access to this repository.'
+
+HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+remote_commit_json="$(github_api GET "/repos/$REPOSITORY/commits/main")"
+remote_main_sha="$(printf '%s' "$remote_commit_json" | node -e '
+  let input = "";
+  process.stdin.on("data", (chunk) => input += chunk);
+  process.stdin.on("end", () => process.stdout.write(JSON.parse(input).sha || ""));
+')"
+NEEDS_PUSH=false
+if [[ "$HEAD_SHA" != "$remote_main_sha" ]]; then
+  if git -C "$REPO_ROOT" merge-base --is-ancestor "$remote_main_sha" "$HEAD_SHA" 2>/dev/null; then
+    NEEDS_PUSH=true
+  else
+    die 'Local main is behind or diverged from origin main. Synchronize it before publishing.'
+  fi
+fi
 
 if [[ "$MODE" == release ]]; then
-  published_manifest="$TMP_DIR/published-manifest.json"
-  if curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
-    'https://updates.artcsworld.xyz/downloads/v2/manifest.json' \
-    --output "$published_manifest"; then
-    published_version="$(node -e '
-      const fs = require("fs");
-      try { process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version || "")); }
-      catch { process.exit(2); }
-    ' "$published_manifest")" || die 'Published manifest could not be parsed.'
-    if [[ -n "$published_version" ]]; then
-      newer="$(node -e '
-        const values = process.argv.slice(1).map((value) => value.split(".").map(Number));
-        let result = 0;
-        for (let i = 0; i < 3; i += 1) {
-          if (values[0][i] !== values[1][i]) { result = Math.sign(values[0][i] - values[1][i]); break; }
-        }
-        process.stdout.write(String(result));
-      ' "$VERSION" "$published_version")"
-      [[ "$newer" -gt 0 ]] || die "Release $VERSION must be newer than published $published_version."
-    fi
-  fi
+  info 'Preflighting repository release secrets'
+  repository_secrets="$(github_api GET "/repos/$REPOSITORY/actions/secrets?per_page=100")"
+  missing_secrets="$(printf '%s' "$repository_secrets" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => {
+      const present = new Set((JSON.parse(input).secrets || []).map((secret) => secret.name));
+      const required = [
+        "CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64",
+        "SERVER_HOST",
+        "SERVER_USER",
+        "SSH_PRIVATE_KEY",
+        "SERVER_KNOWN_HOSTS",
+      ];
+      process.stdout.write(required.filter((name) => !present.has(name)).join(", "));
+    });
+  ')"
+  [[ -z "$missing_secrets" ]] || die "Repository is missing required release secrets: $missing_secrets"
+  [[ -z "$PUBLISHED_VERSION" || "$BOOTSTRAP" == false ]] ||
+    die 'Bootstrap was requested but production already has a manifest.'
 fi
 
 info "Preparing CR Tools V2 $VERSION ($MODE)"
 info 'Installing deterministic Node dependencies'
 npm ci
+if [[ "$CURRENT_VERSION" != "$VERSION" ]]; then
+  info "Updating package metadata to $VERSION"
+  npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null
+fi
 
 PYTHON_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cr-tools-v2/publisher-venv"
 if [[ ! -x "$PYTHON_CACHE/bin/python" ]]; then
@@ -312,6 +441,7 @@ npm run lint
 npm run typecheck
 npm run release:verify-inputs
 npm test
+npm run test:shell
 (
   cd python
   "$PYTHON_CACHE/bin/python" -m pytest tests
@@ -319,93 +449,48 @@ npm test
 npm run audit:release
 npm run build:app
 
-info "Setting package version to $VERSION"
-npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null
-
-RELEASE_PATHS=(
-  'pc-build-v2/electron'
-  'pc-build-v2/renderer'
-  'pc-build-v2/shared'
-  'pc-build-v2/python'
-  'pc-build-v2/tests'
-  'pc-build-v2/scripts'
-  'pc-build-v2/resources'
-  'pc-build-v2/docs'
-  'pc-build-v2/.gitattributes'
-  'pc-build-v2/.gitignore'
-  'pc-build-v2/.prettierignore'
-  'pc-build-v2/.prettierrc.json'
-  'pc-build-v2/electron-builder.yml'
-  'pc-build-v2/electron.vite.config.ts'
-  'pc-build-v2/eslint.config.js'
-  'pc-build-v2/package-lock.json'
-  'pc-build-v2/package.json'
-  'pc-build-v2/playwright.config.ts'
-  'pc-build-v2/publish-update.sh'
-  'pc-build-v2/README.md'
-  'pc-build-v2/tsconfig.json'
-  'pc-build-v2/vitest.config.ts'
-  '.github/workflows/pc-build-v2-release.yml'
-  'docs/CR_TOOLS_V2_IMPLEMENTATION_PLAN.md'
-)
-CLEANUP_PATHS=(
-  'pc-build-v2/CaptureConfigurationRepository'
-  'pc-build-v2/PredictionResultConfigurationRepository'
-  'pc-build-v2/can'
-  'pc-build-v2/does'
-  'pc-build-v2/enforces'
-  'pc-build-v2/migrates'
-  'pc-build-v2/retains'
-)
-
-info 'Staging only reviewed V2 release paths'
-git -C "$REPO_ROOT" add -- "${RELEASE_PATHS[@]}"
-for cleanup_path in "${CLEANUP_PATHS[@]}"; do
-  if git -C "$REPO_ROOT" ls-files --error-unmatch -- "$cleanup_path" >/dev/null 2>&1; then
-    git -C "$REPO_ROOT" add -u -- "$cleanup_path"
-  fi
-done
-mapfile -d '' staged_files < <(git -C "$REPO_ROOT" diff --cached --name-only -z)
-for staged_file in "${staged_files[@]}"; do
-  case "$staged_file" in
-    *.env | *.env.* | *.pfx | *.p12 | *.key | *private*.pem)
-      git -C "$REPO_ROOT" restore --staged -- "${staged_files[@]}"
-      die "Sensitive file was selected for commit: $staged_file"
-      ;;
-  esac
-done
-
-if ((${#staged_files[@]} > 0)); then
-  printf 'Files selected for commit:\n'
-  printf '  %s\n' "${staged_files[@]}"
+info 'Creating the reviewed V2 release commit'
+git -C "$REPO_ROOT" add -A -- "${RELEASE_PATHS[@]}"
+git -C "$REPO_ROOT" diff --cached --check
+if ! git -C "$REPO_ROOT" diff --cached --quiet; then
+  git -C "$REPO_ROOT" diff --cached --stat
   git -C "$REPO_ROOT" commit -m "release: prepare CR Tools V2 $VERSION"
+  NEEDS_PUSH=true
 else
-  info 'No new source changes; rebuilding the current commit'
+  info 'No new V2 changes to commit; reusing the pending release commit'
 fi
 
-ASKPASS="$TMP_DIR/git-askpass.sh"
-cat >"$ASKPASS" <<'EOF'
-#!/usr/bin/env bash
-case "$1" in
-  *Username*) printf '%s\n' 'x-access-token' ;;
-  *) printf '%s\n' "$GH_TOKEN" ;;
-esac
-EOF
-chmod 700 "$ASKPASS"
+mapfile -d '' remaining_release_changes < <(
+  git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all -z -- "${RELEASE_PATHS[@]}"
+)
+((${#remaining_release_changes[@]} == 0)) ||
+  die 'V2 release paths changed during commit; review them before publishing.'
 
-info "Pushing $BRANCH to GitHub"
-GH_TOKEN="$TOKEN" \
-  GIT_ASKPASS="$ASKPASS" \
-  GIT_ASKPASS_REQUIRE=force \
-  GIT_TERMINAL_PROMPT=0 \
-  git -C "$REPO_ROOT" push origin "$BRANCH"
-
+if [[ "$NEEDS_PUSH" == true ]]; then
+  info 'Pushing the release commit to origin main'
+  push_main
+fi
 HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-runs_path="/repos/$REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs?event=workflow_dispatch&branch=$BRANCH&per_page=20"
-before_runs=""
+remote_matches=false
+for push_check in {1..30}; do
+  remote_commit_json="$(github_api GET "/repos/$REPOSITORY/commits/main")"
+  remote_main_sha="$(printf '%s' "$remote_commit_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => process.stdout.write(JSON.parse(input).sha || ""));
+  ')"
+  if [[ "$remote_main_sha" == "$HEAD_SHA" ]]; then
+    remote_matches=true
+    break
+  fi
+  sleep 2
+done
+[[ "$remote_matches" == true ]] || die 'origin main did not reach the release commit.'
+
+runs_path="/repos/$REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs?event=workflow_dispatch&branch=$BRANCH&per_page=100"
 workflow_registered=false
 for registration_attempt in {1..30}; do
-  if before_runs="$(github_api GET "$runs_path" '' true)"; then
+  if github_api GET "$runs_path" '' true >/dev/null; then
     workflow_registered=true
     break
   fi
@@ -420,26 +505,25 @@ fi
 if ((registration_attempt > 1)); then
   printf '\n'
 fi
-before_ids="$(printf '%s' "$before_runs" | node -e '
-  let input = "";
-  process.stdin.on("data", (chunk) => input += chunk);
-  process.stdin.on("end", () => {
-    const runs = JSON.parse(input).workflow_runs || [];
-    process.stdout.write(runs.map((run) => run.id).join(","));
-  });
-')"
 
 dispatch_body="$(node -e '
-  const [ref, version, deploy, critical] = process.argv.slice(1);
+  const [ref, version, correlationId, deploy, critical, bootstrap] = process.argv.slice(1);
   process.stdout.write(JSON.stringify({
     ref,
-    inputs: { version, deploy: deploy === "true", critical: critical === "true" },
+    inputs: {
+      version,
+      correlation_id: correlationId,
+      deploy: deploy === "true",
+      critical: critical === "true",
+      bootstrap: bootstrap === "true",
+    },
   }));
-' "$BRANCH" "$VERSION" "$([[ "$MODE" == release ]] && printf true || printf false)" "$CRITICAL")"
+' "$BRANCH" "$VERSION" "$CORRELATION_ID" "$([[ "$MODE" == release ]] && printf true || printf false)" "$CRITICAL" "$BOOTSTRAP")"
 
 info 'Dispatching the Windows workflow'
 github_api POST "/repos/$REPOSITORY/actions/workflows/$WORKFLOW_FILE/dispatches" "$dispatch_body" >/dev/null
 
+RUN_TITLE="CR Tools V2 $VERSION [$CORRELATION_ID]"
 RUN_ID=""
 for _ in {1..30}; do
   sleep 2
@@ -448,13 +532,12 @@ for _ in {1..30}; do
     let input = "";
     process.stdin.on("data", (chunk) => input += chunk);
     process.stdin.on("end", () => {
-      const [sha, excludedText] = process.argv.slice(1);
-      const excluded = new Set(excludedText.split(",").filter(Boolean).map(Number));
+      const [sha, title] = process.argv.slice(1);
       const runs = JSON.parse(input).workflow_runs || [];
-      const match = runs.find((run) => run.head_sha === sha && !excluded.has(run.id));
+      const match = runs.find((run) => run.head_sha === sha && run.display_title === title);
       if (match) process.stdout.write(String(match.id));
     });
-  ' "$HEAD_SHA" "$before_ids")"
+  ' "$HEAD_SHA" "$RUN_TITLE")"
   [[ -z "$RUN_ID" ]] || break
 done
 [[ -n "$RUN_ID" ]] || die 'The dispatched workflow run could not be identified.'
@@ -505,7 +588,7 @@ for artifact_attempt in {1..30}; do
       const match = artifacts.find((artifact) => artifact.name === name && !artifact.expired);
       if (match) process.stdout.write(String(match.id));
     });
-  ' "cr-tools-v2-$VERSION")"
+  ' "cr-tools-v2-$VERSION-$CORRELATION_ID")"
   [[ -z "$ARTIFACT_ID" ]] || break
   printf '\rWaiting for the Windows artifact (%d/30)' "$artifact_attempt"
   sleep 2
@@ -523,10 +606,23 @@ if [[ "$MODE" == test ]]; then
       const artifacts = JSON.parse(input).artifacts || [];
       process.stdout.write(artifacts.some((artifact) => artifact.name === name) ? "true" : "false");
     });
-  ' "cr-tools-v2-smoke-$VERSION")"
+  ' "cr-tools-v2-smoke-$VERSION-$CORRELATION_ID")"
   if [[ "$smoke_artifact_present" == true ]]; then
     SMOKE_WARNING=true
     printf '\nWARNING: GitHub hosted GUI smoke failed. The installer is a test artifact and must be launched manually on Windows.\n'
+  fi
+  upgrade_artifact_present="$(printf '%s' "$artifacts_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk);
+    process.stdin.on("end", () => {
+      const name = process.argv[1];
+      const artifacts = JSON.parse(input).artifacts || [];
+      process.stdout.write(artifacts.some((artifact) => artifact.name === name) ? "true" : "false");
+    });
+  ' "cr-tools-v2-upgrade-$VERSION-$CORRELATION_ID")"
+  if [[ "$upgrade_artifact_present" == true ]]; then
+    SMOKE_WARNING=true
+    printf '\nWARNING: GitHub hosted install-over-existing check failed. Perform a manual upgrade before release.\n'
   fi
 fi
 

@@ -129,9 +129,17 @@ describe('App shell', () => {
         }),
         showWidget: vi.fn(),
         toggleWidget: vi.fn(),
-        updateWidgetSettings: vi
-          .fn()
-          .mockImplementation((settings) => Promise.resolve(settings)),
+        updateWidgetSettings: vi.fn().mockImplementation((patch) =>
+          Promise.resolve({
+            autoOpen: true,
+            alwaysOnTop: true,
+            locked: false,
+            opacity: 0.96,
+            displayMode: 'detailed' as const,
+            bounds: { x: null, y: null, width: 420, height: 360 },
+            ...patch,
+          }),
+        ),
         getUpdateView: vi.fn().mockResolvedValue({
           state: 'UP_TO_DATE',
           currentVersion: '0.1.0',
@@ -469,7 +477,7 @@ describe('App shell', () => {
     expect(window.crTools.hello).toHaveBeenCalledTimes(2)
   })
 
-  it('merges a widget patch into status refreshed immediately before mutation', async () => {
+  it('sends only a widget patch and leaves authoritative merging to main', async () => {
     const staleStatus = {
       settings: {
         autoOpen: true,
@@ -491,19 +499,9 @@ describe('App shell', () => {
       visible: true,
       hasResult: true,
     }
-    const statusBeforeMutation = {
-      settings: {
-        ...statusOnEntry.settings,
-        locked: true,
-        bounds: { x: 40, y: 50, width: 610, height: 700 },
-      },
-      visible: true,
-      hasResult: true,
-    }
     vi.mocked(window.crTools.getWidgetStatus)
       .mockResolvedValueOnce(staleStatus)
       .mockResolvedValueOnce(statusOnEntry)
-      .mockResolvedValueOnce(statusBeforeMutation)
 
     render(<App />)
     await screen.findAllByText('operator')
@@ -517,10 +515,7 @@ describe('App shell', () => {
     await waitFor(() =>
       expect(window.crTools.updateWidgetSettings).toHaveBeenCalledTimes(1),
     )
-    expect(window.crTools.updateWidgetSettings).toHaveBeenCalledWith({
-      ...statusBeforeMutation.settings,
-      autoOpen: false,
-    })
+    expect(window.crTools.updateWidgetSettings).toHaveBeenCalledWith({ autoOpen: false })
   })
 
   it('exposes the V1 full local widget mode as the default', async () => {
@@ -550,7 +545,6 @@ describe('App shell', () => {
 
     await waitFor(() =>
       expect(window.crTools.updateWidgetSettings).toHaveBeenCalledWith({
-        ...latestStatus.settings,
         displayMode: 'deck',
       }),
     )

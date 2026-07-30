@@ -31,6 +31,22 @@ export const WidgetSettingsSchema = z
   })
   .strict()
 
+export const WidgetSettingsPatchSchema = WidgetSettingsSchema.pick({
+  autoOpen: true,
+  alwaysOnTop: true,
+  locked: true,
+  opacity: true,
+  displayMode: true,
+})
+  .partial()
+  .strict()
+  .refine((patch) => Object.values(patch).every((value) => value !== undefined), {
+    message: 'Widget setting values cannot be undefined',
+  })
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'At least one widget setting is required',
+  })
+
 const WidgetCardSchema = z
   .object({
     name: SafeTextSchema,
@@ -99,6 +115,9 @@ export const WidgetStatusSchema = z
 export type WidgetBounds = z.infer<typeof WidgetBoundsSchema>
 export type WidgetDisplayMode = WidgetSettings['displayMode']
 export type WidgetSettings = z.infer<typeof WidgetSettingsSchema>
+export type WidgetSettingsPatch = Partial<
+  Pick<WidgetSettings, 'autoOpen' | 'alwaysOnTop' | 'locked' | 'opacity' | 'displayMode'>
+>
 export type WidgetResult = z.infer<typeof WidgetResultSchema>
 export type WidgetView = z.infer<typeof WidgetViewSchema>
 export type WidgetStatus = z.infer<typeof WidgetStatusSchema>

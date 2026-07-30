@@ -11,8 +11,9 @@ from typing import Any
 import cv2
 import numpy as np
 
-from analyze_trigger import structural_maps
+from analyze_trigger import ANALYZER_VERSION, structural_maps
 from monitor_protocol import MonitorProtocolError, validate_ratio
+from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
 
@@ -73,8 +74,8 @@ class TriggerProfile:
             or not isinstance(analyzer["version"], str)
         ):
             raise MonitorProtocolError("trigger analyzer is invalid")
-        if not 1 <= len(analyzer["version"]) <= 32:
-            raise MonitorProtocolError("trigger analyzer version is invalid")
+        if analyzer["version"] != ANALYZER_VERSION:
+            raise MonitorProtocolError("trigger profile must be re-analyzed")
         if value["schemaVersion"] != 3 or value["structureAlgorithm"] != "max-channel-scharr-v1":
             raise MonitorProtocolError("trigger profile version is invalid")
         structure_hash = value["structureHash64"]
@@ -136,8 +137,8 @@ class TriggerProfile:
         self.template_correlation_mask = cv2.dilate(
             self.template_edges, np.ones((7, 7), np.uint8)
         ) > 0
-        self.orb = cv2.ORB_create(nfeatures=400)
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+        self.orb = create_orb()
+        self.matcher = create_orb_matcher()
         self.template_keypoints, self.template_descriptors = self.orb.detectAndCompute(
             self.template_structure, None
         )
@@ -163,11 +164,21 @@ class TriggerProfile:
 
         orb_inliers = 0
         orb_score = 0.0
+        orb_viable = False
         if self.matcher_mode == "edge_orb":
-            orb_inliers, orb_score = self._score_orb(best_maps[0])
+            alignment = score_orb_alignment(
+                self.template_keypoints,
+                self.template_descriptors,
+                best_maps[0],
+                orb=self.orb,
+                matcher=self.matcher,
+            )
+            orb_inliers = alignment.inliers
+            orb_score = alignment.score
+            orb_viable = alignment.viable
         support_floor = 0.62 if self.quality_grade == "high" else 0.66
         score_floor = 0.69 if self.quality_grade == "high" else 0.73
-        if self.matcher_mode == "edge_orb" and orb_inliers >= 6:
+        if self.matcher_mode == "edge_orb" and orb_viable:
             final_score = min(1.0, best.score * 0.85 + orb_score * 0.15)
             matched = best.support >= support_floor and final_score >= score_floor
         elif self.matcher_mode == "edge_orb":
@@ -219,33 +230,6 @@ class TriggerProfile:
         return MatchResult(
             False, score, support, orientation_score, correlation, 0, "scored"
         )
-
-    def _score_orb(self, structure: np.ndarray) -> tuple[int, float]:
-        if self.template_descriptors is None or len(self.template_keypoints) < 6:
-            return 0, 0.0
-        keypoints, descriptors = self.orb.detectAndCompute(structure, None)
-        if descriptors is None or len(keypoints) < 6:
-            return 0, 0.0
-        pairs = self.matcher.knnMatch(self.template_descriptors, descriptors, k=2)
-        good = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < 0.76 * pair[1].distance]
-        if len(good) < 6:
-            return 0, 0.0
-        source = np.float32([self.template_keypoints[match.queryIdx].pt for match in good])
-        target = np.float32([keypoints[match.trainIdx].pt for match in good])
-        matrix, inlier_mask = cv2.estimateAffinePartial2D(
-            source, target, method=cv2.RANSAC, ransacReprojThreshold=3.0
-        )
-        if matrix is None or inlier_mask is None:
-            return 0, 0.0
-        inliers = int(inlier_mask.sum())
-        inlier_ratio = inliers / len(good)
-        scale = float(math.hypot(matrix[0, 0], matrix[0, 1]))
-        rotation = abs(math.degrees(math.atan2(matrix[0, 1], matrix[0, 0])))
-        translation = float(math.hypot(matrix[0, 2], matrix[1, 2]))
-        if not 0.9 <= scale <= 1.1 or rotation > 6.0 or translation > 10.0:
-            return 0, 0.0
-        score = min(1.0, inliers / 12.0) * min(1.0, inlier_ratio / 0.6)
-        return inliers, score
 
 
 @dataclass(frozen=True)
@@ -389,13 +373,49 @@ def encode_action_png(image: np.ndarray, limits: dict[str, Any]) -> tuple[bytes,
         width = max(1, int(width * scale))
         height = max(1, int(height * scale))
         bgr = cv2.resize(bgr, (width, height), interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".png", bgr, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-    if not ok:
-        raise RuntimeError("action image could not be encoded")
-    output = encoded.tobytes()
-    if not output or len(output) > limits["maxImageBytes"]:
+    source = bgr
+    max_bytes = limits["maxImageBytes"]
+    upper_scale = 1.0
+    lower_scale = 0.0
+    best: tuple[bytes, int, int] | None = None
+    candidate_scale = 1.0
+    for _ in range(8):
+        candidate_width = max(1, int(width * candidate_scale))
+        candidate_height = max(1, int(height * candidate_scale))
+        candidate = (
+            source
+            if candidate_width == width and candidate_height == height
+            else cv2.resize(
+                source,
+                (candidate_width, candidate_height),
+                interpolation=cv2.INTER_AREA,
+            )
+        )
+        ok, encoded = cv2.imencode(
+            ".png", candidate, [cv2.IMWRITE_PNG_COMPRESSION, 9]
+        )
+        if not ok:
+            raise RuntimeError("action image could not be encoded")
+        output = encoded.tobytes()
+        if not output:
+            raise RuntimeError("action image could not be encoded")
+        if len(output) <= max_bytes:
+            best = (output, candidate_width, candidate_height)
+            lower_scale = candidate_scale
+            if len(output) >= int(max_bytes * 0.98) or upper_scale - lower_scale < 0.005:
+                break
+            candidate_scale = (lower_scale + upper_scale) / 2.0
+        else:
+            upper_scale = candidate_scale
+            if lower_scale > 0:
+                candidate_scale = (lower_scale + upper_scale) / 2.0
+            else:
+                candidate_scale *= min(
+                    0.95, math.sqrt(max_bytes / len(output)) * 0.98
+                )
+    if best is None:
         raise RuntimeError("action image exceeds the byte limit")
-    return output, width, height
+    return best
 
 
 class TriggerEngine:

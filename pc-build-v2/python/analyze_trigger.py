@@ -11,11 +11,18 @@ import cv2
 import numpy as np
 
 from protocol.framing import ProtocolError, read_envelope, write_envelope
+from trigger_matching import create_orb, score_orb_alignment
 
-ANALYZER_VERSION = "2.0.0"
+ANALYZER_VERSION = "2.1.0"
 MAX_PNG_BYTES = 32 * 1024 * 1024
 MAX_PIXELS = 20_000_000
 NORMALIZED_SIZE = 128
+LEGACY_KEYPOINT_THRESHOLD = 18
+LEGACY_HASH_THRESHOLD = 5
+LEGACY_ORB_DISTANCE_THRESHOLD = 55
+LEGACY_ORB_MIN_GOOD_MATCHES = 10
+LEGACY_NCC_THRESHOLD = 0.72
+LEGACY_MIN_GRAYSCALE_DEVIATION = 4.0
 
 
 def validate_pixel_rect(value: Any, width: int, height: int) -> tuple[int, int, int, int]:
@@ -160,13 +167,21 @@ def propose_inner_rect(image: np.ndarray) -> tuple[tuple[float, float, float, fl
     return (x / width, y / height, box_width / width, box_height / height), confidence
 
 
-def _crop_ratio(image: np.ndarray, ratio: tuple[float, float, float, float]) -> np.ndarray:
+def _crop_ratio(
+    image: np.ndarray, ratio: tuple[float, float, float, float]
+) -> tuple[np.ndarray, tuple[float, float, float, float]]:
     height, width = image.shape[:2]
     x = min(width - 1, max(0, int(round(ratio[0] * width))))
     y = min(height - 1, max(0, int(round(ratio[1] * height))))
     right = min(width, max(x + 1, int(round((ratio[0] + ratio[2]) * width))))
     bottom = min(height, max(y + 1, int(round((ratio[1] + ratio[3]) * height))))
-    return image[y:bottom, x:right]
+    canonical = (
+        x / width,
+        y / height,
+        (right - x) / width,
+        (bottom - y) / height,
+    )
+    return image[y:bottom, x:right], canonical
 
 
 def _encode_map(image: np.ndarray) -> str:
@@ -185,6 +200,60 @@ def structure_hash64(structure: np.ndarray) -> str:
     return f"{value:016x}"
 
 
+def _average_hash64(gray: np.ndarray) -> str:
+    tiny = cv2.resize(gray, (8, 8), interpolation=cv2.INTER_AREA)
+    average = float(np.mean(tiny))
+    value = 0
+    for pixel in tiny.reshape(-1):
+        value = (value << 1) | int(pixel >= average)
+    return f"{value:016x}"
+
+
+def _legacy_profile(inner: np.ndarray) -> dict[str, Any]:
+    gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
+    normalized = cv2.resize(
+        gray, (NORMALIZED_SIZE, NORMALIZED_SIZE), interpolation=cv2.INTER_AREA
+    )
+    if float(np.std(normalized)) < LEGACY_MIN_GRAYSCALE_DEVIATION:
+        raise ProtocolError(
+            "Selected trigger has too little luminance contrast for V1 compatibility"
+        )
+    mode_detector = cv2.ORB_create(nfeatures=300)
+    mode_keypoints, _ = mode_detector.detectAndCompute(normalized, None)
+    keypoints_count = len(mode_keypoints or [])
+
+    runtime_orb = cv2.ORB_create(nfeatures=400)
+    _, descriptors = runtime_orb.detectAndCompute(normalized, None)
+    good_matches = 0
+    if descriptors is not None:
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = matcher.match(descriptors, descriptors)
+        good_matches = sum(
+            match.distance <= LEGACY_ORB_DISTANCE_THRESHOLD for match in matches
+        )
+    feature_mode = (
+        "orb"
+        if keypoints_count >= LEGACY_KEYPOINT_THRESHOLD
+        and good_matches >= LEGACY_ORB_MIN_GOOD_MATCHES
+        else "ncc"
+    )
+    return {
+        "templateGrayBase64": _encode_map(normalized),
+        "thumbnailHash": _average_hash64(normalized),
+        "featureMode": feature_mode,
+        "keypointsCount": keypoints_count,
+        "normalizedTemplateSize": {
+            "width": NORMALIZED_SIZE,
+            "height": NORMALIZED_SIZE,
+        },
+        "hashThreshold": LEGACY_HASH_THRESHOLD,
+        "orbDistanceThreshold": LEGACY_ORB_DISTANCE_THRESHOLD,
+        "orbMinGoodMatches": LEGACY_ORB_MIN_GOOD_MATCHES,
+        "nccThreshold": LEGACY_NCC_THRESHOLD,
+        "analyzerVersion": "trigger-profile-v2",
+    }
+
+
 def _edge_coverage(edges: np.ndarray) -> float:
     covered = 0
     for row in range(4):
@@ -198,7 +267,7 @@ def _edge_coverage(edges: np.ndarray) -> float:
     return covered / 16.0
 
 
-def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
+def analyze_result(png: bytes, outer_rect: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ProtocolError("PNG cannot be decoded")
@@ -208,7 +277,7 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
     x, y, rect_width, rect_height = validate_pixel_rect(outer_rect, width, height)
     outer = image[y : y + rect_height, x : x + rect_width]
     inner_ratio, crop_confidence = propose_inner_rect(outer)
-    inner = _crop_ratio(outer, inner_ratio)
+    inner, inner_ratio = _crop_ratio(outer, inner_ratio)
     structure, edges, orientation = structural_maps(
         inner, (NORMALIZED_SIZE, NORMALIZED_SIZE)
     )
@@ -219,13 +288,20 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
             "Selected trigger region has too little stable structure; include a border or surrounding UI"
         )
 
-    orb = cv2.ORB_create(nfeatures=400)
-    keypoints = orb.detect(structure, None)
+    orb = create_orb()
+    keypoints, descriptors = orb.detectAndCompute(structure, None)
     quadrants = {
         (int(point.pt[0] >= NORMALIZED_SIZE / 2), int(point.pt[1] >= NORMALIZED_SIZE / 2))
         for point in keypoints
     }
-    matcher_mode = "edge_orb" if len(keypoints) >= 20 and len(quadrants) >= 3 else "edge"
+    self_alignment = score_orb_alignment(
+        keypoints, descriptors, structure, orb=orb
+    )
+    matcher_mode = (
+        "edge_orb"
+        if len(keypoints) >= 20 and len(quadrants) >= 3 and self_alignment.viable
+        else "edge"
+    )
     density_score = min(1.0, edge_pixel_count / 420.0)
     score = float(
         np.clip(0.52 * density_score + 0.33 * edge_coverage + 0.15 * crop_confidence, 0, 1)
@@ -233,7 +309,7 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
     grade = "high" if score >= 0.7 else "medium"
     crop_area_ratio = float(inner_ratio[2] * inner_ratio[3])
 
-    return {
+    profile = {
         "schemaVersion": 3,
         "analyzer": {"name": "cr-tools-trigger-analyzer", "version": ANALYZER_VERSION},
         "innerRect": {
@@ -259,6 +335,12 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
             "cropAreaRatio": crop_area_ratio,
         },
     }
+    return profile, _legacy_profile(inner)
+
+
+def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
+    profile, _ = analyze_result(png, outer_rect)
+    return profile
 
 
 def main() -> None:
@@ -272,10 +354,18 @@ def main() -> None:
             raise ProtocolError("analyzer request version or operation is invalid")
         if metadata["requestId"] != request_id:
             raise ProtocolError("analyzer request id is invalid")
-        profile = analyze(envelope.binary, metadata["outerRect"])
+        profile, legacy_profile = analyze_result(
+            envelope.binary, metadata["outerRect"]
+        )
         write_envelope(
             sys.stdout.buffer,
-            {"protocolVersion": 1, "requestId": request_id, "ok": True, "profile": profile},
+            {
+                "protocolVersion": 1,
+                "requestId": request_id,
+                "ok": True,
+                "profile": profile,
+                "legacyProfile": legacy_profile,
+            },
         )
     except Exception as error:
         write_envelope(

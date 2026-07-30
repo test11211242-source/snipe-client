@@ -1,10 +1,15 @@
 name: CR Tools V2 Windows release
+run-name: CR Tools V2 ${{ inputs.version }} [${{ inputs.correlation_id }}]
 
 on:
   workflow_dispatch:
     inputs:
       version:
         description: Strict x.y.z release version
+        required: true
+        type: string
+      correlation_id:
+        description: Unique UUID generated for this dispatch
         required: true
         type: string
       critical:
@@ -17,8 +22,14 @@ on:
         required: true
         default: false
         type: boolean
+      bootstrap:
+        description: Allow the first production manifest only when none exists
+        required: true
+        default: false
+        type: boolean
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -30,31 +41,63 @@ defaults:
     working-directory: pc-build-v2
 
 jobs:
-  release:
+  promotion-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate release shell helpers
+        working-directory: pc-build-v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n publish-update.sh scripts/promote-update.sh scripts/tests/promote-update.test.sh scripts/tests/publish-update-plan.test.sh
+          bash scripts/tests/promote-update.test.sh
+          bash scripts/tests/publish-update-plan.test.sh
+
+  build:
+    needs: promotion-tests
     runs-on: windows-latest
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - name: Validate dispatch inputs
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          DEPLOY: ${{ inputs.deploy }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'Version must be strict x.y.z semver.'
+          }
+          if ($env:RELEASE_VERSION.Length -gt 32) { throw 'Version is too long.' }
+          if ($env:CORRELATION_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw 'Correlation ID must be a lowercase UUID.'
+          }
+          if ($env:BOOTSTRAP -eq 'true' -and $env:DEPLOY -ne 'true') {
+            throw 'Bootstrap is valid only for a production deployment.'
+          }
+          if ($env:DEPLOY -eq 'true' -and $env:DISPATCH_REF -ne 'refs/heads/main') {
+            throw 'Production deployment is allowed only from main.'
+          }
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:DEPLOY -eq 'true' -and $packageVersion -cne $env:RELEASE_VERSION) {
+            throw 'Production version must match the reviewed package.json version.'
+          }
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: pc-build-v2/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11.9"
-
-      - name: Validate release version
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
-            throw 'Version must be strict x.y.z semver.'
-          }
 
       - name: Install Node dependencies
         run: npm ci
@@ -97,10 +140,11 @@ jobs:
 
       - name: Upload packaged smoke diagnostics
         if: ${{ always() && steps.packaged-smoke.outcome == 'failure' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cr-tools-v2-smoke-${{ inputs.version }}
+          name: cr-tools-v2-smoke-${{ inputs.version }}-${{ inputs.correlation_id }}
           if-no-files-found: warn
+          retention-days: 1
           path: pc-build-v2/test-results
 
       - name: Warn about hosted GUI smoke
@@ -111,51 +155,128 @@ jobs:
       - name: Build unsigned NSIS installer
         run: npm run build
 
-      - name: Prepare installer metadata
+      - name: Verify NSIS install-over-existing flow
+        id: installer-upgrade
+        continue-on-error: ${{ inputs.deploy == false }}
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          $artifactName = "CR_Tools_V2_Setup_$env:RELEASE_VERSION.exe"
-          $artifactPath = Join-Path $PWD "release\$artifactName"
-          if (-not (Test-Path $artifactPath -PathType Leaf)) { throw 'Expected installer was not built.' }
-          "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "ARTIFACT_PATH=release/$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "ARTIFACT_SHA512_HEX=$((Get-FileHash -Algorithm SHA512 $artifactPath).Hash.ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $artifact = Join-Path $PWD "release\CR_Tools_V2_Setup_$env:RELEASE_VERSION.exe"
+          ./scripts/Test-InstallerUpgrade.ps1 -InstallerPath $artifact -ExpectedVersion $env:RELEASE_VERSION
 
-      - name: Create signed update manifest
-        if: ${{ inputs.deploy }}
+      - name: Warn about hosted installer-upgrade smoke
+        if: ${{ inputs.deploy == false && steps.installer-upgrade.outcome == 'failure' }}
         shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          'Hosted install-over-existing check failed.' | Set-Content test-results/installer-upgrade-failed.txt
+          Write-Warning 'The hosted install-over-existing check failed. The test artifact requires a manual upgrade check before release.'
+
+      - name: Upload installer-upgrade diagnostics
+        if: ${{ always() && steps.installer-upgrade.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cr-tools-v2-upgrade-${{ inputs.version }}-${{ inputs.correlation_id }}
+          if-no-files-found: warn
+          retention-days: 1
+          path: pc-build-v2/test-results/installer-upgrade-failed.txt
+
+      - name: Validate build artifact
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $artifactPath = Join-Path $PWD "release\CR_Tools_V2_Setup_$env:RELEASE_VERSION.exe"
+          if (-not (Test-Path $artifactPath -PathType Leaf)) { throw 'Expected installer was not built.' }
+          if ((Get-Item $artifactPath).Length -lt 1) { throw 'Built installer is empty.' }
+
+      - name: Upload exact Windows build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cr-tools-v2-${{ inputs.version }}-${{ inputs.correlation_id }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            pc-build-v2/release/CR_Tools_V2_Setup_${{ inputs.version }}.exe
+            pc-build-v2/resources/runtime-integrity.json
+
+  sign-deploy:
+    if: ${{ inputs.deploy && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Preflight required production secrets
+        shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64 }}
+          SERVER_HOST_VALUE: ${{ secrets.SERVER_HOST }}
+          SERVER_USER_VALUE: ${{ secrets.SERVER_USER }}
+          SSH_PRIVATE_KEY_VALUE: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_KNOWN_HOSTS_VALUE: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in UPDATE_SIGNING_KEY SERVER_HOST_VALUE SERVER_USER_VALUE SSH_PRIVATE_KEY_VALUE SERVER_KNOWN_HOSTS_VALUE; do
+            test -n "${!name}" || { printf 'Required production secret is missing: %s\n' "$name" >&2; exit 1; }
+          done
+
+      - name: Check out the reviewed dispatch commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Download exact Windows build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cr-tools-v2-${{ inputs.version }}-${{ inputs.correlation_id }}
+          path: pc-build-v2/release-input
+
+      - name: Validate downloaded artifact
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          artifact_name="CR_Tools_V2_Setup_${RELEASE_VERSION}.exe"
+          mapfile -d '' installers < <(find release-input -type f -name 'CR_Tools_V2_Setup_*.exe' -print0)
+          test "${#installers[@]}" -eq 1
+          artifact_path="${installers[0]}"
+          test "$(basename "$artifact_path")" = "$artifact_name"
+          test "$(stat -c '%s' "$artifact_path")" -gt 0
+          printf 'ARTIFACT_NAME=%s\n' "$artifact_name" >>"$GITHUB_ENV"
+          printf 'ARTIFACT_PATH=%s\n' "$artifact_path" >>"$GITHUB_ENV"
+          printf 'ARTIFACT_SHA512_HEX=%s\n' "$(sha512sum "$artifact_path" | cut -d ' ' -f 1)" >>"$GITHUB_ENV"
+
+      - name: Create and self-verify schema v1 manifest
+        shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_CRITICAL: ${{ inputs.critical }}
           CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64: ${{ secrets.CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64 }}
         run: |
-          $artifactPath = Join-Path $PWD $env:ARTIFACT_PATH
-          '["CR Tools V2 release ' + $env:RELEASE_VERSION + '"]' | Set-Content -Encoding utf8NoBOM release\notes.json
-          $critical = ($env:RELEASE_CRITICAL).ToLowerInvariant()
-          node scripts/create-release-manifest.mjs --version $env:RELEASE_VERSION --artifact $artifactPath --output release\manifest.json --notes-file release\notes.json --critical $critical
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Upload Windows build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cr-tools-v2-${{ inputs.version }}
-          if-no-files-found: error
-          path: |
-            pc-build-v2/release/CR_Tools_V2_Setup_*.exe
-            pc-build-v2/resources/runtime-integrity.json
+          set -euo pipefail
+          printf '["CR Tools V2 release %s"]\n' "$RELEASE_VERSION" >release-input/notes.json
+          node scripts/create-release-manifest.mjs \
+            --version "$RELEASE_VERSION" \
+            --artifact "$ARTIFACT_PATH" \
+            --output release-input/manifest.json \
+            --notes-file release-input/notes.json \
+            --critical "${RELEASE_CRITICAL,,}"
 
       - name: Upload signed manifest artifact
-        if: ${{ inputs.deploy }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cr-tools-v2-manifest-${{ inputs.version }}
+          name: cr-tools-v2-manifest-${{ inputs.version }}-${{ inputs.correlation_id }}
           if-no-files-found: error
-          path: pc-build-v2/release/manifest.json
+          retention-days: 1
+          path: pc-build-v2/release-input/manifest.json
 
       - name: Configure deployment SSH
-        if: ${{ inputs.deploy }}
         shell: bash
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -164,39 +285,138 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s' "$SSH_PRIVATE_KEY" >"$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          test -n "$SERVER_KNOWN_HOSTS"
-          printf '%s\n' "$SERVER_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Deploy installer and manifest atomically
-        if: ${{ inputs.deploy }}
+      - name: Prepare installer, verify it publicly, then commit manifest
         shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
         run: |
           set -euo pipefail
           remote_dir='/home/ubuntu/snipe/data/updates/downloads/v2'
+          remote="$SERVER_USER@$SERVER_HOST"
           ssh_options=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519")
-          ssh "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$remote_dir'"
-          scp "${ssh_options[@]}" "$ARTIFACT_PATH" "$SERVER_USER@$SERVER_HOST:$remote_dir/$ARTIFACT_NAME.new"
-          scp "${ssh_options[@]}" release/manifest.json "$SERVER_USER@$SERVER_HOST:$remote_dir/manifest.json.new"
-          ssh "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "set -eu; printf '%s  %s\n' '$ARTIFACT_SHA512_HEX' '$remote_dir/$ARTIFACT_NAME.new' | sha512sum --check --status; mv '$remote_dir/$ARTIFACT_NAME.new' '$remote_dir/$ARTIFACT_NAME'; mv '$remote_dir/manifest.json.new' '$remote_dir/manifest.json'"
+          ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 '$remote_dir'"
+          scp "${ssh_options[@]}" "$ARTIFACT_PATH" "$remote:$remote_dir/$ARTIFACT_NAME.new.$CORRELATION_ID"
+          scp "${ssh_options[@]}" release-input/manifest.json "$remote:$remote_dir/manifest.json.new.$CORRELATION_ID"
 
-      - name: Smoke public release over HTTPS
-        if: ${{ inputs.deploy }}
+          promote() {
+            local phase="$1"
+            local promotion_args=(
+              --directory "$remote_dir"
+              --version "$RELEASE_VERSION"
+              --artifact-name "$ARTIFACT_NAME"
+              --artifact-sha512-hex "$ARTIFACT_SHA512_HEX"
+              --staging-id "$CORRELATION_ID"
+              --phase "$phase"
+            )
+            if [[ "$BOOTSTRAP" == true ]]; then promotion_args+=(--bootstrap); fi
+            local remote_command='bash -s --'
+            local argument quoted
+            for argument in "${promotion_args[@]}"; do
+              printf -v quoted ' %q' "$argument"
+              remote_command+="$quoted"
+            done
+            ssh "${ssh_options[@]}" "$remote" "$remote_command" <scripts/promote-update.sh
+          }
+
+          prepare_result="$(promote prepare)"
+          case "$prepare_result" in
+            PREPARED)
+              temporary_artifact="$(mktemp)"
+              trap 'rm -f "$temporary_artifact"' EXIT
+              artifact_verified=false
+              for attempt in {1..12}; do
+                rm -f "$temporary_artifact"
+                if curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+                    --header 'Cache-Control: no-cache' \
+                    "https://updates.artcsworld.xyz/downloads/v2/$ARTIFACT_NAME" \
+                    --output "$temporary_artifact" &&
+                  test "$(sha512sum "$temporary_artifact" | cut -d ' ' -f 1)" = "$ARTIFACT_SHA512_HEX"; then
+                  artifact_verified=true
+                  break
+                fi
+                printf 'Public installer verification attempt %d/12 did not match yet.\n' "$attempt"
+                sleep 5
+              done
+              [[ "$artifact_verified" == true ]] || {
+                printf 'Public installer verification failed; manifest was not changed.\n' >&2
+                exit 1
+              }
+              [[ "$(promote commit)" == PROMOTED ]] || {
+                printf 'Manifest commit returned an unexpected result.\n' >&2
+                exit 1
+              }
+              ;;
+            ALREADY_CURRENT)
+              :
+              ;;
+            *)
+              printf 'Unexpected prepare result: %s\n' "$prepare_result" >&2
+              exit 1
+              ;;
+          esac
+
+  verify-production:
+    if: ${{ inputs.deploy && github.ref == 'refs/heads/main' }}
+    needs: sign-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact Windows build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cr-tools-v2-${{ inputs.version }}-${{ inputs.correlation_id }}
+          path: pc-build-v2/verification/build
+
+      - name: Download exact signed manifest artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cr-tools-v2-manifest-${{ inputs.version }}-${{ inputs.correlation_id }}
+          path: pc-build-v2/verification/manifest
+
+      - name: Verify public release over HTTPS with bounded retries
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          manifest='verification/manifest/manifest.json'
+          mapfile -d '' installers < <(find verification/build -type f -name 'CR_Tools_V2_Setup_*.exe' -print0)
+          test "${#installers[@]}" -eq 1
+          artifact="${installers[0]}"
+          artifact_name="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).artifact.fileName)' "$manifest")"
+          test "$(basename "$artifact")" = "$artifact_name"
+          test "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version)' "$manifest")" = "$RELEASE_VERSION"
+          test "$(stat -c '%s' "$artifact")" = "$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).artifact.size))' "$manifest")"
+          artifact_sha512_hex="$(sha512sum "$artifact" | cut -d ' ' -f 1)"
+          manifest_sha512_hex="$(node -e 'process.stdout.write(Buffer.from(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).artifact.sha512, "base64").toString("hex"))' "$manifest")"
+          test "$artifact_sha512_hex" = "$manifest_sha512_hex"
           temporary_artifact="$(mktemp)"
           temporary_manifest="$(mktemp)"
           trap 'rm -f "$temporary_artifact" "$temporary_manifest"' EXIT
           public_base='https://updates.artcsworld.xyz/downloads/v2'
-          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$public_base/manifest.json" --output "$temporary_manifest"
-          cmp release/manifest.json "$temporary_manifest"
-          test "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version)' "$temporary_manifest")" = "${{ inputs.version }}"
-          test "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).artifact.fileName)' "$temporary_manifest")" = "$ARTIFACT_NAME"
-          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$public_base/$ARTIFACT_NAME" --output "$temporary_artifact"
-          test "$(sha512sum "$temporary_artifact" | cut -d ' ' -f 1)" = "$ARTIFACT_SHA512_HEX"
+          verified=false
+          for attempt in {1..12}; do
+            rm -f "$temporary_artifact" "$temporary_manifest"
+            if curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+                --header 'Cache-Control: no-cache' \
+                "$public_base/manifest.json" --output "$temporary_manifest" &&
+              cmp "$manifest" "$temporary_manifest" &&
+              curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+                --header 'Cache-Control: no-cache' \
+                "$public_base/$artifact_name" --output "$temporary_artifact" &&
+              test "$(sha512sum "$temporary_artifact" | cut -d ' ' -f 1)" = "$artifact_sha512_hex"; then
+              verified=true
+              break
+            fi
+            printf 'Public verification attempt %d/12 did not match yet.\n' "$attempt"
+            sleep 5
+          done
+          [[ "$verified" == true ]] || { printf 'Public release verification failed.\n' >&2; exit 1; }

@@ -32,8 +32,8 @@ async function temporaryDirectory(): Promise<string> {
 function signedManifest(
   artifact: Uint8Array,
   overrides: Partial<UpdateManifestPayload['artifact']> = {},
+  version = '1.1.0',
 ): SignedUpdateManifest {
-  const version = '1.1.0'
   const payload: UpdateManifestPayload = {
     schemaVersion: 1,
     channel: 'stable',
@@ -75,20 +75,22 @@ async function service(
       path: string
       size: number
       sha512: string
-    }) => Promise<void>
+    }) => Promise<{ cancel: () => void }>
     requestShutdown?: () => Promise<void>
     isPackaged?: boolean
     platform?: NodeJS.Platform
+    currentVersion?: string
+    userDataPath?: string
   } = {},
 ): Promise<UpdateService> {
-  const userData = await temporaryDirectory()
+  const userData = options.userDataPath ?? (await temporaryDirectory())
   return new UpdateService({
     fetch,
     ...nodeUpdateDependencies,
     launchVerifiedInstaller:
-      options.launchVerifiedInstaller ?? vi.fn().mockResolvedValue(undefined),
+      options.launchVerifiedInstaller ?? vi.fn().mockResolvedValue({ cancel: vi.fn() }),
     requestShutdown: options.requestShutdown ?? vi.fn().mockResolvedValue(undefined),
-    currentVersion: () => '1.0.0',
+    currentVersion: () => options.currentVersion ?? '1.0.0',
     userDataPath: () => userData,
     isPackaged: () => options.isPackaged ?? true,
     platform: () => options.platform ?? 'win32',
@@ -134,6 +136,62 @@ describe('UpdateService', () => {
     resolveFetch(manifestResponse(manifest))
     await expect(first).resolves.toMatchObject({ state: 'AVAILABLE' })
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists the highest trusted manifest and rejects lower-version replay', async () => {
+    const userData = await temporaryDirectory()
+    const firstArtifact = Buffer.from('newest')
+    const firstManifest = signedManifest(firstArtifact, {}, '2.0.0')
+    const first = await service(route(firstManifest, firstArtifact), {
+      userDataPath: userData,
+    })
+    await expect(first.check()).resolves.toMatchObject({
+      state: 'AVAILABLE',
+      availableVersion: '2.0.0',
+    })
+    await expect(first.download()).resolves.toMatchObject({ state: 'READY' })
+    const trustedManifestHash = createHash('sha512')
+      .update(JSON.stringify(firstManifest))
+      .digest('base64')
+    await expect(
+      fileSystem.readFile(join(userData, 'update-trust.v1.json'), 'utf8'),
+    ).resolves.toBe(
+      `${JSON.stringify({
+        version: '2.0.0',
+        manifestSha512: trustedManifestHash,
+      })}\n`,
+    )
+
+    const replayedArtifact = Buffer.from('older')
+    const replayedManifest = signedManifest(replayedArtifact, {}, '1.5.0')
+    const restarted = await service(route(replayedManifest, replayedArtifact), {
+      userDataPath: userData,
+    })
+    await expect(restarted.check()).resolves.toMatchObject({
+      state: 'FAILED',
+      error: { code: 'MANIFEST_REPLAYED', retryable: false },
+    })
+  })
+
+  it('rejects a different artifact for a previously trusted version', async () => {
+    const userData = await temporaryDirectory()
+    const firstArtifact = Buffer.from('first')
+    const firstManifest = signedManifest(firstArtifact, {}, '2.0.0')
+    const first = await service(route(firstManifest, firstArtifact), {
+      userDataPath: userData,
+    })
+    await first.check()
+    await first.download()
+
+    const replacementArtifact = Buffer.from('replacement')
+    const replacementManifest = signedManifest(replacementArtifact, {}, '2.0.0')
+    const restarted = await service(route(replacementManifest, replacementArtifact), {
+      userDataPath: userData,
+    })
+    await expect(restarted.check()).resolves.toMatchObject({
+      state: 'FAILED',
+      error: { code: 'MANIFEST_VERSION_CONFLICT', retryable: false },
+    })
   })
 
   it('rejects malicious redirect origin and path', async () => {
@@ -266,6 +324,11 @@ describe('UpdateService', () => {
       ),
     )
     expect(updateDirectories.flat()).toEqual([])
+    const userData = temporaryDirectories.at(-1)
+    if (userData === undefined) throw new Error('Missing test directory')
+    await expect(
+      fileSystem.stat(join(userData, 'update-trust.v1.json')),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('cancels an owned download, cleans the partial, and ignores its stale failure', async () => {
@@ -309,8 +372,14 @@ describe('UpdateService', () => {
     const artifact = Buffer.from('abc')
     const manifest = signedManifest(artifact)
     const launch = vi
-      .fn<(installer: { path: string; size: number; sha512: string }) => Promise<void>>()
-      .mockResolvedValue(undefined)
+      .fn<
+        (installer: {
+          path: string
+          size: number
+          sha512: string
+        }) => Promise<{ cancel: () => void }>
+      >()
+      .mockResolvedValue({ cancel: vi.fn() })
     const updater = await service(route(manifest, artifact), {
       launchVerifiedInstaller: launch,
     })
@@ -346,12 +415,36 @@ describe('UpdateService', () => {
     expect(shutdown).not.toHaveBeenCalled()
   })
 
+  it('cancels the deferred installer when application shutdown fails', async () => {
+    const artifact = Buffer.from('abc')
+    const manifest = signedManifest(artifact)
+    const cancel = vi.fn()
+    const updater = await service(route(manifest, artifact), {
+      launchVerifiedInstaller: vi.fn().mockResolvedValue({ cancel }),
+      requestShutdown: vi.fn().mockRejectedValue(new Error('shutdown failed')),
+    })
+    await updater.check()
+    await updater.download()
+
+    await expect(updater.install()).resolves.toMatchObject({
+      state: 'FAILED',
+      error: { code: 'UPDATE_SHUTDOWN_FAILED' },
+    })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it('passes exact trusted metadata to the locked launcher and shuts down only on success', async () => {
     const artifact = Buffer.from('abc')
     const manifest = signedManifest(artifact)
     const launch = vi
-      .fn<(installer: { path: string; size: number; sha512: string }) => Promise<void>>()
-      .mockResolvedValue(undefined)
+      .fn<
+        (installer: {
+          path: string
+          size: number
+          sha512: string
+        }) => Promise<{ cancel: () => void }>
+      >()
+      .mockResolvedValue({ cancel: vi.fn() })
     const shutdown = vi.fn().mockResolvedValue(undefined)
     const updater = await service(route(manifest, artifact), {
       launchVerifiedInstaller: launch,

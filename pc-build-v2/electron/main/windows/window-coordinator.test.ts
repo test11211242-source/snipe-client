@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pathToFileURL } from 'node:url'
 
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 
@@ -29,6 +30,7 @@ vi.mock('electron', () => {
     }
 
     show = vi.fn()
+    hide = vi.fn()
     focus = vi.fn()
     showInactive = vi.fn()
     once = vi.fn()
@@ -48,6 +50,8 @@ vi.mock('electron', () => {
     setResizable = vi.fn()
     setOpacity = vi.fn()
     setBounds = vi.fn()
+    setIgnoreMouseEvents = vi.fn()
+    isVisible = vi.fn(() => false)
   }
 
   return {
@@ -68,6 +72,7 @@ import {
   persistableWidgetBounds,
   resolveDevelopmentRendererUrl,
   WindowCoordinator,
+  WIDGET_RENDERER_READY_TIMEOUT_MS,
 } from './window-coordinator'
 
 describe('WindowCoordinator auth shell', () => {
@@ -77,7 +82,10 @@ describe('WindowCoordinator auth shell', () => {
     vi.stubEnv('ELECTRON_RENDERER_URL', '')
   })
 
-  afterEach(() => vi.unstubAllEnvs())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+  })
 
   it('enforces isolated renderer preferences and blocks external navigation', async () => {
     const warn = vi.fn()
@@ -150,6 +158,29 @@ describe('WindowCoordinator auth shell', () => {
     ).toBeNull()
   })
 
+  it('accepts a registered auth sender when auth is one of the allowed kinds', async () => {
+    const warn = vi.fn()
+    const coordinator = new WindowCoordinator({ warn } as unknown as StructuredLogger)
+    const authWindow = await coordinator.ensureAuthWindow()
+    const loadedPath = electronMocks.loadFile.mock.calls[0]?.[0]
+    if (loadedPath === undefined) throw new Error('Auth renderer path was not loaded')
+
+    expect(() =>
+      coordinator.assertSender(authWindow.webContents, pathToFileURL(loadedPath).href, [
+        'main',
+        'auth',
+      ]),
+    ).not.toThrow()
+    expect(() =>
+      coordinator.assertSender(
+        authWindow.webContents,
+        'https://attacker.example/auth.html',
+        ['main', 'auth'],
+      ),
+    ).toThrow('IPC sender is not authorized')
+    expect(warn).toHaveBeenCalledOnce()
+  })
+
   it('fits normal windows and clamps saved widget bounds to current work areas', () => {
     expect(
       fitWindowBounds(
@@ -208,13 +239,22 @@ describe('WindowCoordinator auth shell', () => {
     expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(1)
     await Promise.resolve()
     expect(electronMocks.loadFile).toHaveBeenCalledTimes(1)
-    release()
-    await Promise.all([first, second])
     const loadedWindow = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
-      on: ReturnType<typeof vi.fn>
       getBounds: ReturnType<typeof vi.fn>
+      on: ReturnType<typeof vi.fn>
       setAspectRatio: ReturnType<typeof vi.fn>
+      setIgnoreMouseEvents: ReturnType<typeof vi.fn>
+      show: ReturnType<typeof vi.fn>
     }
+    coordinator.showWidget()
+    expect(loadedWindow.show).not.toHaveBeenCalled()
+    release()
+    coordinator.markWidgetRendererReady()
+    await Promise.all([first, second])
+    coordinator.showWidget()
+    expect(loadedWindow.show).toHaveBeenCalledOnce()
+    expect(loadedWindow.setIgnoreMouseEvents).toHaveBeenNthCalledWith(1, true)
+    expect(loadedWindow.setIgnoreMouseEvents).toHaveBeenNthCalledWith(2, false)
     const widgetOptions = electronMocks.browserWindowConstructed.mock.calls[0]?.[0] as {
       frame: boolean
       transparent: boolean
@@ -254,7 +294,9 @@ describe('WindowCoordinator auth shell', () => {
     await expect(failed).rejects.toThrow('load failed')
     expect(failedWindow.destroy).toHaveBeenCalledOnce()
 
-    await expect(coordinator.ensureWidgetWindow(settings)).resolves.toBeUndefined()
+    const retry = coordinator.ensureWidgetWindow(settings)
+    coordinator.markWidgetRendererReady()
+    await expect(retry).resolves.toBeUndefined()
     expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(3)
   })
 
@@ -269,7 +311,9 @@ describe('WindowCoordinator auth shell', () => {
       bounds: { x: null, y: null, width: 360, height: 300 },
     }
 
-    await coordinator.ensureWidgetWindow(settings)
+    const opening = coordinator.ensureWidgetWindow(settings)
+    coordinator.markWidgetRendererReady()
+    await opening
     coordinator.applyWidgetSettings(settings)
     coordinator.showWidgetInactive()
 
@@ -304,6 +348,167 @@ describe('WindowCoordinator auth shell', () => {
     blur?.()
     expect(window.moveTop).toHaveBeenCalledTimes(moveCount + 1)
   })
+
+  it('destroys a non-interactive widget when renderer readiness times out', async () => {
+    vi.useFakeTimers()
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 1,
+      displayMode: 'detailed' as const,
+      bounds: { x: null, y: null, width: 420, height: 360 },
+    }
+
+    const opening = coordinator.ensureWidgetWindow(settings)
+    const rejection = expect(opening).rejects.toMatchObject({
+      code: 'WIDGET_RENDERER_TIMEOUT',
+    })
+    const window = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
+      destroy: ReturnType<typeof vi.fn>
+      hide: ReturnType<typeof vi.fn>
+      setIgnoreMouseEvents: ReturnType<typeof vi.fn>
+      show: ReturnType<typeof vi.fn>
+    }
+    coordinator.showWidget()
+    expect(window.show).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(WIDGET_RENDERER_READY_TIMEOUT_MS)
+
+    await rejection
+    expect(window.setIgnoreMouseEvents).toHaveBeenCalledWith(true)
+    expect(window.hide).toHaveBeenCalledOnce()
+    expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('suppresses input again until a reloaded widget renderer is ready', async () => {
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 1,
+      displayMode: 'detailed' as const,
+      bounds: { x: null, y: null, width: 420, height: 360 },
+    }
+    const opening = coordinator.ensureWidgetWindow(settings)
+    coordinator.markWidgetRendererReady()
+    await opening
+    const window = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
+      setIgnoreMouseEvents: ReturnType<typeof vi.fn>
+      show: ReturnType<typeof vi.fn>
+      webContents: { on: ReturnType<typeof vi.fn> }
+    }
+    const navigation = window.webContents.on.mock.calls.find(
+      ([event]) => event === 'did-start-navigation',
+    )?.[1] as
+      | ((event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void)
+      | undefined
+
+    const loadedPath = electronMocks.loadFile.mock.calls[0]?.[0]
+    if (loadedPath === undefined) throw new Error('Widget renderer path was not loaded')
+    navigation?.({}, pathToFileURL(loadedPath).href, false, true)
+    coordinator.showWidget()
+    expect(window.show).not.toHaveBeenCalled()
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true)
+
+    coordinator.markWidgetRendererReady()
+    coordinator.showWidget()
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false)
+    expect(window.show).toHaveBeenCalledOnce()
+  })
+
+  it('ignores in-place navigation and supersedes overlapping reload readiness', async () => {
+    vi.useFakeTimers()
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 1,
+      displayMode: 'detailed' as const,
+      bounds: { x: null, y: null, width: 420, height: 360 },
+    }
+    const opening = coordinator.ensureWidgetWindow(settings)
+    coordinator.markWidgetRendererReady()
+    await opening
+    const window = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
+      destroy: ReturnType<typeof vi.fn>
+      show: ReturnType<typeof vi.fn>
+      webContents: { on: ReturnType<typeof vi.fn> }
+    }
+    const navigation = window.webContents.on.mock.calls.find(
+      ([event]) => event === 'did-start-navigation',
+    )?.[1] as
+      | ((event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void)
+      | undefined
+    const loadedPath = electronMocks.loadFile.mock.calls[0]?.[0]
+    if (loadedPath === undefined) throw new Error('Widget renderer path was not loaded')
+    const rendererUrl = pathToFileURL(loadedPath).href
+
+    navigation?.({}, `${rendererUrl}#deck`, true, true)
+    coordinator.showWidget()
+    expect(window.show).toHaveBeenCalledOnce()
+    window.show.mockClear()
+
+    navigation?.({}, rendererUrl, false, true)
+    await vi.advanceTimersByTimeAsync(5_000)
+    navigation?.({}, rendererUrl, false, true)
+    await vi.advanceTimersByTimeAsync(5_100)
+    expect(window.destroy).not.toHaveBeenCalled()
+    coordinator.markWidgetRendererReady()
+    coordinator.showWidget()
+    expect(window.show).toHaveBeenCalledOnce()
+  })
+
+  it.each(['did-fail-load', 'render-process-gone', 'unresponsive'] as const)(
+    'destroys the widget after %s',
+    async (failure) => {
+      const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+      const settings = {
+        autoOpen: true,
+        alwaysOnTop: true,
+        locked: false,
+        opacity: 1,
+        displayMode: 'detailed' as const,
+        bounds: { x: null, y: null, width: 420, height: 360 },
+      }
+      const opening = coordinator.ensureWidgetWindow(settings)
+      const window = electronMocks.browserWindowConstructed.mock.calls[0]?.[1] as {
+        destroy: ReturnType<typeof vi.fn>
+        hide: ReturnType<typeof vi.fn>
+        on: ReturnType<typeof vi.fn>
+        webContents: { on: ReturnType<typeof vi.fn> }
+      }
+      const rejection = expect(opening).rejects.toMatchObject({
+        code:
+          failure === 'did-fail-load'
+            ? 'WIDGET_LOAD_FAILED'
+            : failure === 'render-process-gone'
+              ? 'WIDGET_RENDERER_GONE'
+              : 'WIDGET_RENDERER_UNRESPONSIVE',
+      })
+
+      if (failure === 'unresponsive') {
+        const handler = window.on.mock.calls.find(([event]) => event === failure)?.[1] as
+          (() => void) | undefined
+        handler?.()
+      } else {
+        const handler = window.webContents.on.mock.calls.find(
+          ([event]) => event === failure,
+        )?.[1] as ((...args: unknown[]) => void) | undefined
+        if (failure === 'did-fail-load') {
+          handler?.({}, -2, 'failed', 'file:///widget.html', true)
+        } else {
+          handler?.({}, { reason: 'crashed' })
+        }
+      }
+
+      await rejection
+      expect(window.hide).toHaveBeenCalledOnce()
+      expect(window.destroy).toHaveBeenCalledOnce()
+    },
+  )
 
   it('normalizes encoded Windows file URLs without allowing a different renderer', () => {
     const expected =

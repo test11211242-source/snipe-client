@@ -105,7 +105,7 @@ export const LegacyOcrRegionsSchema = z
           inner_ratio: NormalizedRectSchema,
           template_gray_base64: z.string().min(1),
           thumbnail_hash: z.string().regex(/^[a-f0-9]{16}$/),
-          hash_algorithm: z.literal('ahash64-bitwise-v1'),
+          hash_algorithm: z.literal('ahash64-hex-char-v1'),
           feature_mode: z.enum(['orb', 'ncc']),
           keypoints_count: z.number().int().nonnegative(),
           normalized_template_size: PixelSizeSchema,
