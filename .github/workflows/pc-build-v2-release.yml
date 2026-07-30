@@ -204,7 +204,7 @@ jobs:
             pc-build-v2/resources/runtime-integrity.json
 
   sign-deploy:
-    if: ${{ inputs.deploy && github.ref == 'refs/heads/main' }}
+    if: ${{ inputs.deploy == true && github.ref == 'refs/heads/main' }}
     needs: build
     runs-on: ubuntu-latest
     environment: production
@@ -367,7 +367,7 @@ jobs:
           esac
 
   verify-production:
-    if: ${{ inputs.deploy && github.ref == 'refs/heads/main' }}
+    if: ${{ inputs.deploy == true && github.ref == 'refs/heads/main' }}
     needs: sign-deploy
     runs-on: ubuntu-latest
     steps:
