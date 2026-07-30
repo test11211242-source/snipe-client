@@ -183,6 +183,7 @@ jobs:
           path: pc-build-v2/test-results/installer-upgrade-failed.txt
 
       - name: Validate build artifact
+        if: always()
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -192,6 +193,7 @@ jobs:
           if ((Get-Item $artifactPath).Length -lt 1) { throw 'Built installer is empty.' }
 
       - name: Upload exact Windows build artifact
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cr-tools-v2-${{ inputs.version }}-${{ inputs.correlation_id }}

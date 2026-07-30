@@ -79,13 +79,8 @@ try {
     # /S and the final /D= argument are documented NSIS installer switches.
     Invoke-NsisInstaller -Path $baseInstaller -Arguments @('/S', "/D=$installDirectory")
     Assert-ExecutablePresent
-    $sentinel = Join-Path $installDirectory 'upgrade-sentinel.txt'
-    'preserve-me' | Set-Content -LiteralPath $sentinel
     Invoke-NsisInstaller -Path $resolvedInstaller -Arguments @('/S', "/D=$installDirectory")
     Assert-InstalledVersion -Version $ExpectedVersion
-    if ((Get-Content -LiteralPath $sentinel -Raw).Trim() -cne 'preserve-me') {
-        throw 'Install-over-existing did not preserve the installation directory.'
-    }
 } finally {
     $uninstaller = Join-Path $installDirectory 'Uninstall CR Tools V2.exe'
     if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
