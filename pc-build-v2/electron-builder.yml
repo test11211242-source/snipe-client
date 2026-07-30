@@ -24,6 +24,8 @@ extraResources:
     to: update-public-key.pem
   - from: resources/runtime-integrity.json
     to: runtime-integrity.json
+  - from: resources/app-version.json
+    to: app-version.json
 asar: true
 win:
   forceCodeSigning: false

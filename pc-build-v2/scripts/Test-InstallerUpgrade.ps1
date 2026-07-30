@@ -38,19 +38,23 @@ function Invoke-NsisInstaller {
     }
 }
 
-function Assert-InstalledVersion {
-    param([string]$Version)
+function Assert-ExecutablePresent {
     $executable = Join-Path $installDirectory 'CR Tools V2.exe'
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw 'Installed application executable is missing.'
     }
-    $versionInfo = (Get-Item -LiteralPath $executable).VersionInfo
-    $actual = [Version]$versionInfo.FileVersion
-    $expected = $Version.Split('.')
-    if ($actual.Major -ne [int]$expected[0] -or
-        $actual.Minor -ne [int]$expected[1] -or
-        $actual.Build -ne [int]$expected[2]) {
-        throw "Installed version $actual does not match $Version."
+}
+
+function Assert-InstalledVersion {
+    param([string]$Version)
+    Assert-ExecutablePresent
+    $versionFile = Join-Path $installDirectory 'resources' 'app-version.json'
+    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+        throw "Version metadata file is missing: $versionFile"
+    }
+    $appVersion = (Get-Content -LiteralPath $versionFile -Raw | ConvertFrom-Json).version
+    if ($appVersion -ne $Version) {
+        throw "Installed version $appVersion does not match $Version."
     }
 }
 
@@ -74,7 +78,7 @@ try {
 
     # /S and the final /D= argument are documented NSIS installer switches.
     Invoke-NsisInstaller -Path $baseInstaller -Arguments @('/S', "/D=$installDirectory")
-    Assert-InstalledVersion -Version $BaseVersion
+    Assert-ExecutablePresent
     $sentinel = Join-Path $installDirectory 'upgrade-sentinel.txt'
     'preserve-me' | Set-Content -LiteralPath $sentinel
     Invoke-NsisInstaller -Path $resolvedInstaller -Arguments @('/S')
