@@ -81,7 +81,7 @@ try {
     Assert-ExecutablePresent
     $sentinel = Join-Path $installDirectory 'upgrade-sentinel.txt'
     'preserve-me' | Set-Content -LiteralPath $sentinel
-    Invoke-NsisInstaller -Path $resolvedInstaller -Arguments @('/S')
+    Invoke-NsisInstaller -Path $resolvedInstaller -Arguments @('/S', "/D=$installDirectory")
     Assert-InstalledVersion -Version $ExpectedVersion
     if ((Get-Content -LiteralPath $sentinel -Raw).Trim() -cne 'preserve-me') {
         throw 'Install-over-existing did not preserve the installation directory.'
