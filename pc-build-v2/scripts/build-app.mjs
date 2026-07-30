@@ -21,5 +21,5 @@ if (!existsSync(resourceDir)) mkdirSync(resourceDir, { recursive: true })
 const pkg = JSON.parse(readFileSync(resolve(thisDir, '..', 'package.json'), 'utf8'))
 writeFileSync(
   resolve(resourceDir, 'app-version.json'),
-  JSON.stringify({ version: pkg.version }) + '\n',
+  JSON.stringify({ version: pkg.version }, null, 2) + '\n',
 )
