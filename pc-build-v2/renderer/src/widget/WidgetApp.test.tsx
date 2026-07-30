@@ -307,7 +307,7 @@ describe('WidgetApp', () => {
     await act(async () => vi.advanceTimersByTimeAsync(250))
     await act(async () => vi.advanceTimersByTimeAsync(750))
     expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(3)
-    expect(container.querySelector('img')).toHaveAttribute(
+    expect(container.querySelector('.deck-card img')).toHaveAttribute(
       'src',
       'data:image/png;base64,AA==',
     )
@@ -342,7 +342,7 @@ describe('WidgetApp', () => {
     })
     const { container, unmount } = render(<WidgetApp />)
     await loadWidgetWithFakeTimers()
-    const image = container.querySelector('img')
+    const image = container.querySelector('.deck-card img')
     if (image === null) throw new Error('Card image was not rendered')
     expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
 
@@ -351,7 +351,7 @@ describe('WidgetApp', () => {
     await act(async () => vi.advanceTimersByTimeAsync(250))
     expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(9)
 
-    const retriedImage = container.querySelector('img')
+    const retriedImage = container.querySelector('.deck-card img')
     if (retriedImage === null) throw new Error('Retried card image was not rendered')
     fireEvent.error(retriedImage)
     fireEvent.click(screen.getByRole('tab', { name: 'Колода 2: Турнир' }))

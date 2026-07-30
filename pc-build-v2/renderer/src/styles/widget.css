@@ -145,8 +145,9 @@ button:focus-visible {
   line-height: 16px;
 }
 
-.player-rating svg {
-  color: #e5bc72;
+.player-rating .rating-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .widget-controls {

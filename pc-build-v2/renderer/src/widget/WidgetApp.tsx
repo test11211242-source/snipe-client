@@ -1,7 +1,8 @@
-import { GripVertical, LayoutGrid, Lock, Pin, Trophy, Unlock, X } from 'lucide-react'
+import { GripVertical, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { WidgetSettingsPatch, WidgetView } from '../../../shared/models/widget'
+import ratingIcon from './assets/rating.png'
 
 const OPACITY_STEP = 5
 const MIN_OPACITY_PERCENT = 55
@@ -251,7 +252,7 @@ export function WidgetApp(): React.JSX.Element {
           <h1 title={playerName}>{playerName}</h1>
           {found?.player.rating !== null && found?.player.rating !== undefined && (
             <span className="player-rating" aria-label={`Рейтинг ${found.player.rating}`}>
-              <Trophy aria-hidden="true" size={13} />
+              <img src={ratingIcon} className="rating-icon" aria-hidden="true" alt="" />
               {found.player.rating.toLocaleString('ru-RU')}
             </span>
           )}
