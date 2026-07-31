@@ -343,9 +343,13 @@ github_download() {
     printf 'show-error\n'
     printf 'fail\n'
     printf 'location\n'
+    printf 'retry 5\n'
+    printf 'retry-delay 5\n'
+    printf 'retry-all-errors\n'
     printf 'header = "Accept: application/vnd.github+json"\n'
     printf 'header = "Authorization: Bearer %s"\n' "$TOKEN"
     printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
+    printf 'header = "Cache-Control: no-cache"\n'
   } | curl --config - --url "https://api.github.com$path" --output "$output"
 }
 
@@ -630,13 +634,13 @@ artifact_zip="$TMP_DIR/artifact.zip"
 extract_dir="$TMP_DIR/artifact"
 mkdir -p -- "$extract_dir"
 info 'Downloading the verified Windows artifact'
-for download_attempt in {1..3}; do
+for download_attempt in {1..12}; do
   if github_download "/repos/$REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" "$artifact_zip"; then
     break
   fi
-  [[ "$download_attempt" -lt 3 ]] || die 'Windows artifact download failed after 3 attempts.'
-  printf 'Download attempt %d/3 failed, retrying in 5 seconds...\n' "$download_attempt"
-  sleep 5
+  [[ "$download_attempt" -lt 12 ]] || die 'Windows artifact download failed after 12 attempts.'
+  printf 'Download attempt %d/12 failed, retrying in 10 seconds...\n' "$download_attempt"
+  sleep 10
 done
 unzip -q "$artifact_zip" -d "$extract_dir"
 
