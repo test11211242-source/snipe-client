@@ -14,6 +14,7 @@ vi.mock('electron', () => {
     readonly webContents = {
       id: 7,
       on: vi.fn(),
+      send: vi.fn(),
       setWindowOpenHandler: vi.fn(),
     }
 

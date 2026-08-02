@@ -15,6 +15,24 @@ function isCancelled(signal: AbortSignal): boolean {
   return signal.aborted
 }
 
+function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
+  const leftBounds = left.settings.bounds
+  const rightBounds = right.settings.bounds
+  return (
+    left.result?.id === right.result?.id &&
+    left.visible === right.visible &&
+    left.settings.autoOpen === right.settings.autoOpen &&
+    left.settings.alwaysOnTop === right.settings.alwaysOnTop &&
+    left.settings.locked === right.settings.locked &&
+    left.settings.opacity === right.settings.opacity &&
+    left.settings.displayMode === right.settings.displayMode &&
+    leftBounds.x === rightBounds.x &&
+    leftBounds.y === rightBounds.y &&
+    leftBounds.width === rightBounds.width &&
+    leftBounds.height === rightBounds.height
+  )
+}
+
 export function WidgetApp(): React.JSX.Element {
   const [view, setView] = useState<WidgetView | null>(null)
   const [deckSelection, setDeckSelection] = useState({ resultId: '', index: 0 })
@@ -42,6 +60,17 @@ export function WidgetApp(): React.JSX.Element {
 
   useEffect(() => {
     void window.crToolsWidget.rendererReady().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    return window.crToolsWidget.onViewChanged((nextView) => {
+      setView((current) =>
+        pendingMutationsRef.current > 0 && current !== null
+          ? { ...nextView, settings: current.settings }
+          : nextView,
+      )
+      setFailed(false)
+    })
   }, [])
 
   useEffect(() => {
@@ -73,11 +102,16 @@ export function WidgetApp(): React.JSX.Element {
     const load = async (): Promise<void> => {
       if (inFlight) return
       inFlight = true
-      let nextView: WidgetView | null = null
       try {
-        nextView = await window.crToolsWidget.getView()
+        const loadedView = await window.crToolsWidget.getView()
         if (active) {
-          if (pendingMutationsRef.current === 0) setView(nextView)
+          setView((current) =>
+            pendingMutationsRef.current > 0 && current !== null
+              ? { ...loadedView, settings: current.settings }
+              : current !== null && sameWidgetView(current, loadedView)
+                ? current
+                : loadedView,
+          )
           setFailed(false)
         }
       } catch {
@@ -90,8 +124,7 @@ export function WidgetApp(): React.JSX.Element {
         restart()
         return
       }
-      const hasResult = nextView?.result !== null && nextView?.result !== undefined
-      schedule(document.hidden ? 5_000 : hasResult ? 2_500 : 1_000)
+      schedule(document.hidden ? 30_000 : 10_000)
     }
 
     const onVisibilityChange = (): void => restart()
@@ -353,15 +386,14 @@ export function WidgetApp(): React.JSX.Element {
                 found.decks.length > 1 ? `deck-tab-${selectedDeck}` : undefined
               }
             >
-              {deck?.cards.map((card, cardIndex) => (
-                <Card
-                  key={`${found.id}-${selectedDeck}-${cardIndex}-${card.name}-${card.hasImage}`}
+              {deck !== null && (
+                <DeckCards
+                  key={`${found.id}-${selectedDeck}`}
                   resultId={found.id}
                   deckIndex={selectedDeck}
-                  cardIndex={cardIndex}
-                  card={card}
+                  cards={deck.cards}
                 />
-              ))}
+              )}
             </div>
             {found.decks.length > 1 && (
               <div className="deck-switcher" role="tablist" aria-label="Выбор колоды">
@@ -524,80 +556,123 @@ interface CardView {
   hasImage: boolean
 }
 
-function Card({
+function DeckCards({
   resultId,
   deckIndex,
-  cardIndex,
-  card,
+  cards,
 }: {
   resultId: string
   deckIndex: number
-  cardIndex: number
-  card: CardView
+  cards: CardView[]
 }): React.JSX.Element {
-  const [image, setImage] = useState<string | null>(null)
-  const retryRef = useRef<() => void>(() => undefined)
+  const [images, setImages] = useState<(string | null)[]>(() => cards.map(() => null))
 
   useEffect(() => {
     const cancellation = new AbortController()
-    let inFlight = false
-    let attempts = 0
-    let timer: number | undefined
+    const timers = new Set<number>()
+    const loadedImages = cards.map(() => null as string | null)
+    let settled = 0
+    let firstPainted = false
 
-    const scheduleRetry = (): void => {
-      if (
-        cancellation.signal.aborted ||
-        inFlight ||
-        timer !== undefined ||
-        attempts >= CARD_ASSET_MAX_ATTEMPTS
-      ) {
-        return
-      }
-      const delay = CARD_ASSET_RETRY_DELAYS_MS[attempts - 1]
-      if (delay === undefined) return
-      timer = window.setTimeout(() => {
-        timer = undefined
-        void load()
-      }, delay)
-    }
+    const wait = (delay: number): Promise<void> =>
+      new Promise((resolve) => {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer)
+          resolve()
+        }, delay)
+        timers.add(timer)
+      })
 
-    const load = async (): Promise<void> => {
-      if (
-        cancellation.signal.aborted ||
-        inFlight ||
-        attempts >= CARD_ASSET_MAX_ATTEMPTS
-      ) {
-        return
-      }
-      inFlight = true
-      attempts += 1
+    const request = async (cardIndex: number): Promise<string | null> => {
       try {
         const asset = await window.crToolsWidget.getCardAsset({
           resultId,
           deckIndex,
           cardIndex,
         })
-        if (isCancelled(cancellation.signal)) return
-        if (asset.kind === 'available') {
-          setImage(asset.dataUrl)
-          return
-        }
+        return asset.kind === 'available' ? asset.dataUrl : null
       } catch {
-        if (isCancelled(cancellation.signal)) return
-      } finally {
-        inFlight = false
+        return null
       }
-      scheduleRetry()
     }
 
-    retryRef.current = scheduleRetry
-    if (card.hasImage) void load()
+    const paint = (): void => {
+      if (isCancelled(cancellation.signal)) return
+      firstPainted = true
+      setImages([...loadedImages])
+    }
+
+    const firstPaintTimer = window.setTimeout(paint, 100)
+    timers.add(firstPaintTimer)
+
+    const retry = async (cardIndex: number): Promise<void> => {
+      for (let attempt = 1; attempt < CARD_ASSET_MAX_ATTEMPTS; attempt += 1) {
+        const delay = CARD_ASSET_RETRY_DELAYS_MS[attempt - 1]
+        if (delay === undefined) return
+        await wait(delay)
+        if (isCancelled(cancellation.signal)) return
+        const retried = await request(cardIndex)
+        if (isCancelled(cancellation.signal)) return
+        if (retried !== null) {
+          loadedImages[cardIndex] = retried
+          setImages((current) => {
+            const next = [...current]
+            next[cardIndex] = retried
+            return next
+          })
+          return
+        }
+      }
+    }
+
+    cards.forEach((card, cardIndex) => {
+      void (card.hasImage ? request(cardIndex) : Promise.resolve(null)).then((image) => {
+        if (isCancelled(cancellation.signal)) return
+        loadedImages[cardIndex] = image
+        settled += 1
+        if (settled === cards.length && !firstPainted) {
+          window.clearTimeout(firstPaintTimer)
+          timers.delete(firstPaintTimer)
+          paint()
+        } else if (firstPainted && image !== null) {
+          setImages((current) => {
+            const next = [...current]
+            next[cardIndex] = image
+            return next
+          })
+        }
+        if (image === null && card.hasImage) void retry(cardIndex)
+      })
+    })
+
     return () => {
       cancellation.abort()
-      retryRef.current = () => undefined
-      if (timer !== undefined) window.clearTimeout(timer)
+      for (const timer of timers) window.clearTimeout(timer)
+      timers.clear()
     }
-  }, [card.hasImage, cardIndex, deckIndex, resultId])
+  }, [cards, deckIndex, resultId])
+
+  return (
+    <>
+      {cards.map((card, cardIndex) => (
+        <Card
+          key={`${cardIndex}-${card.name}-${card.hasImage}`}
+          card={card}
+          image={images[cardIndex] ?? null}
+        />
+      ))}
+    </>
+  )
+}
+
+function Card({
+  card,
+  image,
+}: {
+  card: CardView
+  image: string | null
+}): React.JSX.Element {
+  const [decodeFailed, setDecodeFailed] = useState(false)
 
   const initials = card.name
     .split(/\s+/u)
@@ -608,7 +683,7 @@ function Card({
 
   return (
     <article className="deck-card" aria-label={card.name} title={card.name}>
-      {!card.hasImage || image === null ? (
+      {!card.hasImage || image === null || decodeFailed ? (
         <span className="card-placeholder">{initials}</span>
       ) : (
         <img
@@ -616,10 +691,7 @@ function Card({
           alt=""
           draggable={false}
           loading="eager"
-          onError={() => {
-            setImage(null)
-            retryRef.current()
-          }}
+          onError={() => setDecodeFailed(true)}
         />
       )}
     </article>

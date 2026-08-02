@@ -51,17 +51,34 @@ const widgetView: WidgetView = {
   },
 }
 
+let pushedView: ((view: WidgetView) => void) | null = null
+
 async function loadWidgetWithFakeTimers(): Promise<void> {
   await act(async () => vi.advanceTimersByTimeAsync(0))
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 describe('WidgetApp', () => {
   beforeEach(() => {
+    pushedView = null
     Object.defineProperty(window, 'crToolsWidget', {
       configurable: true,
       value: Object.freeze({
         rendererReady: vi.fn().mockResolvedValue(undefined),
         getView: vi.fn().mockResolvedValue(widgetView),
+        onViewChanged: vi.fn((listener: (view: WidgetView) => void) => {
+          pushedView = listener
+          return () => {
+            pushedView = null
+          }
+        }),
         getCardAsset: vi.fn().mockResolvedValue({ kind: 'unavailable' }),
         updateSettings: vi
           .fn()
@@ -74,6 +91,57 @@ describe('WidgetApp', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('renders a pushed opponent immediately without waiting for polling', async () => {
+    render(<WidgetApp />)
+    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
+
+    act(() => {
+      pushedView?.({
+        ...widgetView,
+        result:
+          widgetView.result?.kind === 'player_found'
+            ? {
+                ...widgetView.result,
+                id: '49d970c1-fc4f-4bea-a767-8f108d3b8739',
+                player: { ...widgetView.result.player, name: 'Instant Opponent' },
+              }
+            : widgetView.result,
+      })
+    })
+
+    expect(screen.getByRole('heading', { name: 'Instant Opponent' })).toBeVisible()
+    expect(window.crToolsWidget.getView).toHaveBeenCalledOnce()
+  })
+
+  it('does not lose a pushed opponent while a setting is being saved', async () => {
+    const saving = deferred<WidgetView['settings']>()
+    vi.mocked(window.crToolsWidget.updateSettings).mockReturnValueOnce(saving.promise)
+    render(<WidgetApp />)
+    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Открепить от переднего плана' }))
+    act(() => {
+      pushedView?.({
+        ...widgetView,
+        result:
+          widgetView.result?.kind === 'player_found'
+            ? {
+                ...widgetView.result,
+                id: '69d970c1-fc4f-4bea-a767-8f108d3b8739',
+                player: { ...widgetView.result.player, name: 'Opponent During Save' },
+              }
+            : widgetView.result,
+      })
+    })
+    expect(screen.getByRole('heading', { name: 'Opponent During Save' })).toBeVisible()
+
+    await act(async () => {
+      saving.resolve({ ...widgetView.settings, alwaysOnTop: false })
+      await saving.promise
+    })
+    expect(screen.getByRole('heading', { name: 'Opponent During Save' })).toBeVisible()
+  })
 
   it('renders the V1 full mode as a direct image-only 4x2 grid', async () => {
     const { container } = render(<WidgetApp />)
@@ -334,7 +402,7 @@ describe('WidgetApp', () => {
     expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(4)
   })
 
-  it('backs off after image decode failure and cancels retries on deck change', async () => {
+  it('falls back after decode failure and cancels asset retries on deck change', async () => {
     vi.useFakeTimers()
     vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValue({
       kind: 'available',
@@ -349,14 +417,12 @@ describe('WidgetApp', () => {
     fireEvent.error(image)
     expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
     await act(async () => vi.advanceTimersByTimeAsync(250))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(9)
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
+    expect(container.querySelectorAll('.card-placeholder')).toHaveLength(1)
 
-    const retriedImage = container.querySelector('.deck-card img')
-    if (retriedImage === null) throw new Error('Retried card image was not rendered')
-    fireEvent.error(retriedImage)
     fireEvent.click(screen.getByRole('tab', { name: 'Колода 2: Турнир' }))
     await act(async () => vi.advanceTimersByTimeAsync(10_000))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(9)
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
 
     vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValueOnce({
       kind: 'unavailable',
@@ -365,9 +431,9 @@ describe('WidgetApp', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(17)
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(16)
     unmount()
     await act(async () => vi.advanceTimersByTimeAsync(10_000))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(17)
+    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(16)
   })
 })

@@ -77,6 +77,7 @@ export interface CrToolsApi {
     capture: CaptureStatus
   }>
   getMonitorView: () => Promise<MonitorView>
+  onMonitorViewChanged: (listener: (view: MonitorView) => void) => () => void
   startMonitor: () => Promise<MonitorView>
   stopMonitor: () => Promise<MonitorView>
   getMonitorPreferences: () => Promise<MonitorPreferences>
@@ -147,6 +148,7 @@ export interface CrToolsAuthApi {
 export interface CrToolsWidgetApi {
   rendererReady: () => Promise<void>
   getView: () => Promise<WidgetView>
+  onViewChanged: (listener: (view: WidgetView) => void) => () => void
   getCardAsset: (request: CardAssetRequest) => Promise<CardAssetResult>
   updateSettings: (patch: WidgetSettingsPatch) => Promise<WidgetSettings>
   hide: () => Promise<WidgetStatus>

@@ -11,6 +11,7 @@ import {
   IPC_CHANNELS,
 } from '../../shared/contracts/app'
 import type { CrToolsApi } from '../../shared/contracts/preload'
+import type { MonitorView } from '../../shared/models/monitor'
 import {
   AuthViewResultSchema,
   EmptyPayloadSchema,
@@ -203,6 +204,14 @@ const api: CrToolsApi = Object.freeze({
         EmptyMonitorPayloadSchema.parse({}),
       ),
     ),
+  onMonitorViewChanged: (listener: (view: MonitorView) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, rawView: unknown): void => {
+      const view = MonitorViewResultSchema.safeParse(rawView)
+      if (view.success) listener(view.data)
+    }
+    ipcRenderer.on(MONITOR_IPC_CHANNELS.viewChanged, handler)
+    return () => ipcRenderer.removeListener(MONITOR_IPC_CHANNELS.viewChanged, handler)
+  },
   startMonitor: async () =>
     MonitorViewResultSchema.parse(
       await ipcRenderer.invoke(

@@ -114,6 +114,14 @@ export function useAppBootstrap(): {
   const restartUpdatePollingRef = useRef<() => void>(() => undefined)
 
   useEffect(() => {
+    return window.crTools.onMonitorViewChanged((value) => {
+      monitorGenerationRef.current += 1
+      monitorStateRef.current = value.state
+      setMonitorResource({ value, state: 'ready', error: null })
+    })
+  }, [])
+
+  useEffect(() => {
     let active = true
     const isActive = (): boolean => active
     const captureGeneration = ++captureGenerationRef.current

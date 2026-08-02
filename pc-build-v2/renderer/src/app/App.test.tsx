@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewPayload } from '../../../shared/contracts/capture-ipc'
+import type { MonitorView } from '../../../shared/models/monitor'
 import { App } from './App'
 
 function deferred<T>() {
@@ -14,8 +15,11 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+let pushedMonitorView: ((view: MonitorView) => void) | null = null
+
 describe('App shell', () => {
   beforeEach(() => {
+    pushedMonitorView = null
     Object.defineProperty(window, 'crTools', {
       configurable: true,
       value: Object.freeze({
@@ -109,6 +113,12 @@ describe('App shell', () => {
           },
           results: [],
         }),
+        onMonitorViewChanged: vi.fn((listener: (view: MonitorView) => void) => {
+          pushedMonitorView = listener
+          return () => {
+            pushedMonitorView = null
+          }
+        }),
         startMonitor: vi.fn(),
         stopMonitor: vi.fn(),
         getMonitorPreferences: vi
@@ -178,6 +188,55 @@ describe('App shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
     expect(screen.getByRole('heading', { name: 'Источник захвата' })).toBeVisible()
     expect(screen.getByRole('heading', { level: 1, name: 'Захват' })).toHaveFocus()
+  })
+
+  it('renders a pushed monitor result without waiting for the polling interval', async () => {
+    render(<App />)
+    expect(await screen.findByText('Результатов пока нет')).toBeVisible()
+    const callsBeforePush = vi.mocked(window.crTools.getMonitorView).mock.calls.length
+
+    act(() => {
+      pushedMonitorView?.({
+        state: 'READY',
+        preferences: { searchMode: 'fast', deckMode: 'pol' },
+        readiness: {
+          authenticated: true,
+          captureConfigured: true,
+          sourceAvailable: true,
+        },
+        error: null,
+        startedAt: '2026-07-12T12:00:00.000Z',
+        stats: {
+          triggers: 1,
+          requests: 1,
+          droppedActions: 0,
+          playersFound: 1,
+          playersNotFound: 0,
+          recognitionFailures: 0,
+          serviceErrors: 0,
+        },
+        results: [
+          {
+            id: '59d970c1-fc4f-4bea-a767-8f108d3b8739',
+            kind: 'player_found',
+            timestamp: '2026-07-12T12:00:01.000Z',
+            searchMode: 'fast',
+            deckMode: 'pol',
+            searchedNickname: 'Instant',
+            player: {
+              name: 'Instant Opponent',
+              tag: '#FAST',
+              rating: 2500,
+              clan: 'Push',
+            },
+            decks: [],
+          },
+        ],
+      })
+    })
+
+    expect(screen.getByText('Instant Opponent')).toBeVisible()
+    expect(window.crTools.getMonitorView).toHaveBeenCalledTimes(callsBeforePush)
   })
 
   it('shows the honest unsigned-publisher warning in update settings', async () => {

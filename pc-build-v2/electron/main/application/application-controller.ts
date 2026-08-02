@@ -213,6 +213,9 @@ export class ApplicationController {
       }
       await this.windows.ensureMainWindow()
       await this.widget.start(view.user.id)
+      void this.images.start().catch((error: unknown) => {
+        this.logger.warn('Card image cache warmup failed', { error })
+      })
       this.notifications.start()
       this.reprocessedResults.start(view.user.id)
       this.streamer.start()

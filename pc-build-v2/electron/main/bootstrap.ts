@@ -224,7 +224,11 @@ const widgetSettings = new WidgetSettingsRepository(
   nodeWidgetSettingsFileSystem,
 )
 const widget = new WidgetController(monitor, widgetSettings, windows)
-const images = new ImageAssetService(monitor, globalThis.fetch)
+const images = new ImageAssetService(monitor, globalThis.fetch, {
+  cacheDirectory: join(app.getPath('userData'), 'card-images.v1'),
+  versionUrl: `${server.apiUrl}/api/cards/version`,
+  manifestUrl: `${server.apiUrl}/api/cards/manifest`,
+})
 const notifications = new NotificationService(
   monitor,
   () => Notification.isSupported(),

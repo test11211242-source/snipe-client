@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { MonitorResult } from '../../../shared/models/monitor'
 import { ImageAssetService } from './image-asset-service'
@@ -123,6 +126,95 @@ describe('ImageAssetService', () => {
     expect(calls).not.toContain(png().toString('base64'))
   })
 
+  it('persists validated assets and reuses them after a service restart', async () => {
+    const cacheDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-card-cache-'))
+    const persistence = {
+      cacheDirectory,
+      versionUrl: 'https://api.artcsworld.xyz/api/cards/version',
+      manifestUrl: 'https://api.artcsworld.xyz/api/cards/manifest',
+    }
+    const retained = {
+      getRetainedResult: () =>
+        result('https://api-assets.clashroyale.com/cards/knight.png'),
+    }
+    try {
+      const firstFetch = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(Uint8Array.from(png()), {
+          headers: { 'content-type': 'image/png' },
+        }),
+      )
+      const firstService = new ImageAssetService(retained, firstFetch, persistence)
+      await expect(firstService.getCardAsset(request)).resolves.toMatchObject({
+        kind: 'available',
+      })
+      expect(firstFetch).toHaveBeenCalledOnce()
+
+      const secondFetch = vi.fn<typeof fetch>()
+      const secondService = new ImageAssetService(retained, secondFetch, persistence)
+      await expect(secondService.getCardAsset(request)).resolves.toMatchObject({
+        kind: 'available',
+      })
+      expect(secondFetch).not.toHaveBeenCalled()
+    } finally {
+      await rm(cacheDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('warms normal, evolution, and hero assets from the server manifest', async () => {
+    const cacheDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-card-warm-'))
+    const urls = {
+      normal: 'https://api-assets.clashroyale.com/cards/knight.png',
+      evolution: 'https://api-assets.clashroyale.com/cards/knight-evo.png',
+      hero: 'https://api-assets.clashroyale.com/cards/knight-hero.png',
+    }
+    const persistence = {
+      cacheDirectory,
+      versionUrl: 'https://api.artcsworld.xyz/api/cards/version',
+      manifestUrl: 'https://api.artcsworld.xyz/api/cards/manifest',
+    }
+    const fetchImplementation = vi.fn<typeof fetch>((input) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url === persistence.versionUrl)
+        return Promise.resolve(Response.json({ version: 1, content_hash: 'cards-v1' }))
+      if (url === persistence.manifestUrl) {
+        return Promise.resolve(
+          Response.json({
+            version: 1,
+            content_hash: 'cards-v1',
+            cards: {
+              Knight: {
+                icon_url: urls.normal,
+                evolution_icon_url: urls.evolution,
+                hero_icon_url: urls.hero,
+              },
+            },
+          }),
+        )
+      }
+      return Promise.resolve(
+        new Response(Uint8Array.from(png()), {
+          headers: { 'content-type': 'image/png' },
+        }),
+      )
+    })
+    try {
+      const service = new ImageAssetService(
+        { getRetainedResult: () => result(urls.hero) },
+        fetchImplementation,
+        persistence,
+      )
+      await service.start()
+      expect(fetchImplementation).toHaveBeenCalledTimes(5)
+      await expect(service.getCardAsset(request)).resolves.toMatchObject({
+        kind: 'available',
+      })
+      expect(fetchImplementation).toHaveBeenCalledTimes(5)
+    } finally {
+      await rm(cacheDirectory, { recursive: true, force: true })
+    }
+  })
+
   it('coalesces concurrent requests for the same retained asset URL', async () => {
     let release!: (response: Response) => void
     const fetchImplementation = vi.fn<typeof fetch>(
@@ -152,8 +244,8 @@ describe('ImageAssetService', () => {
     ])
   })
 
-  it('caps global network concurrency at four', async () => {
-    const cards = Array.from({ length: 6 }, (_, index) => ({
+  it('caps global network concurrency at ten', async () => {
+    const cards = Array.from({ length: 12 }, (_, index) => ({
       name: `Card ${index}`,
       level: null,
       evolutionLevel: null,
@@ -161,7 +253,10 @@ describe('ImageAssetService', () => {
     }))
     const retained = result(cards[0]?.iconUrl ?? '')
     if (retained.kind !== 'player_found') throw new Error('Expected found result')
-    retained.decks[0] = { label: null, cards }
+    retained.decks = [
+      { label: null, cards: cards.slice(0, 6) },
+      { label: null, cards: cards.slice(6) },
+    ]
     let active = 0
     let maximum = 0
     const releases: ((response: Response) => void)[] = []
@@ -180,10 +275,14 @@ describe('ImageAssetService', () => {
       { getRetainedResult: () => retained },
       fetchImplementation,
     )
-    const operations = cards.map((_, cardIndex) =>
-      service.getCardAsset({ ...request, cardIndex }),
+    const operations = cards.map((_, index) =>
+      service.getCardAsset({
+        ...request,
+        deckIndex: Math.floor(index / 6),
+        cardIndex: index % 6,
+      }),
     )
-    expect(fetchImplementation).toHaveBeenCalledTimes(4)
+    expect(fetchImplementation).toHaveBeenCalledTimes(10)
     for (const release of releases.splice(0)) {
       release(
         new Response(Uint8Array.from(png()), {
@@ -191,7 +290,7 @@ describe('ImageAssetService', () => {
         }),
       )
     }
-    await vi.waitFor(() => expect(fetchImplementation).toHaveBeenCalledTimes(6))
+    await vi.waitFor(() => expect(fetchImplementation).toHaveBeenCalledTimes(12))
     for (const release of releases.splice(0)) {
       release(
         new Response(Uint8Array.from(png()), {
@@ -200,7 +299,7 @@ describe('ImageAssetService', () => {
       )
     }
     await Promise.all(operations)
-    expect(maximum).toBe(4)
+    expect(maximum).toBe(10)
   })
 
   it('aborts all active fetches when stopped', async () => {

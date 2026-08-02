@@ -427,6 +427,18 @@ export class WindowCoordinator {
     return window !== undefined && !window.isDestroyed() && window.isVisible()
   }
 
+  sendToRenderer(kind: WindowKind, channel: string, payload: unknown): boolean {
+    const window = this.#registry.get(kind)?.window
+    if (window === undefined || window.isDestroyed()) return false
+    try {
+      window.webContents.send(channel, payload)
+      return true
+    } catch (error) {
+      this.logger.warn('Renderer event delivery failed', { kind, channel, error })
+      return false
+    }
+  }
+
   applyWidgetSettings(settings: WidgetSettings): void {
     const registered = this.#registry.get('widget')
     if (registered === undefined || registered.window.isDestroyed()) return

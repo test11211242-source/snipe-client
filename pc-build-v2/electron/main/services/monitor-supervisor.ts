@@ -127,6 +127,12 @@ export class MonitorSupervisor {
     return this.#view
   }
 
+  getCurrentView(): MonitorView {
+    return this.auth.getView().user?.id === this.#userContextId
+      ? MonitorViewSchema.parse(this.#view)
+      : this.redactedView(this.auth.getView().user !== null)
+  }
+
   getRetainedResult(resultId: string): MonitorResult | null {
     if (this.auth.getView().user?.id !== this.#userContextId) return null
     return this.#view.results.find((result) => result.id === resultId) ?? null

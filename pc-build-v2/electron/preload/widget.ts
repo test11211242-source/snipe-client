@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { CrToolsWidgetApi } from '../../shared/contracts/preload'
+import type { WidgetView } from '../../shared/models/widget'
 import {
   CardAssetRequestSchema,
   CardAssetResultSchema,
@@ -29,6 +30,14 @@ const api: CrToolsWidgetApi = Object.freeze({
         EmptyWidgetPayloadSchema.parse({}),
       ),
     ),
+  onViewChanged: (listener: (view: WidgetView) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, rawView: unknown): void => {
+      const view = WidgetViewResultSchema.safeParse(rawView)
+      if (view.success) listener(view.data)
+    }
+    ipcRenderer.on(WIDGET_IPC_CHANNELS.viewChanged, handler)
+    return () => ipcRenderer.removeListener(WIDGET_IPC_CHANNELS.viewChanged, handler)
+  },
   getCardAsset: async (rawRequest: unknown) => {
     const request = CardAssetRequestSchema.parse(rawRequest)
     return CardAssetResultSchema.parse(

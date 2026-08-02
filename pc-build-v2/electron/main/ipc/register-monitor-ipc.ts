@@ -52,9 +52,17 @@ export function registerMonitorIpc(dependencies: MonitorIpcDependencies): () => 
       await dependencies.monitor.updatePreferences(preferences),
     )
   })
+  const disposeResults = dependencies.monitor.subscribeResults(() => {
+    dependencies.windows.sendToRenderer(
+      'main',
+      MONITOR_IPC_CHANNELS.viewChanged,
+      MonitorViewResultSchema.parse(dependencies.monitor.getCurrentView()),
+    )
+  })
   const channels = Object.values(MONITOR_IPC_CHANNELS)
   dependencies.logger.info('Monitor IPC registered', { channels })
   return () => {
+    disposeResults()
     for (const channel of channels) ipcMain.removeHandler(channel)
   }
 }

@@ -165,7 +165,8 @@ loss close it.
 
 `WindowCoordinator` remains the only `BrowserWindow` registry. The widget has a dedicated
 sandboxed preload and renderer entry, production devtools disabled, blocked navigation and
-popups, and a CSP with `connect-src 'none'`. Its preload exposes only view polling, indexed
+popups, and a CSP with `connect-src 'none'`. Its preload exposes validated view events with
+fallback polling, indexed
 card asset lookup, allowed settings updates, and hide. The view strips card URLs and never
 contains tokens, capture selectors, raw OCR responses, or screenshots.
 
@@ -173,8 +174,10 @@ Card images are optional. `ImageAssetService` resolves result/deck/card indices 
 currently retained monitor result and only accepts exact HTTPS host
 `api-assets.clashroyale.com`. It performs manual redirect validation, a five-second
 timeout, 512 KiB response limit, PNG/JPEG/WebP signature and dimension checks, sends no
-credentials or referrer, and stores only a bounded in-memory LRU. Any failure displays card
-initials and name. Renderers cannot provide an asset URL or perform direct HTTP requests.
+credentials or referrer, stores a bounded in-memory LRU, and keeps validated assets in a
+content-addressed disk cache. The cache is warmed from the server card manifest in the
+background, including normal, evolution, and hero variants. Any failure displays card initials
+and name. Renderers cannot provide an asset URL or perform direct HTTP requests.
 
 Widget controls are keyboard-focusable and labeled: pin, position lock, compact mode,
 opacity, deck tabs, and hide. The Settings page exposes the same behavior and honestly

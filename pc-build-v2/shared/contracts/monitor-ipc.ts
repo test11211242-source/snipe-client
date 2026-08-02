@@ -4,6 +4,7 @@ import { MonitorPreferencesSchema, MonitorViewSchema } from '../models/monitor'
 
 export const MONITOR_IPC_CHANNELS = Object.freeze({
   getView: 'monitor:get-view',
+  viewChanged: 'monitor:view-changed',
   start: 'monitor:start',
   stop: 'monitor:stop',
   getPreferences: 'monitor:get-preferences',

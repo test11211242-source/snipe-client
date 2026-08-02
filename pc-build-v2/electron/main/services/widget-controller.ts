@@ -1,4 +1,5 @@
 import { ApplicationError } from '../../../shared/errors/application-error'
+import { WIDGET_IPC_CHANNELS } from '../../../shared/contracts/widget-ipc'
 import type { MonitorResult } from '../../../shared/models/monitor'
 import {
   WIDGET_DECK_HEIGHT,
@@ -202,11 +203,13 @@ export class WidgetController {
           : latestBounds,
       }
       this.windows.applyWidgetSettings(this.#settings)
+      this.publishView()
       return this.#settings
     })
   }
 
   private acceptResult(result: MonitorResult): void {
+    this.publishView()
     if (
       this.#settings?.autoOpen !== true ||
       result.kind !== 'player_found' ||
@@ -223,6 +226,11 @@ export class WidgetController {
       .finally(() => {
         if (generation === this.#generation) this.#autoOpeningIds.delete(result.id)
       })
+  }
+
+  private publishView(): void {
+    if (this.#settings === null || this.#userId === null) return
+    this.windows.sendToRenderer('widget', WIDGET_IPC_CHANNELS.viewChanged, this.getView())
   }
 
   private acceptBounds(rawBounds: WidgetBounds): void {

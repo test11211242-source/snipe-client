@@ -73,6 +73,7 @@ function harness(autoOpen = true) {
     showWidgetInactive: vi.fn(),
     hideWidget: vi.fn(),
     isWidgetVisible: vi.fn().mockReturnValue(false),
+    sendToRenderer: vi.fn().mockReturnValue(true),
     close: vi.fn(),
   }
   const controller = new WidgetController(monitor, repository as never, windows as never)
@@ -120,6 +121,11 @@ describe('WidgetController', () => {
     const test = harness(false)
     await test.controller.start('user')
     test.result(found('29d970c1-fc4f-4bea-a767-8f108d3b8739'))
+    expect(test.windows.sendToRenderer).toHaveBeenCalledWith(
+      'widget',
+      'widget:view-changed',
+      test.controller.getView(),
+    )
     expect(test.windows.showWidget).not.toHaveBeenCalled()
     expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
     await test.controller.stop('auth-transition')

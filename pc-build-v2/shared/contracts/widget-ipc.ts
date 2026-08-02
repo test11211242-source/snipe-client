@@ -17,6 +17,7 @@ export const MAIN_WIDGET_IPC_CHANNELS = Object.freeze({
 export const WIDGET_IPC_CHANNELS = Object.freeze({
   rendererReady: 'widget:renderer-ready',
   getView: 'widget:get-view',
+  viewChanged: 'widget:view-changed',
   getCardAsset: 'widget:get-card-asset',
   updateSettings: 'widget:update-settings',
   hide: 'widget:hide',

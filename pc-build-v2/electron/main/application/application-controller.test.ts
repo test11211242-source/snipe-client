@@ -45,7 +45,7 @@ describe('ApplicationController user context', () => {
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
     }
-    const images = { stop: vi.fn() }
+    const images = { start: vi.fn().mockResolvedValue(undefined), stop: vi.fn() }
     const notifications = { start: vi.fn(), stop: vi.fn() }
     const reprocessedResults = { start: vi.fn(), stop: vi.fn() }
     const streamer = {
@@ -90,6 +90,7 @@ describe('ApplicationController user context', () => {
     expect(monitor.setUserContext).toHaveBeenNthCalledWith(3, 'B')
     expect(widget.stop).toHaveBeenCalledWith('auth-transition')
     expect(images.stop).toHaveBeenCalledTimes(3)
+    expect(images.start).toHaveBeenCalledTimes(2)
     expect(reprocessedResults.stop).toHaveBeenCalled()
     expect(notifications.stop).toHaveBeenCalled()
     expect(widget.start).toHaveBeenNthCalledWith(1, 'A')
