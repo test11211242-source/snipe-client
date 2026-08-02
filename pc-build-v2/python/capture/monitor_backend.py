@@ -14,10 +14,13 @@ class WindowsMonitorBackend:
             raise CaptureBackendError("PLATFORM_UNAVAILABLE", "Capture is available on Windows only")
         from windows_capture import WindowsCapture
 
+        # Windows 10 must keep the system capture border because border suppression is unsupported.
+        draw_border = False if sys.getwindowsversion().build >= 22000 else None
+
         if selector.get("kind") == "window" and set(selector) == {"kind", "windowHwnd"}:
             self.capture = WindowsCapture(
                 cursor_capture=False,
-                draw_border=False,
+                draw_border=draw_border,
                 monitor_index=None,
                 window_name=None,
                 window_hwnd=parse_window_hwnd(selector["windowHwnd"]),
@@ -29,7 +32,7 @@ class WindowsMonitorBackend:
         }:
             self.capture = WindowsCapture(
                 cursor_capture=False,
-                draw_border=False,
+                draw_border=draw_border,
                 monitor_index=monitor_index_for_device(selector["displayDeviceName"]),
                 window_name=None,
                 window_hwnd=None,

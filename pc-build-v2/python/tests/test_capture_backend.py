@@ -15,7 +15,13 @@ def test_hwnd_is_parsed_as_bounded_decimal_string() -> None:
             parse_window_hwnd(invalid)
 
 
-def test_monitor_backend_registers_exact_windows_capture_event_names(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("windows_build", "expected_draw_border"),
+    ((19045, None), (22000, False)),
+)
+def test_monitor_backend_registers_exact_windows_capture_event_names(
+    monkeypatch, windows_build, expected_draw_border
+) -> None:
     events = {}
     options = {}
 
@@ -31,13 +37,16 @@ def test_monitor_backend_registers_exact_windows_capture_event_names(monkeypatch
             return SimpleNamespace(stop=lambda: None, wait=lambda: None)
 
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        sys, "getwindowsversion", lambda: SimpleNamespace(build=windows_build), raising=False
+    )
     monkeypatch.setitem(sys.modules, "windows_capture", SimpleNamespace(WindowsCapture=FakeCapture))
     frames = []
     closed = []
     backend = WindowsMonitorBackend({"kind": "window", "windowHwnd": "123"})
     backend.start(frames.append, lambda: closed.append(True))
 
-    assert options["draw_border"] is False
+    assert options["draw_border"] is expected_draw_border
     assert set(events) == {"on_frame_arrived", "on_closed"}
     events["on_frame_arrived"](SimpleNamespace(frame_buffer="frame"), object())
     events["on_closed"]()
