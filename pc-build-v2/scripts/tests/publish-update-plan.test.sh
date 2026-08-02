@@ -5,6 +5,17 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PUBLISHER="$SCRIPT_DIR/../../publish-update.sh"
+WORKFLOW="$SCRIPT_DIR/../../../.github/workflows/pc-build-v2-release.yml"
+
+deploy_condition="inputs.deploy == true && github.ref == 'refs/heads/main'"
+deploy_condition_count=0
+while IFS= read -r line; do
+  [[ "$line" != *"inputs.deploy == 'true'"* ]]
+  if [[ "$line" == *"$deploy_condition"* ]]; then
+    deploy_condition_count=$((deploy_condition_count + 1))
+  fi
+done <"$WORKFLOW"
+[[ "$deploy_condition_count" -eq 2 ]]
 
 output="$($PUBLISHER release --plan)"
 value() {
