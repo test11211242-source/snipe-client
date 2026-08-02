@@ -210,6 +210,7 @@ jobs:
     environment: production
     steps:
       - name: Preflight required production secrets
+        working-directory: .
         shell: bash
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64 }}
