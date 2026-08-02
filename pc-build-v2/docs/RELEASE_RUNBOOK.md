@@ -26,7 +26,7 @@ while transferring it.
 - `CR_TOOLS_V2_UPDATE_PRIVATE_KEY_B64`: base64 of the Ed25519 private PEM
 - `SERVER_HOST`: deployment host
 - `SERVER_USER`: deployment SSH user
-- `SSH_PRIVATE_KEY`: deployment key
+- `SSH_PRIVATE_KEY`: base64-encoded deployment private key
 - `SERVER_KNOWN_HOSTS`: required pinned known-hosts line(s)
 
 The workflow fails closed when `SERVER_KNOWN_HOSTS` is absent. Obtain and verify the host key

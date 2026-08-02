@@ -288,8 +288,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s' "$SSH_PRIVATE_KEY" >"$HOME/.ssh/id_ed25519"
+          printf '%s' "$SSH_PRIVATE_KEY" | base64 --decode >"$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
           printf '%s\n' "$SERVER_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
