@@ -33,7 +33,7 @@ export function updateStateLabel(state: UpdateState | null): string {
     DOWNLOADING: 'Загружаем',
     READY: 'Готово к установке',
     UP_TO_DATE: 'Установлена актуальная версия',
-    FAILED: 'Проверка не удалась',
+    FAILED: 'Обновление не выполнено',
   }
   return labels[state]
 }
@@ -67,7 +67,23 @@ export function publicErrorMessage(code: string, fallback: string): string {
     SERVER_ERROR: 'Сервис временно недоступен.',
     UPDATE_CHECK_FAILED: 'Не удалось проверить наличие обновления.',
     UPDATE_DOWNLOAD_FAILED: 'Не удалось загрузить обновление.',
-    UPDATE_INSTALL_FAILED: 'Не удалось запустить установку обновления.',
+    INSTALLER_NOT_READY: 'Сначала загрузите и проверьте обновление.',
+    INSTALLER_LAUNCH_FAILED: 'Не удалось запустить установку обновления.',
+    INSTALLER_HELPER_START_FAILED:
+      'Не удалось запустить системный компонент установки Windows.',
+    INSTALLER_HELPER_EXECUTION_FAILED:
+      'Windows прервала работу системного компонента установки.',
+    INSTALLER_HELPER_TIMEOUT:
+      'Проверка установщика заняла слишком много времени. Повторите попытку.',
+    INSTALLER_HELPER_OUTPUT_LIMIT:
+      'Системный компонент установки вернул некорректный объём данных.',
+    INSTALLER_HELPER_EXITED: 'Системный компонент завершился до запуска установщика.',
+    INSTALLER_HELPER_NOT_READY:
+      'Системный компонент не подтвердил готовность установщика.',
+    UPDATE_SHUTDOWN_FAILED: 'Не удалось закрыть приложение для установки обновления.',
+    ARTIFACT_SIZE_MISMATCH: 'Загруженный установщик был изменён. Скачайте его заново.',
+    ARTIFACT_HASH_MISMATCH: 'Целостность установщика нарушена. Скачайте его заново.',
+    ARTIFACT_CHANGED: 'Загруженный установщик был изменён. Скачайте его заново.',
   }
   const known = messages[code]
   if (known !== undefined) return known

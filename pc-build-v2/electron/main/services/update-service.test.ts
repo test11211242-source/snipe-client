@@ -9,6 +9,7 @@ import type {
   UpdateManifestPayload,
 } from '../../../shared/contracts/update'
 import { canonicalizeUpdatePayload } from '../../../shared/update-manifest.mjs'
+import { VerifiedInstallerLaunchError } from './launch-verified-installer'
 import { nodeUpdateDependencies, UpdateService } from './update-service'
 
 const keys = generateKeyPairSync('ed25519')
@@ -398,21 +399,37 @@ describe('UpdateService', () => {
     expect(launch).not.toHaveBeenCalled()
   })
 
-  it('keeps the app running when the verified installer fails to launch', async () => {
+  it('keeps a verified artifact ready and retries a failed installer launch', async () => {
     const artifact = Buffer.from('abc')
     const manifest = signedManifest(artifact)
     const shutdown = vi.fn().mockResolvedValue(undefined)
+    const launch = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new VerifiedInstallerLaunchError(
+          'INSTALLER_HELPER_EXITED',
+          'The Windows installer helper exited unsuccessfully',
+          1,
+        ),
+      )
+      .mockResolvedValueOnce({ cancel: vi.fn() })
     const updater = await service(route(manifest, artifact), {
-      launchVerifiedInstaller: vi.fn().mockRejectedValue(new Error('launch failed')),
+      launchVerifiedInstaller: launch,
       requestShutdown: shutdown,
     })
     await updater.check()
     await updater.download()
     await expect(updater.install()).resolves.toMatchObject({
-      state: 'FAILED',
-      error: { code: 'INSTALLER_LAUNCH_FAILED' },
+      state: 'READY',
+      error: { code: 'INSTALLER_HELPER_EXITED', retryable: true },
     })
     expect(shutdown).not.toHaveBeenCalled()
+    await expect(updater.install()).resolves.toMatchObject({
+      state: 'READY',
+      error: null,
+    })
+    expect(launch).toHaveBeenCalledTimes(2)
+    expect(shutdown).toHaveBeenCalledOnce()
   })
 
   it('cancels the deferred installer when application shutdown fails', async () => {
@@ -428,7 +445,7 @@ describe('UpdateService', () => {
 
     await expect(updater.install()).resolves.toMatchObject({
       state: 'FAILED',
-      error: { code: 'UPDATE_SHUTDOWN_FAILED' },
+      error: { code: 'UPDATE_SHUTDOWN_FAILED', retryable: false },
     })
     expect(cancel).toHaveBeenCalledOnce()
   })

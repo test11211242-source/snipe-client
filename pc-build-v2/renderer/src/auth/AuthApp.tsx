@@ -3,6 +3,7 @@ import { useEffect, useState, type SyntheticEvent } from 'react'
 
 import type { AuthView } from '../../../shared/models/auth'
 import type { UpdateView } from '../../../shared/models/update'
+import { publicErrorMessage } from '../app/format'
 
 type FormMode = 'login' | 'register'
 type FormSubmitEvent = SyntheticEvent<HTMLFormElement, SubmitEvent>
@@ -255,13 +256,19 @@ function AuthUpdatePanel({
       actionLabel = 'Отменить загрузку'
       operation = () => window.crToolsAuth.cancelUpdate()
     } else if (view.state === 'READY') {
-      status = `Версия ${view.availableVersion ?? ''} готова к установке`
+      status =
+        view.error === null
+          ? `Версия ${view.availableVersion ?? ''} готова к установке`
+          : `${publicErrorMessage(view.error.code, view.error.message)} (${view.error.code})`
       actionLabel = 'Установить обновление'
       operation = () => window.crToolsAuth.installUpdate()
     } else if (view.state === 'UP_TO_DATE') {
       status = `Установлена актуальная версия ${view.currentVersion}`
     } else if (view.state === 'FAILED') {
-      status = view.error?.message ?? 'Проверка обновлений завершилась ошибкой.'
+      status =
+        view.error === null
+          ? 'Проверка обновлений завершилась ошибкой.'
+          : `${publicErrorMessage(view.error.code, view.error.message)} (${view.error.code})`
     } else {
       status = `Текущая версия ${view.currentVersion}`
     }

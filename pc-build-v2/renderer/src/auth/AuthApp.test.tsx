@@ -145,8 +145,16 @@ describe('AuthApp', () => {
       error: null,
     }
     const ready = { ...available, state: 'READY' as const }
+    const failedInstall = {
+      ...ready,
+      error: {
+        code: 'INSTALLER_HELPER_EXITED',
+        message: 'English fallback',
+        retryable: true,
+      },
+    }
     const downloadUpdate = vi.fn().mockResolvedValue(ready)
-    const installUpdate = vi.fn().mockResolvedValue(ready)
+    const installUpdate = vi.fn().mockResolvedValue(failedInstall)
     Object.defineProperty(window, 'crToolsAuth', {
       configurable: true,
       value: Object.freeze({
@@ -174,6 +182,12 @@ describe('AuthApp', () => {
     expect(await screen.findByText('Версия 1.1.0 готова к установке')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Установить обновление' }))
     await vi.waitFor(() => expect(installUpdate).toHaveBeenCalledOnce())
+    expect(
+      await screen.findByText(
+        'Системный компонент завершился до запуска установщика. (INSTALLER_HELPER_EXITED)',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Установить обновление' })).toBeVisible()
     expect(downloadUpdate).toHaveBeenCalledOnce()
   })
 

@@ -12,6 +12,28 @@ export interface VerifiedInstallerLaunchControl {
   cancel(): void
 }
 
+export type VerifiedInstallerLaunchErrorCode =
+  | 'INSTALLER_HELPER_START_FAILED'
+  | 'INSTALLER_HELPER_EXECUTION_FAILED'
+  | 'INSTALLER_HELPER_TIMEOUT'
+  | 'INSTALLER_HELPER_OUTPUT_LIMIT'
+  | 'INSTALLER_HELPER_EXITED'
+  | 'INSTALLER_HELPER_NOT_READY'
+
+export class VerifiedInstallerLaunchError extends Error {
+  override readonly name = 'VerifiedInstallerLaunchError'
+
+  constructor(
+    readonly code: VerifiedInstallerLaunchErrorCode,
+    message: string,
+    readonly exitCode: number | null = null,
+    readonly diagnostic = '',
+    readonly retryable = true,
+  ) {
+    super(message)
+  }
+}
+
 export type VerifiedInstallerLauncher = (
   installer: VerifiedInstaller,
 ) => Promise<VerifiedInstallerLaunchControl>
@@ -64,7 +86,7 @@ $parentProcessIdText = [Environment]::GetEnvironmentVariable('CR_TOOLS_PARENT_PR
 $expectedSize = 0L
 $parentProcessId = 0
 if ([string]::IsNullOrWhiteSpace($installerPath) -or
-    -not [System.IO.Path]::IsPathFullyQualified($installerPath) -or
+    -not [System.IO.Path]::IsPathRooted($installerPath) -or
     [System.IO.Path]::GetExtension($installerPath) -cne '.exe' -or
     $expectedHash -notmatch '^[A-Za-z0-9+/]{86}==$' -or
     -not [long]::TryParse($expectedSizeText, [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$expectedSize) -or
@@ -166,13 +188,32 @@ export function createVerifiedInstallerLauncher(
           stdio: ['ignore', 'pipe', 'pipe'],
         })
       } catch {
-        reject(new Error('Verified installer launcher could not start'))
+        reject(
+          new VerifiedInstallerLaunchError(
+            'INSTALLER_HELPER_START_FAILED',
+            'The Windows installer helper could not start',
+          ),
+        )
         return
       }
 
       let settled = false
       let outputBytes = 0
       let stdout = ''
+      let stderr = ''
+      const failure = (
+        code: VerifiedInstallerLaunchErrorCode,
+        message: string,
+        exitCode: number | null = null,
+        retryable = true,
+      ): VerifiedInstallerLaunchError =>
+        new VerifiedInstallerLaunchError(
+          code,
+          message,
+          exitCode,
+          stderr.trim(),
+          retryable,
+        )
       const settle = (error?: Error): void => {
         if (settled) return
         settled = true
@@ -190,9 +231,19 @@ export function createVerifiedInstallerLauncher(
       }
       const countOutput = (chunk: Buffer | string, isStdout: boolean): void => {
         outputBytes += Buffer.byteLength(chunk)
+        if (!isStdout && !settled) {
+          stderr = `${stderr}${String(chunk)}`.slice(-MAX_OUTPUT_BYTES)
+        }
         if (outputBytes > MAX_OUTPUT_BYTES && !settled) {
           child.kill('SIGKILL')
-          settle(new Error('Verified installer launcher exceeded its output limit'))
+          settle(
+            failure(
+              'INSTALLER_HELPER_OUTPUT_LIMIT',
+              'The Windows installer helper exceeded its output limit',
+              null,
+              false,
+            ),
+          )
           return
         }
         if (!isStdout || settled) return
@@ -201,21 +252,37 @@ export function createVerifiedInstallerLauncher(
       }
       const timeout = dependencies.timers.setTimeout(() => {
         if (!settled) child.kill('SIGKILL')
-        settle(new Error('Verified installer launcher timed out'))
+        settle(
+          failure(
+            'INSTALLER_HELPER_TIMEOUT',
+            'The Windows installer helper timed out',
+            null,
+            false,
+          ),
+        )
       }, PROCESS_TIMEOUT_MS)
 
       child.stdout.on('data', (chunk: Buffer | string) => countOutput(chunk, true))
       child.stderr.on('data', (chunk: Buffer | string) => countOutput(chunk, false))
-      child.once('error', () =>
-        settle(new Error('Verified installer launcher failed to execute')),
+      child.once('error', (error) =>
+        settle(
+          new VerifiedInstallerLaunchError(
+            'INSTALLER_HELPER_EXECUTION_FAILED',
+            'The Windows installer helper failed to execute',
+            null,
+            error.message,
+          ),
+        ),
       )
       child.once('close', (code) => {
         if (!settled) {
           settle(
-            new Error(
+            failure(
+              code === 0 ? 'INSTALLER_HELPER_NOT_READY' : 'INSTALLER_HELPER_EXITED',
               code === 0
-                ? 'Verified installer launcher exited before readiness'
-                : 'Verified installer launcher exited unsuccessfully',
+                ? 'The Windows installer helper exited before readiness'
+                : 'The Windows installer helper exited unsuccessfully',
+              code,
             ),
           )
         }

@@ -23,7 +23,10 @@ import {
   UpdateValidationError,
   verifyUpdateManifest,
 } from './update-manifest-verifier'
-import type { VerifiedInstallerLauncher } from './launch-verified-installer'
+import {
+  VerifiedInstallerLaunchError,
+  type VerifiedInstallerLauncher,
+} from './launch-verified-installer'
 
 type UpdateFileSystem = Pick<
   typeof nodeFileSystem,
@@ -475,6 +478,7 @@ export class UpdateService {
       })
       return this.getView()
     }
+    this.setView({ state: 'READY', error: null })
     try {
       await this.verifyArtifact(ready)
       let launchControl: Awaited<ReturnType<VerifiedInstallerLauncher>>
@@ -484,11 +488,14 @@ export class UpdateService {
           size: ready.size,
           sha512: ready.sha512,
         })
-      } catch {
+      } catch (error) {
+        if (error instanceof VerifiedInstallerLaunchError) {
+          throw new UpdateValidationError(error.code, error.message, error.retryable)
+        }
         throw new UpdateValidationError(
           'INSTALLER_LAUNCH_FAILED',
           'Windows could not launch the verified installer',
-          true,
+          false,
         )
       }
       try {
@@ -498,11 +505,16 @@ export class UpdateService {
         throw new UpdateValidationError(
           'UPDATE_SHUTDOWN_FAILED',
           'The application could not shut down for the update',
-          true,
+          false,
         )
       }
     } catch (error) {
-      this.setView({ state: 'FAILED', error: publicError(error) })
+      const updateError = publicError(error)
+      const readyStillValid = this.#ready?.generation === this.#generation
+      this.setView({
+        state: updateError.retryable && readyStillValid ? 'READY' : 'FAILED',
+        error: updateError,
+      })
     }
     return this.getView()
   }
