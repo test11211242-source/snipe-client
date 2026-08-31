@@ -12,6 +12,7 @@ import {
 } from './controls'
 import { useDraft } from './state'
 import type { StreamerRunner } from './types'
+import { AccountManager } from './AccountManager'
 
 const WIDGET_ORIGIN = 'https://api.artcsworld.xyz'
 
@@ -35,9 +36,13 @@ export function ObsTab({
   const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set())
   const [copied, setCopied] = useState<'stats' | 'opponent' | null>(null)
   const copiedTimer = useRef<number | undefined>(undefined)
+  const enabledAccounts = view.title.accounts.filter((account) => account.enabled)
+  const selectedManualTag = settings.manualStreamerTag.replace('#', '').toUpperCase()
   const manualTagInvalid =
     settings.streamerAccountMode === 'manual' &&
-    !/^#?[0289PYLQGRJCUV]+$/i.test(settings.manualStreamerTag.trim())
+    !enabledAccounts.some(
+      (account) => account.tag.replace('#', '').toUpperCase() === selectedManualTag,
+    )
   const timingInvalid =
     settings.opponentSecondSlideEnabled &&
     settings.opponentSlideSeconds >= settings.opponentDisplaySeconds
@@ -188,6 +193,7 @@ export function ObsTab({
             onChange={setSettings}
             onValidityChange={setValidity}
           />
+          <AccountManager accounts={view.title.accounts} busy={busy} run={run} embedded />
         </WidgetCard>
 
         <WidgetCard
@@ -211,6 +217,7 @@ export function ObsTab({
             onValidityChange={setValidity}
             manualTagInvalid={manualTagInvalid}
             timingInvalid={timingInvalid}
+            accounts={enabledAccounts}
           />
         </WidgetCard>
       </div>
@@ -419,6 +426,7 @@ function OpponentSettings({
   onValidityChange,
   manualTagInvalid,
   timingInvalid,
+  accounts,
 }: {
   value: OverlaySettings
   disabled: boolean
@@ -426,6 +434,7 @@ function OpponentSettings({
   onValidityChange: (fieldKey: string, invalid: boolean) => void
   manualTagInvalid: boolean
   timingInvalid: boolean
+  accounts: StreamerView['title']['accounts']
 }): React.JSX.Element {
   const manualTagErrorId = useId()
   const timingErrorId = useId()
@@ -449,28 +458,34 @@ function OpponentSettings({
           label="Аккаунт стримера"
           value={value.streamerAccountMode}
           options={[
-            ['stream_title', 'Из настроек названия'],
-            ['manual', 'Указать вручную'],
+            ['stream_title', 'Автоматически по боям'],
+            ['manual', 'Закрепить аккаунт'],
           ]}
           disabled={disabled}
           onChange={(streamerAccountMode) => onChange({ ...value, streamerAccountMode })}
         />
         {value.streamerAccountMode === 'manual' && (
           <label>
-            Тег аккаунта
-            <input
+            Аккаунт для карточки соперника
+            <select
               aria-describedby={manualTagInvalid ? manualTagErrorId : undefined}
               aria-invalid={manualTagInvalid}
-              disabled={disabled}
-              maxLength={20}
+              disabled={disabled || accounts.length === 0}
               value={value.manualStreamerTag}
               onChange={(event) =>
-                onChange({ ...value, manualStreamerTag: event.target.value })
+                onChange({ ...value, manualStreamerTag: event.currentTarget.value })
               }
-            />
+            >
+              <option value="">Выберите аккаунт</option>
+              {accounts.map((account) => (
+                <option key={account.tag} value={account.tag}>
+                  {account.alias || account.name || account.tag} · {account.tag}
+                </option>
+              ))}
+            </select>
             {manualTagInvalid && (
               <small className="field-error" id={manualTagErrorId}>
-                Укажите корректный тег Clash Royale.
+                Выберите один из добавленных аккаунтов.
               </small>
             )}
           </label>

@@ -5,6 +5,7 @@ import type {
   StreamTitlePreview,
   StreamTitleSettings,
 } from '../../../../shared/models/streamer'
+import { MAX_STREAMER_ACCOUNTS } from '../../../../shared/models/streamer'
 import { Button, Status } from '../ui'
 import {
   ConfirmedButton,
@@ -13,6 +14,7 @@ import {
   Select,
   StreamerToggle,
 } from './controls'
+import { AccountManager } from './AccountManager'
 import { useDraft } from './state'
 import type { StreamerRunner } from './types'
 
@@ -45,8 +47,6 @@ export function TitleTab({
     reset,
     dirty,
   } = useDraft(view.title.settings)
-  const [tag, setTag] = useState('')
-  const [alias, setAlias] = useState('')
   const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set())
   const [preview, setPreview] = useState<StreamTitlePreview>({
     previewTitle: view.title.previewTitle,
@@ -55,19 +55,27 @@ export function TitleTab({
   })
   const [previewState, setPreviewState] = useState<'ready' | 'loading' | 'error'>('ready')
   const previewGeneration = useRef(0)
-  const tagErrorId = useId()
-  const tagInvalid = tag.trim().length > 0 && !TAG_PATTERN.test(tag.trim())
-  const accountLimitReached = view.title.accounts.length >= 4
+  const enabledAccounts = view.title.accounts.filter((account) => account.enabled)
+  const maxSelectableAccounts = Math.max(
+    1,
+    Math.min(MAX_STREAMER_ACCOUNTS, enabledAccounts.length),
+  )
   const selectedManualTag = settings.manualAccountTag.replace('#', '').toUpperCase()
   const manualTagInvalid =
     settings.accountDisplayMode === 'manual' &&
     (!TAG_PATTERN.test(settings.manualAccountTag.trim()) ||
-      !view.title.accounts.some(
+      !enabledAccounts.some(
         (account) => account.tag.replace('#', '').toUpperCase() === selectedManualTag,
       ))
   const invalid = invalidFields.size > 0 || manualTagInvalid
 
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
+
+  useEffect(() => {
+    if (settings.maxAccounts > maxSelectableAccounts) {
+      setSettings({ ...settings, maxAccounts: maxSelectableAccounts })
+    }
+  }, [maxSelectableAccounts, setSettings, settings])
 
   useEffect(() => {
     if (!active || invalid) return
@@ -99,16 +107,6 @@ export function TitleTab({
       else next.delete(fieldKey)
       return next
     })
-  }
-
-  const addAccount = async (): Promise<void> => {
-    const result = await run('account-add', () =>
-      window.crTools.addStreamTitleAccount({ tag: tag.trim(), alias: alias.trim() }),
-    )
-    if (result !== null) {
-      setTag('')
-      setAlias('')
-    }
   }
 
   const changeEnabled = async (enabled: boolean): Promise<void> => {
@@ -196,7 +194,7 @@ export function TitleTab({
           </p>
           <TitleFields
             value={settings}
-            accounts={view.title.accounts}
+            accounts={enabledAccounts}
             onChange={setSettings}
             disabled={busy !== null}
             onValidityChange={setValidity}
@@ -269,90 +267,7 @@ export function TitleTab({
         </section>
 
         <aside className="streamer-context-stack" aria-label="Аккаунты и сессия">
-          <section className="streamer-panel accounts-panel">
-            <div className="streamer-section-heading compact">
-              <div>
-                <span className="eyebrow">CLASH ROYALE</span>
-                <h2>Аккаунты</h2>
-              </div>
-              <span className="context-count">{view.title.accounts.length}/4</span>
-            </div>
-            <div className="account-add">
-              <label>
-                Тег аккаунта
-                <input
-                  aria-describedby={tagInvalid ? tagErrorId : undefined}
-                  aria-invalid={tagInvalid}
-                  value={tag}
-                  maxLength={20}
-                  placeholder="#TAG"
-                  disabled={accountLimitReached || busy !== null}
-                  onChange={(event) => setTag(event.target.value)}
-                />
-                {tagInvalid && (
-                  <small className="field-error" id={tagErrorId}>
-                    Проверьте формат тега Clash Royale.
-                  </small>
-                )}
-              </label>
-              <label>
-                Отображаемое имя
-                <input
-                  value={alias}
-                  maxLength={100}
-                  placeholder="Основной"
-                  disabled={accountLimitReached || busy !== null}
-                  onChange={(event) => setAlias(event.target.value)}
-                />
-              </label>
-              <Button
-                variant="primary"
-                disabled={
-                  busy !== null ||
-                  accountLimitReached ||
-                  tag.trim().length < 2 ||
-                  tagInvalid
-                }
-                onClick={() => void addAccount()}
-              >
-                Добавить аккаунт
-              </Button>
-            </div>
-            {view.title.accounts.length === 0 ? (
-              <div className="streamer-empty compact-empty">
-                <strong>Аккаунтов пока нет</strong>
-                <span>Добавьте тег, чтобы сформировать название.</span>
-              </div>
-            ) : (
-              <div className="account-list">
-                {view.title.accounts.map((account) => (
-                  <div key={account.tag}>
-                    <span>
-                      <strong>{account.alias || account.name || account.tag}</strong>
-                      <small>
-                        {account.tag} ·{' '}
-                        {account.currentRank === null
-                          ? 'место неизвестно'
-                          : `место ${account.currentRank}`}{' '}
-                        · {account.currentElo ?? 'ELO неизвестен'}
-                      </small>
-                    </span>
-                    <button
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        void run('account-remove', () =>
-                          window.crTools.removeStreamTitleAccount(account.tag),
-                        )
-                      }
-                    >
-                      Удалить
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+          <AccountManager accounts={view.title.accounts} busy={busy} run={run} />
           <section className="streamer-panel title-session-panel">
             <span className="eyebrow">ТЕКУЩАЯ СЕССИЯ</span>
             <h2>Результат эфира</h2>
@@ -482,7 +397,7 @@ function TitleFields({
             label="Сколько аккаунтов показать"
             value={value.maxAccounts}
             min={1}
-            max={4}
+            max={Math.max(1, Math.min(MAX_STREAMER_ACCOUNTS, accounts.length))}
             disabled={disabled}
             onChange={(maxAccounts) => onChange({ ...value, maxAccounts })}
             onValidityChange={onValidityChange}

@@ -189,6 +189,27 @@ describe('StreamerService', () => {
     expect(rejected.shell.openExternal).not.toHaveBeenCalled()
   })
 
+  it('uses the shared streamer account registry routes', async () => {
+    const test = harness()
+
+    await test.service.addTitleAccount('#P0Y', 'Основной')
+    await test.service.removeTitleAccount('#P0Y')
+
+    expect(test.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        path: '/api/streamer/accounts',
+        body: { tag: '#P0Y', alias: 'Основной' },
+      }),
+    )
+    expect(test.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'DELETE',
+        path: '/api/streamer/accounts/%23P0Y',
+      }),
+    )
+  })
+
   it('gates every management operation on authoritative streamer roles', async () => {
     const test = harness()
     Object.assign(userView.user, { roles: ['premium'] })

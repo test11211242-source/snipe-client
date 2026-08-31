@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  MAX_STREAMER_ACCOUNTS,
   OverlaySettingsSchema,
   StreamerViewSchema,
 } from '../../../shared/models/streamer'
@@ -52,10 +53,13 @@ describe('streamer server adapters', () => {
     expect(predictions.statistics.successRate).toBe(100)
     expect(
       parseTitle({
-        settings: { account_display_mode: 'invalid' },
-        accounts: new Array(10).fill({ tag: '#P0' }),
+        settings: { account_display_mode: 'invalid', max_accounts: 999 },
+        accounts: new Array(25).fill({ tag: '#P0' }),
       }).accounts,
-    ).toHaveLength(4)
+    ).toHaveLength(MAX_STREAMER_ACCOUNTS)
+    expect(parseTitle({ settings: { max_accounts: 999 } }).settings.maxAccounts).toBe(
+      MAX_STREAMER_ACCOUNTS,
+    )
   })
 
   it('rejects secrets and unknown fields at the aggregate renderer boundary', () => {

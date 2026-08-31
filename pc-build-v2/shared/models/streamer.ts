@@ -10,6 +10,7 @@ const TagSchema = z
   .max(20)
   .regex(/^#?[0289PYLQGRJCUV]+$/i)
 const CountSchema = z.number().int().nonnegative().max(1_000_000)
+export const MAX_STREAMER_ACCOUNTS = 20
 
 export const PredictionPreferencesSchema = z
   .object({
@@ -87,7 +88,7 @@ export const StreamTitleSettingsSchema = z
     includeElo: z.boolean(),
     includeWl: z.boolean(),
     includeDelta: z.boolean(),
-    maxAccounts: z.number().int().min(1).max(4),
+    maxAccounts: z.number().int().min(1).max(MAX_STREAMER_ACCOUNTS),
     pollIntervalSeconds: z.number().int().min(2).max(30),
     twitchCheckIntervalSeconds: z.number().int().min(10).max(120),
     offlineGraceMinutes: z.number().int().min(1).max(120),
@@ -164,7 +165,7 @@ export const StreamerViewSchema = z
               })
               .strict(),
           )
-          .max(4),
+          .max(MAX_STREAMER_ACCOUNTS),
         session: z
           .object({
             totalWins: CountSchema,
