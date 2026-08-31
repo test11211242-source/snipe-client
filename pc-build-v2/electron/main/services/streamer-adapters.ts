@@ -4,6 +4,7 @@ import type {
   StreamTitleSettings,
   StreamerView,
 } from '../../../shared/models/streamer'
+import { MAX_STREAMER_ACCOUNTS } from '../../../shared/models/streamer'
 
 type RecordValue = Record<string, unknown>
 
@@ -112,7 +113,7 @@ export function parseTitle(value: unknown): StreamerView['title'] {
   const twitch = record(input['twitch'])
   const session = record(input['session'])
   const rawAccounts = Array.isArray(input['accounts'])
-    ? input['accounts'].slice(0, 4)
+    ? input['accounts'].slice(0, MAX_STREAMER_ACCOUNTS)
     : []
   const rawResults = Array.isArray(input['recent_results'])
     ? input['recent_results'].slice(0, 20)
@@ -137,7 +138,7 @@ export function parseTitle(value: unknown): StreamerView['title'] {
       includeElo: bool(settings['include_elo'], true),
       includeWl: bool(settings['include_wl'], true),
       includeDelta: bool(settings['include_delta'], true),
-      maxAccounts: integer(settings['max_accounts'], 1, 1, 4),
+      maxAccounts: integer(settings['max_accounts'], 1, 1, MAX_STREAMER_ACCOUNTS),
       pollIntervalSeconds: integer(settings['poll_interval_seconds'], 2, 2, 30),
       twitchCheckIntervalSeconds: integer(
         settings['twitch_check_interval_seconds'],

@@ -278,7 +278,7 @@ export class StreamerService {
 
   addTitleAccount(tag: string, alias: string): Promise<StreamerView> {
     return this.mutate(() =>
-      this.request('POST', '/api/streamer/title/accounts', { tag, alias }),
+      this.request('POST', '/api/streamer/accounts', { tag, alias }),
     )
   }
 
@@ -286,7 +286,7 @@ export class StreamerService {
     return this.mutate(() =>
       this.request(
         'DELETE',
-        `/api/streamer/title/accounts/${encodeURIComponent(tag)}` as `/api/${string}`,
+        `/api/streamer/accounts/${encodeURIComponent(tag)}` as `/api/${string}`,
       ),
     )
   }
