@@ -304,7 +304,7 @@ jobs:
           BOOTSTRAP: ${{ inputs.bootstrap }}
         run: |
           set -euo pipefail
-          remote_dir='/home/ubuntu/snipe/data/updates/downloads/v2'
+          remote_dir='/home/ubuntu/snipe-shared/data/updates/downloads/v2'
           remote="$SERVER_USER@$SERVER_HOST"
           ssh_options=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519")
           ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 '$remote_dir'"
