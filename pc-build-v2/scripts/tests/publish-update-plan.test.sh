@@ -9,13 +9,20 @@ WORKFLOW="$SCRIPT_DIR/../../../.github/workflows/pc-build-v2-release.yml"
 
 deploy_condition="inputs.deploy == true && github.ref == 'refs/heads/main'"
 deploy_condition_count=0
+stable_update_root="/home/ubuntu/snipe-shared/data/updates/downloads/v2"
+stable_update_root_count=0
 while IFS= read -r line; do
   [[ "$line" != *"inputs.deploy == 'true'"* ]]
+  [[ "$line" != *"/home/ubuntu/snipe/data/updates/downloads/v2"* ]]
   if [[ "$line" == *"$deploy_condition"* ]]; then
     deploy_condition_count=$((deploy_condition_count + 1))
   fi
+  if [[ "$line" == *"$stable_update_root"* ]]; then
+    stable_update_root_count=$((stable_update_root_count + 1))
+  fi
 done <"$WORKFLOW"
 [[ "$deploy_condition_count" -eq 2 ]]
+[[ "$stable_update_root_count" -eq 1 ]]
 
 output="$($PUBLISHER release --plan)"
 value() {
