@@ -20,6 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_BASE = "https://updates.artcsworld.xyz/downloads/v2"
+PUBLIC_HEADERS = {"User-Agent": "CRToolsPublisher/1.0", "Cache-Control": "no-cache"}
 WORKFLOW = "pc-build-v2-local-publish.yml"
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 CHECKS = [
@@ -55,7 +56,7 @@ def select_version(current: str, published: str | None, requested: str | None) -
 
 def fetch_public_manifest() -> dict | None:
     request = urllib.request.Request(
-        f"{PUBLIC_BASE}/manifest.json", headers={"Cache-Control": "no-cache"}
+        f"{PUBLIC_BASE}/manifest.json", headers=PUBLIC_HEADERS
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -260,7 +261,7 @@ def verify_public_artifact(receipt: dict) -> None:
         raise PublishError("The public manifest does not describe the exact locally built installer.")
     digest = hashlib.sha512()
     size = 0
-    request = urllib.request.Request(expected_url, headers={"Cache-Control": "no-cache"})
+    request = urllib.request.Request(expected_url, headers=PUBLIC_HEADERS)
     with urllib.request.urlopen(request, timeout=60) as response:
         while block := response.read(1024 * 1024):
             size += len(block)
