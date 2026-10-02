@@ -16,6 +16,15 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(publisher.select_version("0.2.0", "0.1.21", None), "0.2.0")
         self.assertEqual(publisher.select_version("0.1.21", None, None), "0.1.21")
 
+    def test_public_manifest_uses_the_publisher_agent(self):
+        response = Mock()
+        response.read.return_value = b'{"version":"0.1.21","schemaVersion":1,"channel":"stable"}'
+        with patch.object(publisher.urllib.request, "urlopen") as download:
+            download.return_value.__enter__.return_value = response
+            self.assertEqual(publisher.fetch_public_manifest()["version"], "0.1.21")
+            request = download.call_args.args[0]
+            self.assertEqual(request.get_header("User-agent"), "CRToolsPublisher/1.0")
+
     def test_rejects_replayed_versions_and_shell_arguments(self):
         for current, public, requested in [
             ("0.1.21", "0.1.22", None), ("0.1.21", "0.1.21", "0.1.21"),
