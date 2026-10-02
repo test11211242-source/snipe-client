@@ -125,15 +125,24 @@ export class RuntimeIntegrityService {
     ) {
       throw new Error('Runtime files do not match the inventory')
     }
-    for (const file of parsed.files) {
-      const path = resolve(this.runtimeRoot, ...file.path.split('/'))
-      const stat = await lstat(path)
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size) {
-        throw new Error('Runtime file metadata does not match the inventory')
-      }
-      if ((await hashFile(path)) !== file.sha256) {
-        throw new Error('Runtime file hash does not match the inventory')
-      }
-    }
+    let nextFile = 0
+    const checks = await Promise.allSettled(
+      Array.from({ length: 4 }, async () => {
+        while (nextFile < parsed.files.length) {
+          const file = parsed.files[nextFile++]
+          if (file === undefined) return
+          const path = resolve(this.runtimeRoot, ...file.path.split('/'))
+          const stat = await lstat(path)
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size) {
+            throw new Error('Runtime file metadata does not match the inventory')
+          }
+          if ((await hashFile(path)) !== file.sha256) {
+            throw new Error('Runtime file hash does not match the inventory')
+          }
+        }
+      }),
+    )
+    const failed = checks.find((check) => check.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
 }

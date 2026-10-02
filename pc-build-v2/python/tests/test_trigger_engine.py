@@ -240,3 +240,13 @@ def test_source_aspect_ratio_change_requires_new_setup() -> None:
     changed = np.zeros((256, 256, 3), dtype=np.uint8)
     with pytest.raises(RuntimeError, match="aspect ratio changed"):
         engine.process(changed, 0.0)
+
+
+def test_blank_frame_is_rejected_without_numeric_overflow() -> None:
+    configured = trigger_image((20, 80, 140))
+    profile = TriggerProfile(profile_for(configured))
+    with np.errstate(over="raise", invalid="raise"):
+        result = profile.evaluate(np.zeros_like(configured))
+    assert result.matched is False
+    assert result.support == 0.0
+    assert np.isfinite(result.score)

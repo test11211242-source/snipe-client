@@ -15,6 +15,7 @@ import { PublicErrorSchema } from '../errors/application-error'
 
 export const MAIN_CAPTURE_IPC_CHANNELS = Object.freeze({
   listSources: 'capture:list-sources',
+  loadPreviews: 'capture:load-previews',
   prepareSource: 'capture:prepare-source',
   releaseSource: 'capture:release-source',
   startSetup: 'capture:start-setup',
@@ -41,6 +42,11 @@ export const SETUP_IPC_CHANNELS = Object.freeze({
 
 export const EmptyCapturePayloadSchema = z.object({}).strict()
 export const SourceSnapshotResultSchema = CaptureSourceSnapshotSchema
+export const SourcePreviewsPayloadSchema = z
+  .object({
+    revision: z.string().regex(/^[a-f0-9]{32}$/),
+  })
+  .strict()
 export const CaptureStatusResultSchema = CaptureStatusSchema
 export const CaptureProfilesResultSchema = CaptureProfilesViewSchema
 export const CaptureProfileMutationResultSchema = z

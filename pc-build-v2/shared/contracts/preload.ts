@@ -46,6 +46,7 @@ export interface CrToolsApi {
   logout: () => Promise<AuthView>
   getRealtimeStatus: () => Promise<RealtimeStatus>
   listCaptureSources: () => Promise<CaptureSourceSnapshot>
+  loadCapturePreviews: (payload: { revision: string }) => Promise<CaptureSourceSnapshot>
   prepareCaptureSource: (payload: PreviewPayload) => Promise<CapturePreparationResponse>
   releaseCaptureSource: (payload: PreviewPayload) => Promise<{ released: boolean }>
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>

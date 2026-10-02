@@ -11,6 +11,12 @@ identity:
 
 ## Commands
 
+For a local Windows installer, run `..\publish-update.cmd test`. After reviewed
+changes are merged to clean, synchronized `main`, run `..\publish-update.cmd release`
+to build on your own PC and publish an update for installed clients. GitHub only
+signs and deploys that exact finished installer; it does not build it again.
+See [the local Windows publisher runbook](docs/RELEASE_RUNBOOK.md#local-windows-publisher).
+
 Requires Node.js `^20.19.0` or `>=22.12.0` and npm. Windows release packaging also
 requires PowerShell 7 (`pwsh`).
 
@@ -157,9 +163,10 @@ process, OCR, and supervisor tests are cross-platform.
 
 ## Local Widget
 
-M5 is implemented. `WidgetController` owns one generation-safe monitor result subscription
-and opens the dedicated widget only for a new `player_found` result when auto-open is
-enabled. Manually opening the widget clearly shows empty, not-found, recognition-failure,
+M5 is implemented. Starting monitoring from the main window immediately opens the dedicated
+widget with an empty deck placeholder while capture is being prepared. `WidgetController`
+owns one generation-safe monitor result subscription and also opens the widget for a new
+`player_found` result when auto-open is enabled. Opening the widget clearly shows empty, not-found, recognition-failure,
 or service-error state. Closing the widget never quits the application; logout and auth
 loss close it.
 

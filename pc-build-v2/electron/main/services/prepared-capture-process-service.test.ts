@@ -74,6 +74,31 @@ function png(width: number, height: number): Buffer {
 }
 
 describe('PreparedCaptureProcessService', () => {
+  it('settles readiness when cancelled before the first frame and allows another source', async () => {
+    const child = new FakeChild()
+    const nextChild = new FakeChild()
+    const spawn = vi.fn().mockReturnValueOnce(child).mockReturnValueOnce(nextChild)
+    const service = new PreparedCaptureProcessService(
+      'python.exe',
+      'prepared_capture.py',
+      { warn: vi.fn() },
+      spawn,
+    )
+    const starting = service.start({ kind: 'window', windowHwnd: '123' })
+    const rejected = expect(starting).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_CANCELLED',
+    })
+    const stopping = service.stop()
+    child.emit('close', 0, null)
+    await rejected
+    await stopping
+    const next = service.start({ kind: 'window', windowHwnd: '456' })
+    nextChild.event(1, 'ready', { frameSequence: 1, width: 1280, height: 720 })
+    await expect(next).resolves.toMatchObject({ size: { width: 1280, height: 720 } })
+    const cleanup = service.stop()
+    nextChild.emit('close', 0, null)
+    await cleanup
+  })
   it('starts one selected source and freezes the latest validated PNG', async () => {
     const child = new FakeChild()
     const spawn = vi.fn(() => child)

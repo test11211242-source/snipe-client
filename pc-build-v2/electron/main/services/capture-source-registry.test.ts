@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type {
   CaptureSourceProvider,
@@ -40,6 +40,80 @@ function source(
 }
 
 describe('CaptureSourceRegistry', () => {
+  it('returns selectable sources before previews and coalesces preview loads without changing keys', async () => {
+    let finishPreviews!: (sources: ElectronCaptureSource[]) => void
+    const sources = [source('window:12:0', 'Game', '', 20)]
+    const previews = vi.fn(
+      () =>
+        new Promise<ElectronCaptureSource[]>((resolve) => {
+          finishPreviews = resolve
+        }),
+    )
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: vi.fn().mockResolvedValue(sources),
+      previews,
+      ownWindowHandles: () => new Set(),
+      displays: vi.fn().mockResolvedValue([]),
+    }
+    const registry = new CaptureSourceRegistry(provider)
+    const listed = await registry.enumerate()
+    expect(previews).not.toHaveBeenCalled()
+    expect(listed.sources[0]?.preview).toBeNull()
+    const loading = registry.loadPreviews(listed.revision)
+    expect(registry.loadPreviews(listed.revision)).toBe(loading)
+    await expect(
+      registry.resolve(required(listed.sources[0]).sourceKey, listed.revision),
+    ).resolves.toMatchObject({ selector: { kind: 'window', windowHwnd: '12' } })
+    finishPreviews(sources)
+    const completed = await loading
+    expect(completed.sources[0]?.sourceKey).toBe(listed.sources[0]?.sourceKey)
+    expect(completed.sources[0]?.preview?.dataUrl).toBe('data:image/jpeg;base64,cG5n')
+    expect(previews).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a late preview response for a replaced source list', async () => {
+    let finishPreviews!: (sources: ElectronCaptureSource[]) => void
+    const sources = [source('window:12:0', 'Game')]
+    const registry = new CaptureSourceRegistry({
+      currentProcessId: 1,
+      enumerate: () => Promise.resolve(sources),
+      previews: () =>
+        new Promise((resolve) => {
+          finishPreviews = resolve
+        }),
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    })
+    const first = await registry.enumerate()
+    const previews = registry.loadPreviews(first.revision)
+    const rejected = expect(previews).rejects.toMatchObject({
+      code: 'CAPTURE_SOURCE_STALE',
+    })
+    const second = await registry.enumerate()
+    finishPreviews(sources)
+    await rejected
+    expect(second.sources[0]?.preview).toBeNull()
+  })
+
+  it('does not run the display helper when resolving a saved window', async () => {
+    const displays = vi.fn().mockRejectedValue(new Error('slow helper unavailable'))
+    const registry = new CaptureSourceRegistry({
+      currentProcessId: 1,
+      enumerate: () => Promise.resolve([source('window:12:0', 'Game')]),
+      ownWindowHandles: () => new Set(),
+      displays,
+    })
+    await expect(
+      registry.resolvePreference({
+        kind: 'window',
+        label: 'Game',
+        titleHint: 'Game',
+        executableLabel: null,
+      }),
+    ).resolves.toMatchObject({ windowHwnd: '12' })
+    expect(displays).not.toHaveBeenCalled()
+  })
   it('joins shuffled displays by display_id and handles negative bounds and text-only titles', async () => {
     const sources = [
       source('screen:1:0', 'Wrong order', '22'),
@@ -108,11 +182,8 @@ describe('CaptureSourceRegistry', () => {
     const registry = new CaptureSourceRegistry(provider, 10, () => now)
     const snapshot = await registry.enumerate()
     const item = required(snapshot.sources[0])
-    expect(item.preview).toMatchObject({
-      size: { width: 320, height: 180 },
-      dataUrl: 'data:image/jpeg;base64,cG5n',
-    })
-    expect(enumerateSizes).toEqual([{ width: 360, height: 203 }])
+    expect(item.preview).toBeNull()
+    expect(enumerateSizes).toEqual([{ width: 0, height: 0 }])
     await expect(registry.resolve(item.sourceKey, '0'.repeat(32))).rejects.toMatchObject({
       code: 'CAPTURE_SOURCE_STALE',
     })
@@ -123,7 +194,7 @@ describe('CaptureSourceRegistry', () => {
       selector: { kind: 'window', windowHwnd: '12' },
     })
     expect(enumerateSizes).toEqual([
-      { width: 360, height: 203 },
+      { width: 0, height: 0 },
       { width: 0, height: 0 },
     ])
   })
@@ -187,7 +258,9 @@ describe('CaptureSourceRegistry', () => {
       ownWindowHandles: () => new Set(),
       displays: () => Promise.resolve([]),
     }
-    const snapshot = await new CaptureSourceRegistry(provider).enumerate()
+    const registry = new CaptureSourceRegistry(provider)
+    const listed = await registry.enumerate()
+    const snapshot = await registry.loadPreviews(listed.revision)
     expect(snapshot.sources[0]).toMatchObject({
       captureSupported: true,
       preview: null,

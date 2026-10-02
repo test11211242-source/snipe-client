@@ -99,6 +99,7 @@ export class ApplicationController {
       windows: this.windows,
       logger: this.logger,
       monitor: this.monitor,
+      widget: this.widget,
     })
     const disposeWidgetIpc = registerWidgetIpc({
       windows: this.windows,

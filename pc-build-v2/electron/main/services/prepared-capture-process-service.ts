@@ -347,6 +347,10 @@ export class PreparedCaptureProcessService {
       })
     }
     owned.stopping = true
+    this.rejectPending(
+      owned,
+      new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled'),
+    )
     clearTimeout(owned.readyTimer)
     const stopped = new Promise<void>((resolve) => {
       owned.resolveStop = resolve

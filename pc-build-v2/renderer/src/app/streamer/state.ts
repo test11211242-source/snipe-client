@@ -33,9 +33,8 @@ export function useDraft<T>(serverValue: T): {
 
   useEffect(() => {
     if (previousServerValue.current === serializedServerValue) return
-    setDraft((current) =>
-      JSON.stringify(current) === previousServerValue.current ? serverValue : current,
-    )
+    const previous = previousServerValue.current
+    setDraft((current) => (JSON.stringify(current) === previous ? serverValue : current))
     previousServerValue.current = serializedServerValue
   }, [serializedServerValue, serverValue])
 

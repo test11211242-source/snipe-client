@@ -435,6 +435,25 @@ button:focus-visible {
   animation: widget-loading 1.5s ease-in-out infinite;
 }
 
+.widget-deck-placeholder {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  flex: 1 1 100px;
+  min-height: 0;
+  max-height: 136px;
+  margin-top: 12px;
+  gap: 8px;
+  width: min(100%, 240px);
+}
+
+.widget-deck-placeholder i {
+  min-height: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .widget-empty strong {
   font-size: 13px;
   font-weight: 800;

@@ -281,6 +281,50 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     })
   }
 
+  async resolveWindow(windowHwnd: string): Promise<ElectronCaptureSource | undefined> {
+    const sources = await desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: false,
+    })
+    const source = sources.find((candidate) => candidate.id === `window:${windowHwnd}:0`)
+    if (source === undefined) return undefined
+    const details = (await this.windowMetadata([windowHwnd]).catch(() => [])).find(
+      (entry) => entry.windowHwnd === windowHwnd,
+    )
+    return {
+      id: source.id,
+      name: source.name,
+      displayId: source.display_id,
+      thumbnail: source.thumbnail,
+      ...(details === undefined
+        ? {}
+        : {
+            ownerProcessId: details.ownerProcessId,
+            ...(details.executableLabel === null
+              ? {}
+              : { executableLabel: details.executableLabel }),
+          }),
+    }
+  }
+
+  async previews(thumbnailSize: {
+    width: number
+    height: number
+  }): Promise<ElectronCaptureSource[]> {
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize,
+      fetchWindowIcons: false,
+    })
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      displayId: source.display_id,
+      thumbnail: source.thumbnail,
+    }))
+  }
+
   async displays(): Promise<ElectronDisplayInfo[]> {
     const electronDisplays = screen.getAllDisplays().map((display) => {
       const origin = screen.dipToScreenPoint({ x: display.bounds.x, y: display.bounds.y })

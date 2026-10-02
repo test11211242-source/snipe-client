@@ -21,8 +21,16 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
   const [attempt, setAttempt] = useState(0)
   const [dirtyTabs, setDirtyTabs] = useState({ title: false, obs: false })
   const viewGeneration = useRef(0)
+  const operationInFlight = useRef(false)
+  const mounted = useRef(false)
   const roleAllowed = hasStreamerRole(auth)
   const canPoll = useEffectEvent(() => busy === null && !document.hidden)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const streamerTabs = [
     { id: 'overview' as const, label: 'Обзор' },
     { id: 'predictions' as const, label: 'Twitch и прогнозы' },
@@ -50,12 +58,14 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
           const refreshedView = await window.crTools.refreshStreamer()
           if (isActive() && generation === viewGeneration.current) setView(refreshedView)
         } catch {
-          if (isActive()) setError('Часть данных трансляции пока не обновилась.')
+          if (isActive() && generation === viewGeneration.current)
+            setError('Часть данных трансляции пока не обновилась.')
         }
       } catch {
-        if (isActive()) setError('Не удалось открыть рабочее пространство стримера.')
+        if (isActive() && generation === viewGeneration.current)
+          setError('Не удалось открыть рабочее пространство стримера.')
       } finally {
-        if (isActive()) setBusy(null)
+        if (isActive() && generation === viewGeneration.current) setBusy(null)
       }
     }
 
@@ -91,18 +101,23 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
   }, [roleAllowed])
 
   const run: StreamerRunner = async (name, operation) => {
-    ++viewGeneration.current
+    if (operationInFlight.current || busy !== null) return null
+    operationInFlight.current = true
+    const generation = ++viewGeneration.current
     setBusy(name)
     setError(null)
     try {
       const nextView = await operation()
+      if (!mounted.current || generation !== viewGeneration.current) return null
       setView(nextView)
       return nextView
     } catch (cause) {
-      setError(operationError(name, cause))
+      if (mounted.current && generation === viewGeneration.current)
+        setError(operationError(name, cause))
       return null
     } finally {
-      setBusy(null)
+      operationInFlight.current = false
+      if (mounted.current && generation === viewGeneration.current) setBusy(null)
     }
   }
 

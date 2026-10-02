@@ -1,5 +1,67 @@
 # CR Tools V2 Release Runbook
 
+## Local Windows Publisher
+
+The normal Windows entry point is `client\publish-update.cmd` (also available
+inside `pc-build-v2`). It uses Windows Python, Node.js 22, PowerShell 7, Git for
+Windows, 64-bit 7-Zip and GitHub CLI. Authenticate once with `gh auth login`; it uses the
+Windows credential store and does not require a copied publisher token file.
+
+The publisher uses the installed x64 `7z.exe` through electron-builder's supported
+`ELECTRON_BUILDER_7ZIP_PATH` override. It verifies the executable's PE architecture;
+the v26 bundled toolset incorrectly supplies an x86 compressor for x64 Windows and
+can crash while creating the installer. No dependency or tool cache is patched.
+
+```powershell
+C:\Dev\Snipe\client\publish-update.cmd test
+C:\Dev\Snipe\client\publish-update.cmd release --plan
+C:\Dev\Snipe\client\publish-update.cmd release
+C:\Dev\Snipe\client\publish-update.cmd release 0.1.22 --yes
+```
+
+`test` checks and builds the installer on this PC, keeps the current development
+version, and never commits, uploads, signs or publishes. It runs lint, TypeScript,
+Vitest, publisher tests, Python tests, the dependency audit, runtime validation,
+unpacked packaging, the packaged Windows smoke, and the final NSIS build. It then
+checks the installer and packaged version and saves the installer under
+`pc-build-v2/published/<version>/local-<uuid>/`. It does not run the NSIS fixture
+installation on the owner's PC, which would alter their existing app registration.
+Manually verify an upgrade using the app or a disposable Windows user/VM.
+
+`release` requires reviewed code on clean `main`, synchronized with a fresh fetch
+of `origin/main`. Commit/review/merge development changes before invoking it; the
+publisher refuses to pick up arbitrary unsaved files. It reads the public manifest,
+selects the next patch version (or reuses a newer unpublished package version), and
+asks for `PUBLISH` unless `--yes` was explicitly supplied. `--plan`/`--dry-run`
+only checks the source and reports the selection; it does not build or publish.
+
+The publisher creates an isolated local release worktree, updates package metadata,
+and runs the same Windows checks and NSIS build there. After success it creates
+the release metadata commit, pushes without force, and advances the original clean
+`main` by fast-forward. Source changes during the build stop publication. An
+installer receipt records the exact source SHA, Windows platform, checks, size and
+SHA-512; the runtime inventory has a separate SHA-512.
+
+The installer is already complete before anything is uploaded. A temporary GitHub
+**draft** transports that exact file to `pc-build-v2-local-publish.yml`, which runs
+only on Linux to validate the receipt, sign the manifest using existing secrets,
+and promote the update on the existing server. It has no Windows runner, npm
+installation, compilation or packaging job. The source SHA, draft target and
+receipt must all match the dispatched commit. The workflow verifies public files;
+the local publisher also downloads and hashes the public installer before deleting
+the temporary draft. Installed clients see the same signed schema-v1 update channel.
+
+If publication fails after upload, keep the local files and draft. Re-run only
+failed GitHub jobs, then run `publish-update.cmd resume <run-id>` from the same
+checkout to verify the exact saved build and remove its temporary transport. Do
+not create a different build with the same version. Failure output includes the
+stage and local log path; successful logs are removed.
+
+The signing-only workflow must be merged to `main` once before the first local
+publication. Its secrets and `production` Environment are the same ones used by
+the existing publisher. The legacy Bash publisher below remains available for
+the old hosted-build process; it is not the local Windows entry point.
+
 ## Trust Model
 
 CR Tools V2 is Windows-only and intentionally has no Authenticode certificate. Every fresh

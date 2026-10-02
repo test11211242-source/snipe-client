@@ -153,6 +153,7 @@ export class WidgetController {
     this.windows.applyWidgetSettings(this.requireSettings())
     if (passive) this.windows.showWidgetInactive()
     else this.windows.showWidget()
+    this.publishView()
     return this.getStatus()
   }
 

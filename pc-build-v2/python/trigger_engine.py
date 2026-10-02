@@ -204,6 +204,10 @@ class TriggerProfile:
         self, structure: np.ndarray, edges: np.ndarray, orientation: np.ndarray
     ) -> "MatchResult":
         candidate_edges = edges > 0
+        if not np.any(candidate_edges):
+            # OpenCV uses a float32 sentinel when there are no target edges.
+            # Squaring that distance overflows; an empty frame cannot match.
+            return MatchResult(False, 0.0, 0.0, 0.0, 0.0, 0, "no_candidate_edges")
         distance = cv2.distanceTransform(
             np.where(candidate_edges, 0, 1).astype(np.uint8), cv2.DIST_L2, 3
         )

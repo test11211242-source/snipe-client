@@ -8,7 +8,16 @@ import tseslint from 'typescript-eslint'
 
 export default defineConfig(
   {
-    ignores: ['dist', 'out', 'release', 'coverage', 'node_modules', '.venv'],
+    ignores: [
+      'dist',
+      'out',
+      'release',
+      'published',
+      'coverage',
+      'node_modules',
+      '.venv',
+      'resources/python-runtime',
+    ],
   },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,

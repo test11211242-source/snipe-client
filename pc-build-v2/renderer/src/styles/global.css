@@ -1359,6 +1359,12 @@ summary:focus-visible,
   color: var(--color-text);
 }
 
+.capture-profile-actions .text-button[aria-pressed='true'] {
+  color: var(--color-focus);
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .profile-manager-empty {
   margin: var(--space-4) 0 0;
   color: var(--color-text-tertiary);

@@ -84,6 +84,11 @@ export function CapturePage({
   const [snapshot, setSnapshot] = useState<CaptureSourceSnapshot | null>(null)
   const [tab, setTab] = useState<SourceTab>('window')
   const [loading, setLoading] = useState(true)
+  const [previewsLoadedRevision, setPreviewsLoadedRevision] = useState<string | null>(
+    null,
+  )
+  const previewsLoading =
+    snapshot !== null && previewsLoadedRevision !== snapshot.revision
   const [startingKey, setStartingKey] = useState<string | null>(null)
   const [preparingKey, setPreparingKey] = useState<string | null>(null)
   const [preparation, setPreparation] = useState<CapturePreparationResult | null>(null)
@@ -92,6 +97,7 @@ export function CapturePage({
   const [query, setQuery] = useState('')
   const [availableOnly, setAvailableOnly] = useState(true)
   const [profileAction, setProfileAction] = useState<ProfileAction | null>(null)
+  const [createdProfileId, setCreatedProfileId] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState<string | null>(null)
   const [profileDialog, setProfileDialog] = useState<ProfileDialogState | null>(null)
   const [profileDialogName, setProfileDialogName] = useState('')
@@ -101,18 +107,16 @@ export function CapturePage({
   const sourceRefreshGeneration = useRef(0)
   const profileRefreshGeneration = useRef(0)
   const profileDialogRef = useRef<HTMLDialogElement | null>(null)
+  const profileDialogBackdropGesture = useRef(false)
   const profileDialogReturnFocus = useRef<HTMLElement | null>(null)
+  const profileTaskRef = useRef<HTMLDivElement | null>(null)
   const applyStatus = useEffectEvent(onStatus)
   const applyProfiles = useEffectEvent(onProfiles)
   const actionProfile =
     profileAction === null || profiles === null
       ? undefined
       : profileAction.profileId === null
-        ? profiles.profiles.find(
-            (profile) =>
-              profile.profileName.toLocaleLowerCase('ru-RU') ===
-              profileAction.profileName.toLocaleLowerCase('ru-RU'),
-          )
+        ? profiles.profiles.find((profile) => profile.profileId === createdProfileId)
         : profiles.profiles.find(
             (profile) => profile.profileId === profileAction.profileId,
           )
@@ -230,6 +234,34 @@ export function CapturePage({
     }
   }, [])
 
+  const sourceRevision = snapshot?.revision
+  useEffect(() => {
+    if (sourceRevision === undefined) return
+    let active = true
+    void window.crTools
+      .loadCapturePreviews({ revision: sourceRevision })
+      .then(
+        (next) => {
+          if (active)
+            setSnapshot((current) =>
+              current?.revision === next.revision ? next : current,
+            )
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        if (active) setPreviewsLoadedRevision(sourceRevision)
+      })
+    return () => {
+      active = false
+    }
+  }, [sourceRevision])
+
+  useEffect(() => {
+    if (profileAction !== null)
+      profileTaskRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [profileAction])
+
   useEffect(() => {
     const dialog = profileDialogRef.current
     if (profileDialog !== null && dialog !== null && !dialog.open) dialog.showModal()
@@ -299,6 +331,7 @@ export function CapturePage({
   }
 
   const beginProfileDialog = (dialog: ProfileDialogState): void => {
+    profileDialogBackdropGesture.current = false
     profileDialogReturnFocus.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     setProfileDialog(dialog)
@@ -307,6 +340,7 @@ export function CapturePage({
   }
 
   const addProfile = (profileName: string): void => {
+    setCreatedProfileId(null)
     releaseSelection()
     setProfileAction({
       kind: 'configure',
@@ -316,8 +350,11 @@ export function CapturePage({
     })
   }
 
-  const renameProfile = async (profileId: string, profileName: string): Promise<void> => {
-    if (profiles?.revision === null || profiles?.revision === undefined) return
+  const renameProfile = async (
+    profileId: string,
+    profileName: string,
+  ): Promise<boolean> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return false
     setProfileBusy(profileId)
     setError(null)
     try {
@@ -336,8 +373,12 @@ export function CapturePage({
             }
           : current,
       )
+      return true
     } catch {
-      setError('Не удалось переименовать профиль. Название должно быть уникальным.')
+      setProfileDialogError(
+        'Не удалось переименовать профиль. Название должно быть уникальным.',
+      )
+      return false
     } finally {
       setProfileBusy(null)
     }
@@ -346,8 +387,8 @@ export function CapturePage({
   const duplicateProfile = async (
     profileId: string,
     profileName: string,
-  ): Promise<void> => {
-    if (profiles?.revision === null || profiles?.revision === undefined) return
+  ): Promise<boolean> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return false
     setProfileBusy(profileId)
     setError(null)
     try {
@@ -369,15 +410,19 @@ export function CapturePage({
           expectedRevision: result.profiles.revision ?? 0,
         })
       }
+      return true
     } catch {
-      setError('Не удалось дублировать профиль. Проверьте название и повторите.')
+      setProfileDialogError(
+        'Не удалось дублировать профиль. Проверьте название и повторите.',
+      )
+      return false
     } finally {
       setProfileBusy(null)
     }
   }
 
-  const deleteProfile = async (profileId: string): Promise<void> => {
-    if (profiles?.revision === null || profiles?.revision === undefined) return
+  const deleteProfile = async (profileId: string): Promise<boolean> => {
+    if (profiles?.revision === null || profiles?.revision === undefined) return false
     setProfileBusy(profileId)
     setError(null)
     try {
@@ -397,8 +442,12 @@ export function CapturePage({
               expectedRevision: result.profiles.revision ?? 0,
             },
       )
+      return true
     } catch {
-      setError('Не удалось удалить профиль. Единственный профиль удалить нельзя.')
+      setProfileDialogError(
+        'Не удалось удалить профиль. Единственный профиль удалить нельзя.',
+      )
+      return false
     } finally {
       setProfileBusy(null)
     }
@@ -408,8 +457,7 @@ export function CapturePage({
     const dialog = profileDialog
     if (dialog === null || profileBusy !== null) return
     if (dialog.kind === 'delete') {
-      await deleteProfile(dialog.profileId)
-      setProfileDialog(null)
+      if (await deleteProfile(dialog.profileId)) setProfileDialog(null)
       return
     }
     const profileName = profileDialogName.trim()
@@ -439,11 +487,9 @@ export function CapturePage({
       addProfile(profileName)
       setProfileDialog(null)
     } else if (dialog.kind === 'rename') {
-      await renameProfile(dialog.profileId, profileName)
-      setProfileDialog(null)
+      if (await renameProfile(dialog.profileId, profileName)) setProfileDialog(null)
     } else {
-      await duplicateProfile(dialog.profileId, profileName)
-      setProfileDialog(null)
+      if (await duplicateProfile(dialog.profileId, profileName)) setProfileDialog(null)
     }
   }
 
@@ -498,6 +544,7 @@ export function CapturePage({
   const start = async (source: CaptureSourceView): Promise<void> => {
     const prepared = preparation
     if (
+      currentProfileAction === null ||
       !source.captureSupported ||
       !sources.includes(source) ||
       prepared?.sourceKey !== source.sourceKey ||
@@ -510,7 +557,7 @@ export function CapturePage({
     setError(null)
     try {
       if (
-        currentProfileAction?.kind === 'rebind' &&
+        currentProfileAction.kind === 'rebind' &&
         currentProfileAction.profileId !== null
       ) {
         applyMutation(
@@ -520,19 +567,25 @@ export function CapturePage({
             expectedRevision: currentProfileAction.expectedRevision,
           }),
         )
-      } else if (currentProfileAction !== null) {
-        await window.crTools.startCaptureSetup({
+      } else {
+        const session = await window.crTools.startCaptureSetup({
           preparationId: prepared.preparationId,
           profileId: currentProfileAction.profileId,
           profileName: currentProfileAction.profileName,
           expectedRevision: currentProfileAction.expectedRevision,
         })
+        if (currentProfileAction.profileId === null)
+          setCreatedProfileId(session.profileId)
       }
       selectedRef.current = null
+      setSelectedKey(null)
       setPreparation(null)
-    } catch {
+      if (currentProfileAction.kind === 'rebind') setProfileAction(null)
+    } catch (cause) {
       setError(
-        'Источник изменился или захват не запустился. Обновите список и повторите.',
+        cause instanceof Error && cause.message.includes('different aspect ratio')
+          ? 'У нового источника другие пропорции. Нажмите «Области» и заново выделите области распознавания.'
+          : 'Не удалось применить источник. Выберите его повторно; если профиль изменён в другом окне, обновите список.',
       )
     } finally {
       setStartingKey(null)
@@ -550,7 +603,10 @@ export function CapturePage({
         title="Источник захвата"
         description="Выберите окно Clash Royale или монитор. Области распознавания настраиваются на следующем шаге."
         actions={
-          <Button onClick={() => void refresh()} disabled={loading}>
+          <Button
+            onClick={() => void refresh()}
+            disabled={loading || startingKey !== null}
+          >
             <RefreshCw
               className={loading ? 'is-spinning' : undefined}
               aria-hidden="true"
@@ -580,6 +636,7 @@ export function CapturePage({
             disabled={
               profiles === null ||
               profileBusy !== null ||
+              startingKey !== null ||
               profiles.profiles.length >= MAX_CAPTURE_PROFILES
             }
           >
@@ -613,7 +670,7 @@ export function CapturePage({
                   {!profile.isActive && (
                     <Button
                       variant="text"
-                      disabled={profileBusy !== null}
+                      disabled={profileBusy !== null || startingKey !== null}
                       onClick={() => void activateProfile(profile.profileId)}
                     >
                       <Play aria-hidden="true" size={13} />
@@ -622,7 +679,11 @@ export function CapturePage({
                   )}
                   <Button
                     variant="text"
-                    disabled={profileBusy !== null}
+                    aria-pressed={
+                      currentProfileAction?.kind === 'rebind' &&
+                      currentProfileAction.profileId === profile.profileId
+                    }
+                    disabled={profileBusy !== null || startingKey !== null}
                     onClick={() => {
                       releaseSelection()
                       setProfileAction({
@@ -638,7 +699,11 @@ export function CapturePage({
                   </Button>
                   <Button
                     variant="text"
-                    disabled={profileBusy !== null}
+                    aria-pressed={
+                      profileAction?.kind === 'configure' &&
+                      profileAction.profileId === profile.profileId
+                    }
+                    disabled={profileBusy !== null || startingKey !== null}
                     onClick={() => {
                       releaseSelection()
                       setProfileAction({
@@ -656,7 +721,7 @@ export function CapturePage({
                     variant="icon"
                     aria-label={`Переименовать ${profile.profileName}`}
                     title="Переименовать профиль"
-                    disabled={profileBusy !== null}
+                    disabled={profileBusy !== null || startingKey !== null}
                     onClick={() =>
                       beginProfileDialog({
                         kind: 'rename',
@@ -709,16 +774,37 @@ export function CapturePage({
           </div>
         )}
         {currentProfileAction !== null && (
-          <div className="capture-profile-task" data-kind={currentProfileAction.kind}>
+          <div
+            ref={profileTaskRef}
+            className="capture-profile-task"
+            data-kind={currentProfileAction.kind}
+            role="status"
+          >
             <strong>
-              {currentProfileAction.kind === 'rebind' ? 'Перепривязка' : 'Настройка'}:{' '}
-              {currentProfileAction.profileName}
+              {currentProfileAction.kind === 'rebind'
+                ? 'Перепривязка'
+                : currentProfileAction.profileId === null
+                  ? 'Новый профиль'
+                  : 'Настройка'}
+              : {currentProfileAction.profileName}
             </strong>
             <span>
               {currentProfileAction.kind === 'rebind'
                 ? 'Выберите другое окно. Сохранённые области останутся без изменений.'
                 : 'Выберите источник, затем настройте области распознавания.'}
             </span>
+            {profileAction !== null && (
+              <Button
+                variant="text"
+                disabled={startingKey !== null}
+                onClick={() => {
+                  releaseSelection()
+                  setProfileAction(null)
+                }}
+              >
+                Отменить
+              </Button>
+            )}
           </div>
         )}
       </section>
@@ -732,8 +818,24 @@ export function CapturePage({
             if (profileBusy !== null) event.preventDefault()
             else setProfileDialog(null)
           }}
+          onPointerDown={(event) => {
+            profileDialogBackdropGesture.current = event.target === event.currentTarget
+          }}
+          onPointerUp={(event) => {
+            profileDialogBackdropGesture.current =
+              profileDialogBackdropGesture.current && event.target === event.currentTarget
+          }}
+          onPointerCancel={() => {
+            profileDialogBackdropGesture.current = false
+          }}
           onClick={(event) => {
-            if (event.target === event.currentTarget && profileBusy === null) {
+            const backdropGesture = profileDialogBackdropGesture.current
+            profileDialogBackdropGesture.current = false
+            if (
+              backdropGesture &&
+              event.target === event.currentTarget &&
+              profileBusy === null
+            ) {
               setProfileDialog(null)
             }
           }}
@@ -790,14 +892,14 @@ export function CapturePage({
               <div className="profile-dialog-actions">
                 <Button
                   autoFocus={profileDialog.kind === 'delete'}
-                  disabled={profileBusy !== null}
+                  disabled={profileBusy !== null || startingKey !== null}
                   onClick={() => setProfileDialog(null)}
                 >
                   Отмена
                 </Button>
                 <Button
                   variant={profileDialog.kind === 'delete' ? 'danger' : 'primary'}
-                  disabled={profileBusy !== null}
+                  disabled={profileBusy !== null || startingKey !== null}
                   type="submit"
                 >
                   {profileDialog.kind === 'create'
@@ -820,6 +922,7 @@ export function CapturePage({
           <span className="sr-only">Поиск источника</span>
           <input
             type="search"
+            disabled={startingKey !== null}
             value={query}
             placeholder="Поиск по названию"
             onChange={(event) => {
@@ -838,12 +941,14 @@ export function CapturePage({
           ]}
           value={tab}
           onChange={(nextTab) => {
+            if (startingKey !== null) return
             setTab(nextTab)
             releaseSelection()
           }}
         />
         <Button
           className="availability-filter"
+          disabled={startingKey !== null}
           aria-pressed={availableOnly}
           onClick={() => {
             setAvailableOnly((value) => !value)
@@ -900,6 +1005,7 @@ export function CapturePage({
                   busy={
                     startingKey === source.sourceKey || preparingKey === source.sourceKey
                   }
+                  previewLoading={previewsLoading}
                   onSelect={() => void selectSource(source)}
                 />
               ))}
@@ -972,12 +1078,14 @@ function SourceCard({
   selected,
   disabled,
   busy,
+  previewLoading,
   onSelect,
 }: {
   source: CaptureSourceView
   selected: boolean
   disabled: boolean
   busy: boolean
+  previewLoading: boolean
   onSelect: () => void
 }): React.JSX.Element {
   const previewState = !source.captureSupported
@@ -989,7 +1097,9 @@ function SourceCard({
   const previewLabel = !source.captureSupported
     ? 'Источник недоступен'
     : source.preview === null
-      ? 'Миниатюра недоступна'
+      ? previewLoading
+        ? 'Загружаем миниатюру'
+        : 'Миниатюра недоступна'
       : `${source.preview.size.width} × ${source.preview.size.height}`
 
   return (

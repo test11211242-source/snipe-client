@@ -2,11 +2,11 @@
 
 This repository contains the Windows client and its test/release automation.
 The related backend, admin, and canonical PWA repository is
-`/home/art/dev/snipe-server` in WSL.
+`C:\Dev\Snipe\server` on Windows.
 
 ## Worktree safety
 
-The original `C:\Dev\snipe-client` checkout may contain user changes and large
+The original `C:\Dev\Snipe\client` checkout may contain user changes and large
 runtime artifacts. Never reset, clean, overwrite, or publish from a dirty
 checkout. Use an existing clean worktree or create a task-specific worktree,
 and review only the paths relevant to the task.
@@ -22,9 +22,9 @@ authorize publication to users. `main` may contain unreleased changes, and the
 package version may remain at the current public version during development.
 
 - `Собери тестовую Windows-версию` permits
-  `./publish-update.sh test [X.Y.Z]`, which must not deploy an update.
+  `publish-update.cmd test`, which builds locally and must not deploy an update.
 - Only `Опубликуй Windows X.Y.Z` permits
-  `./publish-update.sh release X.Y.Z` and its `PUBLISH` confirmation.
+  `publish-update.cmd release X.Y.Z` and its `PUBLISH` confirmation.
 - Requests such as implement, fix, test, build, prepare, merge, or continue do
   not authorize a release, version bump, signing, or upload.
 
@@ -33,6 +33,13 @@ must be newer than the public manifest and must match reviewed package metadata.
 The canonical server destination is
 `/home/ubuntu/snipe-shared/data/updates/downloads/v2`. Always verify the public
 manifest and installer after publication.
+
+The Windows publisher builds and runs Windows gates on the owner's PC. GitHub
+only validates, signs and deploys the exact local installer through
+`pc-build-v2-local-publish.yml`; do not dispatch the old hosted-build workflow
+when the user requests local assembly. Release metadata commits are created
+only after all local gates pass, in an isolated worktree. Development commits
+and reviews remain separate from publication.
 
 ## Verification
 

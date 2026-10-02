@@ -3,6 +3,8 @@ node_modules/
 out/
 release/
 published/
+resources/python-runtime/
+resources/runtime-integrity.json
 coverage/
 playwright-report/
 test-results/

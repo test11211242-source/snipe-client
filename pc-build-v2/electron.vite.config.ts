@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react-swc'
 import { defineConfig } from 'electron-vite'
 
+import { developmentCsp } from './development-csp'
+
 export default defineConfig({
   main: {
     build: {
@@ -32,7 +34,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(import.meta.dirname, 'renderer'),
-    plugins: [react()],
+    plugins: [developmentCsp(), react()],
     build: {
       rollupOptions: {
         input: {

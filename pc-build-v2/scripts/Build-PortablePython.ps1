@@ -7,6 +7,19 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$RuntimeDirectory = [System.IO.Path]::GetFullPath($RuntimeDirectory)
+$resourcesRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'resources'))
+$resourcesPrefix = $resourcesRoot + [System.IO.Path]::DirectorySeparatorChar
+if (-not $RuntimeDirectory.StartsWith($resourcesPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+    [System.IO.Path]::GetFileName($RuntimeDirectory) -ne 'python-runtime') {
+  throw 'Runtime directory must be a python-runtime directory inside this checkout resources folder.'
+}
+foreach ($target in @($resourcesRoot, $RuntimeDirectory)) {
+  if ((Test-Path -LiteralPath $target) -and
+      ((Get-Item -LiteralPath $target).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+    throw 'Runtime build refuses a linked resources or runtime directory.'
+  }
+}
 $requirements = Join-Path $root 'python\requirements-windows-runtime.txt'
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("cr-tools-v2-python-" + [guid]::NewGuid())
 $package = Join-Path $staging "python.$PythonVersion.nupkg"
@@ -27,18 +40,18 @@ try {
   if (-not (Test-Path (Join-Path $tools 'python.exe'))) {
     throw 'Pinned NuGet Python package did not contain tools\python.exe.'
   }
-  if (Test-Path $RuntimeDirectory) { Remove-Item -Recurse -Force $RuntimeDirectory }
+  if (Test-Path -LiteralPath $RuntimeDirectory) { Remove-Item -LiteralPath $RuntimeDirectory -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $RuntimeDirectory | Out-Null
   Copy-Item -Recurse -Force (Join-Path $tools '*') $RuntimeDirectory
 
   $python = Join-Path $RuntimeDirectory 'python.exe'
-  & $python -m ensurepip --upgrade
+  & $python -I -m ensurepip --upgrade
   if ($LASTEXITCODE -ne 0) { throw 'ensurepip failed.' }
-  & $python -m pip install --disable-pip-version-check --no-compile --no-deps --only-binary=:all: --require-hashes --requirement $requirements
+  & $python -I -m pip install --disable-pip-version-check --no-compile --no-deps --only-binary=:all: --require-hashes --requirement $requirements
   if ($LASTEXITCODE -ne 0) { throw 'Pinned wheel installation failed.' }
-  & $python -m pip check
+  & $python -I -m pip check
   if ($LASTEXITCODE -ne 0) { throw 'pip check failed.' }
-  & $python -c "import cv2, numpy, windows_capture; print('portable runtime imports verified')"
+  & $python -I -c "import cv2, numpy, windows_capture; print('portable runtime imports verified')"
   if ($LASTEXITCODE -ne 0) { throw 'Portable runtime import smoke failed.' }
 
   $licenses = Join-Path $RuntimeDirectory 'licenses'
@@ -56,7 +69,6 @@ try {
     $_.Name -eq 'pip' -or $_.Name -like 'pip-*.dist-info'
   } | Remove-Item -Recurse -Force
   Get-ChildItem (Join-Path $RuntimeDirectory 'Scripts') -File -Filter 'pip*.exe' | Remove-Item -Force
-  Remove-Item -Recurse -Force (Join-Path $env:LOCALAPPDATA 'pip\Cache') -ErrorAction SilentlyContinue
 
   & (Join-Path $PSScriptRoot 'Test-PortableRuntime.ps1') -RuntimeDirectory $RuntimeDirectory
   if ($LASTEXITCODE -ne 0) { throw 'Final portable runtime validation failed.' }
@@ -64,5 +76,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory generation failed.' }
 }
 finally {
-  Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+  $resolvedStaging = [System.IO.Path]::GetFullPath($staging)
+  $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+  if ($resolvedStaging.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+      [System.IO.Path]::GetFileName($resolvedStaging) -like 'cr-tools-v2-python-*') {
+    Remove-Item -LiteralPath $resolvedStaging -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }

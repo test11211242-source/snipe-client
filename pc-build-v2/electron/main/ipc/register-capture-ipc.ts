@@ -21,6 +21,7 @@ import {
   SetupFrameResultSchema,
   SetupSessionResultSchema,
   SourceSnapshotResultSchema,
+  SourcePreviewsPayloadSchema,
   StartSetupPayloadSchema,
 } from '../../../shared/contracts/capture-ipc'
 import { ApplicationError } from '../../../shared/errors/application-error'
@@ -50,6 +51,13 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     verify(event, dependencies.windows, 'main')
     EmptyCapturePayloadSchema.parse(rawPayload)
     return SourceSnapshotResultSchema.parse(await dependencies.registry.enumerate())
+  })
+  ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.loadPreviews, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = SourcePreviewsPayloadSchema.parse(rawPayload)
+    return SourceSnapshotResultSchema.parse(
+      await dependencies.registry.loadPreviews(payload.revision),
+    )
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.prepareSource, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')

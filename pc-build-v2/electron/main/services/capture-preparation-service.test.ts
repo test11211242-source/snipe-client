@@ -24,6 +24,33 @@ const source: ResolvedCaptureSource = {
 }
 
 describe('CapturePreparationService', () => {
+  it('interrupts an in-flight readiness wait when the user changes source', async () => {
+    let rejectFirst!: (error: Error) => void
+    const pending = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    const process = {
+      start: vi
+        .fn()
+        .mockReturnValueOnce(pending)
+        .mockResolvedValue({ sessionId: 'next' }),
+      stop: vi.fn().mockImplementation(() => {
+        if (process.start.mock.calls.length === 1) rejectFirst(new Error('cancelled'))
+        return Promise.resolve()
+      }),
+    }
+    const service = new CapturePreparationService(
+      { resolve: vi.fn().mockResolvedValue(source) } as never,
+      process as never,
+    )
+    const first = service.prepare('a'.repeat(32), 'b'.repeat(32))
+    const rejected = expect(first).rejects.toThrow('cancelled')
+    await vi.waitFor(() => expect(process.start).toHaveBeenCalledOnce())
+    const second = service.prepare('c'.repeat(32), 'b'.repeat(32))
+    await rejected
+    await expect(second).resolves.toMatchObject({ sourceKey: 'c'.repeat(32) })
+    expect(process.start).toHaveBeenCalledTimes(2)
+  })
   it('binds an opaque preparation to its resolved source and consumes it once', async () => {
     const process = {
       start: vi.fn().mockResolvedValue({
