@@ -18,6 +18,11 @@ on:
         description: Temporary draft containing the exact local installer and receipt
         required: true
         type: string
+      build_source_sha:
+        description: Original reviewed build commit for recovery after a workflow-only fix
+        required: false
+        default: ""
+        type: string
       critical:
         description: Mark this update critical
         required: true
@@ -46,6 +51,10 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: production
+    # GitHub only exposes draft releases to tokens with push access.
+    permissions:
+      actions: read
+      contents: write
     steps:
       - name: Preflight required production secrets
         working-directory: .
@@ -66,6 +75,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -78,14 +89,22 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
           LOCAL_BUILD_TAG: ${{ inputs.local_build_tag }}
-          RELEASE_SOURCE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE_SHA: ${{ inputs.build_source_sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$CORRELATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
           [[ "$LOCAL_BUILD_TAG" == "local-windows-$RELEASE_VERSION-$CORRELATION_ID" ]]
+          [[ "$RELEASE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" "$GITHUB_SHA"
+          # Recovery may update publication automation, but never the built application.
+          git diff --exit-code "$RELEASE_SOURCE_SHA" "$GITHUB_SHA" -- .
           mkdir -p release-input
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$LOCAL_BUILD_TAG" >release-input/transport.json
+          # The tags endpoint only returns published releases. List authenticated drafts instead.
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp >release-input/releases.json
+          jq --exit-status --arg tag "$LOCAL_BUILD_TAG" \
+            '[.[][] | select(.tag_name == $tag)] | if length == 1 then .[0] else error("Expected one draft transport") end' \
+            release-input/releases.json >release-input/transport.json
           gh release download "$LOCAL_BUILD_TAG" --repo "$GITHUB_REPOSITORY" --dir release-input \
             --pattern "CR_Tools_V2_Setup_$RELEASE_VERSION.exe" \
             --pattern runtime-integrity.json --pattern local-build.json
