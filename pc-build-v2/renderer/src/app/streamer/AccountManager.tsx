@@ -83,9 +83,7 @@ export function AccountManager({
         </label>
         <Button
           variant="primary"
-          disabled={
-            busy !== null || limitReached || tag.trim().length < 2 || tagInvalid
-          }
+          disabled={busy !== null || limitReached || tag.trim().length < 2 || tagInvalid}
           onClick={() => void addAccount()}
         >
           Добавить аккаунт

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { Button, Status, Toggle } from '../ui'
 
@@ -199,14 +199,57 @@ export function ConfirmedButton({
   prompt: string
   action: () => Promise<void>
 }): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false)
+  const dialog = useRef<HTMLDialogElement | null>(null)
+  const trigger = useRef<HTMLElement | null>(null)
+  const titleId = useId()
+  useEffect(() => {
+    const currentDialog = dialog.current
+    if (confirming) currentDialog?.showModal()
+    else trigger.current?.focus()
+    return () => {
+      if (currentDialog?.open) currentDialog.close()
+    }
+  }, [confirming])
   return (
-    <Button
-      disabled={disabled}
-      onClick={() => {
-        if (window.confirm(prompt)) void action()
-      }}
-    >
-      {label}
-    </Button>
+    <>
+      <Button
+        disabled={disabled}
+        onClick={(event) => {
+          trigger.current = event.currentTarget
+          setConfirming(true)
+        }}
+      >
+        {label}
+      </Button>
+      {confirming && (
+        <dialog
+          className="profile-dialog-shell"
+          ref={dialog}
+          aria-labelledby={titleId}
+          onCancel={() => setConfirming(false)}
+        >
+          <section className="profile-dialog">
+            <h3 id={titleId}>{label}</h3>
+            <p>{prompt}</p>
+            <div className="profile-dialog-actions">
+              <Button autoFocus onClick={() => setConfirming(false)}>
+                Отмена
+              </Button>
+              <Button
+                variant="danger"
+                disabled={disabled}
+                onClick={() => {
+                  setConfirming(false)
+                  void action()
+                }}
+              >
+                Подтвердить
+              </Button>
+            </div>
+          </section>
+        </dialog>
+      )}
+    </>
   )
 }

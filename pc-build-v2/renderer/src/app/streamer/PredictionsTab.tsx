@@ -8,6 +8,7 @@ import type {
 import { Button, Status } from '../ui'
 import {
   DraftStatus,
+  ConfirmedButton,
   Metric,
   NumberField,
   Requirement,
@@ -145,19 +146,16 @@ export function PredictionsTab({
                 : 'Подключите канал, чтобы создавать прогнозы. Если он связан с другим профилем CR Tools, привязка перейдёт сюда.'}
           </p>
           {view.twitch.connected ? (
-            <Button
-              variant="danger"
+            <ConfirmedButton
+              label="Отключить Twitch"
+              prompt="Отключить Twitch и отозвать серверный токен?"
               disabled={busy !== null}
-              onClick={() => {
-                if (window.confirm('Отключить Twitch и отозвать серверный токен?')) {
-                  void run('disconnect', () =>
-                    window.crTools.disconnectTwitch({ confirmed: true }),
-                  )
-                }
-              }}
-            >
-              Отключить Twitch
-            </Button>
+              action={() =>
+                run('disconnect', () =>
+                  window.crTools.disconnectTwitch({ confirmed: true }),
+                ).then(() => undefined)
+              }
+            />
           ) : (
             <Button
               variant="primary"

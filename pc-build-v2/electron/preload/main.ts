@@ -31,6 +31,7 @@ import {
   ReleasePreparationResultSchema,
   RebindCaptureProfilePayloadSchema,
   SourceSnapshotResultSchema,
+  SourcePreviewsPayloadSchema,
   StartSetupPayloadSchema,
   SetupSessionResultSchema,
 } from '../../shared/contracts/capture-ipc'
@@ -135,6 +136,12 @@ const api: CrToolsApi = Object.freeze({
         EmptyCapturePayloadSchema.parse({}),
       ),
     ),
+  loadCapturePreviews: async (rawPayload: unknown) => {
+    const payload = SourcePreviewsPayloadSchema.parse(rawPayload)
+    return SourceSnapshotResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.loadPreviews, payload),
+    )
+  },
   prepareCaptureSource: async (rawPayload: unknown) => {
     const payload = PreviewPayloadSchema.parse(rawPayload)
     return CapturePreparationResponseSchema.parse(

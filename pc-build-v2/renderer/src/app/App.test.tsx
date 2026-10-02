@@ -78,6 +78,7 @@ describe('App shell', () => {
           expiresAt: Date.now() + 30_000,
           sources: [],
         }),
+        loadCapturePreviews: vi.fn().mockRejectedValue(new Error('No previews')),
         prepareCaptureSource: vi
           .fn()
           .mockImplementation(({ sourceKey, revision }: PreviewPayload) =>
@@ -91,7 +92,9 @@ describe('App shell', () => {
             }),
           ),
         releaseCaptureSource: vi.fn().mockResolvedValue({ released: true }),
-        startCaptureSetup: vi.fn(),
+        startCaptureSetup: vi.fn().mockResolvedValue({
+          profileId: '00000000-0000-4000-8000-000000000030',
+        }),
         getMonitorView: vi.fn().mockResolvedValue({
           state: 'STOPPED',
           preferences: { searchMode: 'fast', deckMode: 'pol' },
@@ -373,7 +376,207 @@ describe('App shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
 
     expect(dialog).not.toBeInTheDocument()
-    expect(screen.getByText(/Настройка:/)).toHaveTextContent('Второй аккаунт')
+    expect(screen.getByText(/Новый профиль:/)).toHaveTextContent('Второй аккаунт')
+  })
+
+  it.each(['input-to-backdrop', 'backdrop-to-input'])(
+    'keeps the profile name dialog open after dragging %s',
+    async (direction) => {
+      render(<App />)
+      fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Добавить профиль' }))
+      const dialog = screen.getByRole('dialog', { name: 'Новый профиль' })
+      const input = screen.getByRole('textbox', { name: 'Название' })
+      fireEvent.change(input, { target: { value: 'Название для выделения' } })
+      const startsInInput = direction === 'input-to-backdrop'
+
+      fireEvent.pointerDown(startsInInput ? input : dialog)
+      fireEvent.pointerUp(startsInInput ? dialog : input)
+      // A release over a different element targets the common ancestor for click.
+      fireEvent.click(dialog)
+
+      expect(dialog).toBeVisible()
+      expect(input).toHaveValue('Название для выделения')
+      fireEvent.change(input, { target: { value: '' } })
+      expect(dialog).toBeVisible()
+      fireEvent.change(input, { target: { value: 'Новое название' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+      expect(dialog).not.toBeInTheDocument()
+      expect(screen.getByText(/Новый профиль:/)).toHaveTextContent('Новое название')
+    },
+  )
+
+  it('closes the profile dialog after a click entirely on the backdrop', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    const trigger = await screen.findByRole('button', { name: 'Добавить профиль' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: 'Новый профиль' })
+
+    fireEvent.pointerDown(dialog)
+    fireEvent.pointerUp(dialog)
+    fireEvent.click(dialog)
+
+    expect(dialog).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('ignores a cancelled backdrop gesture when editing a profile name', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить профиль' }))
+    const dialog = screen.getByRole('dialog', { name: 'Новый профиль' })
+
+    fireEvent.pointerDown(dialog)
+    fireEvent.pointerCancel(dialog)
+    fireEvent.click(dialog)
+
+    expect(dialog).toBeVisible()
+  })
+
+  it('creates a new named profile through source preparation and setup even while previews are pending', async () => {
+    const revision = 'c'.repeat(32)
+    vi.mocked(window.crTools.loadCapturePreviews).mockReturnValue(
+      new Promise(() => undefined),
+    )
+    vi.mocked(window.crTools.listCaptureSources).mockResolvedValue({
+      revision,
+      expiresAt: Date.now() + 30_000,
+      sources: [
+        {
+          sourceKey: 'a'.repeat(32),
+          revision,
+          kind: 'window',
+          label: 'Game',
+          detail: null,
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+      ],
+    })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить профиль' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Название' }), {
+      target: { value: 'Новый аккаунт' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Game/ }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Продолжить к настройке' }),
+      ).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить к настройке' }))
+    await waitFor(() =>
+      expect(window.crTools.startCaptureSetup).toHaveBeenCalledWith({
+        preparationId: '00000000-0000-4000-8000-000000000020',
+        profileId: null,
+        profileName: 'Новый аккаунт',
+        expectedRevision: 0,
+      }),
+    )
+  })
+
+  it('does not replace a new profile with a different saved profile sharing its name', async () => {
+    const revision = 'c'.repeat(32)
+    vi.mocked(window.crTools.listCaptureSources).mockResolvedValue({
+      revision,
+      expiresAt: Date.now() + 30_000,
+      sources: [
+        {
+          sourceKey: 'a'.repeat(32),
+          revision,
+          kind: 'window',
+          label: 'Game',
+          detail: null,
+          captureSupported: true,
+          unavailableReason: null,
+          preview: null,
+        },
+      ],
+    })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить профиль' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Название' }), {
+      target: { value: 'Новый аккаунт' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
+      revision: 1,
+      activeProfileId: '00000000-0000-4000-8000-000000000001',
+      profiles: [
+        {
+          profileId: '00000000-0000-4000-8000-000000000001',
+          profileName: 'Новый аккаунт',
+          isActive: true,
+          sourceLabel: 'Other',
+          configurationRevision: 1,
+          configurationFingerprint: 'a'.repeat(64),
+          sourceKind: 'window',
+          createdAt: '2026-10-02T12:00:00.000Z',
+          updatedAt: '2026-10-02T12:00:00.000Z',
+          committedAt: '2026-10-02T12:00:00.000Z',
+        },
+      ],
+    })
+    window.dispatchEvent(new Event('focus'))
+    await screen.findByRole('button', { name: 'Переименовать Новый аккаунт' })
+    fireEvent.click(await screen.findByRole('button', { name: /Game/ }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Продолжить к настройке' }),
+      ).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить к настройке' }))
+    await waitFor(() =>
+      expect(window.crTools.startCaptureSetup).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileId: null,
+          profileName: 'Новый аккаунт',
+          expectedRevision: 0,
+        }),
+      ),
+    )
+  })
+
+  it('keeps a failed profile rename dialog open with its name and error', async () => {
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
+      revision: 1,
+      activeProfileId: '00000000-0000-4000-8000-000000000001',
+      profiles: [
+        {
+          profileId: '00000000-0000-4000-8000-000000000001',
+          profileName: 'Основной',
+          isActive: true,
+          sourceLabel: 'Game',
+          configurationRevision: 1,
+          configurationFingerprint: 'a'.repeat(64),
+          createdAt: '2026-10-02T12:00:00.000Z',
+          updatedAt: '2026-10-02T12:00:00.000Z',
+          committedAt: '2026-10-02T12:00:00.000Z',
+          sourceKind: 'window',
+        },
+      ],
+    })
+    vi.mocked(window.crTools.renameCaptureProfile).mockRejectedValue(
+      new Error('write failed'),
+    )
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Переименовать Основной' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Название' }), {
+      target: { value: 'Переименованный' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    expect(await screen.findByText(/Не удалось переименовать профиль/)).toBeVisible()
+    expect(screen.getByRole('dialog', { name: 'Переименовать профиль' })).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Название' })).toHaveValue(
+      'Переименованный',
+    )
   })
 
   it('closes the profile dialog with Escape and restores trigger focus', async () => {

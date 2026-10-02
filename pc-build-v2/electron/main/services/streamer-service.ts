@@ -36,7 +36,6 @@ import {
   titleToServer,
 } from './streamer-adapters'
 
-const UnknownSchema = z.unknown()
 const CommandSuccessSchema = z.object({ success: z.literal(true) }).loose()
 const TitlePreviewResponseSchema = z
   .object({
@@ -164,7 +163,7 @@ export class StreamerService {
   setSectionActive(active: boolean): StreamerView {
     this.#sectionActive = active
     if (active) {
-      void this.refresh()
+      void this.refresh().catch(() => undefined)
       this.schedulePoll(15_000)
     } else if (this.#oauthPollsRemaining === 0) {
       this.stopPolling()
@@ -356,6 +355,7 @@ export class StreamerService {
       this.captureConfigurations.load(userId),
       this.monitor.getView(),
     ])
+    if (!this.isCurrentRefresh(generation, signal)) return this.#view
     const localErrors: StreamerView['refresh']['errors'] = []
     const localPreferences =
       local[0].status === 'fulfilled'
@@ -386,13 +386,13 @@ export class StreamerService {
       this.api.request({
         method: 'GET',
         path: '/api/streamer/bot/status',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
       this.api.request({
         method: 'GET',
         path: '/api/streamer/result-config',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
     ]).then(([status, result]) => (!status.ok ? status : !result.ok ? result : status))
@@ -400,30 +400,30 @@ export class StreamerService {
       this.api.request({
         method: 'GET',
         path: '/api/streamer/auth/status',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
       predictionRequest,
       this.api.request({
         method: 'GET',
         path: '/api/streamer/title/status',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
       this.api.request({
         method: 'GET',
         path: '/api/streamer/settings/deck-sharing',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
       this.api.request({
         method: 'GET',
         path: '/api/streamer/opponent-widget/status',
-        schema: UnknownSchema,
+        schema: CommandSuccessSchema,
         signal,
       }),
     ])
-    if (generation !== this.#generation || signal.aborted) return this.#view
+    if (!this.isCurrentRefresh(generation, signal)) return this.#view
     const sections = ['twitch', 'predictions', 'title', 'deckSharing', 'overlay'] as const
     const errors: StreamerView['refresh']['errors'] = [...localErrors]
     let next = this.#view
@@ -445,52 +445,58 @@ export class StreamerService {
         continue
       }
       const value = settled.value.data
-      if (section === 'twitch')
-        next = {
-          ...next,
-          twitch: { ...parseTwitch(value), polling: this.#oauthPollsRemaining > 0 },
-        }
-      else if (section === 'predictions') {
-        const parsed = parsePredictions(value, localPreferences)
-        this.predictions.observeServerState(
-          parsed.active,
-          userId,
-          predictionObservationGeneration,
-        )
-        next = { ...next, predictions: { ...next.predictions, ...parsed } }
-      } else if (section === 'title') next = { ...next, title: parseTitle(value) }
-      else if (section === 'deckSharing') {
-        const input =
-          value !== null && typeof value === 'object'
-            ? (value as Record<string, unknown>)
-            : {}
-        const settings =
-          input['settings'] !== null && typeof input['settings'] === 'object'
-            ? (input['settings'] as Record<string, unknown>)
-            : {}
-        next = { ...next, deckSharing: { enabled: settings['enabled'] === true } }
-      } else {
-        const parsed = parseOverlay(value)
-        this.#urls = parsed.urls
-        next = {
-          ...next,
-          overlay: {
-            settings: parsed.settings,
-            urlsAvailable: {
-              stats: parsed.urls.stats !== null,
-              opponent: parsed.urls.opponent !== null,
+      const previous = next
+      const previousUrls = this.#urls
+      try {
+        CommandSuccessSchema.parse(value)
+        if (section === 'twitch')
+          next = {
+            ...next,
+            twitch: { ...parseTwitch(value), polling: this.#oauthPollsRemaining > 0 },
+          }
+        else if (section === 'predictions') {
+          const parsed = parsePredictions(value, localPreferences)
+          this.predictions.observeServerState(
+            parsed.active,
+            userId,
+            predictionObservationGeneration,
+          )
+          next = { ...next, predictions: { ...next.predictions, ...parsed } }
+        } else if (section === 'title') next = { ...next, title: parseTitle(value) }
+        else if (section === 'deckSharing') {
+          const settings =
+            value['settings'] !== null && typeof value['settings'] === 'object'
+              ? (value['settings'] as Record<string, unknown>)
+              : {}
+          next = { ...next, deckSharing: { enabled: settings['enabled'] === true } }
+        } else {
+          const parsed = parseOverlay(value)
+          this.#urls = parsed.urls
+          next = {
+            ...next,
+            overlay: {
+              settings: parsed.settings,
+              urlsAvailable: {
+                stats: parsed.urls.stats !== null,
+                opponent: parsed.urls.opponent !== null,
+              },
+              maskedUrls: {
+                stats:
+                  parsed.urls.stats === null ? null : 'OBS stats URL available (hidden)',
+                opponent:
+                  parsed.urls.opponent === null
+                    ? null
+                    : 'OBS opponent URL available (hidden)',
+              },
+              recommendedSizes: recommendedSizes(parsed.settings),
             },
-            maskedUrls: {
-              stats:
-                parsed.urls.stats === null ? null : 'OBS stats URL available (hidden)',
-              opponent:
-                parsed.urls.opponent === null
-                  ? null
-                  : 'OBS opponent URL available (hidden)',
-            },
-            recommendedSizes: recommendedSizes(parsed.settings),
-          },
+          }
         }
+        next = StreamerViewSchema.parse(next)
+      } catch (error) {
+        next = previous
+        this.#urls = previousUrls
+        errors.push(publicFailure(section, error))
       }
     }
     const boundedErrors = errors
@@ -591,6 +597,10 @@ export class StreamerService {
     ++this.#generation
     this.#refreshController.abort()
     this.#refreshPromise = null
+  }
+
+  private isCurrentRefresh(generation: number, signal: AbortSignal): boolean {
+    return generation === this.#generation && !signal.aborted
   }
 
   private schedulePoll(delay: number): void {

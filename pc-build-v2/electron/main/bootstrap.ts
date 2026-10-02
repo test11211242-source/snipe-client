@@ -275,6 +275,11 @@ const application = new ApplicationController(
 )
 requestApplicationShutdown = () => application.requestShutdown()
 
+// Warm the verified runtime before a user chooses a source; spawning still awaits it.
+void verifyRuntime().catch((error: unknown) => {
+  logger.warn('Python runtime preflight failed', { error })
+})
+
 void application.start().catch((error: unknown) => {
   logger.error('Application startup failed', { error })
   void application.requestShutdown()

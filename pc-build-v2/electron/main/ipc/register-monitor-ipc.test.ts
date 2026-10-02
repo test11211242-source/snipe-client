@@ -48,6 +48,50 @@ beforeEach(() => {
 })
 
 describe('monitor IPC result events', () => {
+  it('opens the waiting widget before monitoring is ready', async () => {
+    let ready!: (view: MonitorView) => void
+    const starting = new Promise<MonitorView>((resolve) => {
+      ready = resolve
+    })
+    const widget = { show: vi.fn().mockResolvedValue({}) }
+    registerMonitorIpc({
+      windows: { assertSender: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn() },
+      widget,
+      monitor: {
+        start: vi.fn().mockReturnValue(starting),
+        subscribeResults: vi.fn(() => () => undefined),
+      },
+    } as never)
+    const handler = electron.handlers.get(MONITOR_IPC_CHANNELS.start)
+    if (handler === undefined) throw new Error('Missing start handler')
+    const result = handler(
+      { senderFrame: { url: 'file:///app/index.html' }, sender: {} },
+      {},
+    )
+    expect(widget.show).toHaveBeenCalledOnce()
+    ready(view)
+    await expect(result).resolves.toEqual(view)
+  })
+
+  it('keeps monitoring running if the widget fails to open', async () => {
+    const warn = vi.fn()
+    registerMonitorIpc({
+      windows: { assertSender: vi.fn() },
+      logger: { info: vi.fn(), warn },
+      widget: { show: vi.fn().mockRejectedValue(new Error('window failure')) },
+      monitor: {
+        start: vi.fn().mockResolvedValue(view),
+        subscribeResults: vi.fn(() => () => undefined),
+      },
+    } as never)
+    const handler = electron.handlers.get(MONITOR_IPC_CHANNELS.start)
+    if (handler === undefined) throw new Error('Missing start handler')
+    await expect(
+      handler({ senderFrame: { url: 'file:///app/index.html' }, sender: {} }, {}),
+    ).resolves.toEqual(view)
+    expect(warn).toHaveBeenCalledOnce()
+  })
   it('pushes the current validated view and disposes the subscription', () => {
     const subscription: { listener?: (result: MonitorResult) => void } = {}
     const disposeResults = vi.fn()

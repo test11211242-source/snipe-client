@@ -5,3 +5,7 @@ coverage
 playwright-report
 test-results
 package-lock.json
+.venv
+published
+resources/python-runtime
+resources/runtime-integrity.json

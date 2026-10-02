@@ -500,6 +500,7 @@ function EmptyResult({ result }: { result: WidgetView['result'] }): React.JSX.El
       <EmptyState
         title="Ожидание соперника"
         detail="Виджет обновится после найденного игрока."
+        deckPlaceholder
       />
     )
   }
@@ -528,11 +529,13 @@ function EmptyState({
   detail,
   tone = 'neutral',
   loading = false,
+  deckPlaceholder = false,
 }: {
   title: string
   detail: string
   tone?: 'neutral' | 'warning' | 'danger'
   loading?: boolean
+  deckPlaceholder?: boolean
 }): React.JSX.Element {
   return (
     <section
@@ -545,6 +548,13 @@ function EmptyState({
       <span aria-hidden="true">CR</span>
       <strong>{title}</strong>
       <p>{detail}</p>
+      {deckPlaceholder && (
+        <div className="widget-deck-placeholder" aria-hidden="true">
+          {Array.from({ length: 8 }, (_, index) => (
+            <i key={index} />
+          ))}
+        </div>
+      )}
     </section>
   )
 }

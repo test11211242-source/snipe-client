@@ -9,6 +9,7 @@ import {
 } from '../../../shared/contracts/monitor-ipc'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { MonitorSupervisor } from '../services/monitor-supervisor'
+import type { WidgetController } from '../services/widget-controller'
 import type { WindowCoordinator } from '../windows/window-coordinator'
 import { verifyIpcSender } from './verify-ipc-sender'
 
@@ -16,6 +17,7 @@ interface MonitorIpcDependencies {
   windows: WindowCoordinator
   logger: StructuredLogger
   monitor: MonitorSupervisor
+  widget: WidgetController
 }
 
 function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator): void {
@@ -31,7 +33,12 @@ export function registerMonitorIpc(dependencies: MonitorIpcDependencies): () => 
   ipcMain.handle(MONITOR_IPC_CHANNELS.start, async (event, rawPayload) => {
     verify(event, dependencies.windows)
     EmptyMonitorPayloadSchema.parse(rawPayload)
-    return MonitorViewResultSchema.parse(await dependencies.monitor.start())
+    const starting = dependencies.monitor.start()
+    // Show the waiting window while preflight and worker startup are still running.
+    void dependencies.widget.show().catch((error: unknown) => {
+      dependencies.logger.warn('Could not open the monitor widget', { error })
+    })
+    return MonitorViewResultSchema.parse(await starting)
   })
   ipcMain.handle(MONITOR_IPC_CHANNELS.stop, async (event, rawPayload) => {
     verify(event, dependencies.windows)

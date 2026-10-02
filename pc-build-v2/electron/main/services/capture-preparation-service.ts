@@ -37,8 +37,10 @@ export class CapturePreparationService {
   prepare(sourceKey: string, revision: string): Promise<CapturePreparationView> {
     const desired = { generation: ++this.#generation, sourceKey, revision }
     this.#desired = desired
+    // Readiness can block the transition queue, so interrupt the old worker now.
+    const stopped = this.stopPrepared()
     return this.queue(async () => {
-      await this.stopPrepared()
+      await stopped
       this.assertDesired(desired)
       const source = await this.registry.resolve(sourceKey, revision)
       this.assertDesired(desired)
@@ -88,8 +90,9 @@ export class CapturePreparationService {
     }
     this.#desired = null
     ++this.#generation
+    const stopped = this.stopPrepared()
     return this.queue(async () => {
-      await this.stopPrepared()
+      await stopped
       return true
     })
   }
@@ -97,7 +100,8 @@ export class CapturePreparationService {
   stop(): Promise<void> {
     this.#desired = null
     ++this.#generation
-    return this.queue(() => this.stopPrepared())
+    const stopped = this.stopPrepared()
+    return this.queue(() => stopped)
   }
 
   private queue<T>(operation: () => Promise<T>): Promise<T> {

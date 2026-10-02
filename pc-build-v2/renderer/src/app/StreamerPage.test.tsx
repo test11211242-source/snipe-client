@@ -137,6 +137,26 @@ describe('StreamerPage', () => {
 
   afterEach(() => vi.restoreAllMocks())
 
+  it('confirms disconnect inside the application and restores focus on cancellation', async () => {
+    render(<StreamerPage auth={auth} />)
+    await screen.findByText('Twitch @caster')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Обновить' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Twitch и прогнозы' }))
+    const trigger = screen.getByRole('button', { name: 'Отключить Twitch' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog', { name: 'Отключить Twitch' })).toBeVisible()
+    expect(window.crTools.disconnectTwitch).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+    expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Подтвердить' }))
+    await waitFor(() =>
+      expect(window.crTools.disconnectTwitch).toHaveBeenCalledWith({ confirmed: true }),
+    )
+  })
+
   it('renders all active tabs, sandboxed OBS previews, and tears down polling', async () => {
     const rendered = render(<StreamerPage auth={auth} />)
     expect(await screen.findByText('Twitch @caster')).toBeInTheDocument()

@@ -124,6 +124,28 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
 }
 
 describe('StreamerService', () => {
+  it('retains valid sections when a title response reports success false', async () => {
+    const test = harness()
+    await test.service.refresh()
+    const previousTitle = test.service.getView().title
+    const original = test.request.getMockImplementation()
+    test.request.mockImplementation(async (input) => {
+      if (input.path.endsWith('/title/status'))
+        return {
+          ok: true,
+          status: 200,
+          data: { success: false, error: 'unavailable' },
+        } as never
+      if (original === undefined) throw new Error('Missing request implementation')
+      return original(input)
+    })
+    const next = await test.service.refresh()
+    expect(next.refresh.state).toBe('partial')
+    expect(next.refresh.errors.map((error) => error.section)).toEqual(['title'])
+    expect(next.title).toEqual(previousTitle)
+    expect(next.twitch.connected).toBe(true)
+    expect(next.overlay.urlsAvailable.opponent).toBe(true)
+  })
   it('coalesces refresh callers and keeps full OBS URLs main-only', async () => {
     const test = harness()
     const first = test.service.refresh()
@@ -235,6 +257,7 @@ describe('StreamerService', () => {
         }),
     )
     const stale = test.service.refresh()
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
     test.service.setSectionActive(false)
     const current = await test.service.refresh()
     expect(current.twitch.connected).toBe(true)

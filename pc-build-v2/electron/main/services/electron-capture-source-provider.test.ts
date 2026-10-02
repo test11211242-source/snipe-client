@@ -114,6 +114,29 @@ describe('ElectronCaptureSourceProvider display mapping', () => {
 })
 
 describe('ElectronCaptureSourceProvider window metadata', () => {
+  it('resolves only the selected window metadata and loads previews without PowerShell', async () => {
+    electron.sources = ['42', '43', '44'].map((handle) => ({
+      id: `window:${handle}:0`,
+      name: 'Game',
+      display_id: '',
+      thumbnail: { isEmpty: () => false },
+    }))
+    const metadata = vi
+      .fn()
+      .mockResolvedValue([
+        { windowHwnd: '43', ownerProcessId: 123, executableLabel: 'Game.exe' },
+      ])
+    const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+    await expect(provider.resolveWindow('43')).resolves.toMatchObject({
+      id: 'window:43:0',
+      ownerProcessId: 123,
+    })
+    expect(metadata).toHaveBeenCalledWith(['43'])
+    await provider.previews({ width: 360, height: 203 })
+    expect(metadata).toHaveBeenCalledOnce()
+    await expect(provider.resolveWindow('99')).resolves.toBeUndefined()
+    expect(metadata).toHaveBeenCalledOnce()
+  })
   it('embeds validated handles in the PowerShell command instead of using trailing switches', () => {
     const command = buildWindowsWindowMetadataCommand(['42', '9007199254740993'])
     expect(command).toContain("$Handles = '42,9007199254740993'")

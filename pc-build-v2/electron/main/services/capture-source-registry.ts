@@ -46,6 +46,11 @@ export interface CaptureSourceProvider {
     width: number
     height: number
   }) => Promise<ElectronCaptureSource[]>
+  previews?: (thumbnailSize: {
+    width: number
+    height: number
+  }) => Promise<ElectronCaptureSource[]>
+  resolveWindow?: (windowHwnd: string) => Promise<ElectronCaptureSource | undefined>
   displays: () => Promise<ElectronDisplayInfo[]>
   ownWindowHandles: () => ReadonlySet<string>
   currentProcessId: number
@@ -87,6 +92,8 @@ export class CaptureSourceRegistry {
   #expiresAt = 0
   #entries = new Map<string, RegistryEntry>()
   #enumerationGeneration = 0
+  #previewLoad: { revision: string; promise: Promise<CaptureSourceSnapshot> } | null =
+    null
 
   constructor(
     private readonly provider: CaptureSourceProvider,
@@ -97,25 +104,13 @@ export class CaptureSourceRegistry {
   async enumerate(): Promise<CaptureSourceSnapshot> {
     const generation = ++this.#enumerationGeneration
     const [sources, displays] = await Promise.all([
-      this.provider.enumerate({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
+      this.provider.enumerate({ width: 0, height: 0 }),
       this.provider.displays(),
     ])
     const displayById = new Map(displays.map((display) => [display.id, display]))
     const ownHandles = this.provider.ownWindowHandles()
     const revision = opaqueKey()
     const entries = new Map<string, RegistryEntry>()
-    let previewDataUrlBytes = 0
-    const takePreview = (source: ElectronCaptureSource): CaptureSourceView['preview'] => {
-      const preview = this.preview(source)
-      if (
-        preview === null ||
-        previewDataUrlBytes + preview.dataUrl.length > MAX_TOTAL_PREVIEW_DATA_URL_BYTES
-      ) {
-        return null
-      }
-      previewDataUrlBytes += preview.dataUrl.length
-      return preview
-    }
 
     for (const source of sources.slice(0, 512)) {
       if (entries.size >= 256) break
@@ -139,7 +134,7 @@ export class CaptureSourceRegistry {
           detail: executableLabel,
           captureSupported: true,
           unavailableReason: null,
-          preview: takePreview(source),
+          preview: null,
         }
         entries.set(sourceKey, {
           rawId: source.id,
@@ -168,7 +163,7 @@ export class CaptureSourceRegistry {
         unavailableReason: mapped
           ? null
           : 'This display cannot be mapped safely to the Windows capture device.',
-        preview: takePreview(source),
+        preview: null,
       }
       entries.set(sourceKey, {
         rawId: source.id,
@@ -183,6 +178,7 @@ export class CaptureSourceRegistry {
 
     if (generation !== this.#enumerationGeneration) throw this.staleError()
     this.#revision = revision
+    this.#previewLoad = null
     this.#expiresAt = this.now() + this.ttlMs
     this.#entries = entries
     return CaptureSourceSnapshotSchema.parse({
@@ -192,20 +188,65 @@ export class CaptureSourceRegistry {
     })
   }
 
+  loadPreviews(revision: string): Promise<CaptureSourceSnapshot> {
+    if (revision !== this.#revision) return Promise.reject(this.staleError())
+    if (this.#previewLoad?.revision === revision) return this.#previewLoad.promise
+    const promise = this.populatePreviews(revision)
+    this.#previewLoad = { revision, promise }
+    void promise.catch(() => {
+      if (this.#previewLoad?.promise === promise) this.#previewLoad = null
+    })
+    return promise
+  }
+
+  private async populatePreviews(revision: string): Promise<CaptureSourceSnapshot> {
+    const size = { width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }
+    const sources = await (this.provider.previews?.(size) ??
+      this.provider.enumerate(size))
+    if (revision !== this.#revision) throw this.staleError()
+    const byId = new Map(sources.map((source) => [source.id, source]))
+    let totalBytes = 0
+    for (const entry of this.#entries.values()) {
+      const source = byId.get(entry.rawId)
+      if (
+        source === undefined ||
+        (entry.view.kind === 'window' && source.name.slice(0, 300) !== entry.view.label)
+      )
+        continue
+      const preview = this.preview(source)
+      if (
+        preview === null ||
+        totalBytes + preview.dataUrl.length > MAX_TOTAL_PREVIEW_DATA_URL_BYTES
+      )
+        continue
+      totalBytes += preview.dataUrl.length
+      entry.view = { ...entry.view, preview }
+    }
+    return CaptureSourceSnapshotSchema.parse({
+      revision,
+      expiresAt: this.#expiresAt,
+      sources: [...this.#entries.values()].map((entry) => entry.view),
+    })
+  }
+
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
     const entry = this.getEntry(sourceKey, revision)
     this.assertExpiredWindowHasIdentity(entry)
-    const sources = await this.provider.enumerate({ width: 0, height: 0 })
+    const currentSource =
+      entry.windowHwnd !== null && this.provider.resolveWindow !== undefined
+        ? await this.provider.resolveWindow(entry.windowHwnd)
+        : (await this.provider.enumerate({ width: 0, height: 0 })).find(
+            (source) => source.id === entry.rawId,
+          )
     this.assertCurrent(sourceKey, revision)
     this.assertExpiredWindowHasIdentity(entry)
-    const currentSource = sources.find((source) => source.id === entry.rawId)
     if (currentSource === undefined) throw this.staleError()
 
     let selector: SetupCaptureSelector
     if (entry.view.kind === 'window' && entry.windowHwnd !== null) {
       if (
         parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
-        currentSource.name !== entry.view.label ||
+        currentSource.name.slice(0, 300) !== entry.view.label ||
         (entry.ownerProcessId !== null &&
           currentSource.ownerProcessId !== entry.ownerProcessId) ||
         (entry.executableLabel !== null &&
@@ -263,7 +304,7 @@ export class CaptureSourceRegistry {
   async resolvePreference(preference: CapturePreference): Promise<SetupCaptureSelector> {
     const [sources, displays] = await Promise.all([
       this.provider.enumerate({ width: 0, height: 0 }),
-      this.provider.displays(),
+      preference.kind === 'display' ? this.provider.displays() : Promise.resolve([]),
     ])
 
     if (preference.kind === 'window') {
