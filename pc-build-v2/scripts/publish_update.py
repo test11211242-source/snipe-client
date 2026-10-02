@@ -288,7 +288,8 @@ def complete_publication(runner: Runner, destination: Path, state: dict) -> None
     verify_public_artifact(receipt)
     runner.step("remove temporary draft transport")
     try:
-        runner.gh("release", "delete", state["tag"], "--yes", "--cleanup-tag")
+        # Draft uploads do not create a Git tag; deleting one would fail after successful cleanup.
+        runner.gh("release", "delete", state["tag"], "--yes")
     except PublishError:
         print(f"Update is published and verified; temporary draft may need cleanup: {state['tag']}")
     print(f"WINDOWS RELEASE OK {receipt['version']} build=local artifact={destination / receipt['artifact']['fileName']}")
