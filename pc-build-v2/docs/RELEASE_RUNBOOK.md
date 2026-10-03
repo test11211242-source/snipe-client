@@ -79,6 +79,22 @@ the old hosted-build process; it is not the local Windows entry point.
 
 ## Trust Model
 
+### Build-tool audit assessment (2026-10-03)
+
+`npm run audit:release` requires zero production dependency findings. High and
+critical findings in development tools also block release unless individually
+reviewed. GHSA-ch52-4w7c-c8xp has no patched npm release as of this assessment:
+https://github.com/advisories/GHSA-ch52-4w7c-c8xp.
+
+Its shared HTTP response-cache scenario does not occur in this app: the package
+is absent from production dependencies; Electron's Got downloader leaves HTTP
+response caching disabled by default; builder caches store downloaded artifacts,
+not responses shared across user sessions. The reviewed exception applies only
+to that advisory and a lockfile-pinned `http-cache-semantics` 4.2.0 marked `dev`.
+It is printed explicitly in release logs. Production use, another leaf version,
+another advisory or incomplete audit data still stops publication. Re-review this
+assessment when upstream publishes a fix or the downloader/cache setup changes.
+
 CR Tools V2 is Windows-only and intentionally has no Authenticode certificate. Every fresh
 installer or update can therefore trigger an unavoidable Windows SmartScreen "Unknown
 publisher" warning. The Ed25519 manifest signature authenticates update metadata and the
