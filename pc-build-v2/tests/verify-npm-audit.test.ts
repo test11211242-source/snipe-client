@@ -44,7 +44,7 @@ describe('release dependency audit', () => {
     // Windows environment keys are case-insensitive; do not retain an inherited
     // NPM_EXECPATH alongside the fixture's npm_execpath.
     for (const key of Object.keys(environment)) {
-      if (key.toLowerCase() === 'npm_execpath') delete environment[key]
+      if (key.toLowerCase() === 'npm_execpath') Reflect.deleteProperty(environment, key)
     }
     environment['npm_execpath'] = join(directory, 'npm.cjs')
     return spawnSync(
