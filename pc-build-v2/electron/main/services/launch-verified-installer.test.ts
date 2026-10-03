@@ -1,8 +1,4 @@
-import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { promises as fileSystem } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -19,12 +15,12 @@ class FakeProcess extends EventEmitter {
 }
 
 const hash = 'A'.repeat(86) + '=='
-const windowsTest = process.platform === 'win32' ? it : it.skip
 
 function dependencies(child: FakeProcess) {
   const spawn = vi.fn<VerifiedInstallerLauncherDependencies['spawn']>(() => child)
   const value: VerifiedInstallerLauncherDependencies = {
     platform: () => 'win32',
+    helperPath: () => 'C:\\trusted\\installer-helper.exe',
     parentProcessId: () => 4321,
     environment: () => ({
       SAFE_PARENT_VALUE: 'preserved',
@@ -50,11 +46,10 @@ describe('launchVerifiedInstaller', () => {
     expect(firstCall).toBeDefined()
     if (firstCall === undefined) throw new Error('Launcher was not spawned')
     const [executable, args, options] = firstCall
-    expect(executable).toBe(
-      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-    )
+    expect(executable).toBe('C:\\trusted\\installer-helper.exe')
     expect(options).toMatchObject({
       shell: false,
+      detached: true,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -68,16 +63,7 @@ describe('launchVerifiedInstaller', () => {
     })
     expect(args).not.toContain('C:\\safe & unusual\\setup.exe')
     expect(args).not.toContain(hash)
-    expect(args.join('\n')).toContain('[System.IO.FileShare]::Read')
-    expect(args.join('\n')).toContain('$sha512.ComputeHash($stream)')
-    expect(args.join('\n')).toContain('Start-Process -FilePath $installerPath -PassThru')
-    expect(args.join('\n')).toContain('Get-Process -Id $parentProcessId')
-    expect(args.join('\n')).toContain('[DateTime]::UtcNow.AddMinutes(5)')
-    expect(args.join('\n')).toContain('CR_TOOLS_INSTALLER_READY')
-    expect(args.join('\n')).toContain('[System.IO.Path]::IsPathRooted($installerPath)')
-    expect(args.join('\n')).not.toContain('IsPathFullyQualified')
-    expect(args.join('\n')).not.toContain('-ArgumentList')
-    expect(args).not.toContain('Bypass')
+    expect(args).toEqual([])
 
     const secondChild = new FakeProcess()
     const secondDependencies = dependencies(secondChild)
@@ -162,35 +148,4 @@ describe('launchVerifiedInstaller', () => {
     child.emit('close', 1, null)
     await rejected
   })
-
-  windowsTest(
-    'runs the exact helper with inbox Windows PowerShell 5.1',
-    async () => {
-      const directory = await fileSystem.mkdtemp(
-        join(tmpdir(), 'cr-tools-installer-helper-'),
-      )
-      const installerPath = join(directory, 'probe.exe')
-      const installer = Buffer.from('CR Tools verified installer helper probe')
-      let control: { cancel(): void } | undefined
-      await fileSystem.writeFile(installerPath, installer)
-
-      try {
-        control = await createVerifiedInstallerLauncher()({
-          path: installerPath,
-          size: installer.byteLength,
-          sha512: createHash('sha512').update(installer).digest('base64'),
-        })
-      } finally {
-        control?.cancel()
-        await new Promise((resolve) => setTimeout(resolve, 250))
-        await fileSystem.rm(directory, {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 100,
-        })
-      }
-    },
-    15_000,
-  )
 })

@@ -28,6 +28,21 @@ checks the installer and packaged version and saves the installer under
 installation on the owner's PC, which would alter their existing app registration.
 Manually verify an upgrade using the app or a disposable Windows user/VM.
 
+The in-app install handoff uses `resources/installer-helper.exe`, compiled locally
+with the Windows .NET Framework compiler during `build:app` and shipped as an
+external resource. It verifies the installer SHA-512 under a read lock, acknowledges
+readiness, survives Electron shutdown, and starts NSIS with
+`/S --updated --force-run`. NSIS updates the existing installation and launches it
+after success. Later diagnostics persist beside the downloaded installer as
+`<installer>.install.log`. Cancellation kills the helper before installation.
+
+Windows Vitest tests exercise the complete handoff after an actual Electron parent
+exits, cancellation, hash rejection, and diagnostics after an installer failure.
+Checking only the readiness marker misses the old PowerShell helper's shutdown
+failure. Versions 0.1.21 and 0.1.22 using that helper require one manual launch of a
+verified newer installer to receive this fix; repeated downloads cannot repair the
+already installed updater. The packaged smoke also requires the helper resource.
+
 `release` requires reviewed code on clean `main`, synchronized with a fresh fetch
 of `origin/main`. Commit/review/merge development changes before invoking it; the
 publisher refuses to pick up arbitrary unsaved files. It reads the public manifest,
