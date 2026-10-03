@@ -8,6 +8,8 @@ files:
   - out/**/*
   - package.json
 extraResources:
+  - from: resources/installer-helper.exe
+    to: installer-helper.exe
   - from: python
     to: python
     filter:

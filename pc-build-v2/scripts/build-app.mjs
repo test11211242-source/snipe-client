@@ -18,6 +18,11 @@ const thisDir = dirname(fileURLToPath(import.meta.url))
 const resourceDir = resolve(thisDir, '..', 'resources')
 if (!existsSync(resourceDir)) mkdirSync(resourceDir, { recursive: true })
 
+if (process.platform === 'win32') {
+  const { buildInstallerHelper } = await import('./build-installer-helper.mjs')
+  buildInstallerHelper(resolve(resourceDir, 'installer-helper.exe'))
+}
+
 const pkg = JSON.parse(readFileSync(resolve(thisDir, '..', 'package.json'), 'utf8'))
 writeFileSync(
   resolve(resourceDir, 'app-version.json'),

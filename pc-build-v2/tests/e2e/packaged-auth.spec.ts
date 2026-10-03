@@ -90,7 +90,10 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
     access(join(resources, 'python', 'monitor_engine.py')),
     access(join(resources, 'runtime-integrity.json')),
     access(join(resources, 'update-public-key.pem')),
+    access(join(resources, 'installer-helper.exe')),
   ])
+  const installerHelper = await readFile(join(resources, 'installer-helper.exe'))
+  expect(installerHelper.subarray(0, 2).toString('ascii')).toBe('MZ')
   const inventory = JSON.parse(
     await readFile(join(resources, 'runtime-integrity.json'), 'utf8'),
   ) as { root?: unknown; files?: unknown[] }
