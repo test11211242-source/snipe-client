@@ -1,7 +1,7 @@
 import type { AppSnapshot } from '../models/application'
 import type { AuthView } from '../models/auth'
 import type { RealtimeStatus } from '../models/network'
-import type { ActivateInvitePayload, LoginPayload, RegisterPayload } from './auth-ipc'
+import type { LoginPayload, RegisterPayload } from './auth-ipc'
 import type { AppSettingsView, HelloResult } from './app'
 import type {
   CapturePreparationResponse,
@@ -135,8 +135,7 @@ export interface CrToolsSetupApi {
 export interface CrToolsAuthApi {
   getView: () => Promise<AuthView>
   retryBootstrap: () => Promise<AuthView>
-  checkInvite: () => Promise<AuthView>
-  activateInvite: (payload: ActivateInvitePayload) => Promise<AuthView>
+  resetLogin: () => Promise<AuthView>
   login: (payload: LoginPayload) => Promise<AuthView>
   register: (payload: RegisterPayload) => Promise<AuthView>
   getUpdateView: () => Promise<UpdateView>

@@ -301,17 +301,23 @@
   opacity: 0.58;
 }
 
-.device-hint {
-  margin-top: 15px;
-  color: var(--auth-muted);
-  font-size: 12px;
-  line-height: 1.5;
-  text-align: center;
+.session-notice {
+  padding: 16px;
+  border: 1px solid var(--auth-danger);
+  border-radius: 8px;
+  background: #2b1b21;
 }
 
-.device-hint code {
-  color: #c9ccd3;
-  font-size: 12px;
+.session-notice h3 {
+  margin: 0 0 8px;
+  color: var(--auth-danger);
+  font-size: 16px;
+}
+
+.session-notice p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .mode-switch {

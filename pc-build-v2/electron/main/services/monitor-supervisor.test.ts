@@ -92,7 +92,6 @@ function harness(
                 role: 'premium',
                 roles: ['premium'],
               },
-        deviceHint: null,
         error: null,
       }),
       getAccessToken: vi.fn().mockResolvedValue('token'),

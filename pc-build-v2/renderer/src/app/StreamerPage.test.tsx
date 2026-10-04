@@ -66,7 +66,6 @@ const auth = {
     role: 'premium' as const,
     roles: ['premium' as const, 'streamer' as const],
   },
-  deviceHint: null,
   error: null,
 }
 

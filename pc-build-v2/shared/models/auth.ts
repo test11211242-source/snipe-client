@@ -20,7 +20,6 @@ export const AuthUserViewSchema = z
 
 export const AuthStateSchema = z.enum([
   'BOOTSTRAPPING',
-  'INVITE_REQUIRED',
   'UNAUTHENTICATED',
   'AUTHENTICATED',
   'BLOCKED',
@@ -31,10 +30,6 @@ export const AuthViewSchema = z
   .object({
     state: AuthStateSchema,
     user: AuthUserViewSchema.nullable(),
-    deviceHint: z
-      .string()
-      .regex(/^[a-f0-9]{8}\.\.\.[a-f0-9]{4}$/)
-      .nullable(),
     error: ApiErrorSchema.nullable(),
   })
   .strict()

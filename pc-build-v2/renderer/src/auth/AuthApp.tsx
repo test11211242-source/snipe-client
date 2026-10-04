@@ -1,4 +1,4 @@
-import { KeyRound, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react'
+import { LockKeyhole, ShieldCheck, UserRound } from 'lucide-react'
 import { useEffect, useState, type SyntheticEvent } from 'react'
 
 import type { AuthView } from '../../../shared/models/auth'
@@ -17,7 +17,6 @@ function ipcErrorView(): AuthView {
   return {
     state: 'ERROR',
     user: null,
-    deviceHint: null,
     error: {
       code: 'UNKNOWN',
       message: 'Не удалось получить состояние авторизации от приложения.',
@@ -118,13 +117,6 @@ export function AuthApp(): React.JSX.Element {
     }
   }
 
-  const submitInvite = (event: FormSubmitEvent): void => {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    const inviteCode = readFormString(data, 'inviteCode')
-    void run(() => window.crToolsAuth.activateInvite({ inviteCode }))
-  }
-
   const submitCredentials = (event: FormSubmitEvent): void => {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
@@ -132,7 +124,10 @@ export function AuthApp(): React.JSX.Element {
     const password = readFormString(data, 'password')
     if (mode === 'register') {
       const username = readFormString(data, 'username')
-      void run(() => window.crToolsAuth.register({ email, username, password }))
+      const inviteKey = readFormString(data, 'inviteKey')
+      void run(() =>
+        window.crToolsAuth.register({ email, username, password, inviteKey }),
+      )
     } else {
       void run(() => window.crToolsAuth.login({ email, password }))
     }
@@ -173,14 +168,7 @@ export function AuthApp(): React.JSX.Element {
       <section className="auth-panel" aria-labelledby="auth-form-title">
         <div className="auth-panel-stack">
           <div className="auth-panel-inner">
-            {state === 'INVITE_REQUIRED' ? (
-              <InviteForm
-                pending={pending}
-                deviceHint={view?.deviceHint ?? null}
-                error={view?.error?.message ?? null}
-                onSubmit={submitInvite}
-              />
-            ) : state === 'BLOCKED' ? (
+            {state === 'BLOCKED' ? (
               <StateMessage
                 tone="danger"
                 title="Доступ заблокирован"
@@ -188,6 +176,11 @@ export function AuthApp(): React.JSX.Element {
                   view?.error?.message ??
                   'Сервер запретил доступ для этой учётной записи.'
                 }
+                actionLabel="Войти в другой аккаунт"
+                onAction={() => {
+                  setMode('login')
+                  void run(() => window.crToolsAuth.resetLogin())
+                }}
               />
             ) : state === 'ERROR' ? (
               <StateMessage
@@ -203,11 +196,15 @@ export function AuthApp(): React.JSX.Element {
               <div className="auth-loading" role="status" aria-live="polite">
                 <span className="auth-spinner" aria-hidden="true" />
                 <h2 id="auth-form-title">Проверяем защищённый сеанс</h2>
-                <p>Соединение с production API и проверка устройства.</p>
+                <p>Проверяем сохранённый вход</p>
               </div>
             ) : (
               <CredentialsForm
                 mode={mode}
+                sessionReplaced={
+                  view?.error?.code === 'UNAUTHORIZED' &&
+                  view.error.message === 'Выполнен вход на другом устройстве'
+                }
                 pending={pending}
                 error={view?.error?.message ?? null}
                 onModeChange={setMode}
@@ -291,57 +288,16 @@ function AuthUpdatePanel({
   )
 }
 
-function InviteForm({
-  pending,
-  deviceHint,
-  error,
-  onSubmit,
-}: {
-  pending: boolean
-  deviceHint: string | null
-  error: string | null
-  onSubmit: (event: FormSubmitEvent) => void
-}): React.JSX.Element {
-  return (
-    <form className="auth-form" onSubmit={onSubmit}>
-      <div className="form-icon">
-        <KeyRound aria-hidden="true" size={22} />
-      </div>
-      <span className="eyebrow">ЭТАП 01 / ДОПУСК</span>
-      <h2 id="auth-form-title">Активируйте инвайт</h2>
-      <p className="form-description">Код будет привязан к текущему устройству.</p>
-      <label htmlFor="invite-code">Инвайт-код</label>
-      <input
-        id="invite-code"
-        name="inviteCode"
-        autoComplete="off"
-        minLength={8}
-        maxLength={50}
-        pattern="[A-Za-z0-9_-]+"
-        required
-        autoFocus
-      />
-      <div className="form-error" role="alert" aria-live="assertive">
-        {error}
-      </div>
-      <button className="primary-button" disabled={pending} type="submit">
-        {pending ? 'Проверяем...' : 'Активировать доступ'}
-      </button>
-      <div className="device-hint">
-        Устройство: <code>{deviceHint ?? 'проверяется'}</code>
-      </div>
-    </form>
-  )
-}
-
 function CredentialsForm({
   mode,
+  sessionReplaced,
   pending,
   error,
   onModeChange,
   onSubmit,
 }: {
   mode: FormMode
+  sessionReplaced: boolean
   pending: boolean
   error: string | null
   onModeChange: (mode: FormMode) => void
@@ -349,10 +305,16 @@ function CredentialsForm({
 }): React.JSX.Element {
   return (
     <form className="auth-form" onSubmit={onSubmit}>
+      {sessionReplaced && (
+        <div className="session-notice" role="alert" aria-live="assertive">
+          <h3>Вы вышли из аккаунта</h3>
+          <p>{error}</p>
+        </div>
+      )}
       <div className="form-icon">
         <UserRound aria-hidden="true" size={22} />
       </div>
-      <span className="eyebrow">ЭТАП 02 / УЧЁТНАЯ ЗАПИСЬ</span>
+      <span className="eyebrow">УЧЁТНАЯ ЗАПИСЬ</span>
       <h2 id="auth-form-title">
         {mode === 'login' ? 'Вход в CR Tools' : 'Создание аккаунта'}
       </h2>
@@ -372,6 +334,16 @@ function CredentialsForm({
           Регистрация
         </button>
       </div>
+      <label htmlFor="email">Email</label>
+      <input
+        id="email"
+        name="email"
+        type="email"
+        maxLength={254}
+        autoComplete="email"
+        required
+        autoFocus
+      />
       {mode === 'register' && (
         <>
           <label htmlFor="username">Имя пользователя</label>
@@ -385,16 +357,6 @@ function CredentialsForm({
           />
         </>
       )}
-      <label htmlFor="email">Email</label>
-      <input
-        id="email"
-        name="email"
-        type="email"
-        maxLength={254}
-        autoComplete="email"
-        required
-        autoFocus
-      />
       <label htmlFor="password">Пароль</label>
       <input
         id="password"
@@ -405,13 +367,38 @@ function CredentialsForm({
         autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
         required
       />
-      <div className="form-error" role="alert" aria-live="assertive">
-        {error}
-      </div>
+      {mode === 'register' && (
+        <>
+          <label htmlFor="invite-key">Ключ доступа</label>
+          <input
+            id="invite-key"
+            name="inviteKey"
+            autoComplete="off"
+            aria-describedby="invite-key-help"
+            pattern={'\\s*[A-Za-z0-9_\\-]{8,50}\\s*'}
+            title="Ключ: 8–50 латинских букв, цифр, символов _ или -"
+            required
+          />
+          <p id="invite-key-help" className="form-description">
+            Ключ покупается у администратора. Нужен один раз — потом входите по почте и
+            паролю на любом устройстве
+          </p>
+        </>
+      )}
+      {!sessionReplaced && (
+        <div className="form-error" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      )}
       <button className="primary-button" disabled={pending} type="submit">
         <LockKeyhole aria-hidden="true" size={16} />
         {pending ? 'Отправляем...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}
       </button>
+      {mode === 'login' && (
+        <p className="form-description">
+          Уже зарегистрированы на телефоне или сайте? Входите той же почтой и паролем
+        </p>
+      )}
     </form>
   )
 }

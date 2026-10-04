@@ -22,7 +22,6 @@ const auth = {
       role: 'premium',
       roles: ['premium', 'streamer'],
     },
-    deviceHint: null,
     error: null,
   }),
 }

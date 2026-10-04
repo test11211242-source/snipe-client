@@ -1,14 +1,10 @@
 import type { z } from 'zod'
 
 import {
-  InviteActivateRequestSchema,
-  InviteCheckRequestSchema,
   LoginRequestSchema,
   RefreshRequestSchema,
   RegisterRequestSchema,
   ServerAuthResponseSchema,
-  ServerInviteActivateResponseSchema,
-  ServerInviteCheckResponseSchema,
   ServerMeResponseSchema,
   parseMeUser,
   toAuthUserView,
@@ -55,12 +51,10 @@ export class AuthSession {
   #view: AuthView = AuthViewSchema.parse({
     state: 'BOOTSTRAPPING',
     user: null,
-    deviceHint: null,
     error: null,
   })
   #accessToken: string | null = null
   #refreshToken: string | null = null
-  #inviteGranted = false
   #generation = 0
   #operationController = new AbortController()
   #refreshPromise: Promise<ApiResult<string>> | undefined
@@ -129,18 +123,6 @@ export class AuthSession {
   private async runBootstrap(generation: number): Promise<AuthView> {
     const identity = await this.prepareIdentity(generation)
     if (identity === null) return this.#view
-    const invite = await this.requestInviteCheck(identity.hwid, generation)
-    if (!this.isCurrent(generation)) return this.#view
-    if (!invite.ok) {
-      this.fail(invite.error)
-      return this.#view
-    }
-    this.#inviteGranted = invite.data.has_access
-    if (!this.#inviteGranted) {
-      this.update({ state: 'INVITE_REQUIRED', user: null, error: null })
-      return this.#view
-    }
-
     try {
       this.#refreshToken = await this.runSecretMutation(() =>
         this.secrets.loadRefreshToken(),
@@ -183,52 +165,9 @@ export class AuthSession {
     return this.bootstrap()
   }
 
-  async checkInvite(): Promise<AuthView> {
-    const generation = this.beginOperation()
-    this.update({ state: 'BOOTSTRAPPING', user: null, error: null })
-    const identity = await this.prepareIdentity(generation)
-    if (identity === null) return this.#view
-    const result = await this.requestInviteCheck(identity.hwid, generation)
-    if (!this.isCurrent(generation)) return this.#view
-    if (!result.ok) this.fail(result.error)
-    else if (result.data.has_access) {
-      this.#inviteGranted = true
-      this.update({ state: 'UNAUTHENTICATED', user: null, error: null })
-    } else {
-      this.update({ state: 'INVITE_REQUIRED', user: null, error: null })
-    }
-    return this.#view
-  }
-
-  async activateInvite(inviteCode: string): Promise<AuthView> {
-    const generation = this.beginOperation()
-    const identity = await this.prepareIdentity(generation)
-    if (identity === null) return this.#view
-    const body = InviteActivateRequestSchema.parse({
-      invite_code: inviteCode,
-      hwid: identity.hwid,
-    })
-    const result = await this.api.request({
-      method: 'POST',
-      path: '/api/invite-keys/validate',
-      body,
-      schema: ServerInviteActivateResponseSchema,
-      signal: this.signalFor(generation),
-    })
-    if (!this.isCurrent(generation)) return this.#view
-    if (!result.ok) this.fail(result.error)
-    else if (!result.data.success) {
-      this.update({
-        state: 'INVITE_REQUIRED',
-        user: null,
-        error: createApiError(
-          'VALIDATION_FAILED',
-          result.data.message ?? 'Инвайт-код недействителен',
-          false,
-        ),
-      })
-    } else {
-      this.#inviteGranted = true
+  resetLogin(): AuthView {
+    if (this.#view.state === 'BLOCKED') {
+      this.beginOperation()
       this.update({ state: 'UNAUTHENTICATED', user: null, error: null })
     }
     return this.#view
@@ -253,7 +192,12 @@ export class AuthSession {
     }
   }
 
-  async register(email: string, username: string, password: string): Promise<AuthView> {
+  async register(
+    email: string,
+    username: string,
+    password: string,
+    inviteKey: string,
+  ): Promise<AuthView> {
     const generation = this.beginOperation()
     this.update({ state: 'BOOTSTRAPPING', user: null, error: null })
     try {
@@ -261,6 +205,7 @@ export class AuthSession {
         email,
         username,
         password,
+        invite_key: inviteKey,
         hwid: await this.identity.getIdentity(),
       })
       return await this.authenticate('/api/auth/register', body, generation)
@@ -301,11 +246,7 @@ export class AuthSession {
       clearFailed = true
     }
     this.update({
-      state: clearFailed
-        ? 'ERROR'
-        : this.#inviteGranted
-          ? 'UNAUTHENTICATED'
-          : 'INVITE_REQUIRED',
+      state: clearFailed ? 'ERROR' : 'UNAUTHENTICATED',
       user: null,
       error: clearFailed ? this.secretClearError() : null,
     })
@@ -317,10 +258,6 @@ export class AuthSession {
     body: z.infer<typeof LoginRequestSchema> | z.infer<typeof RegisterRequestSchema>,
     generation: number,
   ): Promise<AuthView> {
-    if (!this.#inviteGranted) {
-      this.update({ state: 'INVITE_REQUIRED', user: null, error: null })
-      return this.#view
-    }
     if (!this.isCurrent(generation)) return this.#view
     const result = await this.api.request({
       method: 'POST',
@@ -331,7 +268,7 @@ export class AuthSession {
     })
     if (!this.isCurrent(generation)) return this.#view
     if (!result.ok) {
-      if (result.error.code === 'FORBIDDEN') {
+      if (path === '/api/auth/login' && result.error.code === 'FORBIDDEN') {
         await this.handleAuthFailure(result.error, false)
       } else {
         this.update({ state: 'UNAUTHENTICATED', user: null, error: result.error })
@@ -364,27 +301,13 @@ export class AuthSession {
 
   private async prepareIdentity(generation: number): Promise<{ hwid: string } | null> {
     try {
-      const [hwid, hint] = await Promise.all([
-        this.identity.getIdentity(),
-        this.identity.getMaskedHint(),
-      ])
+      const hwid = await this.identity.getIdentity()
       if (!this.isCurrent(generation)) return null
-      this.update({ deviceHint: hint })
       return { hwid }
     } catch (error) {
       if (this.isCurrent(generation)) this.fail(errorFromUnknown(error))
       return null
     }
-  }
-
-  private requestInviteCheck(hwid: string, generation: number) {
-    return this.api.request({
-      method: 'POST',
-      path: '/api/invite-keys/check-hwid',
-      body: InviteCheckRequestSchema.parse({ hwid }),
-      schema: ServerInviteCheckResponseSchema,
-      signal: this.signalFor(generation),
-    })
   }
 
   private async refreshAccessToken(generation: number): Promise<ApiResult<string>> {
