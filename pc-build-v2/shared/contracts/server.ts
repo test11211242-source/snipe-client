@@ -2,20 +2,13 @@ import { z } from 'zod'
 
 import { UserRoleSchema, type AuthUserView } from '../models/auth'
 
-export const InviteCheckRequestSchema = z
-  .object({ hwid: z.string().regex(/^[a-f0-9]{64}$/) })
-  .strict()
-export const InviteActivateRequestSchema = z
-  .object({
-    invite_code: z
-      .string()
-      .trim()
-      .min(8)
-      .max(50)
-      .regex(/^[A-Za-z0-9_-]+$/),
-    hwid: z.string().regex(/^[a-f0-9]{64}$/),
-  })
-  .strict()
+export const InviteKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(50)
+  .regex(/^[A-Za-z0-9_-]+$/)
+
 export const LoginRequestSchema = z
   .object({
     email: z.email().max(254),
@@ -27,6 +20,7 @@ export const RegisterRequestSchema = z
   .object({
     email: z.email().max(254),
     username: z.string().trim().min(2).max(50),
+    invite_key: InviteKeySchema,
     password: z.string().min(8).max(256),
     hwid: z.string().regex(/^[a-f0-9]{64}$/),
   })
@@ -68,24 +62,6 @@ export const ServerMeResponseSchema = z.union([
   ServerUserSchema,
   z.object({ user: ServerUserSchema }).loose(),
 ])
-
-export const ServerInviteCheckResponseSchema = z
-  .object({
-    success: z.boolean().optional(),
-    has_access: z.boolean(),
-    message: z.string().max(300).optional(),
-    key_info: z.unknown().optional(),
-  })
-  .loose()
-
-export const ServerInviteActivateResponseSchema = z
-  .object({
-    success: z.boolean(),
-    message: z.string().max(300).optional(),
-    error_code: z.string().max(100).optional(),
-    key_info: z.unknown().optional(),
-  })
-  .loose()
 
 export type ServerTokens = z.infer<typeof ServerTokensSchema>
 

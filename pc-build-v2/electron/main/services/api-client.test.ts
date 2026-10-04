@@ -34,6 +34,7 @@ describe('ApiClient', () => {
       'Bearer top-secret-token',
     )
     expect(JSON.stringify(debug.mock.calls)).not.toContain('top-secret-token')
+    expect(new Headers(call?.[1]?.headers).get('X-Client-Platform')).toBe('windows')
   })
 
   it('normalizes 401 and rejects oversized and malformed responses', async () => {
@@ -171,5 +172,21 @@ describe('ApiClient', () => {
     ).resolves.toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } })
     expect(auth.getAccessToken).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    [401, 'UNAUTHORIZED', 'Неверный email или пароль'],
+    [401, 'UNAUTHORIZED', 'Выполнен вход на другом устройстве'],
+    [403, 'FORBIDDEN', 'Подписка не активна. Продлите ключ доступа.'],
+    [403, 'FORBIDDEN', 'Этот ключ уже привязан к другому аккаунту'],
+    [400, 'VALIDATION_FAILED', 'Пользователь с таким email уже существует'],
+  ])('preserves HTTP %s auth detail', async (status, code, message) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ detail: message }), { status }))
+    const client = new ApiClient(createProductionServerConfig(), fetchMock, logger)
+    await expect(
+      client.request({ method: 'POST', path: '/api/auth/login', schema }),
+    ).resolves.toMatchObject({ ok: false, error: { code, message, status } })
   })
 })

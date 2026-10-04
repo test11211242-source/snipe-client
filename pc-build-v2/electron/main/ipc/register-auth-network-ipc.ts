@@ -2,7 +2,6 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
   AUTH_IPC_CHANNELS,
-  ActivateInvitePayloadSchema,
   AuthViewResultSchema,
   EmptyPayloadSchema,
   LoginPayloadSchema,
@@ -45,17 +44,10 @@ export function registerAuthNetworkIpc(
     EmptyPayloadSchema.parse(rawPayload)
     return AuthViewResultSchema.parse(await dependencies.auth.retryBootstrap())
   })
-  ipcMain.handle(AUTH_IPC_CHANNELS.checkInvite, async (event, rawPayload) => {
+  ipcMain.handle(AUTH_IPC_CHANNELS.resetLogin, (event, rawPayload) => {
     verifySender(event, dependencies.windows, 'auth')
     EmptyPayloadSchema.parse(rawPayload)
-    return AuthViewResultSchema.parse(await dependencies.auth.checkInvite())
-  })
-  ipcMain.handle(AUTH_IPC_CHANNELS.activateInvite, async (event, rawPayload) => {
-    verifySender(event, dependencies.windows, 'auth')
-    const payload = ActivateInvitePayloadSchema.parse(rawPayload)
-    return AuthViewResultSchema.parse(
-      await dependencies.auth.activateInvite(payload.inviteCode),
-    )
+    return AuthViewResultSchema.parse(dependencies.auth.resetLogin())
   })
   ipcMain.handle(AUTH_IPC_CHANNELS.login, async (event, rawPayload) => {
     verifySender(event, dependencies.windows, 'auth')
@@ -68,7 +60,12 @@ export function registerAuthNetworkIpc(
     verifySender(event, dependencies.windows, 'auth')
     const payload = RegisterPayloadSchema.parse(rawPayload)
     return AuthViewResultSchema.parse(
-      await dependencies.auth.register(payload.email, payload.username, payload.password),
+      await dependencies.auth.register(
+        payload.email,
+        payload.username,
+        payload.password,
+        payload.inviteKey,
+      ),
     )
   })
   ipcMain.handle(MAIN_NETWORK_IPC_CHANNELS.getAuthView, (event, rawPayload) => {

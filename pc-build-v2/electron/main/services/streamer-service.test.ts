@@ -12,7 +12,6 @@ const userView = {
     role: 'premium' as const,
     roles: ['premium', 'streamer'] as const,
   },
-  deviceHint: null,
   error: null,
 }
 

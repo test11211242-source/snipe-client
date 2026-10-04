@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { AuthViewResultSchema, LoginPayloadSchema } from './auth-ipc'
-import { ServerUserSchema, toAuthUserView } from './server'
+import {
+  AuthViewResultSchema,
+  LoginPayloadSchema,
+  RegisterPayloadSchema,
+} from './auth-ipc'
+import { ServerUserSchema, toAuthUserView, RegisterRequestSchema } from './server'
 import { hasStreamerRole } from '../models/auth'
 
 describe('auth boundary contracts', () => {
@@ -25,7 +29,6 @@ describe('auth boundary contracts', () => {
       AuthViewResultSchema.parse({
         state: 'AUTHENTICATED',
         user: toAuthUserView(serverUser),
-        deviceHint: '12345678...abcd',
         error: null,
         token: 'rejected',
       }),
@@ -59,10 +62,50 @@ describe('auth boundary contracts', () => {
       hasStreamerRole({
         state: 'AUTHENTICATED',
         user,
-        deviceHint: null,
         error: null,
       }),
     ).toBe(true)
     expect(toAuthUserView({ ...user, roles: undefined }).roles).toEqual(['premium'])
+  })
+
+  it('requires and trims the registration key at both IPC and server boundaries', () => {
+    const payload = {
+      email: 'a@example.com',
+      username: 'tester',
+      password: 'password123',
+    }
+    const request = { ...payload, hwid: 'a'.repeat(64) }
+    expect(RegisterPayloadSchema.safeParse(payload).success).toBe(false)
+    expect(RegisterRequestSchema.safeParse(request).success).toBe(false)
+    expect(
+      RegisterPayloadSchema.parse({ ...payload, inviteKey: ' test_key-123 ' }).inviteKey,
+    ).toBe('test_key-123')
+    expect(
+      RegisterRequestSchema.parse({ ...request, invite_key: ' test_key-123 ' })
+        .invite_key,
+    ).toBe('test_key-123')
+    for (const key of ['', 'short', 'a'.repeat(51), 'invalid key', 'key<script>']) {
+      expect(
+        RegisterPayloadSchema.safeParse({ ...payload, inviteKey: key }).success,
+      ).toBe(false)
+      expect(
+        RegisterRequestSchema.safeParse({ ...request, invite_key: key }).success,
+      ).toBe(false)
+    }
+    for (const key of ['a'.repeat(8), 'a'.repeat(50)]) {
+      expect(
+        RegisterPayloadSchema.safeParse({ ...payload, inviteKey: key }).success,
+      ).toBe(true)
+      expect(
+        RegisterRequestSchema.safeParse({ ...request, invite_key: key }).success,
+      ).toBe(true)
+    }
+    expect(
+      RegisterPayloadSchema.safeParse({
+        ...payload,
+        inviteKey: 'test_key-123',
+        hwid: 'renderer-device',
+      }).success,
+    ).toBe(false)
   })
 })

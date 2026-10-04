@@ -44,7 +44,6 @@ function harness() {
       getView: () => ({
         state: user === null ? ('UNAUTHENTICATED' as const) : ('AUTHENTICATED' as const),
         user,
-        deviceHint: null,
         error: null,
       }),
     },

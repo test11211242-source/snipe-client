@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { createProductionServerConfig } from '../infrastructure/server-config'
-import { ApiClient } from './api-client'
+import { ApiClient, AuthenticatedApiClient } from './api-client'
+import { ServerMeResponseSchema } from '../../../shared/contracts/server'
 import {
   AuthSession,
   type AuthSessionRevoker,
@@ -39,6 +40,20 @@ function json(value: unknown, status = 200): Response {
 
 function requestPath(input: string | URL | Request): string {
   return new URL(input instanceof Request ? input.url : input).pathname
+}
+
+function requestBody(
+  call: Parameters<typeof fetch> | undefined,
+): Record<string, unknown> {
+  const body = call?.[1]?.body
+  if (typeof body !== 'string') throw new Error('Expected JSON request body')
+  return JSON.parse(body) as Record<string, unknown>
+}
+
+function firstPath(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>): string {
+  const call = fetchMock.mock.calls[0]
+  if (call === undefined) throw new Error('Expected an API request')
+  return requestPath(call[0])
 }
 
 function store(initial: string | null): RefreshTokenStore & {
@@ -94,7 +109,7 @@ describe('AuthSession', () => {
   it('bootstraps through refresh and /me, projecting a strict token-free user', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh'))
         return Promise.resolve(
           json({
@@ -119,13 +134,17 @@ describe('AuthSession', () => {
     expect(auth.getView().user).not.toHaveProperty('ignored')
     expect(auth.getView()).not.toHaveProperty('accessToken')
     expect(secrets.value).toBe('refresh-2')
+    expect(fetchMock.mock.calls.map(([url]) => requestPath(url))).toEqual([
+      '/api/auth/refresh',
+      '/api/auth/me',
+    ])
   })
 
   it('coalesces twenty concurrent forced refresh calls into one request', async () => {
     let refreshCalls = 0
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         refreshCalls += 1
         return Promise.resolve(
@@ -151,7 +170,7 @@ describe('AuthSession', () => {
     let refreshCalls = 0
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         refreshCalls += 1
         if (refreshCalls === 1)
@@ -180,7 +199,7 @@ describe('AuthSession', () => {
   it('invokes revocation but always completes durable local invalidation', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         return Promise.resolve(
           json({ tokens: { access_token: 'access', refresh_token: 'refresh-current' } }),
@@ -233,7 +252,7 @@ describe('AuthSession', () => {
         else signal?.addEventListener('abort', rejectAbort, { once: true })
       })
     })
-    const { auth } = session(fetchMock, store(null))
+    const { auth } = session(fetchMock, store('refresh-1'))
 
     const bootstrap = auth.bootstrap()
     await started
@@ -247,7 +266,7 @@ describe('AuthSession', () => {
     const stalledFetch = vi
       .fn<typeof fetch>()
       .mockReturnValue(new Promise(() => undefined))
-    const { auth } = session(stalledFetch, store(null), 10)
+    const { auth } = session(stalledFetch, store('refresh-1'), 10)
 
     await expect(auth.bootstrap()).resolves.toMatchObject({
       state: 'ERROR',
@@ -272,7 +291,7 @@ describe('AuthSession', () => {
     }
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         return Promise.resolve(
           json({ tokens: { access_token: 'stale', refresh_token: 'stale-refresh' } }),
@@ -301,7 +320,7 @@ describe('AuthSession', () => {
     }
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         return Promise.resolve(
           json({ tokens: { access_token: 'access', refresh_token: 'refresh-1' } }),
@@ -356,8 +375,7 @@ describe('AuthSession', () => {
       let refreshCalls = 0
       const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
         const path = requestPath(url)
-        if (path.endsWith('check-hwid'))
-          return Promise.resolve(json({ has_access: true }))
+
         if (path.endsWith('refresh')) {
           refreshCalls += 1
           return Promise.resolve(json({ message: 'expired' }, status))
@@ -389,7 +407,7 @@ describe('AuthSession', () => {
     let meCalls = 0
     const fetch401 = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('refresh')) {
         refreshCalls += 1
         return Promise.resolve(
@@ -406,21 +424,14 @@ describe('AuthSession', () => {
     expect(refreshCalls).toBe(2)
     expect(meCalls).toBe(2)
 
-    const fetch403 = vi.fn<typeof fetch>().mockImplementation((url) => {
-      const path = requestPath(url)
-      return Promise.resolve(
-        path.endsWith('check-hwid')
-          ? json({ has_access: true })
-          : json({ message: 'blocked' }, 403),
-      )
+    const fetch403 = vi.fn<typeof fetch>().mockImplementation(() => {
+      return Promise.resolve(json({ message: 'blocked' }, 403))
     })
     expect((await session(fetch403).auth.bootstrap()).state).toBe('BLOCKED')
   })
 
   it('reports invalid encrypted state and server outages as actionable errors', async () => {
-    const availableFetch = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(json({ has_access: true }))
+    const availableFetch = vi.fn<typeof fetch>().mockResolvedValue(json(user))
     const invalidStore = store(null)
     invalidStore.loadRefreshToken = () =>
       Promise.reject(new ApplicationError('SECRET_INVALID', 'corrupt secret'))
@@ -442,7 +453,7 @@ describe('AuthSession', () => {
     const secrets = store(null)
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = requestPath(url)
-      if (path.endsWith('check-hwid')) return Promise.resolve(json({ has_access: true }))
+
       if (path.endsWith('register'))
         return Promise.resolve(
           json({
@@ -456,8 +467,166 @@ describe('AuthSession', () => {
     const { auth } = session(fetchMock, secrets)
     expect((await auth.bootstrap()).state).toBe('UNAUTHENTICATED')
     expect(
-      (await auth.register('operator@example.com', 'operator', 'password123')).state,
+      (
+        await auth.register(
+          'operator@example.com',
+          'operator',
+          'password123',
+          'test_key-123',
+        )
+      ).state,
     ).toBe('AUTHENTICATED')
     expect(secrets.value).toBe('r')
+    expect(requestBody(fetchMock.mock.calls[0])['hwid']).toMatch(/^[a-f0-9]{64}$/)
+    expect(requestBody(fetchMock.mock.calls[0])).toMatchObject({
+      email: 'operator@example.com',
+      username: 'operator',
+      password: 'password123',
+      invite_key: 'test_key-123',
+    })
   })
+
+  it('starts offline at login without making any API request when no token is saved', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'))
+    const { auth } = session(fetchMock, store(null))
+    await expect(auth.bootstrap()).resolves.toEqual({
+      state: 'UNAUTHENTICATED',
+      user: null,
+      error: null,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    await expect(auth.logout()).resolves.toMatchObject({ state: 'UNAUTHENTICATED' })
+  })
+
+  it('logs in on an unfamiliar PC without checking or activating a key', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      json({
+        tokens: { access_token: 'access-new-pc', refresh_token: 'refresh-new-pc' },
+        user,
+      }),
+    )
+    const { auth, secrets } = session(fetchMock, store(null))
+    await expect(
+      auth.login('operator@example.com', 'password123'),
+    ).resolves.toMatchObject({
+      state: 'AUTHENTICATED',
+      error: null,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(firstPath(fetchMock)).toBe('/api/auth/login')
+    expect(requestBody(fetchMock.mock.calls[0])['hwid']).toMatch(/^[a-f0-9]{64}$/)
+    expect(requestBody(fetchMock.mock.calls[0])).toMatchObject({
+      email: 'operator@example.com',
+      password: 'password123',
+    })
+    expect(secrets.value).toBe('refresh-new-pc')
+  })
+
+  it.each([
+    [403, 'Этот ключ уже привязан к другому аккаунту'],
+    [400, 'Пользователь с таким email уже существует'],
+  ])(
+    'keeps registration editable after HTTP %s without mutating secrets',
+    async (status, message) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(json({ detail: message }, status))
+      const { auth, secrets } = session(fetchMock, store(null))
+      await expect(
+        auth.register(
+          'operator@example.com',
+          'operator',
+          'password123',
+          ' test_key-123 ',
+        ),
+      ).resolves.toMatchObject({
+        state: 'UNAUTHENTICATED',
+        user: null,
+        error: { message, status },
+      })
+      expect(requestBody(fetchMock.mock.calls[0])['hwid']).toMatch(/^[a-f0-9]{64}$/)
+      expect(requestBody(fetchMock.mock.calls[0])).toMatchObject({
+        invite_key: 'test_key-123',
+      })
+      expect(secrets.saves).toBe(0)
+      expect(secrets.clears).toBe(0)
+    },
+  )
+
+  it.each([
+    [403, 'Подписка не активна. Продлите ключ доступа.', 'BLOCKED'],
+    [401, 'Неверный email или пароль', 'UNAUTHENTICATED'],
+  ])(
+    'preserves login HTTP %s detail and can return from a blocked account',
+    async (status, message, state) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(json({ detail: message }, status))
+      const { auth, secrets } = session(fetchMock, store(null))
+      await expect(
+        auth.login('operator@example.com', 'password123'),
+      ).resolves.toMatchObject({
+        state,
+        user: null,
+        error: { message, status },
+      })
+      if (state === 'BLOCKED') {
+        expect(secrets.clears).toBe(1)
+        expect(auth.resetLogin()).toEqual({
+          state: 'UNAUTHENTICATED',
+          user: null,
+          error: null,
+        })
+        expect(fetchMock).toHaveBeenCalledOnce()
+      }
+    },
+  )
+
+  it.each(['bootstrap', 'refresh', 'request'] as const)(
+    'clears a replaced session during %s and exposes its server message',
+    async (operation) => {
+      const message = 'Выполнен вход на другом устройстве'
+      const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
+        if (operation === 'bootstrap' || fetchMock.mock.calls.length > 2) {
+          return Promise.resolve(json({ detail: message }, 401))
+        }
+        if (requestPath(url).endsWith('refresh')) {
+          return Promise.resolve(
+            json({ tokens: { access_token: 'access', refresh_token: 'refresh' } }),
+          )
+        }
+        return Promise.resolve(json(user))
+      })
+      const { auth, secrets } = session(fetchMock)
+      await auth.bootstrap()
+      if (operation === 'refresh')
+        await expect(auth.getAccessToken(true)).resolves.toBeNull()
+      if (operation === 'request') {
+        const client = new AuthenticatedApiClient(
+          new ApiClient(createProductionServerConfig(), fetchMock, logger),
+          auth,
+        )
+        await expect(
+          client.request({
+            method: 'GET',
+            path: '/api/auth/me',
+            schema: ServerMeResponseSchema,
+          }),
+        ).resolves.toMatchObject({ ok: false, error: { message } })
+      }
+      expect(auth.getView()).toMatchObject({
+        state: 'UNAUTHENTICATED',
+        user: null,
+        error: { code: 'UNAUTHORIZED', message },
+      })
+      expect(secrets.value).toBeNull()
+      expect(secrets.clears).toBe(1)
+      await expect(auth.getAccessToken()).resolves.toBeNull()
+      expect(
+        fetchMock.mock.calls.every(
+          ([url]) => !requestPath(url).startsWith('/api/invite-keys/'),
+        ),
+      ).toBe(true)
+    },
+  )
 })

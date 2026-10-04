@@ -49,7 +49,6 @@ describe('App shell', () => {
             role: 'premium',
             roles: ['premium'],
           },
-          deviceHint: '12345678...abcd',
           error: null,
         }),
         getRealtimeStatus: vi.fn().mockResolvedValue({
@@ -169,7 +168,6 @@ describe('App shell', () => {
         logout: vi.fn().mockResolvedValue({
           state: 'UNAUTHENTICATED',
           user: null,
-          deviceHint: null,
           error: null,
         }),
       }),

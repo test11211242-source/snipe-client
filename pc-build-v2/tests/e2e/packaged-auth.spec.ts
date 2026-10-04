@@ -208,7 +208,7 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
 
     const view = await page.evaluate(() => window.crToolsAuth.getView())
     expect(view.state).toMatch(
-      /^(BOOTSTRAPPING|INVITE_REQUIRED|UNAUTHENTICATED|AUTHENTICATED|BLOCKED|ERROR)$/,
+      /^(BOOTSTRAPPING|UNAUTHENTICATED|AUTHENTICATED|BLOCKED|ERROR)$/,
     )
     await expect(
       page.evaluate(() => window.crToolsAuth.getUpdateView()),
@@ -218,13 +218,40 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
         /^(IDLE|CHECKING|AVAILABLE|DOWNLOADING|READY|UP_TO_DATE|FAILED)$/,
       ),
     })
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.crToolsAuth.getView().then((next) => next.state)),
+      )
+      .toBe('UNAUTHENTICATED')
+    await expect(page.getByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
+    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Регистрация', exact: true }).click()
+    await expect(page.getByLabel('Ключ доступа')).toBeVisible()
+    await expect(page.getByLabel('Ключ доступа')).toHaveAttribute('required', '')
+    await expect(page.getByText(/Ключ покупается у администратора/)).toBeVisible()
+    await page.getByRole('button', { name: 'Вход', exact: true }).click()
+    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
+    // The exposed preload rejects invalid registration keys before any API request.
+    await expect(
+      page.evaluate(async () => {
+        try {
+          await window.crToolsAuth.register({
+            email: 'fixture@example.com',
+            username: 'fixture',
+            password: 'test-password',
+            inviteKey: 'bad',
+          })
+          return false
+        } catch {
+          return true
+        }
+      }),
+    ).resolves.toBe(true)
     const bridgeKeys = await page.evaluate(() => Object.keys(window.crToolsAuth).sort())
     expect(bridgeKeys).toEqual(
       [
-        'activateInvite',
         'cancelUpdate',
         'checkForUpdate',
-        'checkInvite',
         'downloadUpdate',
         'getUpdateView',
         'getView',
@@ -232,6 +259,7 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
         'login',
         'register',
         'retryBootstrap',
+        'resetLogin',
       ].sort(),
     )
   } finally {

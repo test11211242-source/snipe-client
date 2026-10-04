@@ -127,7 +127,10 @@ export class ApiClient {
     const timeout = setTimeout(() => {
       controller.abort(timeoutReason)
     }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-    const headers: Record<string, string> = { Accept: 'application/json' }
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'X-Client-Platform': 'windows',
+    }
     if (request.body !== undefined && !(request.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json'
     }

@@ -2,12 +2,12 @@ import { z } from 'zod'
 
 import { AuthViewSchema } from '../models/auth'
 import { RealtimeStatusSchema } from '../models/network'
+import { InviteKeySchema } from './server'
 
 export const AUTH_IPC_CHANNELS = Object.freeze({
   getView: 'auth:get-view',
   retryBootstrap: 'auth:retry-bootstrap',
-  checkInvite: 'auth:check-invite',
-  activateInvite: 'auth:activate-invite',
+  resetLogin: 'auth:reset-login',
   login: 'auth:login',
   register: 'auth:register',
 })
@@ -22,16 +22,6 @@ export const EmptyPayloadSchema = z.object({}).strict()
 export const AuthViewResultSchema = AuthViewSchema
 export const RealtimeStatusResultSchema = RealtimeStatusSchema
 
-export const ActivateInvitePayloadSchema = z
-  .object({
-    inviteCode: z
-      .string()
-      .trim()
-      .min(8)
-      .max(50)
-      .regex(/^[A-Za-z0-9_-]+$/),
-  })
-  .strict()
 export const LoginPayloadSchema = z
   .object({
     email: z.email().max(254),
@@ -42,10 +32,10 @@ export const RegisterPayloadSchema = z
   .object({
     email: z.email().max(254),
     username: z.string().trim().min(2).max(50),
+    inviteKey: InviteKeySchema,
     password: z.string().min(8).max(256),
   })
   .strict()
 
-export type ActivateInvitePayload = z.infer<typeof ActivateInvitePayloadSchema>
 export type LoginPayload = z.infer<typeof LoginPayloadSchema>
 export type RegisterPayload = z.infer<typeof RegisterPayloadSchema>
