@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   H2HLookupResultSchema,
+  H2HHttpResponseSchema,
   H2HRequestSchema,
   H2HResponseSchema,
 } from '../../../shared/contracts/h2h'
-import { ApiClient } from './api-client'
+import { ApiClient, AuthenticatedApiClient } from './api-client'
 import { H2HService } from './h2h-service'
 import { ApiErrorSchema } from '../../../shared/errors/api-error'
 
@@ -306,4 +307,37 @@ describe('review regression additive H2H evolution', () => {
       }).success,
     ).toBe(false)
   })
+})
+
+describe('approved review future H2H values', () => {
+  it.each([
+    { ...response('none'), reasonCode: 'FUTURE_SERVER_REASON' },
+    { ...response('none'), status: 'future_status' },
+  ])(
+    'normalizes unknown HTTP enums without weakening the IPC contract: %j',
+    async (data) => {
+      expect(H2HResponseSchema.safeParse(data).success).toBe(false)
+      expect(H2HHttpResponseSchema.parse(data)).toMatchObject({
+        status: 'unavailable',
+        reasonCode: 'H2H_SERVICE_UNAVAILABLE',
+      })
+      const api = new ApiClient(
+        { apiUrl: 'https://example.test' } as never,
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(data))),
+        { debug: vi.fn(), warn: vi.fn() },
+      )
+      const authenticatedApi = new AuthenticatedApiClient(api, {
+        getAccessToken: vi.fn().mockResolvedValue('test-token'),
+      })
+      const service = new H2HService(authenticatedApi, {
+        getContextGeneration: () => 1,
+      } as never)
+      expect(H2HLookupResultSchema.parse(await service.lookup(payload))).toEqual({
+        requestId,
+        capability: 'unavailable',
+        retryAt: null,
+        code: 'H2H_SERVICE_UNAVAILABLE',
+      })
+    },
+  )
 })

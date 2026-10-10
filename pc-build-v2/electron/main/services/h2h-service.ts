@@ -124,11 +124,16 @@ export class H2HService {
       })
       if (signal.aborted || generation !== this.auth.getContextGeneration())
         return { capability: 'cancelled', retryAt: null, code: 'H2H_CANCELLED' }
-      if (response.ok)
-        return {
-          capability: 'supported',
-          data: H2HHttpResponseSchema.parse(response.data),
-        }
+      if (response.ok) {
+        const data = H2HHttpResponseSchema.parse(response.data)
+        if (data.reasonCode === 'H2H_SERVICE_UNAVAILABLE')
+          return {
+            capability: 'unavailable',
+            retryAt: null,
+            code: 'H2H_SERVICE_UNAVAILABLE',
+          }
+        return { capability: 'supported', data }
+      }
       if (response.error.status === 404)
         return { capability: 'unsupported', retryAt: null, code: 'H2H_UNSUPPORTED' }
       if (response.error.status === 429) {

@@ -78,13 +78,28 @@ export const H2HResponseSchema = z
 
 const HttpMeeting = Meeting.strip()
 export const H2HHttpResponseSchema = H2HResponseSchema.extend({
+  status: z.string(),
+  reasonCode: z.string().optional(),
   opponent: H2HResponseSchema.shape.opponent.strip(),
   coverage: H2HResponseSchema.shape.coverage.strip(),
   totals: H2HResponseSchema.shape.totals.strip(),
   last: HttpMeeting.nullable(),
   recent: z.array(HttpMeeting).max(10),
   perAccount: z.array(H2HResponseSchema.shape.perAccount.element.strip()).max(20),
-}).strip()
+})
+  .strip()
+  .transform((response) => {
+    const status = H2HResponseSchema.shape.status.safeParse(response.status)
+    const reasonCode = H2HResponseSchema.shape.reasonCode.safeParse(response.reasonCode)
+    if (!status.success || !reasonCode.success) {
+      return {
+        ...response,
+        status: 'unavailable' as const,
+        reasonCode: 'H2H_SERVICE_UNAVAILABLE' as const,
+      }
+    }
+    return { ...response, status: status.data, reasonCode: reasonCode.data }
+  })
 
 export const H2HLookupResultSchema = z.discriminatedUnion('capability', [
   z
@@ -102,6 +117,7 @@ export const H2HLookupResultSchema = z.discriminatedUnion('capability', [
       code: z.enum([
         'H2H_UNSUPPORTED',
         'H2H_REQUEST_FAILED',
+        'H2H_SERVICE_UNAVAILABLE',
         'UNAUTHORIZED',
         'FORBIDDEN',
         'H2H_CANCELLED',
