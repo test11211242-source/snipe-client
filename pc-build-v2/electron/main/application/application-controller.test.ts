@@ -1,12 +1,28 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const handlers = vi.hoisted(
+  () => new Map<string, (event: unknown, payload: unknown) => unknown>(),
+)
 vi.mock('electron', () => ({
   session: { defaultSession: {} },
+  dialog: { showMessageBox: vi.fn().mockResolvedValue({ response: 0 }) },
+  ipcMain: {
+    handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) =>
+      handlers.set(channel, handler),
+    removeHandler: (channel: string) => handlers.delete(channel),
+  },
 }))
 
 import { createApiError } from '../../../shared/errors/api-error'
 import type { AuthView } from '../../../shared/models/auth'
 import { ApplicationController } from './application-controller'
+import { WidgetController } from '../services/widget-controller'
+import { DEFAULT_WIDGET_SETTINGS } from '../infrastructure/widget-settings-repository'
+import {
+  MAIN_WIDGET_IPC_CHANNELS,
+  WidgetStatusResultSchema,
+} from '../../../shared/contracts/widget-ipc'
+import { registerWidgetIpc } from '../ipc/register-widget-ipc'
 
 function authenticated(userId: string): AuthView {
   return {
@@ -23,6 +39,103 @@ function authenticated(userId: string): AuthView {
 }
 
 describe('ApplicationController user context', () => {
+  it.each(['ready', 'logout', 'switch', 'disk-retry'])(
+    'fences a real deferred widget load before renderer status: %s',
+    async (mode) => {
+      let release!: () => void
+      const loading = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const repository = {
+        load: vi.fn(async () => {
+          await loading
+          return { ...DEFAULT_WIDGET_SETTINGS }
+        }),
+        save: vi.fn(),
+      }
+      if (mode === 'disk-retry')
+        repository.load.mockRejectedValueOnce(new Error('disk denied'))
+      const windows = {
+        ensureMainWindow: vi.fn(() => {
+          const status = handlers.get(MAIN_WIDGET_IPC_CHANNELS.getStatus)
+          if (status === undefined) throw new Error('Missing widget status handler')
+          const event = {
+            sender: { id: 1 },
+            senderFrame: { url: 'file:///app/index.html' },
+          }
+          expect(WidgetStatusResultSchema.parse(status(event, {})).settings).toEqual(
+            DEFAULT_WIDGET_SETTINGS,
+          )
+          return Promise.resolve()
+        }),
+        ensureAuthWindow: vi.fn(),
+        close: vi.fn(),
+        isWidgetVisible: () => false,
+        onWidgetBoundsChanged: vi.fn(() => vi.fn()),
+        assertSender: vi.fn(),
+      }
+      const monitor = {
+        stop: vi.fn(),
+        setUserContext: vi.fn(),
+        getLatestResult: () => null,
+        subscribeResults: vi.fn(() => vi.fn()),
+      }
+      const widget = new WidgetController(monitor, repository as never, windows as never)
+      registerWidgetIpc({
+        windows,
+        widget,
+        images: {},
+        logger: { info: vi.fn() },
+      } as never)
+      const controller = new ApplicationController(
+        {} as never,
+        windows as never,
+        {} as never,
+        { error: vi.fn() } as never,
+        {} as never,
+        { start: vi.fn(), stop: vi.fn() } as never,
+        {} as never,
+        { cancelForAuthTransition: vi.fn() } as never,
+        monitor as never,
+        widget,
+        { start: vi.fn().mockResolvedValue(undefined), stop: vi.fn() } as never,
+        { start: vi.fn(), stop: vi.fn() } as never,
+        { start: vi.fn(), stop: vi.fn() } as never,
+        { start: vi.fn(), stop: vi.fn() } as never,
+        {} as never,
+        { stop: vi.fn() } as never,
+        {} as never,
+      )
+      const internal = controller as unknown as {
+        syncWindows: (view: AuthView) => Promise<void>
+        queueWindowSync: (view: AuthView) => void
+      }
+      const start = internal.syncWindows(authenticated('A'))
+      await vi.waitFor(() => expect(repository.load).toHaveBeenCalled())
+      expect(windows.ensureMainWindow).not.toHaveBeenCalled()
+      if (mode === 'logout' || mode === 'switch') {
+        internal.queueWindowSync(
+          mode === 'logout'
+            ? { state: 'UNAUTHENTICATED', user: null, error: null }
+            : authenticated('B'),
+        )
+      }
+      release()
+      await start
+      if (mode === 'logout') {
+        await vi.waitFor(() => expect(windows.ensureAuthWindow).toHaveBeenCalled())
+        expect(windows.ensureMainWindow).not.toHaveBeenCalled()
+        expect(() => widget.getStatus()).toThrow()
+      } else {
+        await vi.waitFor(() => expect(windows.ensureMainWindow).toHaveBeenCalledOnce())
+        if (mode === 'switch') expect(repository.load).toHaveBeenLastCalledWith('B')
+        else {
+          await internal.syncWindows(authenticated('A'))
+          expect(repository.load).toHaveBeenCalledTimes(mode === 'disk-retry' ? 2 : 1)
+        }
+      }
+    },
+  )
   it.each([null, 'Выполнен вход на другом устройстве'])(
     'opens login and clears user services across A -> exit (%s) -> B',
     async (message) => {

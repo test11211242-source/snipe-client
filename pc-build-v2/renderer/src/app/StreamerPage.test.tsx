@@ -112,7 +112,9 @@ describe('StreamerPage', () => {
           ),
         setStreamTitleEnabled: vi.fn().mockResolvedValue(view),
         setStreamTitlePaused: vi.fn().mockResolvedValue(view),
-        addStreamTitleAccount: vi.fn().mockResolvedValue(view),
+        addStreamTitleAccount: vi
+          .fn()
+          .mockResolvedValue({ ok: true, view, warning: null }),
         removeStreamTitleAccount: vi.fn().mockResolvedValue(view),
         resetStreamTitle: vi.fn().mockResolvedValue(view),
         undoStreamTitle: vi.fn().mockResolvedValue(view),
@@ -135,6 +137,63 @@ describe('StreamerPage', () => {
   })
 
   afterEach(() => vi.restoreAllMocks())
+  it.each([
+    ['ACCOUNT_TAG_INVALID', 'Проверьте формат тега Clash Royale.'],
+    ['UNAUTHORIZED', 'Требуется повторный вход.'],
+    ['ACCOUNT_NOT_FOUND', 'Аккаунт с таким тегом не найден в Clash Royale.'],
+    ['CLASH_API_UNAVAILABLE', 'API Clash Royale временно недоступен. Повторите позже.'],
+    ['ACCOUNT_LIMIT_REACHED', 'Достигнут лимит аккаунтов. Удалите ненужный аккаунт.'],
+    ['UNKNOWN', 'Сервер не подтвердил сохранение аккаунта. Повторите попытку.'],
+  ])(
+    'shows account cause beside the old form and keeps inputs: %s',
+    async (code, message) => {
+      vi.mocked(window.crTools.addStreamTitleAccount).mockResolvedValueOnce({
+        ok: false,
+        error: { code, detail: 'private upstream body' },
+      } as never)
+      render(<StreamerPage auth={auth} />)
+      await screen.findByText('Twitch @caster')
+      fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+      const tag = screen.getAllByLabelText('Тег аккаунта')[0]
+      const alias = screen.getAllByLabelText('Отображаемое имя')[0]
+      const add = screen.getAllByRole('button', { name: 'Добавить аккаунт' })[0]
+      if (tag === undefined || alias === undefined || add === undefined)
+        throw new Error('Missing account form')
+      fireEvent.change(tag, { target: { value: '#P0Y' } })
+      fireEvent.change(alias, { target: { value: 'My alias' } })
+      fireEvent.click(add)
+      expect(await screen.findByText(message)).toBeVisible()
+      expect(tag).toHaveValue('#P0Y')
+      expect(alias).toHaveValue('My alias')
+      expect(screen.queryByText('private upstream body')).not.toBeInTheDocument()
+    },
+  )
+  it.each(['TITLE_UPDATE_FAILED', 'REFRESH_FAILED'] as const)(
+    'reports saved-with-warning and clears only saved inputs: %s',
+    async (warning) => {
+      vi.mocked(window.crTools.addStreamTitleAccount).mockResolvedValueOnce({
+        ok: true,
+        view,
+        warning,
+      })
+      render(<StreamerPage auth={auth} />)
+      await screen.findByText('Twitch @caster')
+      fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+      const tag = screen.getAllByLabelText('Тег аккаунта')[0]
+      const add = screen.getAllByRole('button', { name: 'Добавить аккаунт' })[0]
+      if (tag === undefined || add === undefined) throw new Error('Missing account form')
+      fireEvent.change(tag, { target: { value: '#P0Y' } })
+      fireEvent.click(add)
+      expect(
+        await screen.findByText(
+          warning === 'TITLE_UPDATE_FAILED'
+            ? 'Аккаунт сохранён, но название Twitch не обновлено.'
+            : 'Аккаунт сохранён, но список не удалось обновить. Обновите данные.',
+        ),
+      ).toBeVisible()
+      expect(tag).toHaveValue('')
+    },
+  )
 
   it('confirms disconnect inside the application and restores focus on cancellation', async () => {
     render(<StreamerPage auth={auth} />)

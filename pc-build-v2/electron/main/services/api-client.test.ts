@@ -12,6 +12,26 @@ const logger = {
 const schema = z.object({ ok: z.literal(true) }).strict()
 
 describe('ApiClient', () => {
+  it.each([
+    [400, 'ACCOUNT_NOT_FOUND'],
+    [400, 'ACCOUNT_TAG_INVALID'],
+    [400, 'ACCOUNT_LIMIT_REACHED'],
+    [409, 'ACCOUNT_LIMIT_REACHED'],
+    [503, 'CLASH_API_UNAVAILABLE'],
+  ] as const)(
+    'preserves allowlisted account code regardless of status: %s/%s',
+    async (status, code) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ code, detail: 'safe detail' }), { status }),
+        )
+      const client = new ApiClient(createProductionServerConfig(), fetchMock, logger)
+      await expect(
+        client.request({ method: 'POST', path: '/api/streamer/accounts', schema }),
+      ).resolves.toMatchObject({ ok: false, error: { code, message: 'safe detail' } })
+    },
+  )
   it('sends bounded JSON to the fixed origin without exposing a token to logs', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response('{"ok":true}', {

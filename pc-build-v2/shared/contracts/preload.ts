@@ -1,3 +1,4 @@
+import type { AccountMutationResult } from './streamer-ipc'
 import type { AppSnapshot } from '../models/application'
 import type { AuthView } from '../models/auth'
 import type { RealtimeStatus } from '../models/network'
@@ -42,6 +43,26 @@ export interface CrToolsApi {
   getAppSnapshot: () => Promise<AppSnapshot>
   getAppSettings: () => Promise<AppSettingsView>
   updateAppSettings: (settings: AppSettingsView) => Promise<AppSettingsView>
+  openLogFolder: () => Promise<{ opened: boolean }>
+  reportBootstrapFailure: (cause: {
+    capability:
+      | 'protocol'
+      | 'snapshot'
+      | 'auth'
+      | 'realtime'
+      | 'capture'
+      | 'profiles'
+      | 'monitor'
+      | 'widget'
+      | 'settings'
+      | 'update'
+    code:
+      | 'AUTH_REQUIRED'
+      | 'SOURCE_METADATA_UNAVAILABLE'
+      | 'WIDGET_NOT_READY'
+      | 'INVALID_RESPONSE'
+      | 'IPC_FAILED'
+  }) => Promise<void>
   getAuthView: () => Promise<AuthView>
   logout: () => Promise<AuthView>
   getRealtimeStatus: () => Promise<RealtimeStatus>
@@ -104,7 +125,7 @@ export interface CrToolsApi {
   addStreamTitleAccount: (payload: {
     tag: string
     alias: string
-  }) => Promise<StreamerView>
+  }) => Promise<AccountMutationResult>
   removeStreamTitleAccount: (tag: string) => Promise<StreamerView>
   resetStreamTitle: (confirmation: { confirmed: true }) => Promise<StreamerView>
   undoStreamTitle: (confirmation: { confirmed: true }) => Promise<StreamerView>

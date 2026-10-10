@@ -51,3 +51,36 @@ export const StreamerTagPayloadSchema = z
 export const OverlaySettingsPayloadSchema = OverlaySettingsSchema
 export const OverlayCopyPayloadSchema = z.object({ kind: OverlayUrlKindSchema }).strict()
 export const StreamerConfirmationPayloadSchema = StreamerConfirmationSchema
+
+export const AccountErrorCodeSchema = z.enum([
+  'ACCOUNT_TAG_INVALID',
+  'ACCOUNT_NOT_FOUND',
+  'ACCOUNT_LIMIT_REACHED',
+  'CLASH_API_UNAVAILABLE',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'STREAMER_ROLE_REQUIRED',
+  'STREAMER_CANCELLED',
+  'UNKNOWN',
+])
+export const AccountMutationResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      ok: z.literal(true),
+      view: StreamerViewSchema,
+      warning: z.enum(['TITLE_UPDATE_FAILED', 'REFRESH_FAILED']).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z
+        .object({
+          code: AccountErrorCodeSchema,
+          detail: z.string().max(300).nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+])
+export type AccountMutationResult = z.infer<typeof AccountMutationResultSchema>

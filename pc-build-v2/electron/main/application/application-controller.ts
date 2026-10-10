@@ -1,4 +1,4 @@
-import { session, type App } from 'electron'
+import { dialog, session, type App } from 'electron'
 
 import type { AppSnapshot } from '../../../shared/models/application'
 import type { AuthView } from '../../../shared/models/auth'
@@ -37,6 +37,7 @@ export class ApplicationController {
   #shutdownPromise: Promise<void> | undefined
   #windowSync: Promise<void> = Promise.resolve()
   #activeUserId: string | null = null
+  #authGeneration = 0
 
   constructor(
     private readonly electronApp: App,
@@ -131,14 +132,16 @@ export class ApplicationController {
     this.logger.info('Opening authentication shell', this.getSnapshot())
     await this.windows.ensureAuthWindow()
     this.logger.info('Authentication shell ready', this.getSnapshot())
+    this.#disposeAuthSubscription = this.auth.subscribe((view) =>
+      this.queueWindowSync(view),
+    )
+    const generation = this.#authGeneration
     const initialView = await this.auth.bootstrap()
     if (this.lifecycle.state === 'SHUTTING_DOWN' || this.lifecycle.state === 'STOPPED') {
       return
     }
-    await this.syncWindows(initialView)
-    this.#disposeAuthSubscription = this.auth.subscribe((view) =>
-      this.queueWindowSync(view),
-    )
+    if (generation === this.#authGeneration) this.queueWindowSync(initialView)
+    await this.#windowSync
     this.logger.info('Application auth and network core ready', this.getSnapshot())
   }
 
@@ -163,8 +166,8 @@ export class ApplicationController {
     })
     this.electronApp.on('second-instance', () => this.windows.focusActiveWindow())
     this.electronApp.on('activate', () => {
-      if (this.auth.getView().state === 'AUTHENTICATED') {
-        void this.windows.ensureMainWindow()
+      if (this.lifecycle.state === 'READY') {
+        this.queueWindowSync(this.auth.getView())
       } else {
         void this.windows.ensureAuthWindow()
       }
@@ -181,8 +184,11 @@ export class ApplicationController {
   }
 
   private queueWindowSync(view: AuthView): void {
+    const generation = ++this.#authGeneration
     this.#windowSync = this.#windowSync
-      .then(() => this.syncWindows(view))
+      .then(async () => {
+        if (generation === this.#authGeneration) await this.syncWindows(view)
+      })
       .catch((error: unknown) =>
         this.logger.error('Window auth transition failed', { error }),
       )
@@ -191,6 +197,7 @@ export class ApplicationController {
   private async syncWindows(view: AuthView): Promise<void> {
     if (view.state === 'AUTHENTICATED') {
       if (view.user === null) throw new Error('Authenticated view is missing its user')
+      const generation = this.#authGeneration
       if (this.#activeUserId !== view.user.id) {
         this.setup.cancelForAuthTransition()
         if (this.#activeUserId !== null) {
@@ -206,6 +213,40 @@ export class ApplicationController {
         this.monitor.setUserContext(view.user.id)
         this.#activeUserId = view.user.id
       }
+      for (;;) {
+        try {
+          await this.widget.start(view.user.id)
+          break
+        } catch (error) {
+          this.logger.error('Authenticated services initialization failed', {
+            stage: 'widget-settings',
+            error,
+          })
+          if (generation !== this.#authGeneration) return
+          const choice = await dialog.showMessageBox({
+            type: 'error',
+            title: 'Не удалось открыть CR Tools',
+            message:
+              'Не удалось загрузить настройки виджета. Основное окно ещё не готово.',
+            buttons: ['Повторить', 'Выйти из профиля'],
+            defaultId: 0,
+            cancelId: 1,
+          })
+          if (generation !== this.#authGeneration) return
+          if (choice.response !== 0) {
+            await this.auth.logout()
+            return
+          }
+        }
+      }
+      if (
+        generation !== this.#authGeneration ||
+        this.lifecycle.state === 'SHUTTING_DOWN' ||
+        this.lifecycle.state === 'STOPPED'
+      ) {
+        await this.widget.stop('auth-transition')
+        return
+      }
       if (
         this.lifecycle.state === 'AUTHENTICATING' ||
         this.lifecycle.state === 'RECOVERING'
@@ -213,7 +254,6 @@ export class ApplicationController {
         this.lifecycle.transitionTo('READY')
       }
       await this.windows.ensureMainWindow()
-      await this.widget.start(view.user.id)
       void this.images.start().catch((error: unknown) => {
         this.logger.warn('Card image cache warmup failed', { error })
       })
@@ -257,6 +297,7 @@ export class ApplicationController {
     }
 
     this.auth.cancelPendingOperations()
+    ++this.#authGeneration
     await this.updater.stop()
     this.#disposeIpc?.()
     this.#disposeIpc = undefined
@@ -276,6 +317,7 @@ export class ApplicationController {
     this.windows.closeAll('shutdown')
     this.lifecycle.transitionTo('STOPPED')
     this.logger.info('Application stopped cleanly')
+    await this.logger.flush()
     this.electronApp.quit()
     await Promise.resolve()
   }

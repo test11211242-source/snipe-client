@@ -1,6 +1,8 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
+  OpenLogFolderResultSchema,
+  BootstrapFailurePayloadSchema,
   AppSnapshotPayloadSchema,
   AppSnapshotResultSchema,
   AppSettingsPayloadSchema,
@@ -55,6 +57,19 @@ export function registerAppIpc(dependencies: AppIpcDependencies): () => void {
     return AppSettingsViewSchema.parse(await dependencies.settings.update(payload))
   })
 
+  ipcMain.handle(IPC_CHANNELS.openLogFolder, async (event, rawPayload: unknown) => {
+    verifyMainSender(event, dependencies.windows)
+    AppSnapshotPayloadSchema.parse(rawPayload)
+    return OpenLogFolderResultSchema.parse({
+      opened: await dependencies.logger.openFolder(),
+    })
+  })
+  ipcMain.handle(IPC_CHANNELS.reportBootstrapFailure, (event, rawPayload: unknown) => {
+    verifyMainSender(event, dependencies.windows)
+    const cause = BootstrapFailurePayloadSchema.parse(rawPayload)
+    dependencies.logger.warn('Renderer bootstrap capability failed', cause)
+  })
+
   dependencies.logger.info('Application IPC registered', {
     channels: Object.values(IPC_CHANNELS),
   })
@@ -64,5 +79,7 @@ export function registerAppIpc(dependencies: AppIpcDependencies): () => void {
     ipcMain.removeHandler(IPC_CHANNELS.getSnapshot)
     ipcMain.removeHandler(IPC_CHANNELS.getSettings)
     ipcMain.removeHandler(IPC_CHANNELS.updateSettings)
+    ipcMain.removeHandler(IPC_CHANNELS.openLogFolder)
+    ipcMain.removeHandler(IPC_CHANNELS.reportBootstrapFailure)
   }
 }

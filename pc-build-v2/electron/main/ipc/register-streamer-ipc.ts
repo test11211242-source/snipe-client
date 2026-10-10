@@ -1,6 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import {
+  AccountMutationResultSchema,
   EmptyStreamerPayloadSchema,
   OverlayCopyPayloadSchema,
   OverlaySettingsPayloadSchema,
@@ -112,7 +113,7 @@ export function registerStreamerIpc(dependencies: Dependencies): () => void {
   ipcMain.handle(STREAMER_IPC_CHANNELS.addTitleAccount, async (event, raw) => {
     verify(event, dependencies.windows)
     const payload = StreamerAccountPayloadSchema.parse(raw)
-    return StreamerViewResultSchema.parse(
+    return AccountMutationResultSchema.parse(
       await dependencies.streamer.addTitleAccount(payload.tag, payload.alias),
     )
   })

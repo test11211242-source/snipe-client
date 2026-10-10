@@ -7,6 +7,8 @@ export const IPC_CHANNELS = Object.freeze({
   getSnapshot: 'app:get-snapshot',
   getSettings: 'app:get-settings',
   updateSettings: 'app:update-settings',
+  openLogFolder: 'app:open-log-folder',
+  reportBootstrapFailure: 'app:report-bootstrap-failure',
 })
 
 export const HelloPayloadSchema = z
@@ -35,6 +37,30 @@ export const AppSettingsViewSchema = z
   .strict()
 export const AppSettingsPayloadSchema = z.object({}).strict()
 export const AppSettingsUpdateSchema = AppSettingsViewSchema
+export const OpenLogFolderResultSchema = z.object({ opened: z.boolean() }).strict()
+export const BootstrapFailurePayloadSchema = z
+  .object({
+    capability: z.enum([
+      'protocol',
+      'snapshot',
+      'auth',
+      'realtime',
+      'capture',
+      'profiles',
+      'monitor',
+      'widget',
+      'settings',
+      'update',
+    ]),
+    code: z.enum([
+      'AUTH_REQUIRED',
+      'SOURCE_METADATA_UNAVAILABLE',
+      'WIDGET_NOT_READY',
+      'INVALID_RESPONSE',
+      'IPC_FAILED',
+    ]),
+  })
+  .strict()
 
 export type HelloResult = z.infer<typeof HelloResultSchema>
 export type AppSettingsView = z.infer<typeof AppSettingsViewSchema>

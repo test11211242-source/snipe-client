@@ -18,11 +18,32 @@ function deferred<T>() {
 let pushedMonitorView: ((view: MonitorView) => void) | null = null
 
 describe('App shell', () => {
+  it('records a safe bootstrap capability cause and retries without losing other data', async () => {
+    vi.mocked(window.crTools.getWidgetStatus).mockRejectedValueOnce(
+      new Error('password=private user@example.com'),
+    )
+    render(<App />)
+    await waitFor(() =>
+      expect(window.crTools.reportBootstrapFailure).toHaveBeenCalledWith({
+        capability: 'widget',
+        code: 'IPC_FAILED',
+      }),
+    )
+    expect(
+      screen.queryByText('password=private user@example.com'),
+    ).not.toBeInTheDocument()
+    const retry = await screen.findByRole('button', { name: /Повторить/ })
+    fireEvent.click(retry)
+    await waitFor(() => expect(window.crTools.getWidgetStatus).toHaveBeenCalledTimes(2))
+    expect(await screen.findAllByText('operator')).not.toHaveLength(0)
+  })
   beforeEach(() => {
     pushedMonitorView = null
     Object.defineProperty(window, 'crTools', {
       configurable: true,
       value: Object.freeze({
+        reportBootstrapFailure: vi.fn().mockResolvedValue(undefined),
+        openLogFolder: vi.fn().mockResolvedValue({ opened: true }),
         hello: vi.fn().mockResolvedValue({
           protocolVersion: 1,
           message: 'hello from CR Tools V2',

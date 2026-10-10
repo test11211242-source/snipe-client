@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_TITLE_SETTINGS } from './streamer-adapters'
 import { StreamerService } from './streamer-service'
+import { createApiError } from '../../../shared/errors/api-error'
+import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-ipc'
 
 const userView = {
   state: 'AUTHENTICATED' as const,
@@ -123,6 +125,57 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
 }
 
 describe('StreamerService', () => {
+  it.each([
+    'ACCOUNT_TAG_INVALID',
+    'ACCOUNT_NOT_FOUND',
+    'ACCOUNT_LIMIT_REACHED',
+    'CLASH_API_UNAVAILABLE',
+    'UNAUTHORIZED',
+    'VALIDATION_FAILED',
+  ] as const)('returns an IPC-safe account error: %s', async (code) => {
+    const test = harness()
+    test.request.mockResolvedValueOnce({
+      ok: false,
+      error: createApiError(code, 'bounded detail', false, 400),
+    } as never)
+    const result = AccountMutationResultSchema.parse(
+      await test.service.addTitleAccount('#P0Y', 'Alias'),
+    )
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: code === 'VALIDATION_FAILED' ? 'UNKNOWN' : code,
+        detail: code === 'VALIDATION_FAILED' ? null : 'bounded detail',
+      },
+    })
+    expect(test.request).toHaveBeenCalledOnce()
+  })
+  it.each(['TITLE_UPDATE_FAILED', 'REFRESH_FAILED'] as const)(
+    'distinguishes saved account warning: %s',
+    async (warning) => {
+      const test = harness()
+      const original = test.request.getMockImplementation()
+      if (original === undefined) throw new Error('Missing request fixture')
+      test.request.mockImplementation(async (input) => {
+        if (input.method === 'POST')
+          return {
+            ok: true,
+            status: 200,
+            data: {
+              success: true,
+              ...(warning === 'TITLE_UPDATE_FAILED' ? { warning } : {}),
+            },
+          } as never
+        if (warning === 'REFRESH_FAILED' && input.path.endsWith('/title/status'))
+          throw new Error('refresh failed')
+        return original(input)
+      })
+      const result = AccountMutationResultSchema.parse(
+        await test.service.addTitleAccount('#P0Y', 'Alias'),
+      )
+      expect(result).toMatchObject({ ok: true, warning })
+    },
+  )
   it('retains valid sections when a title response reports success false', async () => {
     const test = harness()
     await test.service.refresh()

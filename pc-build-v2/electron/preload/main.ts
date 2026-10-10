@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import {
+  OpenLogFolderResultSchema,
+  BootstrapFailurePayloadSchema,
   AppSnapshotPayloadSchema,
   AppSnapshotResultSchema,
   AppSettingsPayloadSchema,
@@ -50,6 +52,7 @@ import {
   WidgetStatusResultSchema,
 } from '../../shared/contracts/widget-ipc'
 import {
+  AccountMutationResultSchema,
   EmptyStreamerPayloadSchema,
   OverlayCopyPayloadSchema,
   OverlaySettingsPayloadSchema,
@@ -93,6 +96,16 @@ const api: CrToolsApi = Object.freeze({
     const payload = AppSnapshotPayloadSchema.parse({})
     return AppSnapshotResultSchema.parse(
       await ipcRenderer.invoke(IPC_CHANNELS.getSnapshot, payload),
+    )
+  },
+  openLogFolder: async () =>
+    OpenLogFolderResultSchema.parse(
+      await ipcRenderer.invoke(IPC_CHANNELS.openLogFolder, {}),
+    ),
+  reportBootstrapFailure: async (rawPayload: unknown) => {
+    await ipcRenderer.invoke(
+      IPC_CHANNELS.reportBootstrapFailure,
+      BootstrapFailurePayloadSchema.parse(rawPayload),
     )
   },
   getAppSettings: async () =>
@@ -328,7 +341,7 @@ const api: CrToolsApi = Object.freeze({
       ),
     ),
   addStreamTitleAccount: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
+    AccountMutationResultSchema.parse(
       await ipcRenderer.invoke(
         STREAMER_IPC_CHANNELS.addTitleAccount,
         StreamerAccountPayloadSchema.parse(rawPayload),

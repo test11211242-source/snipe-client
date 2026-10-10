@@ -15,6 +15,7 @@ export interface Resource<T> {
   value: T | null
   state: ResourceState
   error: string | null
+  cause?: 'INVALID_RESPONSE' | 'IPC_FAILED'
 }
 
 export interface BootstrapData {
@@ -50,12 +51,16 @@ function loadResource<T>(
     (value) => {
       if (active()) setter({ value, state: 'ready', error: null })
     },
-    () => {
+    (reason: unknown) => {
       if (active()) {
         setter((current) => ({
           ...current,
           state: 'error',
           error,
+          cause:
+            reason instanceof Error && reason.name === 'ZodError'
+              ? 'INVALID_RESPONSE'
+              : 'IPC_FAILED',
         }))
       }
     },
@@ -140,28 +145,56 @@ export function useAppBootstrap(): {
     beginLoading(setSettingsResource)
     beginLoading(setUpdateResource)
 
+    const report = <T>(
+      capability: Parameters<
+        typeof window.crTools.reportBootstrapFailure
+      >[0]['capability'],
+      request: Promise<T>,
+    ): Promise<T> =>
+      request.catch((reason: unknown) => {
+        const code =
+          reason instanceof Error && reason.name === 'ZodError'
+            ? 'INVALID_RESPONSE'
+            : 'IPC_FAILED'
+        void window.crTools
+          .reportBootstrapFailure({ capability, code })
+          .catch(() => undefined)
+        throw reason
+      })
     void Promise.allSettled([
       loadResource(
-        window.crTools.hello(),
+        report('protocol', window.crTools.hello()),
         setProtocolResource,
         isActive,
         'Не удалось подтвердить совместимость приложения.',
       ),
-      loadResource(window.crTools.getAppSnapshot(), setSnapshotResource, isActive),
-      loadResource(window.crTools.getAuthView(), setAuthResource, isActive),
-      loadResource(window.crTools.getRealtimeStatus(), setRealtimeResource, isActive),
       loadResource(
-        window.crTools.getCaptureStatus(),
+        report('snapshot', window.crTools.getAppSnapshot()),
+        setSnapshotResource,
+        isActive,
+      ),
+      loadResource(
+        report('auth', window.crTools.getAuthView()),
+        setAuthResource,
+        isActive,
+      ),
+      loadResource(
+        report('realtime', window.crTools.getRealtimeStatus()),
+        setRealtimeResource,
+        isActive,
+      ),
+      loadResource(
+        report('capture', window.crTools.getCaptureStatus()),
         setCaptureResource,
         () => active && captureGeneration === captureGenerationRef.current,
       ),
       loadResource(
-        window.crTools.getCaptureProfiles(),
+        report('profiles', window.crTools.getCaptureProfiles()),
         setProfilesResource,
         () => active && profilesGeneration === profilesGenerationRef.current,
       ),
       loadResource(
-        window.crTools.getMonitorView().then((value) => {
+        report('monitor', window.crTools.getMonitorView()).then((value) => {
           if (active && monitorGeneration === monitorGenerationRef.current) {
             monitorStateRef.current = value.state
             restartMonitorPollingRef.current()
@@ -171,10 +204,18 @@ export function useAppBootstrap(): {
         setMonitorResource,
         () => active && monitorGeneration === monitorGenerationRef.current,
       ),
-      loadResource(window.crTools.getWidgetStatus(), setWidgetResource, isActive),
-      loadResource(window.crTools.getAppSettings(), setSettingsResource, isActive),
       loadResource(
-        window.crTools.getUpdateView().then((value) => {
+        report('widget', window.crTools.getWidgetStatus()),
+        setWidgetResource,
+        isActive,
+      ),
+      loadResource(
+        report('settings', window.crTools.getAppSettings()),
+        setSettingsResource,
+        isActive,
+      ),
+      loadResource(
+        report('update', window.crTools.getUpdateView()).then((value) => {
           if (active && updateGeneration === updateGenerationRef.current) {
             updateStateRef.current = value.state
             restartUpdatePollingRef.current()

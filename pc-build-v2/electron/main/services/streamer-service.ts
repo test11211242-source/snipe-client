@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
+import {
+  AccountErrorCodeSchema,
+  type AccountMutationResult,
+} from '../../../shared/contracts/streamer-ipc'
 import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
@@ -275,10 +279,59 @@ export class StreamerService {
     )
   }
 
-  addTitleAccount(tag: string, alias: string): Promise<StreamerView> {
-    return this.mutate(() =>
-      this.request('POST', '/api/streamer/accounts', { tag, alias }),
-    )
+  async addTitleAccount(tag: string, alias: string): Promise<AccountMutationResult> {
+    const outcome: {
+      saved: boolean
+      warning: 'TITLE_UPDATE_FAILED' | 'REFRESH_FAILED' | null
+      failure: AccountMutationResult | null
+    } = { saved: false, warning: null, failure: null }
+    try {
+      const view = await this.mutate(async () => {
+        const result = await this.api.request({
+          method: 'POST',
+          path: '/api/streamer/accounts',
+          body: { tag, alias },
+          schema: CommandSuccessSchema,
+          timeoutMs: 30_000,
+        })
+        if (!result.ok) {
+          const code = AccountErrorCodeSchema.safeParse(result.error.code)
+          outcome.failure = {
+            ok: false,
+            error: {
+              code: code.success ? code.data : 'UNKNOWN',
+              detail: code.success ? result.error.message : null,
+            },
+          }
+          throw new ApplicationError('STREAMER_COMMAND_FAILED', 'Account was not saved')
+        }
+        outcome.saved = true
+        if (result.data['warning'] === 'TITLE_UPDATE_FAILED')
+          outcome.warning = 'TITLE_UPDATE_FAILED'
+      })
+      if (
+        view.refresh.errors.some((error) => error.section === 'title') &&
+        outcome.warning === null
+      ) {
+        outcome.warning = 'REFRESH_FAILED'
+      }
+      return { ok: true, view, warning: outcome.warning }
+    } catch (error) {
+      if (outcome.saved)
+        return {
+          ok: true,
+          view: this.#view,
+          warning: outcome.warning ?? 'REFRESH_FAILED',
+        }
+      if (outcome.failure !== null) return outcome.failure
+      const code = AccountErrorCodeSchema.safeParse(
+        error instanceof ApplicationError ? error.code : 'UNKNOWN',
+      )
+      return {
+        ok: false,
+        error: { code: code.success ? code.data : 'UNKNOWN', detail: null },
+      }
+    }
   }
 
   removeTitleAccount(tag: string): Promise<StreamerView> {

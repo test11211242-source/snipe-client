@@ -74,6 +74,21 @@ size are saved after user move/resize events.
 Valid legacy `compactMode` settings are migrated; malformed or out-of-range files are
 quarantined before defaults are loaded.
 
+M0 service readiness loads the authenticated user's widget settings before opening
+the main renderer. A failed load keeps authentication visible rather than inventing
+settings. Logout/user switches fence pending loads. Monitor stderr is drained as
+rate-limited diagnostic counters and never terminates capture by lifetime volume;
+stdout remains a strict protocol. Metadata helper failures are reported separately
+from absent/ambiguous sources, without relaxing exact identity matching.
+
+Sanitized asynchronous diagnostics rotate under `userData/logs` (five files of at
+most 1 MiB each, bounded pending writes). Disk failures do not stop monitoring.
+The main-only `openLogFolder` capability opens that fixed directory; it accepts no
+path. Diagnostics never contain raw worker stderr, exception messages/stacks,
+private images, title/nickname/email fields or credential-bearing URLs.
+Account additions return typed error codes or a saved-with-warning result; old
+servers without codes receive an honest generic message, not a guessed cause.
+
 Capture configuration is separate and per server user under
 `userData/capture-profiles.v3/`. It stores normalized regions, compact color-independent
 structural trigger maps, non-sensitive source preference metadata, revision, and

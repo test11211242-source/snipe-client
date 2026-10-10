@@ -10,6 +10,8 @@ import {
   nodeSettingsFileSystem,
 } from './infrastructure/settings-repository'
 import { StructuredLogger } from './infrastructure/structured-logger'
+import { mkdir } from 'node:fs/promises'
+import { RotatingLogSink } from './infrastructure/rotating-log-sink'
 import { SecretStore, nodeSecretFileSystem } from './infrastructure/secret-store'
 import { createProductionServerConfig } from './infrastructure/server-config'
 import {
@@ -67,7 +69,18 @@ import { CaptureProfileService } from './services/capture-profile-service'
 
 app.setName('CR Tools V2')
 
-const logger = new StructuredLogger()
+const logSink = new RotatingLogSink(join(app.getPath('userData'), 'logs'))
+const logger = new StructuredLogger(logSink.write, {
+  flush: () => logSink.flush(),
+  openFolder: async () => {
+    try {
+      await mkdir(logSink.directory, { recursive: true })
+      return (await shell.openPath(logSink.directory)) === ''
+    } catch {
+      return false
+    }
+  },
+})
 const windows = new WindowCoordinator(logger)
 const server = createProductionServerConfig()
 const api = new ApiClient(server, globalThis.fetch, logger)
@@ -123,7 +136,9 @@ const capture = new CaptureService(
   join(pythonRoot, 'capture_once.py'),
   join(pythonRoot, 'analyze_trigger.py'),
 )
-const captureSources = new CaptureSourceRegistry(new ElectronCaptureSourceProvider())
+const captureSources = new CaptureSourceRegistry(
+  new ElectronCaptureSourceProvider(undefined, undefined, logger),
+)
 const preparedCaptureProcess = new PreparedCaptureProcessService(
   pythonExecutable,
   join(pythonRoot, 'prepared_capture.py'),
