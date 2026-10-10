@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 
 import type { AppSettingsView } from '../../../shared/contracts/app'
 import type { AuthView } from '../../../shared/models/auth'
@@ -67,6 +67,9 @@ export const updateIdle: UpdateView = {
   error: null,
 }
 
+/** Async capability mock; implementations may take any arguments. */
+export type AsyncMock = Mock<(...args: never[]) => Promise<unknown>>
+
 export interface BridgeOptions {
   auth?: AuthView
   profiles?: CaptureProfilesView
@@ -93,13 +96,14 @@ export interface Bridge {
     window: { command: ReturnType<typeof vi.fn> }
     logout: ReturnType<typeof vi.fn>
     reportBootstrapFailure: ReturnType<typeof vi.fn>
-    retryMonitorSearch: ReturnType<typeof vi.fn>
-    getMonitorHistory: ReturnType<typeof vi.fn>
-    updateMonitorPreferences: ReturnType<typeof vi.fn>
-    getCardAsset: ReturnType<typeof vi.fn>
-    copyPlayerTag: ReturnType<typeof vi.fn>
-    showWidget: ReturnType<typeof vi.fn>
-    h2h: { lookup: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> }
+    retryMonitorSearch: AsyncMock
+    getMonitorHistory: AsyncMock
+    updateMonitorPreferences: AsyncMock
+    getCardAsset: AsyncMock
+    copyPlayerTag: AsyncMock
+    showWidget: AsyncMock
+    getRealtimeStatus: AsyncMock
+    h2h: { lookup: AsyncMock; cancel: AsyncMock }
   }
   /** Delivers a monitor push event to every subscribed listener. */
   push: (view: MonitorView) => void

@@ -63,9 +63,9 @@ class FakeResizeObserver {
   constructor(callback: () => void) {
     resizeCallback = callback
   }
-  observe(): void {}
-  disconnect(): void {}
-  unobserve(): void {}
+  observe = vi.fn()
+  disconnect = vi.fn()
+  unobserve = vi.fn()
 }
 
 function deferred<T>() {

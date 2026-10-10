@@ -117,7 +117,7 @@ export function OpponentPanel({
   switch (presentation.kind) {
     case 'no-profile':
       return (
-        <Card as="section" className={styles['panel']} padded>
+        <Card as="section" aria-label="Соперник" className={styles['panel']} padded>
           <FirstRun />
         </Card>
       )
