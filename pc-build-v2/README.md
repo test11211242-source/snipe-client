@@ -51,11 +51,11 @@ steps are Windows release gates and are not simulated on Linux.
   Electron source IDs, HWNDs, process IDs, monitor indices, or executable paths.
 - `python`: framed one-shot capture and trigger analysis workers plus a strict persistent
   JSON-lines monitor, pinned to `windows-capture==2.0.0`.
-- `electron/preload`: independent main, auth, setup, and widget entry points.
+- `electron/preload`: independent main, auth, and widget entry points; setup is a narrow main namespace.
 - `shared/contracts`: Zod IPC contracts shared by main and preload.
 - `shared/models` and `shared/errors`: boundary-safe models and errors.
-- `renderer`: separate sandboxed auth, main, setup, and widget React entries with
-  restrictive CSPs.
+- `renderer`: separate sandboxed auth, main, and widget React entries with restrictive
+  CSPs; the full-window setup editor is hosted by main.
 
 The renderer has no Node.js integration, filesystem access, tokens, full HWID,
 generic IPC, or generic settings API. Auth and main windows expose separate narrow
@@ -116,8 +116,10 @@ automatic-calibration quality. Prediction result references migrate only from th
 exact validated old profile revision/fingerprint. No migration contacts the server.
 There are no screenshots, RGB templates, tokens or full executable paths on disk.
 A saved HWND is a private binding hint, never a renderer source identifier.
-Setup still posts the schema-version 2 `/api/user/me/ocr-regions` compatibility
-projection before atomically committing the canonical local model.
+Setup atomically saves the canonical local model before posting its schema-version 2
+`/api/user/me/ocr-regions` compatibility projection. Its view reports local persistence,
+server synchronization, and runtime restart independently; a failed projection can be retried
+without saving again, provided the session, authentication, profile, and fingerprint still match.
 
 The production origin is fixed to `https://api.artcsworld.xyz`; realtime uses
 `wss://api.artcsworld.xyz/ws`. The refresh token is encrypted with Electron
@@ -135,9 +137,9 @@ provider and cannot silently instantiate the Windows production identity.
 
 M3 implementation is complete. The Capture workspace explicitly enumerates Electron
 window/display sources, uses opaque short-lived keys, and creates bounded lazy previews.
-Starting setup captures the canonical frame before the setup window exists. The isolated
-wizard maps pointer and numeric coordinates through a letterboxed contain transform and
-stages Trigger, Normal, and Precise regions before analysis/review/commit.
+Starting setup captures the canonical frame before entering the main window's full-window
+editor. The editor maps pointer and numeric coordinates through a letterboxed contain transform
+and stages Trigger, Normal, and Precise regions before analysis/review/commit.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -276,8 +278,8 @@ All streamer management requests originate in main through an authenticated API 
 the app JWT memory-only and retries once after a 401 refresh. The renderer receives one strict,
 bounded `StreamerView`; Twitch credentials, widget tokens, complete OBS URLs, screenshots, raw
 server payloads, and model output do not cross preload. OBS URLs can only be copied by a typed
-`stats`/`opponent` command. Mock previews are local React fixtures and never call the public
-preview endpoint.
+`stats`/`opponent` command. OBS renderer preview URLs use the existing fixed-origin, token-free
+public preview route; bearer URLs and token rotation stay in main.
 
 OAuth opens only a server-returned HTTPS URL whose exact host is `id.twitch.tv`, using Electron's
 system-browser `shell.openExternal`. The callback remains server-owned, and main performs bounded,
@@ -286,10 +288,11 @@ pending. No remote `BrowserWindow` or `window.open` is used.
 
 Prediction preferences and result profiles are strict per-user atomic files under
 `userData/prediction-preferences.v1/` and `userData/prediction-result-config.v1/`. Result setup
-re-resolves the current main capture target, captures before opening the setup window, analyzes
-the result trigger locally, then saves trigger and data endpoints in order. Because the server has
-no transaction across those two endpoints, a second-write failure is reported as partial remote
-state and the local profile remains inactive.
+resolves the explicitly selected capture profile (including inactive profiles) and edits a real
+captured result frame in the same main-window setup namespace. Result geometry is saved locally
+first. Only an active profile updates the server's legacy mirror, in trigger/data order; those
+two endpoints are not transactional. A partial remote failure is a synchronization warning,
+not a false local-save failure, and the same fenced retry resends the saved mirror.
 
 Predictions reuse the single monitor process. Normal battle triggers notify the server through a
 serialized main-only coordinator. The optional result profile has one confirmation and a 60-second
@@ -352,3 +355,39 @@ artifact verification, deployment, and rollback procedures.
 
 The remaining validation and M8 cutover belong to later milestones in
 `../docs/CR_TOOLS_V2_IMPLEMENTATION_PLAN.md` and are intentionally not simulated.
+
+## M3–M5 UI Contracts
+
+The main window is frameless (default 1100×700, minimum 420×360); auth defaults to 480×640.
+`crTools.window.command()` accepts only `get`, `minimize`, `maximize`, `restore`, and `close`.
+Close uses the native close event and the existing close-to-tray policy, never a direct destroy.
+Setup start does not create another window. `crTools.setup` exposes strict session/generation
+commands, selected-profile result setup, and saved-projection retry; auth and widget cannot invoke it.
+
+`crTools.streamer.command()` is the single typed mutation boundary for Twitch, predictions,
+title settings/preview/apply/undo, chat, OBS widgets, and accounts. Its allowlisted errors preserve
+M0 account codes; successful committed mutations can carry `TITLE_UPDATE_FAILED` or
+`REFRESH_FAILED`. `getReadiness()` projects Twitch, enabled account count, running-monitor
+readiness, capture presence, and the active capture/result association in main. Unknown or
+unavailable sections are null, not disconnected.
+Title presets/chips compile to the existing server template/include/account-selection fields.
+Decompilation preserves arbitrary existing templates through explicit raw mode. There is only
+one `{account}` token: active-account and best-account chips cannot be promised simultaneously.
+The existing title endpoint acknowledges settings, not a distinct Twitch application receipt:
+explicit apply returns `unconfirmed` plus `TITLE_APPLICATION_UNCONFIRMED`; the known saved-but-
+Twitch-failed response returns saved success with a warning, while an unrelated gateway failure
+remains an error. Undo uses the existing real server undo operation.
+
+`crTools.h2h.lookup({ requestId, opponentTag, recentLimit })` calls authenticated
+`GET /api/user/me/h2h`. Server statuses `ok`, `none`, `unavailable`, and `no_accounts` remain
+distinct. A missing endpoint is `unsupported`, never `none`; HTTP 429 exposes a retry timestamp
+and prevents another request until it expires. Lookups coalesce by canonical tag/limit/user
+generation, support per-request cancellation, and are cancelled on auth change or main destruction.
+Coverage is only recorded Path of Legends history, not proof that a player exists or has no history.
+No-account and not-found states are never inferred from transport errors.
+
+Main and widget have only canonical player-tag clipboard commands, not arbitrary clipboard writes.
+Widget settings accept bounded `contentHeight` (80–720), not arbitrary native bounds; normal and
+compact widths remain separately persisted. OBS bearer URLs, JWTs, raw API envelopes, HWNDs, and
+capture selectors never cross these bridges. The existing update view already supplies version,
+release notes, download progress, ready/error state and verified install; no second updater was added.
