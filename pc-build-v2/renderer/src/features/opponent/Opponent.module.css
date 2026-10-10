@@ -53,11 +53,11 @@
   position: absolute;
   left: var(--space-3);
   right: var(--space-3);
-  bottom: var(--space-2);
+  bottom: calc(100% + var(--space-2));
   z-index: var(--z-sticky);
   display: grid;
   gap: var(--space-3);
-  max-height: 72%;
+  max-height: 70vh;
   overflow: auto;
   padding: var(--space-3);
   border-radius: var(--radius-xl);
@@ -68,17 +68,21 @@
 /* Header of the card */
 .head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: var(--space-3);
+}
+.head > :last-child {
+  flex: none;
 }
 .headInfo {
   display: flex;
   align-items: center;
+  flex: 1;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-3);
   min-width: 0;
+  min-height: var(--control-md);
 }
 .eyebrow {
   color: var(--color-text-3);
@@ -99,10 +103,10 @@
   color: var(--color-accent);
 }
 .status[data-tone='warn'] {
-  color: var(--color-warn-ink);
+  color: var(--color-warn);
 }
 .status[data-tone='danger'] {
-  color: var(--color-danger-ink);
+  color: var(--color-danger);
 }
 .caption {
   color: var(--color-text-3);
@@ -119,6 +123,7 @@
 }
 .found {
   flex: 1;
+  gap: var(--space-3);
 }
 .idRow {
   display: flex;
@@ -167,13 +172,18 @@
 .decksRow {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-6);
+  gap: var(--space-4);
   min-width: 0;
+}
+@container app (max-width: 719px) {
+  .found {
+    gap: var(--space-3);
+  }
 }
 .h2hCol {
   flex: 1;
-  min-width: 190px;
-  padding-left: var(--space-5);
+  min-width: 0;
+  padding-left: var(--space-4);
   border-left: 1px solid var(--color-line-subtle);
 }
 .foot {
@@ -203,5 +213,5 @@
   color: var(--color-accent);
 }
 .stepBlocked {
-  color: var(--color-warn-ink);
+  color: var(--color-warn);
 }

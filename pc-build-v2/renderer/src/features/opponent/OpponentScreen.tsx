@@ -133,27 +133,27 @@ export function OpponentScreen(): React.JSX.Element {
         viewing={viewing}
       />
       {tier === 'mini' ? (
-        <>
-          {miniExtra === null
-            ? null
-            : createPortal(
-                <Button
-                  aria-expanded={sheetOpen}
-                  onClick={() => setSheetOpen((open) => !open)}
-                >
-                  <Icon name="history" size={14} />
-                  История
-                  <Icon name={sheetOpen ? 'chevronDown' : 'chevronUp'} size={14} />
-                </Button>,
-                miniExtra,
-              )}
-          {sheetOpen ? (
-            <div className={styles['sheet']}>
-              {stats === null ? null : <SessionStats stats={stats} />}
-              {historyList}
-            </div>
-          ) : null}
-        </>
+        miniExtra === null ? null : (
+          createPortal(
+            <>
+              <Button
+                aria-expanded={sheetOpen}
+                onClick={() => setSheetOpen((open) => !open)}
+              >
+                <Icon name="history" size={14} />
+                История
+                <Icon name={sheetOpen ? 'chevronDown' : 'chevronUp'} size={14} />
+              </Button>
+              {sheetOpen ? (
+                <div className={styles['sheet']}>
+                  {stats === null ? null : <SessionStats stats={stats} />}
+                  {historyList}
+                </div>
+              ) : null}
+            </>,
+            miniExtra,
+          )
+        )
       ) : (
         <aside className={styles['side']}>
           {stats === null ? null : <SessionStats stats={stats} />}

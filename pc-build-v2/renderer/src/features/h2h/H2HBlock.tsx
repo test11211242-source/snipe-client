@@ -61,9 +61,9 @@ export function H2HBlock({
             </b>
             <span>· {percent(totals.winRate)}</span>
             <RecentDots recent={recent} />
+            <span className={styles['lineNote']}>{H2H_DISCLAIMER}</span>
             <Icon name="chevronRight" size={14} />
           </span>
-          <span className={styles['lineNote']}>{H2H_DISCLAIMER}</span>
         </button>
       )
     return (

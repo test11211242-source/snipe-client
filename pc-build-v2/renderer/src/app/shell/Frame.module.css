@@ -45,6 +45,7 @@
   min-width: 0;
 }
 .miniStrip {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;

@@ -51,6 +51,14 @@ app.whenReady().then(async () => {
       await win.webContents.executeJavaScript(step)
       await sleep(350)
     }
+    if (scenario.fit) {
+      // Overlay: the window height follows the content, as it does natively.
+      const height = await win.webContents.executeJavaScript(
+        "Math.ceil(document.querySelector('main').getBoundingClientRect().height)",
+      )
+      win.setContentSize(scenario.width, height)
+      await sleep(450)
+    }
     const image = await win.webContents.capturePage()
     fs.writeFileSync(path.join(outDir, `${scenario.name}.png`), image.toPNG())
     win.destroy()

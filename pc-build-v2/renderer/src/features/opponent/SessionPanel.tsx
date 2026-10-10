@@ -4,7 +4,7 @@ import type {
   MonitorSessionStats,
   MonitorView,
 } from '../../../../shared/models/monitor'
-import { Button, Icon, Pill, Row, State } from '../../ui'
+import { Button, Icon, Pill, State } from '../../ui'
 import { cx } from '../../ui/cx'
 import { clockTime } from '../h2h/format'
 import { describeResult } from '../monitor/history'
@@ -58,21 +58,6 @@ export function SessionStats({
   )
 }
 
-function Trail({ result }: { result: MonitorResult }): React.JSX.Element {
-  const model = describeResult(result)
-  return (
-    <span className={styles['trail']}>
-      <time dateTime={result.timestamp}>{clockTime(result.timestamp)}</time>
-      {model.repeated ? (
-        <span className={styles['repeat']}>
-          <Icon name="repeat" size={11} />
-          уже играли
-        </span>
-      ) : null}
-    </span>
-  )
-}
-
 function HistoryRow({
   result,
   selected,
@@ -84,32 +69,41 @@ function HistoryRow({
 }): React.JSX.Element {
   const model = describeResult(result)
   return (
-    <Row
+    <button
       aria-current={selected ? 'true' : undefined}
-      lead={
-        <span className={cx(styles['leadIcon'], styles[TONE_CLASS[model.tone]])}>
-          <Icon name={model.icon} size={15} />
-        </span>
-      }
+      className={cx(styles['row'], selected && styles['rowSelected'])}
       onClick={() => onSelect(result.id)}
-      selected={selected}
-      sub={
+      type="button"
+    >
+      <span className={cx(styles['leadIcon'], styles[TONE_CLASS[model.tone]])}>
+        <Icon name={model.icon} size={15} />
+      </span>
+      <span className={styles['main']}>
+        <b>{model.title}</b>
         <span className={styles['sub']}>
           {model.rating === null ? null : (
             <>
               <Icon name="medal" size={12} />
-              {model.rating.toLocaleString('ru-RU')} ·{' '}
+              <span>{model.rating.toLocaleString('ru-RU')}</span>
+              <span aria-hidden="true">•</span>
             </>
           )}
-          {model.detail}
-          {model.reprocessed ? (
-            <span className={styles['reprocessed']}>{REPROCESSED_LABEL}</span>
-          ) : null}
+          <span className={styles['detail']}>{model.detail}</span>
         </span>
-      }
-      title={model.title}
-      trail={<Trail result={result} />}
-    />
+        {model.reprocessed ? (
+          <span className={styles['reprocessed']}>{REPROCESSED_LABEL}</span>
+        ) : null}
+      </span>
+      <span className={styles['trail']}>
+        <time dateTime={result.timestamp}>{clockTime(result.timestamp)}</time>
+        {model.repeated ? (
+          <span className={styles['repeat']}>
+            <Icon name="repeat" size={11} />
+            уже играли
+          </span>
+        ) : null}
+      </span>
+    </button>
   )
 }
 

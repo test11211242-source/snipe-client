@@ -30,7 +30,7 @@ type Found = Extract<MonitorResult, { kind: 'player_found' }>
 const fetchCardAsset = (request: CardAssetRequest): Promise<CardAssetResult> =>
   window.crTools.getCardAsset(request)
 
-const TILE_WIDTH = { wide: 108, medium: 84, mini: 82 } as const
+const TILE_WIDTH = { wide: 100, medium: 80, mini: 82 } as const
 
 function DeckView({
   result,

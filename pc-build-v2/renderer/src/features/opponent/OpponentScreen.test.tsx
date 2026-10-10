@@ -156,9 +156,15 @@ describe('opponent card: found', () => {
     await renderMain({ monitor: running({ results: [found(1)] }) })
     expect(await screen.findByRole('heading', { name: 'Игрок1' })).toBeVisible()
     expect(screen.getByText('Тег игрока')).toBeVisible()
-    expect(screen.getByText('Северный ветер')).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Соперник' })).getByText(
+        'Северный ветер',
+      ),
+    ).toBeVisible()
     expect(screen.getByText('Рейтинг')).toBeVisible()
-    expect(screen.getByText('2 487')).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Соперник' })).getByText('2 487'),
+    ).toBeVisible()
     expect(screen.getByText(/Колода/, { selector: 'span' })).toHaveTextContent(
       'Колода 1 из 3',
     )

@@ -1,0 +1,3547 @@
+[
+  {
+    "name": "main-found-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-waiting-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "monitorState": "WAITING_SOURCE",
+      "sourceMissing": true,
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "requesting",
+        "nick": "Voron_17"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-nonick-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "capturing"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-summary-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "monitorState": "STOPPED",
+      "summary": {},
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-history-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "main-history-sheet-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": []
+  },
+  {
+    "name": "main-h2h-ok-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "ok"
+    }
+  },
+  {
+    "name": "main-h2h-none-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "none"
+    }
+  },
+  {
+    "name": "main-h2h-noaccounts-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "no_accounts"
+    }
+  },
+  {
+    "name": "main-h2h-loading-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "loading"
+    }
+  },
+  {
+    "name": "main-h2h-unavailable-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "unavailable"
+    }
+  },
+  {
+    "name": "main-notfound-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-recfailed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-svcerror-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        }
+      ],
+      "search": {
+        "phase": "failed",
+        "retry": true
+      }
+    }
+  },
+  {
+    "name": "main-firstrun-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "noProfiles": true,
+      "monitorState": "STOPPED"
+    }
+  },
+  {
+    "name": "main-offline-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "offline": true
+    }
+  },
+  {
+    "name": "main-rebind-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "SOURCE_REBIND_REQUIRED",
+        "message": "Выберите окно игры заново в профиле"
+      }
+    }
+  },
+  {
+    "name": "main-failed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "CAPTURE_FAILED",
+        "message": "Не удалось получить кадр окна игры"
+      }
+    }
+  },
+  {
+    "name": "main-reprocessed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2,
+          "reprocessed": true
+        },
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "main-found-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-waiting-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "monitorState": "WAITING_SOURCE",
+      "sourceMissing": true,
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "requesting",
+        "nick": "Voron_17"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-nonick-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "capturing"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-summary-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "monitorState": "STOPPED",
+      "summary": {},
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-history-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "main-history-sheet-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": []
+  },
+  {
+    "name": "main-h2h-ok-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "ok"
+    }
+  },
+  {
+    "name": "main-h2h-none-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "none"
+    }
+  },
+  {
+    "name": "main-h2h-noaccounts-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "no_accounts"
+    }
+  },
+  {
+    "name": "main-h2h-loading-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "loading"
+    }
+  },
+  {
+    "name": "main-h2h-unavailable-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "unavailable"
+    }
+  },
+  {
+    "name": "main-notfound-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-recfailed-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-svcerror-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        }
+      ],
+      "search": {
+        "phase": "failed",
+        "retry": true
+      }
+    }
+  },
+  {
+    "name": "main-firstrun-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "noProfiles": true,
+      "monitorState": "STOPPED"
+    }
+  },
+  {
+    "name": "main-offline-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "offline": true
+    }
+  },
+  {
+    "name": "main-rebind-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "SOURCE_REBIND_REQUIRED",
+        "message": "Выберите окно игры заново в профиле"
+      }
+    }
+  },
+  {
+    "name": "main-failed-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "CAPTURE_FAILED",
+        "message": "Не удалось получить кадр окна игры"
+      }
+    }
+  },
+  {
+    "name": "main-reprocessed-medium",
+    "width": 820,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2,
+          "reprocessed": true
+        },
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "main-found-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-waiting-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "monitorState": "WAITING_SOURCE",
+      "sourceMissing": true,
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "requesting",
+        "nick": "Voron_17"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-searching-nonick-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "search": {
+        "phase": "capturing"
+      },
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-summary-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "monitorState": "STOPPED",
+      "summary": {},
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-history-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('История')).click()",
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "main-history-sheet-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('История')).click()"
+    ]
+  },
+  {
+    "name": "main-h2h-ok-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "ok"
+    }
+  },
+  {
+    "name": "main-h2h-none-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "none"
+    }
+  },
+  {
+    "name": "main-h2h-noaccounts-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "no_accounts"
+    }
+  },
+  {
+    "name": "main-h2h-loading-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "loading"
+    }
+  },
+  {
+    "name": "main-h2h-unavailable-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "unavailable"
+    }
+  },
+  {
+    "name": "main-notfound-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-recfailed-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        }
+      ]
+    }
+  },
+  {
+    "name": "main-svcerror-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        }
+      ],
+      "search": {
+        "phase": "failed",
+        "retry": true
+      }
+    }
+  },
+  {
+    "name": "main-firstrun-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "noProfiles": true,
+      "monitorState": "STOPPED"
+    }
+  },
+  {
+    "name": "main-offline-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "offline": true
+    }
+  },
+  {
+    "name": "main-rebind-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "SOURCE_REBIND_REQUIRED",
+        "message": "Выберите окно игры заново в профиле"
+      }
+    }
+  },
+  {
+    "name": "main-failed-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "monitorState": "FAILED",
+      "error": {
+        "code": "CAPTURE_FAILED",
+        "message": "Не удалось получить кадр окна игры"
+      }
+    }
+  },
+  {
+    "name": "main-reprocessed-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2,
+          "reprocessed": true
+        },
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        }
+      ]
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('История')).click()",
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Lena')).click()"
+    ]
+  },
+  {
+    "name": "palette-h2h-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "ok"
+    },
+    "steps": [
+      "document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true}))",
+      "(()=>{const i=document.querySelector('input[placeholder=\"#2Q8YLP0\"]');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'#2Q8YLP0');i.dispatchEvent(new Event('input',{bubbles:true}))})()",
+      "document.querySelector('input[placeholder=\"#2Q8YLP0\"]').form.requestSubmit()"
+    ]
+  },
+  {
+    "name": "h2h-dialog-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "minutesAgo": 0,
+          "repeatMinutesAgo": 110
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Дракон",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12,
+          "repeatMinutesAgo": 300
+        },
+        {
+          "n": 3,
+          "kind": "notfound",
+          "nick": "Dr4gon",
+          "minutesAgo": 23
+        },
+        {
+          "n": 4,
+          "name": "Lena",
+          "rating": 2540,
+          "clan": "Alpha",
+          "tag": "#8Y2QL0",
+          "minutesAgo": 37,
+          "decks": 2
+        },
+        {
+          "n": 5,
+          "kind": "recfail",
+          "minutesAgo": 44
+        },
+        {
+          "n": 6,
+          "name": "Ghost",
+          "rating": 2218,
+          "clan": null,
+          "tag": "#2PPLQ",
+          "minutesAgo": 50
+        },
+        {
+          "n": 7,
+          "kind": "svc",
+          "nick": "Лунатик",
+          "minutesAgo": 58
+        },
+        {
+          "n": 8,
+          "name": "Мишка_Топ",
+          "rating": 2602,
+          "clan": "Тайга",
+          "tag": "#JCUV9",
+          "minutesAgo": 64
+        }
+      ],
+      "h2h": "ok"
+    },
+    "steps": [
+      "[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Все встречи')).click()"
+    ]
+  },
+  {
+    "name": "overlay-found-300",
+    "width": 300,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 300,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-found-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-compact-520",
+    "width": 520,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 520,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "compact": true
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-compact-440",
+    "width": 440,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 440,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "compact": true
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-found-720",
+    "width": 720,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 720,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-compact-720",
+    "width": 720,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 720,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "compact": true
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-single-deck-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-searching-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "search": {
+          "phase": "requesting",
+          "nick": "Voron_17"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-searching-nonick-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "search": {
+          "phase": "capturing"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-notfound-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "kind": "notfound",
+          "nick": "Dr4gon"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-recfailed-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "kind": "recfail"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-svc-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "kind": "svc",
+          "nick": "Voron_17"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-idle-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-waiting-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "monitorState": "WAITING_SOURCE"
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-rebind-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "monitorState": "FAILED",
+        "runIntent": false,
+        "monitorError": {
+          "code": "SOURCE_REBIND_REQUIRED",
+          "message": "Выберите окно игры заново в профиле"
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-locked-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "locked": true
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-unpinned-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер"
+        },
+        "pinned": false
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  },
+  {
+    "name": "overlay-reprocessed-360",
+    "width": 360,
+    "height": 600,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "reprocessed": true
+        }
+      }
+    },
+    "page": "widget.html",
+    "fit": true
+  }
+]

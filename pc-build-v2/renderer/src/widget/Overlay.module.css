@@ -56,10 +56,10 @@
   color: var(--color-accent);
 }
 .status[data-tone='warn'] {
-  color: var(--color-warn-ink);
+  color: var(--color-warn);
 }
 .status[data-tone='danger'] {
-  color: var(--color-danger-ink);
+  color: var(--color-danger);
 }
 .controls {
   display: inline-flex;
@@ -100,17 +100,20 @@
   color: var(--color-text-3);
 }
 
+/* Normal: four fluid columns; cards never grow past their 166 px source. */
 .deck {
   display: grid;
-  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: calc(var(--space-2) * var(--k));
   width: 100%;
-  max-width: calc(var(--cols) * 166px + (var(--cols) - 1) * var(--space-2) * 2);
+  max-width: calc(4 * 166px + 3 * var(--space-2) * 2);
   margin: calc(var(--space-1) * var(--k)) auto 0;
   padding: 0;
   list-style: none;
 }
+/* Compact: eight cards in one row, as wide as the window allows. */
 .shell[data-compact='true'] .deck {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: calc(var(--space-1) * var(--k));
 }
 .deck li {
