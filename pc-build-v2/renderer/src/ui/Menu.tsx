@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -9,10 +10,15 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 
 import { cx } from './cx'
 import { useDismiss } from './focus'
+import { placeMenu } from './menuPlacement'
 import styles from './Menu.module.css'
+
+/** Distance from the trigger and the minimum distance to the viewport edge. */
+const GAP = 8
 
 const MenuContext = createContext<{ close: () => void } | null>(null)
 
@@ -69,19 +75,66 @@ export function Menu({
     const toggle = root.current?.querySelector<HTMLElement>('[aria-haspopup="menu"]')
     toggle?.focus()
   }, [])
-  useDismiss(root, open, () => {
-    if (open) close()
-  })
+  const place = useCallback(
+    (element: HTMLElement): void => {
+      const anchor = root.current
+      if (anchor === null) return
+      // Measure the natural size at the origin, then position inside the viewport.
+      element.style.maxHeight = ''
+      element.style.left = '0px'
+      element.style.top = '0px'
+      const size = element.getBoundingClientRect()
+      const placement = placeMenu({
+        anchor: anchor.getBoundingClientRect(),
+        menu: { width: size.width, height: size.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        direction,
+        align,
+        gap: GAP,
+        margin: GAP,
+      })
+      element.style.top = `${placement.top}px`
+      element.style.left = `${placement.left}px`
+      element.style.maxHeight =
+        size.height > placement.maxHeight ? `${placement.maxHeight}px` : ''
+      element.style.visibility = 'visible'
+    },
+    [align, direction],
+  )
+  useDismiss(
+    root,
+    open,
+    () => {
+      if (open) close()
+    },
+    menu,
+  )
+
+  // The menu is fixed-positioned in a portal so scroll containers never clip it.
+  useEffect(() => {
+    if (!open) return
+    const reposition = (): void => {
+      if (menu.current !== null) place(menu.current)
+    }
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    return () => {
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+    }
+  }, [open, place])
 
   const attachMenu = useCallback(
     (element: HTMLDivElement | null): void => {
       menu.current = element
-      if (element === null || focusRequest === null) return
+      if (element === null) return
+      place(element)
+      if (focusRequest === null) return
       const list = items(element)
       const target = focusRequest === 'first' ? list[0] : list[list.length - 1]
       target?.focus()
     },
-    [focusRequest],
+    [focusRequest, place],
   )
 
   return (
@@ -105,43 +158,42 @@ export function Menu({
           },
         },
       })}
-      {open ? (
-        <MenuContext.Provider value={{ close }}>
-          <div
-            aria-label={label}
-            className={cx(
-              styles['menu'],
-              direction === 'up' ? styles['up'] : styles['down'],
-              align === 'end' ? styles['end'] : styles['start'],
-            )}
-            id={id}
-            onKeyDown={(event) => {
-              const list = menu.current === null ? [] : items(menu.current)
-              const index = list.indexOf(document.activeElement as HTMLElement)
-              if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                list[(index + 1) % list.length]?.focus()
-              } else if (event.key === 'ArrowUp') {
-                event.preventDefault()
-                list[(index - 1 + list.length) % list.length]?.focus()
-              } else if (event.key === 'Home') {
-                event.preventDefault()
-                list[0]?.focus()
-              } else if (event.key === 'End') {
-                event.preventDefault()
-                list[list.length - 1]?.focus()
-              } else if (event.key === 'Tab') {
-                setOpen(false)
-              }
-            }}
-            ref={attachMenu}
-            role="menu"
-            style={width === undefined ? undefined : { width }}
-          >
-            {children}
-          </div>
-        </MenuContext.Provider>
-      ) : null}
+      {open
+        ? createPortal(
+            <MenuContext.Provider value={{ close }}>
+              <div
+                aria-label={label}
+                className={styles['menu']}
+                id={id}
+                onKeyDown={(event) => {
+                  const list = menu.current === null ? [] : items(menu.current)
+                  const index = list.indexOf(document.activeElement as HTMLElement)
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    list[(index + 1) % list.length]?.focus()
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    list[(index - 1 + list.length) % list.length]?.focus()
+                  } else if (event.key === 'Home') {
+                    event.preventDefault()
+                    list[0]?.focus()
+                  } else if (event.key === 'End') {
+                    event.preventDefault()
+                    list[list.length - 1]?.focus()
+                  } else if (event.key === 'Tab') {
+                    setOpen(false)
+                  }
+                }}
+                ref={attachMenu}
+                role="menu"
+                style={width === undefined ? undefined : { width }}
+              >
+                {children}
+              </div>
+            </MenuContext.Provider>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

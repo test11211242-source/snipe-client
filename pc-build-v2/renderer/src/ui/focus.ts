@@ -73,6 +73,7 @@ export function useDismiss(
   root: RefObject<HTMLElement | null>,
   active: boolean,
   onDismiss: () => void,
+  also?: RefObject<HTMLElement | null>,
 ): void {
   const dismissRef = useRef(onDismiss)
   useEffect(() => {
@@ -81,7 +82,12 @@ export function useDismiss(
   useEffect(() => {
     if (!active) return
     const onPointer = (event: PointerEvent): void => {
-      if (root.current !== null && !root.current.contains(event.target as Node))
+      const target = event.target as Node
+      if (
+        root.current !== null &&
+        !root.current.contains(target) &&
+        also?.current?.contains(target) !== true
+      )
         dismissRef.current()
     }
     const onKey = (event: KeyboardEvent): void => {
@@ -93,5 +99,5 @@ export function useDismiss(
       document.removeEventListener('pointerdown', onPointer, true)
       document.removeEventListener('keydown', onKey)
     }
-  }, [root, active])
+  }, [root, also, active])
 }
