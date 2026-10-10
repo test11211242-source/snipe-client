@@ -19,7 +19,7 @@ function RouteView({ route }: { route: AppRoute }): React.JSX.Element {
     case 'main':
       return <MainRoute />
     case 'setup':
-      return <SetupRoute />
+      return <SetupRoute intent={route.intent} />
     case 'stream':
       return <StreamRoutes section={route.section} />
     case 'settings':
@@ -43,9 +43,7 @@ function Routes(): React.JSX.Element {
   }, [blocked, role.pending, navigate])
 
   const effective = blocked ? MAIN_ROUTE : route
-  const fullWindow =
-    effective.name === 'setup' ||
-    (effective.name === 'legacy' && effective.page === 'setup')
+  const fullWindow = effective.name === 'setup'
   return (
     <AppFrame chrome={fullWindow ? 'none' : 'full'}>
       {blocked && role.pending ? (

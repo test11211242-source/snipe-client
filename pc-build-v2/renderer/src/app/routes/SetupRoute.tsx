@@ -1,29 +1,17 @@
-import { Button, Icon, State } from '../../ui'
-import { useRouter } from '../router'
+import { SetupFlow } from '../../features/setup'
+import { useRouter, type SetupIntent } from '../router'
 
-/** Full-window route of profile setup (M4). Temporarily links to the old setup flow. */
-export function SetupRoute(): React.JSX.Element {
-  const { navigate, back } = useRouter()
-  return (
-    <State
-      actions={
-        <>
-          <Button onClick={() => back()} variant="ghost">
-            Назад
-          </Button>
-          <Button
-            onClick={() => navigate({ name: 'legacy', page: 'setup' })}
-            variant="primary"
-          >
-            <Icon name="external" size={15} />
-            Настроить профиль (прежний мастер)
-          </Button>
-        </>
-      }
-      icon="wand"
-      title="Настройка профиля"
-    >
-      Новый мастер настройки скоро заменит этот экран.
-    </State>
-  )
+const NEW_PROFILE: SetupIntent = { kind: 'new' }
+
+/**
+ * Full-window setup route (no command bar). Leaving it only ends the setup session and
+ * returns to the previous destination; monitoring keeps running.
+ */
+export function SetupRoute({
+  intent = NEW_PROFILE,
+}: {
+  intent?: SetupIntent | undefined
+}): React.JSX.Element {
+  const { back } = useRouter()
+  return <SetupFlow intent={intent} onExit={() => back()} />
 }

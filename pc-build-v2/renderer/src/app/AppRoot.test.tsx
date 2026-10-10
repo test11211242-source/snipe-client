@@ -52,12 +52,14 @@ describe('shell routing', () => {
     expect(await screen.findByText('Давайте настроим CR Tools')).toBeVisible()
     const create = screen.getAllByRole('button', { name: 'Создать профиль' })
     fireEvent.click(create[create.length - 1] ?? document.body)
-    expect(await screen.findByText('Настройка профиля')).toBeVisible()
+    expect(
+      await screen.findByRole('heading', { name: 'Как назовём профиль?' }),
+    ).toBeVisible()
     // Setup is full-window: no command bar.
     expect(
       screen.queryByRole('navigation', { name: 'Главная панель' }),
     ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Назад' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
     expect(await screen.findByText('Давайте настроим CR Tools')).toBeVisible()
   })
 })
