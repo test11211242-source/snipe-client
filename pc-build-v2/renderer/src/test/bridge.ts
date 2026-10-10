@@ -103,6 +103,14 @@ export interface Bridge {
     copyPlayerTag: AsyncMock
     showWidget: AsyncMock
     getRealtimeStatus: AsyncMock
+    updateAppSettings: AsyncMock
+    checkForUpdate: AsyncMock
+    cancelUpdate: AsyncMock
+    installUpdate: AsyncMock
+    openLogFolder: AsyncMock
+    getWidgetStatus: AsyncMock
+    updateWidgetSettings: AsyncMock
+    toggleWidget: AsyncMock
     listCaptureSources: AsyncMock
     loadCapturePreviews: AsyncMock
     prepareCaptureSource: AsyncMock
@@ -196,6 +204,10 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
     getCardAsset: vi.fn(() => Promise.resolve({ kind: 'unavailable' })),
     copyPlayerTag: vi.fn(() => Promise.resolve({ copied: true })),
     showWidget: vi.fn(() => Promise.resolve({})),
+    openLogFolder: vi.fn(() => Promise.resolve({ opened: true })),
+    getWidgetStatus: vi.fn(() => Promise.reject(new Error('No widget'))),
+    updateWidgetSettings: vi.fn(() => Promise.reject(new Error('No widget'))),
+    toggleWidget: vi.fn(() => Promise.reject(new Error('No widget'))),
     h2h: {
       lookup: vi.fn(({ requestId }: { requestId: string }) =>
         Promise.resolve({

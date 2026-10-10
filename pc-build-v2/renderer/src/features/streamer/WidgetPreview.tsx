@@ -8,7 +8,8 @@ const LOAD_TIMEOUT_MS = 15_000
 type FrameStatus = 'loading' | 'ready' | 'error'
 
 /**
- * The widget as OBS will render it, from the token-free preview URL, scaled to fit the
+ * The widget as OBS will render it (an iframe reports no load errors, so a frame that
+ * has not loaded in time counts as failed), from the token-free preview URL, scaled to fit the
  * stage and centred. The frame has no access to the app: sandboxed scripts only.
  */
 export function WidgetPreview({
@@ -84,7 +85,6 @@ function Frame({
         className={cx(styles['fit'], dimmed && styles['off'])}
         data-status={status}
         height={height}
-        onError={() => setStatus('error')}
         onLoad={() => setStatus((current) => (current === 'error' ? current : 'ready'))}
         referrerPolicy="no-referrer"
         sandbox="allow-scripts"

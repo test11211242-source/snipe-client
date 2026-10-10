@@ -60,9 +60,7 @@ function differing(saved: StreamTitleSettings | undefined, values: object): Edit
 }
 
 function without(edits: Edits, keys: readonly string[]): Edits {
-  return Object.fromEntries(
-    Object.entries(edits).filter(([key]) => !keys.includes(key)),
-  )
+  return Object.fromEntries(Object.entries(edits).filter(([key]) => !keys.includes(key)))
 }
 
 /**

@@ -1,0 +1,125 @@
+.auth {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-8) var(--space-8) var(--space-5);
+  overflow: auto;
+  background: var(--color-bg);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+.brand b {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+}
+.logo {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  border: 2px solid var(--color-accent);
+  display: grid;
+  place-items: center;
+}
+.logo::after {
+  content: '';
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.title {
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.lead {
+  margin-top: var(--space-2);
+  color: var(--color-text-2);
+  line-height: var(--lh-loose);
+}
+.password {
+  position: relative;
+}
+.password input {
+  padding-right: calc(var(--control-sm) + var(--space-3));
+}
+.password button {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  transform: translateY(-50%);
+}
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+  color: var(--color-text-2);
+}
+.loading h1 {
+  color: var(--color-text);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semi);
+}
+.update {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.update h1 {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+}
+.update p {
+  color: var(--color-text-2);
+  line-height: var(--lh-loose);
+}
+.updateIcon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
+  box-shadow: 0 0 0 1px var(--color-warn-line);
+}
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-2);
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.foot {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.offline {
+  color: var(--color-warn);
+}
