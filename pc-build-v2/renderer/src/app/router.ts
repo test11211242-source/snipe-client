@@ -3,12 +3,27 @@ import { createContext, useContext } from 'react'
 export type StreamSection =
   'overview' | 'twitch' | 'predictions' | 'title' | 'chat' | 'widgets'
 export type SettingsSection = 'app' | 'overlay' | 'accounts' | 'updates'
-/** Old (pre-V2) screens still reachable through temporary links until M3–M5 replace them. */
-export type LegacyPage = 'home' | 'capture' | 'streamer' | 'settings' | 'setup'
+/** Old (pre-V2) screens still reachable through temporary links until M5 replaces them. */
+export type LegacyPage = 'home' | 'streamer' | 'settings'
+
+/** Why the full-window setup route was opened. */
+export type SetupIntent =
+  | { kind: 'new' }
+  /** Re-pick the source of an existing profile and mark its regions again. */
+  | {
+      kind: 'recalibrate'
+      profileId: string
+      profileName: string
+      expectedRevision: number
+    }
+  /** Only change the source binding of an existing profile. */
+  | { kind: 'rebind'; profileId: string; profileName: string; expectedRevision: number }
+  /** A setup session already exists in main (prediction result zones, streamer link). */
+  | { kind: 'resume' }
 
 export type AppRoute =
   | { name: 'main' }
-  | { name: 'setup' }
+  | { name: 'setup'; intent?: SetupIntent | undefined }
   | { name: 'stream'; section: StreamSection }
   | { name: 'settings'; section: SettingsSection }
   | { name: 'legacy'; page: LegacyPage }
@@ -25,6 +40,16 @@ export function routesEqual(a: AppRoute, b: AppRoute): boolean {
   if (a.name === 'stream' && b.name === 'stream') return a.section === b.section
   if (a.name === 'settings' && b.name === 'settings') return a.section === b.section
   if (a.name === 'legacy' && b.name === 'legacy') return a.page === b.page
+  if (a.name === 'setup' && b.name === 'setup') {
+    const left = a.intent ?? { kind: 'new' }
+    const right = b.intent ?? { kind: 'new' }
+    if (left.kind !== right.kind) return false
+    return (
+      !('profileId' in left && 'profileId' in right) ||
+      (left.profileId === right.profileId &&
+        left.expectedRevision === right.expectedRevision)
+    )
+  }
   return true
 }
 

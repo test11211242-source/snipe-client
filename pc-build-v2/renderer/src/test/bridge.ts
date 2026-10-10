@@ -103,6 +103,29 @@ export interface Bridge {
     copyPlayerTag: AsyncMock
     showWidget: AsyncMock
     getRealtimeStatus: AsyncMock
+    listCaptureSources: AsyncMock
+    loadCapturePreviews: AsyncMock
+    prepareCaptureSource: AsyncMock
+    releaseCaptureSource: AsyncMock
+    startCaptureSetup: AsyncMock
+    renameCaptureProfile: AsyncMock
+    duplicateCaptureProfile: AsyncMock
+    deleteCaptureProfile: AsyncMock
+    rebindCaptureProfile: AsyncMock
+    setup: Record<
+      | 'startResult'
+      | 'getSession'
+      | 'getFrame'
+      | 'setRegion'
+      | 'finish'
+      | 'analyzeTrigger'
+      | 'review'
+      | 'commit'
+      | 'retrySync'
+      | 'cancel'
+      | 'close',
+      AsyncMock
+    >
     h2h: { lookup: AsyncMock; cancel: AsyncMock }
   }
   /** Delivers a monitor push event to every subscribed listener. */
@@ -185,6 +208,34 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
       cancel: vi.fn(() => Promise.resolve()),
     },
     activateCaptureProfile: vi.fn(),
+    listCaptureSources: vi.fn(() =>
+      Promise.resolve({
+        revision: 'c'.repeat(32),
+        expiresAt: Date.now() + 30_000,
+        sources: [],
+      }),
+    ),
+    loadCapturePreviews: vi.fn(() => Promise.reject(new Error('No previews'))),
+    prepareCaptureSource: vi.fn(),
+    releaseCaptureSource: vi.fn(() => Promise.resolve({ released: true })),
+    startCaptureSetup: vi.fn(),
+    renameCaptureProfile: vi.fn(),
+    duplicateCaptureProfile: vi.fn(),
+    deleteCaptureProfile: vi.fn(),
+    rebindCaptureProfile: vi.fn(),
+    setup: {
+      startResult: vi.fn(),
+      getSession: vi.fn(() => Promise.reject(new Error('No setup is active'))),
+      getFrame: vi.fn(),
+      setRegion: vi.fn(),
+      finish: vi.fn(),
+      analyzeTrigger: vi.fn(),
+      review: vi.fn(),
+      commit: vi.fn(),
+      retrySync: vi.fn(),
+      cancel: vi.fn(),
+      close: vi.fn(),
+    },
     logout: vi.fn(() =>
       Promise.resolve({ state: 'UNAUTHENTICATED', user: null, error: null }),
     ),

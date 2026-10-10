@@ -5,7 +5,6 @@ import { ProfilesPanel } from '../../features/profiles/ProfilesPanel'
 import { TagPalette } from '../../features/palette/TagPalette'
 import { Banner, Button, Dot } from '../../ui'
 import { useAppData } from '../appData'
-import { useRouter } from '../router'
 import { TierProvider, useContainerTier } from '../useTier'
 import { AccountMenu } from './AccountMenu'
 import { CommandBar } from './CommandBar'
@@ -95,7 +94,6 @@ export function AppFrame({
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const tier = useContainerTier(ref)
-  const { navigate } = useRouter()
   const [palette, setPalette] = useState(false)
   const [panel, setPanel] = useState(false)
 
@@ -135,19 +133,7 @@ export function AppFrame({
             {chrome === 'full' && tier === 'mini' ? <MiniStrip /> : null}
             {chrome === 'full' ? <StatusBar mini={tier === 'mini'} /> : null}
             {palette ? <TagPalette onClose={() => setPalette(false)} /> : null}
-            {panel ? (
-              <ProfilesPanel
-                onClose={() => setPanel(false)}
-                onCreate={() => {
-                  setPanel(false)
-                  navigate({ name: 'setup' })
-                }}
-                onLegacy={() => {
-                  setPanel(false)
-                  navigate({ name: 'legacy', page: 'capture' })
-                }}
-              />
-            ) : null}
+            {panel ? <ProfilesPanel onClose={() => setPanel(false)} /> : null}
           </div>
         </ShellActionsContext.Provider>
       </ShellSlotsProvider>
