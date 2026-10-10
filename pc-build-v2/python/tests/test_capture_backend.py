@@ -52,3 +52,21 @@ def test_monitor_backend_registers_exact_windows_capture_event_names(
     events["on_closed"]()
     assert frames == ["frame"]
     assert closed == [True]
+
+
+@pytest.mark.parametrize("stop_fails", [False, True])
+def test_monitor_backend_stops_and_joins_exactly_once(stop_fails):
+    calls = []
+    def stop():
+        calls.append("stop")
+        if stop_fails:
+            raise RuntimeError("stop failed")
+    backend = object.__new__(WindowsMonitorBackend)
+    backend.control = SimpleNamespace(stop=stop, wait=lambda: calls.append("wait"))
+    if stop_fails:
+        with pytest.raises(RuntimeError):
+            backend.stop()
+    else:
+        backend.stop()
+    backend.stop()
+    assert calls == ["stop", "wait"]

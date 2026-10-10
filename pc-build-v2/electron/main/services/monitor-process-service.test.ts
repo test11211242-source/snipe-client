@@ -123,6 +123,43 @@ function service(child: FakeChild, treeKill = vi.fn().mockResolvedValue(undefine
 afterEach(() => vi.useRealTimers())
 
 describe('MonitorProcessService', () => {
+  it('drains unlimited lifetime stderr with bounded rate-limited metadata', async () => {
+    const child = new FakeChild()
+    const test = service(child)
+    const events = listener()
+    const started = test.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
+    await started
+    for (let index = 0; index < 100; index += 1)
+      child.stderr.write(`private warning ${index}\n`)
+    child.stderr.write(Buffer.alloc(1024 * 1024, 97))
+    child.stderr.write('split')
+    child.stderr.write('\n')
+    expect(events.onFatal).not.toHaveBeenCalled()
+    expect(child.killed).toBe(false)
+    expect(test.logger.warn).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('private')
+    const stopped = test.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
+
+  it('preserves a structured startup fatal instead of replacing it with early exit', async () => {
+    const child = new FakeChild()
+    const test = service(child)
+    const events = listener()
+    const started = test.value.start(payload(), events)
+    const rejected = expect(started).rejects.toMatchObject({
+      code: 'CAPTURE_START_FAILED',
+    })
+    child.event(1, 'fatal', {
+      code: 'CAPTURE_START_FAILED',
+      message: 'Capture could not start',
+    })
+    child.emit('close', 0, null)
+    await rejected
+    expect(events.onFatal).toHaveBeenCalledOnce()
+  })
   it('reserves ownership before beforeSpawn and cancels a deferred spawn', async () => {
     let release!: () => void
     const beforeSpawn = new Promise<void>((resolve) => {

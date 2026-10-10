@@ -46,8 +46,18 @@ const TRANSITIONS: Readonly<Record<MonitorState, readonly MonitorState[]>> = {
 }
 
 function publicError(error: unknown): { code: string; message: string } {
+  const messages: Readonly<Record<string, string>> = {
+    CAPTURE_SOURCE_CLOSED: 'Источник захвата был закрыт.',
+    CAPTURE_START_FAILED: 'Не удалось запустить захват выбранного источника.',
+    CAPTURE_NO_FRAME: 'Источник захвата не передал ни одного кадра.',
+    CAPTURE_FRAME_INVALID: 'Источник передал некорректный кадр.',
+    CAPTURE_GEOMETRY_CHANGED: 'Размеры источника изменились. Настройте захват заново.',
+    MONITOR_INTERNAL_FAILED: 'Внутренняя ошибка локального мониторинга.',
+    SOURCE_METADATA_UNAVAILABLE:
+      'Не удалось проверить метаданные источника. Повторите попытку.',
+  }
   return error instanceof ApplicationError
-    ? { code: error.code, message: error.message }
+    ? { code: error.code, message: messages[error.code] ?? error.message }
     : { code: 'MONITOR_FAILED', message: 'Monitoring could not be started' }
 }
 

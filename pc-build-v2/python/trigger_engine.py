@@ -17,6 +17,13 @@ from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
 
+class InvalidFrameError(RuntimeError):
+    pass
+
+
+class GeometryChangedError(RuntimeError):
+    pass
+
 
 def ratio_rect(ratio: dict[str, float], frame_width: int, frame_height: int, parent=None):
     if parent is None:
@@ -34,7 +41,7 @@ def ratio_rect(ratio: dict[str, float], frame_width: int, frame_height: int, par
     width = right - x
     height = bottom - y
     if x < 0 or y < 0 or right > frame_width or bottom > frame_height:
-        raise RuntimeError("configured region exceeds the current source frame")
+        raise GeometryChangedError("configured region exceeds the current source frame")
     return x, y, width, height
 
 
@@ -44,8 +51,8 @@ def crop(image: np.ndarray, rect):
 
 
 def ensure_bgr(image: np.ndarray) -> np.ndarray:
-    if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] not in (3, 4):
-        raise RuntimeError("capture frame format is invalid")
+    if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] not in (3, 4) or image.dtype != np.uint8:
+        raise InvalidFrameError("capture frame format is invalid")
     return image[:, :, :3]
 
 
@@ -450,10 +457,10 @@ class TriggerEngine:
         bgr = ensure_bgr(frame)
         frame_height, frame_width = bgr.shape[:2]
         if frame_width <= 0 or frame_height <= 0 or frame_width * frame_height > 20_000_000:
-            raise RuntimeError("capture frame dimensions are invalid")
+            raise InvalidFrameError("capture frame dimensions are invalid")
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            raise RuntimeError("capture source aspect ratio changed; configure capture again")
+            raise GeometryChangedError("capture source aspect ratio changed")
         if self.capture_due_at is not None:
             if now < self.capture_due_at:
                 return None
@@ -500,7 +507,7 @@ class PredictionTriggerEngine:
         frame_height, frame_width = bgr.shape[:2]
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            raise RuntimeError("prediction capture aspect ratio changed")
+            raise GeometryChangedError("prediction capture aspect ratio changed")
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
         self.last_match = self.profile.evaluate(crop(bgr, inner))

@@ -135,6 +135,11 @@ export const MonitorFatalEventSchema = ProtocolBaseSchema.extend({
         .regex(/^[A-Z0-9_]+$/)
         .max(64),
       message: z.string().min(1).max(300),
+      stage: z.enum(['initialize', 'start', 'frame', 'source', 'stop']).optional(),
+      errorClass: z
+        .string()
+        .regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/)
+        .optional(),
     })
     .strict(),
 }).strict()

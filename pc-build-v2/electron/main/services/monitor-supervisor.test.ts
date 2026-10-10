@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MonitorStartPayload } from '../../../shared/contracts/monitor-protocol'
 import type { MonitorProcessListener } from './monitor-process-service'
 import { MonitorSupervisor } from './monitor-supervisor'
+import { ApplicationError } from '../../../shared/errors/application-error'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -118,6 +119,26 @@ function harness(
 }
 
 describe('MonitorSupervisor concurrency', () => {
+  it.each([
+    'CAPTURE_SOURCE_CLOSED',
+    'CAPTURE_START_FAILED',
+    'CAPTURE_NO_FRAME',
+    'CAPTURE_FRAME_INVALID',
+    'CAPTURE_GEOMETRY_CHANGED',
+    'MONITOR_INTERNAL_FAILED',
+  ] as const)('projects a sanitized Russian fatal cause: %s', async (code) => {
+    const test = harness()
+    await test.supervisor.start()
+    const events = test.listener()
+    if (events === null) throw new Error('Missing process listener')
+    events.onFatal(new ApplicationError(code, 'private arbitrary diagnostic'))
+    const view = await test.supervisor.getView()
+    expect(view.state).toBe('FAILED')
+    expect(view.error?.code).toBe(code)
+    expect(view.error?.message).toMatch(/[А-Яа-я]/)
+    expect(view.error?.message).not.toContain('private')
+    expect(test.process.stop).toHaveBeenCalled()
+  })
   it('coalesces simultaneous starts and becomes READY only after process readiness', async () => {
     const target = deferred<{
       configuration: typeof configuration

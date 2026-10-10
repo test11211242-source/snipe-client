@@ -56,6 +56,9 @@ class WindowsMonitorBackend:
 
     def stop(self) -> None:
         if self.control is not None:
-            self.control.stop()
-            self.control.wait()
+            control = self.control
             self.control = None
+            try:
+                control.stop()
+            finally:
+                control.wait()
