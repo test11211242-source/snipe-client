@@ -166,6 +166,8 @@ export function useSourcePicker(): SourcePicker {
                 'Источник изменился. Список обновлён, выберите нужный источник ещё раз.',
               )
           } else {
+            selected.current = null
+            setSelectedKey(null)
             setError(preparationFailureMessage(response.error.code))
           }
           return
@@ -173,6 +175,8 @@ export function useSourcePicker(): SourcePicker {
         setPreparation(response.preparation)
       } catch {
         if (generation !== selectionGeneration.current) return
+        selected.current = null
+        setSelectedKey(null)
         setError('Не удалось подготовить выбранный источник. Выберите его повторно.')
       } finally {
         if (generation === selectionGeneration.current) setPreparingKey(null)

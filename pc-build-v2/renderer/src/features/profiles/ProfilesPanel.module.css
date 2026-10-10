@@ -78,13 +78,19 @@
 }
 
 .line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
   color: var(--color-text-3);
   font-size: var(--fs-xs);
   line-height: var(--lh-base);
+}
+
+.line svg {
+  display: inline-block;
+  margin-right: var(--space-1);
+  vertical-align: -2px;
+}
+
+.line button {
+  margin-left: var(--space-1);
 }
 
 .lineWarn {
@@ -158,6 +164,10 @@
 @media (max-width: 519px) {
   .row {
     flex-wrap: wrap;
+  }
+
+  .main {
+    flex-basis: calc(100% - 36px - var(--space-3));
   }
 
   .trail {

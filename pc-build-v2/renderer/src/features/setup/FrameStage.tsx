@@ -309,9 +309,7 @@ export function FrameStage({
               data-testid="trigger-inner-region"
               style={boxStyle(inner)}
             >
-              <i className={cx(styles['boxLabel'], styles['boxLabelBelow'])}>
-                {innerLabel}
-              </i>
+              <i className={styles['boxLabel']}>{innerLabel}</i>
             </div>
           )}
         </div>

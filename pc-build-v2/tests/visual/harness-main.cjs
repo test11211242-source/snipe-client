@@ -5,7 +5,11 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const [scenariosFile, outDir] = process.argv.slice(2)
-const scenarios = JSON.parse(fs.readFileSync(scenariosFile, 'utf8'))
+const only =
+  process.env.VISUAL_ONLY === undefined ? null : new RegExp(process.env.VISUAL_ONLY)
+const scenarios = JSON.parse(fs.readFileSync(scenariosFile, 'utf8')).filter(
+  (scenario) => only === null || only.test(scenario.name),
+)
 fs.mkdirSync(outDir, { recursive: true })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 let current = {}
@@ -47,6 +51,9 @@ app.whenReady().then(async () => {
       continue
     }
     await sleep(900)
+    await win.webContents.executeJavaScript(
+      fs.readFileSync(path.join(__dirname, 'harness-helpers.cjs'), 'utf8'),
+    )
     for (const step of scenario.steps ?? []) {
       await win.webContents.executeJavaScript(step)
       await sleep(350)
