@@ -1,0 +1,155 @@
+/* CR Tools V2 — design tokens. Единственный источник значений для прототипа и для приложения.
+   Правило: в компонентах НЕТ собственных цветов, размеров шрифта, радиусов, теней и длительностей. Только var(--…) отсюда.
+   Секция «mock» из макета в приложение не перенесена. Копия design/cr-tools-v2/final/tokens.css; меняйте только вместе с ним. */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Цвет: поверхности ─────────────────────────────── */
+  --color-bg: #0c0d0f; /* окно */
+  --color-surface-1: #121316; /* карточка, панель */
+  --color-surface-2: #17181c; /* поднятое, поле ввода, плитка */
+  --color-surface-3: #1f2126; /* наведение, выбранное, дорожка */
+  --color-surface-pop: #131417; /* всплывающее: меню, диалог, панель */
+  --color-surface-bar: #0a0b0d; /* заголовок окна, строка состояния */
+  --color-scrim: rgb(5 6 7 / 0.62);
+  --color-glass: rgb(16 17 20 / 0.94);
+  --color-ow-rgb: 16 17 20; /* фон оверлея; прозрачность задаётся настройкой opacity */
+
+  /* ── Цвет: линии ───────────────────────────────────── */
+  --color-line-subtle: rgb(255 255 255 / 0.06);
+  --color-line: rgb(255 255 255 / 0.1);
+  --color-line-strong: rgb(255 255 255 / 0.18);
+
+  /* ── Цвет: текст (контраст ≥ 4.5:1 на surface-1/2) ─── */
+  --color-text: #e9eaec;
+  --color-text-2: #9b9ea7;
+  --color-text-3: #868993; /* подписи, подсказки, не менее AA на surface-1/2 */
+  --color-text-disabled: #5c5f68;
+
+  /* ── Цвет: акцент и смысловые ──────────────────────── */
+  --color-accent: #63d2a9;
+  --color-accent-ink: #052319; /* текст на акценте */
+  --color-accent-soft: rgb(99 210 169 / 0.12);
+  --color-accent-line: rgb(99 210 169 / 0.34);
+  --color-warn: #e2b45f;
+  --color-warn-ink: #261b05;
+  --color-warn-soft: rgb(226 180 95 / 0.12);
+  --color-warn-line: rgb(226 180 95 / 0.34);
+  --color-danger: #e87d73;
+  --color-danger-ink: #2a0d0a;
+  --color-danger-soft: rgb(232 125 115 / 0.12);
+  --color-danger-line: rgb(232 125 115 / 0.36);
+  --color-info: #9b9ea7;
+  --color-info-soft: rgb(155 158 167 / 0.12);
+
+  /* ── Цвет: карточки игры (оверлеи на картинке) ─────── */
+  --color-badge-bg: rgb(8 9 11 / 0.78);
+  --color-badge-text: #f2f3f5;
+
+  /* ── Шрифты ────────────────────────────────────────── */
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'Segoe UI', monospace;
+
+  /* ── Шкала шрифта (px) ─────────────────────────────── */
+  --fs-2xs: 11px; /* капс-подписи, значки */
+  --fs-xs: 12px; /* вторичный текст, подсказки */
+  --fs-sm: 13px; /* основной текст интерфейса */
+  --fs-md: 14px; /* названия строк, кнопки */
+  --fs-lg: 16px; /* заголовки панелей */
+  --fs-xl: 20px; /* состояния, диалоги */
+  --fs-2xl: 24px; /* названия экранов */
+  --fs-3xl: 30px; /* ник соперника */
+  --fs-4xl: 40px; /* большие моменты: мастер настройки */
+  --lh-tight: 1.15;
+  --lh-base: 1.4;
+  --lh-loose: 1.55;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semi: 600;
+  --ls-caps: 0.08em;
+  --ls-tight: -0.02em;
+
+  /* ── Отступы (шаг 4) ───────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Радиусы ───────────────────────────────────────── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px; /* кнопки, поля */
+  --radius-lg: 12px; /* карточки, плитки */
+  --radius-xl: 16px; /* диалоги */
+  --radius-full: 999px;
+
+  /* ── Размеры контролов и каркаса ───────────────────── */
+  --control-sm: 28px;
+  --control-md: 34px;
+  --control-lg: 44px;
+  --titlebar-h: 36px;
+  --bar-h: 60px;
+  --statusbar-h: 30px;
+  --nav-w: 232px;
+  --panel-w: 480px;
+  --dialog-w: 440px;
+  --card-ratio: 5 / 6; /* картинка карты 150×180 */
+
+  /* ── Глубина ───────────────────────────────────────── */
+  --ring-1: 0 0 0 1px var(--color-line-subtle);
+  --ring-2: 0 0 0 1px var(--color-line);
+  --elev-popover: 0 18px 44px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.4);
+  --elev-panel: -30px 0 60px rgb(0 0 0 / 0.5);
+  --elev-dialog: 0 30px 80px rgb(0 0 0 / 0.6);
+  --elev-window: 0 20px 50px rgb(0 0 0 / 0.6);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+
+  /* ── Движение ──────────────────────────────────────── */
+  --dur-fast: 120ms;
+  --dur-base: 160ms;
+  --dur-slow: 260ms;
+  --dur-ambient: 2000ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-linear: linear;
+
+  /* ── Слои ──────────────────────────────────────────── */
+  --z-base: 0;
+  --z-sticky: 5;
+  --z-bar: 10;
+  --z-popover: 20;
+  --z-panel: 25;
+  --z-scrim: 30;
+  --z-dialog: 31;
+  --z-toast: 40;
+}
+
+/* Пониженное движение: системная настройка и настройка приложения (AppSettingsView.reducedMotion) */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-ambient: 0ms;
+  }
+}
+:root[data-reduced-motion='true'] {
+  --dur-fast: 0ms;
+  --dur-base: 0ms;
+  --dur-slow: 0ms;
+  --dur-ambient: 0ms;
+}
+
+/* Альтернативный акцент: розовый. Включается атрибутом <html data-accent="rose">. Все пары текст/фон ≥ 4,5:1 (акцент на surface-1 ≈ 7,7:1, чернила на акценте ≈ 7:1). */
+:root[data-accent='rose'] {
+  --color-accent: #f08bab;
+  --color-accent-ink: #2b0b16;
+  --color-accent-soft: rgb(240 139 171 / 0.12);
+  --color-accent-line: rgb(240 139 171 / 0.36);
+}
