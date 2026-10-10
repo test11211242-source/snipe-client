@@ -145,5 +145,20 @@
       "document.querySelector('[aria-label^=\"Аккаунт\"]').click()",
       "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.includes('Выйти')).click()"
     ]
+  },
+  {
+    "name": "catalog-wide",
+    "page": "catalog.html",
+    "width": 1100,
+    "height": 1400
+  },
+  {
+    "name": "catalog-rose",
+    "page": "catalog.html",
+    "width": 1100,
+    "height": 700,
+    "steps": [
+      "[...document.querySelectorAll('button')].find(b=>b.textContent==='Розовый').click()"
+    ]
   }
 ]

@@ -32,7 +32,14 @@ app.whenReady().then(async () => {
     })
     try {
       await win.loadFile(
-        path.join(__dirname, '..', '..', 'out', 'renderer', 'index.html'),
+        path.join(
+          __dirname,
+          '..',
+          '..',
+          'out',
+          'renderer',
+          scenario.page ?? 'index.html',
+        ),
       )
     } catch (error) {
       console.error('load failed', scenario.name, String(error))
