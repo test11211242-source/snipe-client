@@ -40,6 +40,10 @@ export default defineConfig({
           main: resolve(import.meta.dirname, 'renderer/index.html'),
           auth: resolve(import.meta.dirname, 'renderer/auth.html'),
           widget: resolve(import.meta.dirname, 'renderer/widget.html'),
+          // Dev/test component catalog: only built with CR_TOOLS_CATALOG=1, never shipped.
+          ...(process.env['CR_TOOLS_CATALOG'] === '1'
+            ? { catalog: resolve(import.meta.dirname, 'renderer/catalog.html') }
+            : {}),
         },
       },
     },

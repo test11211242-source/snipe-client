@@ -1,0 +1,149 @@
+[
+  {
+    "name": "shell-wide-1100x700",
+    "width": 1100,
+    "height": 700
+  },
+  {
+    "name": "shell-medium-820x700",
+    "width": 820,
+    "height": 700
+  },
+  {
+    "name": "shell-mini-460x700",
+    "width": 460,
+    "height": 700
+  },
+  {
+    "name": "shell-min-420x360",
+    "width": 420,
+    "height": 360
+  },
+  {
+    "name": "profile-menu-wide",
+    "width": 1100,
+    "height": 700,
+    "steps": ["document.querySelector('[aria-label^=\"Профиль:\"]').click()"]
+  },
+  {
+    "name": "palette-wide",
+    "width": 1100,
+    "height": 700,
+    "steps": [
+      "document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true}))"
+    ]
+  },
+  {
+    "name": "account-menu-wide",
+    "width": 1100,
+    "height": 700,
+    "steps": ["document.querySelector('[aria-label^=\"Аккаунт\"]').click()"]
+  },
+  {
+    "name": "stream-wide-1100x700",
+    "width": 1100,
+    "height": 700,
+    "steps": ["document.querySelector('[aria-label=\"Стрим\"]').click()"]
+  },
+  {
+    "name": "stream-medium-820x700",
+    "width": 820,
+    "height": 700,
+    "steps": ["document.querySelector('[aria-label=\"Стрим\"]').click()"]
+  },
+  {
+    "name": "stream-mini-460x700",
+    "width": 460,
+    "height": 700,
+    "steps": [
+      "document.querySelector('[aria-label^=\"Аккаунт\"]').click()",
+      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.includes('Стрим')).click()"
+    ]
+  },
+  {
+    "name": "settings-wide-1100x700",
+    "width": 1100,
+    "height": 700,
+    "steps": ["document.querySelector('[aria-label=\"Настройки\"]').click()"]
+  },
+  {
+    "name": "update-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "state": "AVAILABLE",
+        "currentVersion": "2.5.0",
+        "availableVersion": "2.6.0",
+        "critical": false,
+        "releaseNotes": ["Новое в оверлее, профилях и поиске"],
+        "progress": null,
+        "error": null
+      }
+    }
+  },
+  {
+    "name": "update-downloading-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "state": "DOWNLOADING",
+        "currentVersion": "2.5.0",
+        "availableVersion": "2.6.0",
+        "critical": false,
+        "releaseNotes": [],
+        "progress": {
+          "downloadedBytes": 62,
+          "totalBytes": 100,
+          "percent": 62
+        },
+        "error": null
+      }
+    }
+  },
+  {
+    "name": "player-wide-no-stream",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "player": true
+    }
+  },
+  {
+    "name": "lost-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "sourceMissing": true,
+      "monitorState": "WAITING_SOURCE"
+    }
+  },
+  {
+    "name": "firstrun-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "noProfiles": true,
+      "monitorState": "STOPPED"
+    }
+  },
+  {
+    "name": "offline-partial-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "offline": true,
+      "failing": ["settings", "update"]
+    }
+  },
+  {
+    "name": "dialog-logout",
+    "width": 1100,
+    "height": 700,
+    "steps": [
+      "document.querySelector('[aria-label^=\"Аккаунт\"]').click()",
+      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.includes('Выйти')).click()"
+    ]
+  }
+]

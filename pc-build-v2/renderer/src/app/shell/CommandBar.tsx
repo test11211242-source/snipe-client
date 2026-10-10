@@ -8,7 +8,7 @@ import {
   useMonitorView,
 } from '../../features/monitor'
 import { useProfiles } from '../../features/profiles'
-import { Banner, Dot, IconButton, Icon, Kbd, RunButton, Spinner, cx } from '../../ui'
+import { Banner, Dot, IconButton, Icon, RunButton, Spinner, cx } from '../../ui'
 import { useAppData } from '../appData'
 import { useRouter } from '../router'
 import { useTier } from '../useTier'
@@ -146,7 +146,6 @@ export function CommandBar({
           >
             <Icon name="search" size={15} />
             <span>Проверить тег</span>
-            <Kbd>Ctrl K</Kbd>
           </button>
         )}
         {runButton}
