@@ -119,11 +119,11 @@ export class TrayController {
         type: 'checkbox',
         enabled: widgetStatus !== null,
         checked: widgetStatus?.settings.locked ?? false,
-        click: this.action(() =>
-          this.widget.updateSettings({
+        click: this.action(async () => {
+          await this.widget.updateSettings({
             locked: !this.widget.getStatus().settings.locked,
-          }),
-        ),
+          })
+        }),
       },
       { type: 'separator' },
       { label: 'Выход', click: this.action(this.exit) },

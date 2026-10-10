@@ -173,3 +173,17 @@ describe('native tray lifecycle', () => {
     expect(native.templates).toHaveLength(rendered)
   })
 })
+
+describe('review regression tray click exceptions', () => {
+  it('#13 catches a synchronous lock-status failure after the menu was rendered', async () => {
+    const test = harness()
+    test.controller.start()
+    test.widget.getStatus.mockImplementation(() => {
+      throw new Error('Auth torn down')
+    })
+    expect(() => test.click('Заблокировать оверлей')).not.toThrow()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(test.widget.updateSettings).not.toHaveBeenCalled()
+    test.controller.stop()
+  })
+})

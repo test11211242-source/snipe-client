@@ -39,7 +39,10 @@ export const AppSettingsViewSchema = z
   })
   .strict()
 export const AppSettingsPayloadSchema = z.object({}).strict()
-export const AppSettingsUpdateSchema = AppSettingsViewSchema.partial()
+export const AppSettingsUpdateSchema = AppSettingsViewSchema.partial().refine(
+  (value) => Object.values(value).every((item) => item !== undefined),
+  'Settings patches cannot contain undefined values',
+)
 export type AppSettingsUpdate = z.infer<typeof AppSettingsUpdateSchema>
 export const OpenLogFolderResultSchema = z.object({ opened: z.boolean() }).strict()
 export const BootstrapFailurePayloadSchema = z
