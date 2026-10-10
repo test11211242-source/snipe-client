@@ -132,7 +132,7 @@ describe('partial bootstrap', () => {
     act(() =>
       bridge.push(monitorViewFixture({ state: 'WAITING_SOURCE', runIntent: true })),
     )
-    expect(await screen.findByText('Ждём окно игры', { selector: 'h2' })).toBeVisible()
+    expect(await screen.findByText('Ждём окно игры…', { selector: 'h2' })).toBeVisible()
   })
 })
 
@@ -160,7 +160,7 @@ describe('monitor ownership and continuity', () => {
       bridge.push(monitorViewFixture({ state: 'WAITING_SOURCE', runIntent: true })),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Игра' }))
-    expect(await screen.findByText('Ждём окно игры', { selector: 'h2' })).toBeVisible()
+    expect(await screen.findByText('Ждём окно игры…', { selector: 'h2' })).toBeVisible()
 
     view.unmount()
     expect(bridge.unsubscribe).toHaveBeenCalledTimes(1)
@@ -182,7 +182,8 @@ describe('monitor ownership and continuity', () => {
     await renderApp({
       monitor: monitorViewFixture({ state: 'WAITING_SOURCE', runIntent: true }),
     })
-    expect(await screen.findByRole('button', { name: 'Остановить' })).toBeVisible()
+    // Stop is in the command bar and, calmly, in the waiting card itself.
+    expect(await screen.findAllByRole('button', { name: 'Остановить' })).toHaveLength(2)
     expect(screen.queryByText('Не удалось запустить')).not.toBeInTheDocument()
   })
 })

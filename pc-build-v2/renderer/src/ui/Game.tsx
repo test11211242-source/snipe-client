@@ -34,7 +34,7 @@ export function TagChip({
 }: {
   tag: string
   /** Resolves true when the tag was copied. */
-  onCopy?: (tag: string) => Promise<boolean> | boolean
+  onCopy?: ((tag: string) => Promise<boolean> | boolean) | undefined
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -75,6 +75,8 @@ export interface DeckCardData {
   name: string
   /** Displayable image source; null → placeholder. */
   iconUrl: string | null
+  /** Art is still being fetched: skeleton instead of the placeholder. */
+  pending?: boolean
 }
 
 type TileStyle = CSSProperties & { '--tile-w'?: string; '--cols'?: number }
@@ -90,24 +92,42 @@ export function CardTile({
   card: DeckCardData | null
   loading?: boolean
 }): React.JSX.Element {
-  if (loading) return <Skeleton className={cx(styles['tile'], styles['tileLoading'])} />
-  if (card?.iconUrl == null)
-    return (
-      <span
-        aria-label={card?.name}
-        className={cx(styles['tile'], styles['tileEmpty'])}
-        role={card === null ? undefined : 'img'}
-      >
-        <Icon name="layers" size={28} />
-      </span>
-    )
+  if (loading || card?.pending === true)
+    return <Skeleton className={cx(styles['tile'], styles['tileLoading'])} />
+  if (card?.iconUrl == null) return <TileEmpty card={card} />
+  return <TileArt iconUrl={card.iconUrl} name={card.name} />
+}
+
+function TileEmpty({ card }: { card: DeckCardData | null }): React.JSX.Element {
   return (
-    <span className={styles['tile']} title={card.name}>
+    <span
+      aria-label={card?.name}
+      className={cx(styles['tile'], styles['tileEmpty'])}
+      role={card === null ? undefined : 'img'}
+    >
+      <Icon name="layers" size={28} />
+    </span>
+  )
+}
+
+/** Remote art that fails to decode falls back to the same placeholder. */
+function TileArt({
+  iconUrl,
+  name,
+}: {
+  iconUrl: string
+  name: string
+}): React.JSX.Element {
+  const [failed, setFailed] = useState<string | null>(null)
+  if (failed === iconUrl) return <TileEmpty card={{ name, iconUrl: null }} />
+  return (
+    <span className={styles['tile']} title={name}>
       <img
-        alt={card.name}
+        alt={name}
         className={styles['tileImg']}
         draggable={false}
-        src={card.iconUrl}
+        onError={() => setFailed(iconUrl)}
+        src={iconUrl}
       />
     </span>
   )

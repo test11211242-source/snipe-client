@@ -19,3 +19,20 @@ export function useShellSlots(): ShellSlots {
 export function useMiniStripExtra(): HTMLElement | null {
   return useShellSlots().miniStripExtra
 }
+
+/** Shell-owned overlays that pages may open (profiles panel, tag palette). */
+export interface ShellActions {
+  openProfiles: () => void
+  openPalette: () => void
+}
+
+const NO_ACTIONS: ShellActions = {
+  openProfiles: () => undefined,
+  openPalette: () => undefined,
+}
+
+export const ShellActionsContext = createContext<ShellActions>(NO_ACTIONS)
+
+export function useShellActions(): ShellActions {
+  return useContext(ShellActionsContext)
+}

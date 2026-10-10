@@ -6,7 +6,7 @@ import {
   CaptureProfileSummarySchema,
   type CaptureProfilesView,
 } from '../../../shared/models/capture'
-import { type MonitorView } from '../../../shared/models/monitor'
+import type { MonitorResult, MonitorView } from '../../../shared/models/monitor'
 import type { RealtimeStatus } from '../../../shared/models/network'
 import type { UpdateView } from '../../../shared/models/update'
 import { monitorViewFixture } from '../../../tests/monitor-fixtures'
@@ -74,6 +74,8 @@ export interface BridgeOptions {
   update?: UpdateView
   /** Resource names whose load rejects (until `recover` is called). */
   failing?: readonly string[]
+  /** Older history entries returned by getMonitorHistory. */
+  history?: readonly MonitorResult[]
 }
 
 export interface Bridge {
@@ -91,6 +93,13 @@ export interface Bridge {
     window: { command: ReturnType<typeof vi.fn> }
     logout: ReturnType<typeof vi.fn>
     reportBootstrapFailure: ReturnType<typeof vi.fn>
+    retryMonitorSearch: ReturnType<typeof vi.fn>
+    getMonitorHistory: ReturnType<typeof vi.fn>
+    updateMonitorPreferences: ReturnType<typeof vi.fn>
+    getCardAsset: ReturnType<typeof vi.fn>
+    copyPlayerTag: ReturnType<typeof vi.fn>
+    showWidget: ReturnType<typeof vi.fn>
+    h2h: { lookup: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> }
   }
   /** Delivers a monitor push event to every subscribed listener. */
   push: (view: MonitorView) => void
@@ -153,6 +162,24 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
       Promise.resolve({ ...monitor, state: 'STOPPED', runIntent: false }),
     ),
     retryMonitorSearch: vi.fn(() => Promise.resolve(monitor)),
+    getMonitorHistory: vi.fn(() => Promise.resolve(options.history ?? [])),
+    updateMonitorPreferences: vi.fn((preferences: { deckMode: 'pol' | 'gt' }) =>
+      Promise.resolve(preferences),
+    ),
+    getCardAsset: vi.fn(() => Promise.resolve({ kind: 'unavailable' })),
+    copyPlayerTag: vi.fn(() => Promise.resolve({ copied: true })),
+    showWidget: vi.fn(() => Promise.resolve({})),
+    h2h: {
+      lookup: vi.fn(({ requestId }: { requestId: string }) =>
+        Promise.resolve({
+          capability: 'unavailable',
+          requestId,
+          retryAt: null,
+          code: 'H2H_REQUEST_FAILED',
+        }),
+      ),
+      cancel: vi.fn(() => Promise.resolve()),
+    },
     activateCaptureProfile: vi.fn(),
     logout: vi.fn(() =>
       Promise.resolve({ state: 'UNAUTHENTICATED', user: null, error: null }),

@@ -47,7 +47,7 @@ export interface RowProps {
   bordered?: boolean
   className?: string
   'aria-label'?: string
-  'aria-current'?: 'true' | 'page'
+  'aria-current'?: 'true' | 'page' | undefined
 }
 
 /** List row: icon · title + one line · state/action. */

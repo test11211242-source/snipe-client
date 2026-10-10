@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { MonitorView } from '../../../../shared/models/monitor'
+import type { DeckMode, MonitorView } from '../../../../shared/models/monitor'
 import { usePolling, useResource, type Resource } from '../../app/useResource'
 
 export interface MonitorController extends Resource<MonitorView> {
@@ -13,6 +13,8 @@ export interface MonitorController extends Resource<MonitorView> {
   start: () => Promise<void>
   stop: () => Promise<void>
   retrySearch: (attemptId: string) => Promise<void>
+  /** Next searches use this deck mode; history keeps each result's original mode. */
+  setDeckMode: (mode: DeckMode) => Promise<void>
   reload: () => Promise<void>
   /** Applies a MonitorView returned by another command (profile activation). */
   apply: (view: MonitorView) => void
@@ -91,6 +93,19 @@ export function useMonitorController(): MonitorController {
       ),
     [run],
   )
+  const setDeckMode = useCallback(
+    async (deckMode: DeckMode): Promise<void> => {
+      setActionError(null)
+      try {
+        await window.crTools.updateMonitorPreferences({ deckMode })
+      } catch {
+        setActionError('Не удалось сменить режим колод. Повторите попытку.')
+      }
+      // Main owns the preference; show whatever it holds now.
+      await reloadResource({ quiet: true })
+    },
+    [reloadResource],
+  )
   const reload = useCallback(() => reloadResource(), [reloadResource])
   const clearActionError = useCallback(() => setActionError(null), [])
 
@@ -105,6 +120,7 @@ export function useMonitorController(): MonitorController {
       start,
       stop,
       retrySearch,
+      setDeckMode,
     }),
     [
       resource,
@@ -116,6 +132,7 @@ export function useMonitorController(): MonitorController {
       start,
       stop,
       retrySearch,
+      setDeckMode,
     ],
   )
 }

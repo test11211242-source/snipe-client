@@ -193,3 +193,6 @@
     transform: none;
   }
 }
+.dialogWide {
+  width: 720px;
+}

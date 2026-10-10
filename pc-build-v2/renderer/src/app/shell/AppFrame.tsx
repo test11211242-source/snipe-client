@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { useAuth } from '../../features/auth'
 import { ProfilesPanel } from '../../features/profiles/ProfilesPanel'
@@ -11,7 +11,7 @@ import { AccountMenu } from './AccountMenu'
 import { CommandBar } from './CommandBar'
 import styles from './Frame.module.css'
 import { ShellSlotsProvider } from './ShellSlots'
-import { useShellSlots } from './slotsContext'
+import { ShellActionsContext, useShellSlots } from './slotsContext'
 import { Titlebar } from './Titlebar'
 import { UpdateHost } from './UpdateHost'
 
@@ -110,39 +110,46 @@ export function AppFrame({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  const actions = useMemo(
+    () => ({ openProfiles: () => setPanel(true), openPalette: () => setPalette(true) }),
+    [],
+  )
+
   return (
     <TierProvider value={tier}>
       <ShellSlotsProvider>
-        <div className={styles['frame']} ref={ref}>
-          <Titlebar />
-          {chrome === 'full' ? (
-            <>
-              <UpdateHost />
-              <CommandBar
-                onManageProfiles={() => setPanel(true)}
-                onOpenPalette={() => setPalette(true)}
+        <ShellActionsContext.Provider value={actions}>
+          <div className={styles['frame']} ref={ref}>
+            <Titlebar />
+            {chrome === 'full' ? (
+              <>
+                <UpdateHost />
+                <CommandBar
+                  onManageProfiles={() => setPanel(true)}
+                  onOpenPalette={() => setPalette(true)}
+                />
+                <Notices />
+              </>
+            ) : null}
+            <main className={styles['content']}>{children}</main>
+            {chrome === 'full' && tier === 'mini' ? <MiniStrip /> : null}
+            {chrome === 'full' ? <StatusBar mini={tier === 'mini'} /> : null}
+            {palette ? <TagPalette onClose={() => setPalette(false)} /> : null}
+            {panel ? (
+              <ProfilesPanel
+                onClose={() => setPanel(false)}
+                onCreate={() => {
+                  setPanel(false)
+                  navigate({ name: 'setup' })
+                }}
+                onLegacy={() => {
+                  setPanel(false)
+                  navigate({ name: 'legacy', page: 'capture' })
+                }}
               />
-              <Notices />
-            </>
-          ) : null}
-          <main className={styles['content']}>{children}</main>
-          {chrome === 'full' && tier === 'mini' ? <MiniStrip /> : null}
-          {chrome === 'full' ? <StatusBar mini={tier === 'mini'} /> : null}
-          {palette ? <TagPalette onClose={() => setPalette(false)} /> : null}
-          {panel ? (
-            <ProfilesPanel
-              onClose={() => setPanel(false)}
-              onCreate={() => {
-                setPanel(false)
-                navigate({ name: 'setup' })
-              }}
-              onLegacy={() => {
-                setPanel(false)
-                navigate({ name: 'legacy', page: 'capture' })
-              }}
-            />
-          ) : null}
-        </div>
+            ) : null}
+          </div>
+        </ShellActionsContext.Provider>
       </ShellSlotsProvider>
     </TierProvider>
   )

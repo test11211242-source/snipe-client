@@ -19,6 +19,8 @@ export interface DialogProps {
   role?: 'dialog' | 'alertdialog'
   /** Short explanatory sentence under the title. */
   description?: ReactNode
+  /** Wider body for tables and cards (720 px at most). */
+  wide?: boolean
 }
 
 /** Modal dialog: focus trap, Esc, focus returns to the opener. Rendered into body. */
@@ -29,6 +31,7 @@ export function Dialog({
   footer,
   role = 'dialog',
   description,
+  wide = false,
 }: DialogProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -45,7 +48,7 @@ export function Dialog({
         aria-describedby={description === undefined ? undefined : textId}
         aria-labelledby={titleId}
         aria-modal="true"
-        className={styles['dialog']}
+        className={cx(styles['dialog'], wide && styles['dialogWide'])}
         ref={ref}
         role={role}
         tabIndex={-1}
