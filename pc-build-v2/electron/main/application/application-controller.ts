@@ -96,13 +96,11 @@ export class ApplicationController {
       // Only session-end commits to shutdown; a query can still be cancelled by Windows.
       void this.requestShutdown()
     })
-    this.windows.setSessionQueryHandler(() => {
-      void Promise.all([this.monitor.flushJournal(), this.logger.flush()]).catch(
-        (error: unknown) => {
-          this.logger.warn('Session query flush failed', { error })
-        },
-      )
-    })
+    this.windows.setSessionQueryHandler(() =>
+      Promise.all([this.monitor.flushJournal(), this.logger.flush()]).then(
+        () => undefined,
+      ),
+    )
     this.lifecycle.transitionTo('AUTHENTICATING')
 
     const disposeAppIpc = registerAppIpc({
@@ -373,7 +371,7 @@ export class ApplicationController {
     await this.monitor.stop('exit')
     await this.capturePreparations.stop()
     this.setup.cancelForAuthTransition()
-    await this.windows.flushMainState()
+    await this.windows.flushSessionState()
     this.windows.closeAll('shutdown')
     this.lifecycle.transitionTo('STOPPED')
     this.logger.info('Application stopped cleanly')

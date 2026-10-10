@@ -209,7 +209,8 @@ export class WindowCoordinator {
   #mainLoadPromise: Promise<BrowserWindow> | null = null
   #mainCreationGeneration = 0
   #sessionEndHandler: (() => void) | null = null
-  #sessionQueryHandler: (() => void) | null = null
+  #sessionQueryHandler: (() => void | Promise<void>) | null = null
+  #sessionFlushPromise: Promise<void> | null = null
 
   constructor(
     private readonly logger: StructuredLogger,
@@ -224,7 +225,7 @@ export class WindowCoordinator {
     this.#sessionEndHandler = handler
   }
 
-  setSessionQueryHandler(handler: () => void): void {
+  setSessionQueryHandler(handler: () => void | Promise<void>): void {
     this.#sessionQueryHandler = handler
   }
 
@@ -250,6 +251,20 @@ export class WindowCoordinator {
         this.logger.warn('Main window bounds save failed', { error })
       })
     }
+  }
+
+  flushSessionState(): Promise<void> {
+    if (this.#sessionFlushPromise !== null) return this.#sessionFlushPromise
+    this.#sessionFlushPromise = Promise.resolve()
+      .then(() => Promise.all([this.flushMainState(), this.#sessionQueryHandler?.()]))
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        this.logger.warn('Session state flush failed', { error })
+      })
+      .finally(() => {
+        this.#sessionFlushPromise = null
+      })
+    return this.#sessionFlushPromise
   }
 
   ensureMainWindow(show = true): Promise<BrowserWindow> {
@@ -689,8 +704,7 @@ export class WindowCoordinator {
       }
     })
     window.on('query-session-end', () => {
-      void this.flushMainState()
-      this.#sessionQueryHandler?.()
+      void this.flushSessionState()
     })
     window.on('session-end', () => this.#sessionEndHandler?.())
     if (kind === 'main') {

@@ -769,3 +769,32 @@ describe('WindowCoordinator auth shell', () => {
     })
   })
 })
+
+describe('approved review session flush single flight', () => {
+  it('reuses one in-flight flush across repeated session queries and shutdown', async () => {
+    const gate = Promise.withResolvers<undefined>()
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const bounds = vi.spyOn(coordinator, 'flushMainState').mockReturnValue(gate.promise)
+    const hook = vi.fn(() => gate.promise)
+    coordinator.setSessionQueryHandler(hook)
+    const window = (await coordinator.ensureMainWindow()) as unknown as Record<'on', Mock>
+    const query = window.on.mock.calls.find(
+      ([name]) => name === 'query-session-end',
+    )?.[1] as (() => void) | undefined
+    if (query === undefined) throw new Error('Missing session query')
+    const first = coordinator.flushSessionState()
+    expect(coordinator.flushSessionState()).toBe(first)
+    query()
+    query()
+    await Promise.resolve()
+    expect(bounds).toHaveBeenCalledOnce()
+    expect(hook).toHaveBeenCalledOnce()
+    gate.resolve(undefined)
+    await first
+    const next = coordinator.flushSessionState()
+    expect(next).not.toBe(first)
+    await next
+    expect(bounds).toHaveBeenCalledTimes(2)
+    expect(hook).toHaveBeenCalledTimes(2)
+  })
+})
