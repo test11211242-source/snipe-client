@@ -211,3 +211,55 @@ describe('ApiClient', () => {
     ).resolves.toMatchObject({ ok: false, error: { code, message, status } })
   })
 })
+
+describe('review regression API error semantics', () => {
+  it.each(['/api/auth/login', '/api/auth/register', '/api/streamer/accounts'] as const)(
+    '#6 preserves bounded error bodies and Retry-After on %s',
+    async (path) => {
+      const message = 'Слишком много попыток. Попробуйте позже.'
+      const client = new ApiClient(
+        createProductionServerConfig(),
+        vi.fn<typeof fetch>().mockResolvedValue(
+          new Response(JSON.stringify({ detail: message }), {
+            status: 429,
+            headers: { 'Retry-After': '12' },
+          }),
+        ),
+        logger,
+      )
+      await expect(
+        client.request({ method: 'POST', path, schema }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { status: 429, message, retryAfterSeconds: 12 },
+      })
+    },
+  )
+})
+
+describe('review regression title receipt endpoint ownership', () => {
+  it.each(['/api/auth/login', '/api/streamer/auth/connect'] as const)(
+    '#14 does not interpret a title saved receipt on another endpoint: %s',
+    async (path) => {
+      const client = new ApiClient(
+        createProductionServerConfig(),
+        vi.fn<typeof fetch>().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              code: 'TITLE_SAVED_APPLY_FAILED',
+              detail: 'Not a title mutation',
+            }),
+            { status: 502 },
+          ),
+        ),
+        logger,
+      )
+      await expect(
+        client.request({ method: 'POST', path, schema }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'SERVER_ERROR', status: 502 },
+      })
+    },
+  )
+})

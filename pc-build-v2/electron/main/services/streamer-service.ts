@@ -898,9 +898,10 @@ export class StreamerService {
       throw new ApplicationError('STREAMER_CANCELLED', 'Streamer operation was cancelled')
     if (!result.ok) {
       if (
-        result.error.status === 502 &&
-        result.error.message ===
-          'Настройки сохранены, но Twitch не обновил название. Повторите попытку.' &&
+        (result.error.code === 'TITLE_SAVED_APPLY_FAILED' ||
+          (result.error.status === 502 &&
+            result.error.message ===
+              'Настройки сохранены, но Twitch не обновил название. Повторите попытку.')) &&
         (path === '/api/streamer/title/settings' ||
           path === '/api/streamer/title/enabled' ||
           path === '/api/streamer/title/pause')
@@ -920,7 +921,12 @@ export class StreamerService {
           'The server did not confirm the requested change',
         )
       }
-      throw new ApplicationError(result.error.code, result.error.message)
+      throw new ApplicationError(
+        result.error.code === 'TITLE_SAVED_APPLY_FAILED'
+          ? 'STREAMER_COMMAND_FAILED'
+          : result.error.code,
+        result.error.message,
+      )
     }
   }
 

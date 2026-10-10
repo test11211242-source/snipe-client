@@ -1,6 +1,6 @@
 import {
   H2HRequestSchema,
-  H2HResponseSchema,
+  H2HHttpResponseSchema,
   type H2HRequest,
   type ParsedH2HRequest,
   type H2HLookupResult,
@@ -117,7 +117,7 @@ export class H2HService {
         method: 'GET',
         path: '/api/user/me/h2h',
         query: { opponent_tag: payload.opponentTag, recent_limit: payload.recentLimit },
-        schema: H2HResponseSchema,
+        schema: H2HHttpResponseSchema,
         timeoutMs: 10_000,
         signal,
         authContextGuard: () => generation === this.auth.getContextGeneration(),
@@ -125,7 +125,10 @@ export class H2HService {
       if (signal.aborted || generation !== this.auth.getContextGeneration())
         return { capability: 'cancelled', retryAt: null, code: 'H2H_CANCELLED' }
       if (response.ok)
-        return { capability: 'supported', data: H2HResponseSchema.parse(response.data) }
+        return {
+          capability: 'supported',
+          data: H2HHttpResponseSchema.parse(response.data),
+        }
       if (response.error.status === 404)
         return { capability: 'unsupported', retryAt: null, code: 'H2H_UNSUPPORTED' }
       if (response.error.status === 429) {

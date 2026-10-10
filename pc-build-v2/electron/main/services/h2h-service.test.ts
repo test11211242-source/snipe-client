@@ -240,3 +240,70 @@ describe('H2H long Retry-After handling', () => {
     expect(test.request).toHaveBeenCalledOnce()
   })
 })
+
+describe('review regression additive H2H evolution', () => {
+  it('#7 strips additive HTTP fields while preserving real stale and complete values in strict IPC', async () => {
+    const data = {
+      ...response('ok'),
+      newServerField: true,
+      stale: true,
+      opponent: { tag: '#JCU', serverHint: 'new' },
+      coverage: { source: 'cr_stats_current_and_archives', complete: true, extra: 1 },
+      totals: { ...response('ok').totals, extra: 2 },
+      recent: [
+        { at: '2026-10-10T00:00:00Z', result: 'win', accountTag: '#JCU', extra: true },
+      ],
+      last: {
+        at: '2026-10-10T00:00:00Z',
+        result: 'win',
+        accountTag: '#JCU',
+        extra: true,
+      },
+      perAccount: [
+        {
+          accountTag: '#JCU',
+          alias: 'Account',
+          meetings: 1,
+          wins: 1,
+          losses: 0,
+          draws: 0,
+          decisiveMeetings: 1,
+          winRate: 100,
+          lastAt: null,
+          lastResult: null,
+          extra: true,
+        },
+      ],
+    }
+    const api = new ApiClient(
+      { apiUrl: 'https://example.test' } as never,
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(data))),
+      { debug: vi.fn(), warn: vi.fn() },
+    )
+    const test = harness()
+    test.request.mockImplementation((input) =>
+      api.request({
+        method: 'GET',
+        path: '/api/user/me/h2h',
+        schema: (input as typeof input & { schema: typeof H2HResponseSchema }).schema,
+        signal: input.signal,
+      }),
+    )
+    const result = H2HLookupResultSchema.parse(await test.service.lookup(payload))
+    expect(result).toMatchObject({
+      capability: 'supported',
+      data: { stale: true, coverage: { complete: true } },
+    })
+    if (result.capability !== 'supported') throw new Error('Missing supported H2H data')
+    expect(result.data).not.toHaveProperty('newServerField')
+    expect(result.data.opponent).not.toHaveProperty('serverHint')
+    expect(result.data.recent[0]).not.toHaveProperty('extra')
+    expect(result.data.perAccount[0]).not.toHaveProperty('extra')
+    expect(
+      H2HLookupResultSchema.safeParse({
+        ...result,
+        data: { ...result.data, extra: true },
+      }).success,
+    ).toBe(false)
+  })
+})

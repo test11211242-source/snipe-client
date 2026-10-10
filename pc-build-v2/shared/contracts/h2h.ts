@@ -30,11 +30,11 @@ export const H2HResponseSchema = z
     coverage: z
       .object({
         source: z.literal('cr_stats_current_and_archives'),
-        complete: z.literal(false),
+        complete: z.boolean(),
       })
       .strict(),
     updatedAt: Time,
-    stale: z.literal(false),
+    stale: z.boolean(),
     totals: z
       .object({
         meetings: Count,
@@ -75,6 +75,17 @@ export const H2HResponseSchema = z
       .optional(),
   })
   .strict()
+
+const HttpMeeting = Meeting.strip()
+export const H2HHttpResponseSchema = H2HResponseSchema.extend({
+  opponent: H2HResponseSchema.shape.opponent.strip(),
+  coverage: H2HResponseSchema.shape.coverage.strip(),
+  totals: H2HResponseSchema.shape.totals.strip(),
+  last: HttpMeeting.nullable(),
+  recent: z.array(HttpMeeting).max(10),
+  perAccount: z.array(H2HResponseSchema.shape.perAccount.element.strip()).max(20),
+}).strip()
+
 export const H2HLookupResultSchema = z.discriminatedUnion('capability', [
   z
     .object({

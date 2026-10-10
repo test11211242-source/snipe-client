@@ -4,6 +4,8 @@ import { DEFAULT_TITLE_SETTINGS } from './streamer-adapters'
 import { StreamerService } from './streamer-service'
 import { createApiError } from '../../../shared/errors/api-error'
 import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-ipc'
+import { ApiClient } from './api-client'
+import { z } from 'zod'
 
 const userView = {
   state: 'AUTHENTICATED' as const,
@@ -640,5 +642,40 @@ describe('narrow widget toggle ownership', () => {
     expect(
       test.request.mock.calls.filter(([input]) => input.method !== 'GET'),
     ).toHaveLength(0)
+  })
+})
+
+describe('review regression stable title failure receipts', () => {
+  it('#14 accepts the stable server code without relying on localized wording', async () => {
+    const test = harness()
+    const client = new ApiClient(
+      { apiUrl: 'https://example.test' } as never,
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 'TITLE_SAVED_APPLY_FAILED',
+            detail: 'Wording changed',
+          }),
+          { status: 502 },
+        ),
+      ),
+      { debug: vi.fn(), warn: vi.fn() },
+    )
+    const response = await client.request({
+      method: 'POST',
+      path: '/api/streamer/title/settings',
+      schema: z.object({ success: z.literal(true) }).loose(),
+    })
+    test.request.mockImplementationOnce(() => Promise.resolve(response as never))
+    expect(
+      await test.service.execute({
+        action: 'title.save',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({
+      ok: true,
+      titleApplication: 'failed',
+      warnings: ['TITLE_UPDATE_FAILED'],
+    })
   })
 })
