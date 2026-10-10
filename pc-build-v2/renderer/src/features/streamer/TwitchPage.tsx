@@ -144,6 +144,7 @@ function Twitch(): React.JSX.Element {
             return (
               <Row
                 bordered
+                className={styles['rowPad']}
                 key={usage.section}
                 lead={<Icon name={usage.icon} size={17} />}
                 onClick={() => navigate({ name: 'stream', section: usage.section })}
@@ -163,6 +164,7 @@ function Twitch(): React.JSX.Element {
           })}
           <Row
             bordered
+            className={styles['rowPad']}
             lead={<Icon name="layers" size={17} />}
             onClick={() => navigate({ name: 'stream', section: 'widgets' })}
             sub="Twitch не нужен: своя ссылка с ключом"

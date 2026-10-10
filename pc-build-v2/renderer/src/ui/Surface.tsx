@@ -45,7 +45,7 @@ export interface RowProps {
   onClick?: () => void
   selected?: boolean
   bordered?: boolean
-  className?: string
+  className?: string | undefined
   'aria-label'?: string
   'aria-current'?: 'true' | 'page' | undefined
 }

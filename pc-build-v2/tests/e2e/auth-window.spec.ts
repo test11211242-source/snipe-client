@@ -43,11 +43,9 @@ test('built Windows auth opens login first and asks for a key only during regist
       timeout: 30_000,
     })
     const page = await application.firstWindow()
-    await expect(page.getByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
-    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
-    await expect(
-      page.getByText(/Уже зарегистрированы на телефоне или сайте/),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'С возвращением' })).toBeVisible()
+    await expect(page.getByLabel('Ключ приглашения')).toHaveCount(0)
+    await expect(page.getByText(/Уже есть аккаунт на телефоне или сайте/)).toBeVisible()
     const view = await page.evaluate(() => window.crToolsAuth.getView())
     expect(view).toEqual({ state: 'UNAUTHENTICATED', user: null, error: null })
     const keys = await page.evaluate(() => Object.keys(window.crToolsAuth))
@@ -55,26 +53,19 @@ test('built Windows auth opens login first and asks for a key only during regist
     expect(keys).not.toContain('checkInvite')
     expect(keys).not.toContain('activateInvite')
     await page.getByRole('button', { name: 'Регистрация', exact: true }).click()
-    await expect(page.getByLabel('Email')).toBeVisible()
+    await expect(page.getByLabel('Почта')).toBeVisible()
     await expect(page.getByLabel('Имя пользователя')).toBeVisible()
     await expect(page.getByLabel('Пароль')).toBeVisible()
-    await expect(page.getByLabel('Ключ доступа')).toBeVisible()
-    await expect(page.getByLabel('Ключ доступа')).toHaveAttribute('required', '')
-    await expect(page.getByText(/Ключ покупается у администратора/)).toBeVisible()
-    await page.getByLabel('Ключ доступа').fill('short')
-    expect(
-      await page
-        .getByLabel('Ключ доступа')
-        .evaluate((input: HTMLInputElement) => input.checkValidity()),
-    ).toBe(false)
-    await page.getByLabel('Ключ доступа').fill(' test_key-123 ')
-    expect(
-      await page
-        .getByLabel('Ключ доступа')
-        .evaluate((input: HTMLInputElement) => input.checkValidity()),
-    ).toBe(true)
+    await expect(page.getByLabel('Ключ приглашения')).toBeVisible()
+    await expect(page.getByText(/Ключ выдаёт администратор/)).toBeVisible()
+    await page.getByLabel('Ключ приглашения').fill('short')
+    await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click()
+    await expect(page.getByText(/Ключ — от 8 до 50 символов/)).toBeVisible()
+    await page.getByLabel('Ключ приглашения').fill(' test_key-123 ')
+    await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click()
+    await expect(page.getByText(/Ключ — от 8 до 50 символов/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Вход', exact: true }).click()
-    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
+    await expect(page.getByLabel('Ключ приглашения')).toHaveCount(0)
     await expect(page.getByLabel('Имя пользователя')).toHaveCount(0)
   } finally {
     await application?.close().catch(() => undefined)

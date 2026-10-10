@@ -693,8 +693,352 @@ const renameProfile = ({ profileId, profileName }) => {
   return Promise.resolve(profileMutation())
 }
 
+// ── M5: streamer area, widget settings and the auth window ───────────────────────────
+const sx = fixture.streamer ?? {}
+const accountRows = [
+  {
+    tag: '#88299RC9Y',
+    name: 'ArtCS',
+    alias: 'Основной',
+    enabled: true,
+    currentRank: 297,
+    currentElo: 2675,
+  },
+  {
+    tag: '#22LUPYCYC',
+    name: 'artcs_two',
+    alias: 'Твинк',
+    enabled: true,
+    currentRank: 1904,
+    currentElo: 2411,
+  },
+  {
+    tag: '#9PQ0L2YVV',
+    name: 'ArtCS_old',
+    alias: 'Запасной',
+    enabled: false,
+    currentRank: null,
+    currentElo: null,
+  },
+]
+const titleTemplates = {
+  full: '{rank} · {elo} · {wins}W-{losses}L · {delta}',
+  chips: '{rank} · {elo} · {wins}W-{losses}L | Играю в Clash Royale',
+  raw: '{rank} !! особый {elo}',
+}
+const renderTitle = (template) =>
+  template
+    .replaceAll('{rank}', '★ 297')
+    .replaceAll('{elo}', '2 675 ELO')
+    .replaceAll('{wins}W-{losses}L', '5W-2L')
+    .replaceAll('{delta}', '+12')
+    .replaceAll('{account}', 'Основной')
+const twitchOn = (sx.twitch ?? 'on') === 'on'
+const sview = {
+  access: { allowed: true, reason: null },
+  twitch: {
+    connected: twitchOn,
+    username: twitchOn ? 'artcs_cr' : null,
+    polling: sx.twitch === 'pending',
+  },
+  predictions: {
+    active: sx.predictions === 'active',
+    state: sx.predictions === 'active' ? 'active' : 'stopped',
+    runtimeState:
+      sx.predictions === 'active'
+        ? 'active'
+        : sx.predictions === 'failed'
+          ? 'failed'
+          : 'stopped',
+    settings: {
+      predictionType: 'win_lose',
+      predictionWindow: 120,
+      winStreakCount: 3,
+      delayBetweenPredictions: 10,
+      autoCreateNext: true,
+    },
+    statistics: {
+      total: 24,
+      successful: 18,
+      successRate: 75,
+      currentWinStreak: 3,
+      activeTitle: sx.predictions === 'active' ? 'Победит ли стример в этом бою?' : null,
+    },
+    requirements: {
+      twitchConnected: twitchOn,
+      mainMonitorConfigured: true,
+      mainMonitorRunning: true,
+      resultConfigured: sx.zones !== false,
+    },
+  },
+  title: {
+    settings: {
+      enabled: sx.titleOn === true,
+      paused: false,
+      prefixTemplate: titleTemplates[sx.title ?? 'full'],
+      wlMode: 'active',
+      accountDisplayMode: 'last_active',
+      manualAccountTag: '',
+      includeRank: true,
+      includeElo: true,
+      includeWl: true,
+      includeDelta: (sx.title ?? 'full') === 'full',
+      maxAccounts: 3,
+      pollIntervalSeconds: 5,
+      twitchCheckIntervalSeconds: 30,
+      offlineGraceMinutes: 5,
+      battleMode: 'pathOfLegend',
+      restoreTitleOnOffline: true,
+    },
+    accounts: accountRows.slice(0, sx.accounts ?? 3),
+    session: { totalWins: 5, totalLosses: 2, activeAccountTag: '#88299RC9Y' },
+    recentResults: ['win', 'loss', 'win', 'win', 'loss', 'win', 'win'].map((result) => ({
+      result,
+      accountTag: '#88299RC9Y',
+      at: null,
+    })),
+    previewTitle: renderTitle(titleTemplates[sx.title ?? 'full']),
+    twitchOnline: true,
+  },
+  deckSharing: { enabled: sx.chat !== false },
+  overlay: {
+    settings: {
+      enabled: sx.widgetsOn !== false,
+      opponentEnabled: sx.widgetsOn !== false,
+      streamerStatsEnabled: sx.widgetsOn !== false,
+      previewMode: sx.previewMode === true,
+      previewTarget: 'both',
+      streamerAccountMode: 'stream_title',
+      manualStreamerTag: '',
+      recentLimit: 5,
+      opponentDisplaySeconds: 30,
+      opponentSlideSeconds: 10,
+      opponentSecondSlideEnabled: false,
+      opponentTransitionMs: 400,
+      statsMainSeconds: 20,
+      statsDeltaSeconds: 5,
+      statsBetweenSeconds: 2,
+      statsPollMs: 1000,
+      statsTransitionMs: 400,
+      statsLayout: 'standard',
+      opponentLayout: 'standard',
+      widgetFontStyle: 'gaming',
+      widgetCornerStyle: 'rounded',
+      matchupEnabled: false,
+      matchupRankLimits: [100],
+      matchupMinGames: 5,
+    },
+    urlsAvailable: { stats: sx.urls !== false, opponent: sx.urls !== false },
+    maskedUrls: {
+      stats:
+        sx.urls === false ? null : 'api.artcsworld.xyz/streamer-stats-widget?key=••••••',
+      opponent:
+        sx.urls === false ? null : 'api.artcsworld.xyz/opponent-widget?key=••••••',
+    },
+    recommendedSizes: { stats: '480x64', opponent: '560x380' },
+  },
+  refresh: {
+    state: sx.partial ? 'partial' : 'ready',
+    errors: sx.partial
+      ? [
+          {
+            section: 'twitch',
+            error: { code: 'NETWORK_UNAVAILABLE', message: 'Нет связи' },
+          },
+        ]
+      : [],
+    refreshedAt: '2026-10-10T12:00:00.000Z',
+  },
+}
+const sreadiness = () => ({
+  twitchConnected: sview.twitch.connected,
+  accountsCount: sview.title.accounts.filter((a) => a.enabled).length,
+  monitoring: sx.monitoring !== false,
+  captureConfigured: sx.profile !== false,
+  resultZonesConfigured: sx.zones !== false,
+  activeProfileId: uuid(1),
+})
+const sclone = () => JSON.parse(JSON.stringify(sview))
+const sok = (extra = {}) => ({
+  ok: true,
+  view: sclone(),
+  preview: null,
+  warnings: [],
+  titleApplication: 'not_requested',
+  ...extra,
+})
+const PRESET_CHIPS = {
+  short: ['rank', 'elo'],
+  score: ['elo', 'wl'],
+  full: ['rank', 'elo', 'wl', 'delta'],
+  signed: ['rank', 'elo', { text: 'Играю в Clash Royale' }],
+}
+const TOKENS = {
+  rank: '{rank}',
+  elo: '{elo}',
+  wl: '{wins}W-{losses}L',
+  delta: '{delta}',
+  account: '{account}',
+  best: '{account}',
+}
+const compileBuilder = (settings, builder) => {
+  if (builder.mode === 'raw') return { ...settings, prefixTemplate: builder.template }
+  const chips =
+    builder.mode === 'preset'
+      ? PRESET_CHIPS[builder.preset].map((c) =>
+          typeof c === 'string' ? { kind: c } : { kind: 'text', ...c },
+        )
+      : builder.chips
+  const data = chips.filter((c) => c.kind !== 'text').map((c) => TOKENS[c.kind])
+  const text = chips.filter((c) => c.kind === 'text' && c.text).map((c) => c.text)
+  const kinds = new Set(chips.map((c) => c.kind))
+  return {
+    ...settings,
+    prefixTemplate: [data.join(' · '), text.join(' ')].filter(Boolean).join(' | '),
+    includeRank: kinds.has('rank'),
+    includeElo: kinds.has('elo'),
+    includeWl: kinds.has('wl'),
+    includeDelta: kinds.has('delta'),
+  }
+}
+const streamerCommand = (command) => {
+  const settings = sview.title.settings
+  switch (command.action) {
+    case 'chat.toggle':
+      sview.deckSharing.enabled = command.enabled
+      return Promise.resolve(sok())
+    case 'title.enabled':
+      settings.enabled = command.enabled
+      return Promise.resolve(sok())
+    case 'title.paused':
+      settings.paused = command.paused
+      return Promise.resolve(sok())
+    case 'title.save':
+    case 'title.apply':
+      sview.title.settings = command.settings
+      sview.title.previewTitle = renderTitle(command.settings.prefixTemplate)
+      return Promise.resolve(
+        command.action === 'title.apply'
+          ? sok({
+              titleApplication: 'unconfirmed',
+              warnings: ['TITLE_APPLICATION_UNCONFIRMED'],
+            })
+          : sok(),
+      )
+    case 'title.preview': {
+      const text = renderTitle(command.settings.prefixTemplate)
+      return Promise.resolve(
+        sok({
+          preview: { previewTitle: text, characterCount: text.length, warnings: [] },
+        }),
+      )
+    }
+    case 'widget.settings':
+      sview.overlay.settings = command.settings
+      return Promise.resolve(sok())
+    case 'predictions.start':
+      sview.predictions.active = true
+      sview.predictions.runtimeState = 'active'
+      return Promise.resolve(sok())
+    case 'predictions.stop':
+      sview.predictions.active = false
+      sview.predictions.runtimeState = 'stopped'
+      return Promise.resolve(sok())
+    case 'accounts.add':
+      if (sx.accountError)
+        return Promise.resolve({
+          ok: false,
+          error: { code: sx.accountError, detail: null },
+        })
+      sview.title.accounts.push({
+        tag: command.tag,
+        name: command.alias || command.tag,
+        alias: command.alias,
+        enabled: true,
+        currentRank: null,
+        currentElo: null,
+      })
+      return Promise.resolve(sok())
+    case 'twitch.disconnect':
+      sview.twitch = { connected: false, username: null, polling: false }
+      return Promise.resolve(sok())
+    default:
+      return Promise.resolve(sok())
+  }
+}
+const streamerApi = {
+  command: streamerCommand,
+  getReadiness: () => Promise.resolve(sreadiness()),
+  compileTitle: ({ settings, builder }) =>
+    Promise.resolve({ ok: true, settings: compileBuilder(settings, builder) }),
+  decompileTitle: () =>
+    Promise.resolve(
+      sx.title === 'raw'
+        ? { mode: 'raw', template: titleTemplates.raw }
+        : sx.title === 'chips'
+          ? {
+              mode: 'chips',
+              chips: [
+                { kind: 'rank' },
+                { kind: 'elo' },
+                { kind: 'wl' },
+                { kind: 'text', text: 'Играю в Clash Royale' },
+              ],
+            }
+          : { mode: 'preset', preset: 'full' },
+    ),
+}
+const widgetStatus = {
+  visible: fixture.widgetVisible === true,
+  hasResult: false,
+  settings: {
+    autoOpen: true,
+    alwaysOnTop: true,
+    locked: false,
+    opacity: 0.9,
+    displayMode: 'detailed',
+    bounds: { x: null, y: null, width: 360, height: 300 },
+    normalWidth: 360,
+    compactWidth: 520,
+    compactMode: false,
+  },
+}
+const streamerFailing = sx.loadFail === true
+
+if (fixture.authWindow) {
+  const auth = fixture.authWindow
+  let mode = auth.view
+  const reply = () => Promise.resolve(mode)
+  contextBridge.exposeInMainWorld('crToolsAuth', {
+    getView: () => (auth.hang ? new Promise(() => undefined) : Promise.resolve(mode)),
+    retryBootstrap: reply,
+    resetLogin: reply,
+    login: reply,
+    register: reply,
+    getUpdateView: ok(auth.update ?? data.update),
+    checkForUpdate: ok(auth.update ?? data.update),
+    downloadUpdate: () => new Promise(() => undefined),
+    cancelUpdate: ok(auth.update ?? data.update),
+    installUpdate: ok(auth.update ?? data.update),
+  })
+}
+
 contextBridge.exposeInMainWorld('crTools', {
   setup: setupApi,
+  streamer: streamerApi,
+  setStreamerSectionActive: () => (streamerFailing ? fail() : Promise.resolve(sclone())),
+  getStreamerView: () => (streamerFailing ? fail() : Promise.resolve(sclone())),
+  refreshStreamer: () => (streamerFailing ? fail() : Promise.resolve(sclone())),
+  getWidgetStatus: ok(widgetStatus),
+  updateWidgetSettings: (patch) =>
+    Promise.resolve({ ...widgetStatus.settings, ...patch }),
+  toggleWidget: ok({ ...widgetStatus, visible: true }),
+  openLogFolder: ok({ opened: true }),
+  updateAppSettings: (patch) => Promise.resolve({ ...data.settings, ...patch }),
+  checkForUpdate: ok(data.update),
+  downloadUpdate: ok(data.update),
+  cancelUpdate: ok(data.update),
+  installUpdate: ok(data.update),
   listCaptureSources: () => Promise.resolve(sourceSnapshot(false)),
   loadCapturePreviews: () => Promise.resolve(sourceSnapshot(true)),
   prepareCaptureSource: ({ sourceKey, revision }) =>

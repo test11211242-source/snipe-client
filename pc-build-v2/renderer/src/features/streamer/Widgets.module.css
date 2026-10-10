@@ -16,6 +16,7 @@
   min-width: 0;
 }
 .url {
+  display: block;
   font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   overflow: hidden;
@@ -60,7 +61,8 @@
   transform-origin: center;
   border: 0;
   background: transparent;
-  color-scheme: dark;
+  /* Widgets are transparent pages; matching schemes keep the frame canvas transparent. */
+  color-scheme: light;
 }
 .off {
   opacity: 0.3;

@@ -203,3 +203,9 @@
 .channel:hover {
   color: var(--color-text);
 }
+
+/* Rows inside a flush card keep an inner gutter (Row.bordered drops its own). */
+div.rowPad,
+button.rowPad {
+  padding-inline: var(--space-4);
+}

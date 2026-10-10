@@ -128,6 +128,7 @@ function Widgets(): React.JSX.Element {
           <Card flush>
             <Row
               bordered
+              className={page['rowPad']}
               sub="Общий выключатель. Выключен: OBS получит пустую картинку."
               title="Показывать виджеты в трансляции"
               trail={
@@ -141,6 +142,7 @@ function Widgets(): React.JSX.Element {
             {sources.map((source) => (
               <Row
                 bordered
+                className={page['rowPad']}
                 key={source.kind}
                 lead={<Icon name={source.icon} size={17} />}
                 selected={selected === source.kind}

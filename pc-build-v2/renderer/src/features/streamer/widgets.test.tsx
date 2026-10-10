@@ -47,8 +47,8 @@ describe('OBS widgets: preview frame', () => {
       mountStream(WIDGETS)
       await screen.findByTitle('Предпросмотр: Карточка соперника')
       expect(screen.getByText('Загружаем предпросмотр…')).toBeVisible()
-      act(() => {
-        vi.advanceTimersByTime(16_000)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16_000)
       })
       expect(await screen.findByText('Не удалось загрузить предпросмотр')).toBeVisible()
       expect(screen.getByText(/Сами виджеты в OBS это не затрагивает/)).toBeVisible()

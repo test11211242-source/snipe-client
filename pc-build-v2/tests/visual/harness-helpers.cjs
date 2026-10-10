@@ -47,6 +47,29 @@ window.__h = {
     window.__h.click('Управлять профилями')
     await window.__h.sleep(300)
   },
+  // Opens a streamer/settings area and one of its sections, at any width.
+  async go(area, title) {
+    const h = window.__h
+    if (area === 'stream') {
+      const mode = document.querySelector('[aria-label="Стрим"]')
+      if (mode && mode.offsetParent !== null) mode.click()
+      else {
+        document.querySelector('[aria-label^="Аккаунт"]').click()
+        await h.sleep(150)
+        h.click('Стрим', '[role=menuitem]')
+      }
+    } else document.querySelector('[aria-label="Настройки"]').click()
+    await h.sleep(500)
+    if (!title) return
+    const nav = document.querySelector('nav[aria-label^="Разделы"]')
+    if (nav) h.click(title, 'nav[aria-label^="Разделы"] button')
+    else {
+      document.querySelector('button[aria-label^="Разделы"]').click()
+      await h.sleep(150)
+      h.click(title, '[role=menuitem]')
+    }
+    await h.sleep(900)
+  },
   rowMenu(name) {
     window.__h.click(`Действия с профилем «${name}»`)
   },

@@ -169,6 +169,7 @@ function Overview(): React.JSX.Element {
             return (
               <Row
                 bordered
+                className={styles['rowPad']}
                 key={feature.id}
                 lead={<Icon name={feature.icon} size={17} />}
                 sub={feature.sub}
@@ -203,6 +204,7 @@ function Overview(): React.JSX.Element {
           })}
           <Row
             bordered
+            className={styles['rowPad']}
             lead={<Icon name="layers" size={17} />}
             sub="Работают без Twitch"
             title="Виджеты для OBS"
