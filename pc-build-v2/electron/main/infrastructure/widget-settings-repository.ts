@@ -85,14 +85,23 @@ export class WidgetSettingsRepository {
         value = await this.fs.readFile(source, 'utf8')
       } catch (error) {
         if (!isMissing(error) || this.legacyDirectory === undefined) throw error
-        const old: unknown = JSON.parse(
-          await this.fs.readFile(join(this.legacyDirectory, fileName(userId)), 'utf8'),
+        const bytes = await this.fs.readFile(
+          join(this.legacyDirectory, fileName(userId)),
+          'utf8',
         )
-        const oldSettings = WidgetSettingsSchema.omit({
+        let old: unknown
+        try {
+          old = JSON.parse(bytes) as unknown
+        } catch {
+          return structuredClone(DEFAULT_WIDGET_SETTINGS)
+        }
+        const parsed = WidgetSettingsSchema.omit({
           normalWidth: true,
           compactWidth: true,
           compactMode: true,
-        }).parse(old)
+        }).safeParse(old)
+        if (!parsed.success) return structuredClone(DEFAULT_WIDGET_SETTINGS)
+        const oldSettings = parsed.data
         return await this.save(userId, {
           ...oldSettings,
           normalWidth: oldSettings.bounds.width,

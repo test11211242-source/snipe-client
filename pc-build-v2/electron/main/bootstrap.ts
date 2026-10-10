@@ -125,6 +125,7 @@ const predictionResults = new PredictionResultConfigurationRepository(
   join(app.getPath('userData'), 'prediction-result-config.v4'),
   nodePredictionResultFileSystem,
   join(app.getPath('userData'), 'prediction-result-config.v3'),
+  logger,
 )
 const captureConfigurations = new CaptureConfigurationRepository(
   join(app.getPath('userData'), 'capture-profiles.v4'),

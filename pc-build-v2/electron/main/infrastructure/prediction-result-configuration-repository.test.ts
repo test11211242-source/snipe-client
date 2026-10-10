@@ -213,3 +213,45 @@ describe('prediction result references during v4 capture migration', () => {
     await expect(repository.load('user-1', FIRST_PROFILE)).resolves.toEqual(migrated)
   })
 })
+
+describe('review regression optional legacy result geometry', () => {
+  it.each([
+    '{invalid',
+    JSON.stringify({ ...configuration('user-1'), fingerprint: 'f'.repeat(64) }),
+  ])(
+    '#12 leaves invalid legacy geometry unattached without aborting capture migration: %s',
+    async (bytes) => {
+      const previous = configuration('user-1')
+      const hash = createHash('sha256').update('user-1').digest('hex')
+      const path = join('/old', `${hash}.${FIRST_PROFILE}.json`)
+      const { fs, files } = memoryFileSystem(new Map([[path, bytes]]))
+      const capture = v4CaptureFixture({
+        schemaVersion: 1,
+        userId: 'user-1',
+        revision: 3,
+        committedAt: previous.committedAt,
+        source: previous.source,
+        frameSize: previous.frameSize,
+        regions: {
+          trigger: previous.trigger,
+          normal: previous.data,
+          precise: previous.data,
+        },
+        triggerProfile: previous.triggerProfile,
+        fingerprint: 'a'.repeat(64),
+      })
+      const repository = new PredictionResultConfigurationRepository('/new', fs, '/old')
+      await expect(
+        repository.migrateCaptureReference(
+          'user-1',
+          FIRST_PROFILE,
+          3,
+          'a'.repeat(64),
+          capture,
+        ),
+      ).resolves.toBeUndefined()
+      expect(files.get(path)).toBe(bytes)
+      expect([...files.keys()]).toEqual([path])
+    },
+  )
+})

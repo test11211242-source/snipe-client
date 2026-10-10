@@ -12,6 +12,7 @@ import {
 } from '../../../shared/models/capture'
 import { migratedCaptureProfileId } from './capture-configuration-repository'
 import { z } from 'zod'
+import type { StructuredLogger } from './structured-logger'
 
 export interface PredictionResultFileSystem {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
@@ -55,6 +56,7 @@ export class PredictionResultConfigurationRepository {
     private readonly directory: string,
     private readonly fs: PredictionResultFileSystem = nodePredictionResultFileSystem,
     private readonly legacyDirectory?: string,
+    private readonly logger?: Pick<StructuredLogger, 'warn'>,
   ) {}
 
   load(
@@ -120,11 +122,24 @@ export class PredictionResultConfigurationRepository {
       )
       if (existing !== null) return
       const legacy = new PredictionResultConfigurationRepository(legacyDirectory, this.fs)
-      const previous =
-        (await legacy.readConfiguration(userId, profileFileName(userId, profileId))) ??
-        (profileId === migratedCaptureProfileId(userId)
-          ? await legacy.readConfiguration(userId, fileName(userId))
-          : null)
+      let previous: PredictionResultConfiguration | null
+      try {
+        previous =
+          (await legacy.readConfiguration(userId, profileFileName(userId, profileId))) ??
+          (profileId === migratedCaptureProfileId(userId)
+            ? await legacy.readConfiguration(userId, fileName(userId))
+            : null)
+      } catch (error) {
+        this.logger?.warn('Legacy result geometry was not attached', {
+          errorType:
+            error instanceof z.ZodError
+              ? 'ZodError'
+              : error instanceof SyntaxError
+                ? 'SyntaxError'
+                : 'Error',
+        })
+        return
+      }
       if (
         previous?.captureProfileId !== profileId ||
         previous.captureConfigurationRevision !== oldRevision ||

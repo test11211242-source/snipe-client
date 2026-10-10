@@ -175,3 +175,22 @@ describe('WidgetSettingsRepository', () => {
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('.tmp'), { force: true })
   })
 })
+
+describe('review regression legacy widget fallback', () => {
+  it.each(['{invalid', JSON.stringify({ opacity: 0.01 })])(
+    '#11 leaves invalid v2 input unchanged and uses defaults: %s',
+    async (bytes) => {
+      const { fs, files } = memoryFileSystem()
+      const original = new WidgetSettingsRepository('/v2', fs)
+      await original.save('one', DEFAULT_WIDGET_SETTINGS)
+      const currentPath = [...files.keys()][0]
+      if (currentPath === undefined) throw new Error('Missing fixture path')
+      const legacyPath = currentPath
+      files.delete(currentPath)
+      files.set(legacyPath, bytes)
+      const target = new WidgetSettingsRepository('/v3', fs, '/v2')
+      await expect(target.load('one')).resolves.toEqual(DEFAULT_WIDGET_SETTINGS)
+      expect(files.get(legacyPath)).toBe(bytes)
+    },
+  )
+})
