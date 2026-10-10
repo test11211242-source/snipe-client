@@ -3,7 +3,7 @@ import { useEffect, useState, type SyntheticEvent } from 'react'
 
 import type { AuthView } from '../../../shared/models/auth'
 import type { UpdateView } from '../../../shared/models/update'
-import { publicErrorMessage } from '../app/format'
+import { publicErrorMessage } from '../legacy/format'
 
 type FormMode = 'login' | 'register'
 type FormSubmitEvent = SyntheticEvent<HTMLFormElement, SubmitEvent>

@@ -8,7 +8,10 @@
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
 
+/* Legacy token set: scoped so it cannot override the new design tokens (tokens.css). Removed with the legacy renderer in M6. */
+.legacy-host {
   --color-bg: #0d0e12;
   --color-sidebar: #111218;
   --color-surface: #15171e;
@@ -68,7 +71,6 @@
   --topbar-height: 68px;
   --container-dashboard: 2200px;
   --container-focused: 1480px;
-
   color: var(--color-text);
   background: var(--color-bg);
 }
