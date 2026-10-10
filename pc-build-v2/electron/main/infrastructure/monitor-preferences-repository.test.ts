@@ -43,24 +43,18 @@ describe('MonitorPreferencesRepository', () => {
   it('defaults to fast/PoL and stores strict per-user values atomically', async () => {
     const { fs, files } = memoryFileSystem()
     const repository = new MonitorPreferencesRepository('/prefs', fs)
-    await expect(repository.load('user-a')).resolves.toEqual({
-      searchMode: 'fast',
-      deckMode: 'pol',
-    })
-    await repository.save('user-a', { searchMode: 'precise', deckMode: 'gt' })
-    await repository.save('user-b', { searchMode: 'fast', deckMode: 'pol' })
+    await expect(repository.load('user-a')).resolves.toEqual({ deckMode: 'pol' })
+    await repository.save('user-a', { deckMode: 'gt' })
+    await repository.save('user-b', { deckMode: 'pol' })
     expect(files.size).toBe(2)
     expect([...files.keys()].join()).not.toContain('user-a')
-    await expect(repository.load('user-a')).resolves.toEqual({
-      searchMode: 'precise',
-      deckMode: 'gt',
-    })
+    await expect(repository.load('user-a')).resolves.toEqual({ deckMode: 'gt' })
   })
 
   it('rejects unknown persisted fields and removes a failed temporary write', async () => {
     const { fs, files } = memoryFileSystem()
     const repository = new MonitorPreferencesRepository('/prefs', fs)
-    await repository.save('user', { searchMode: 'fast', deckMode: 'pol' })
+    await repository.save('user', { deckMode: 'pol' })
     const path = [...files.keys()][0]
     if (path === undefined) throw new Error('missing test file')
     files.set(path, '{"searchMode":"fast","deckMode":"pol","token":"x"}')
@@ -72,9 +66,7 @@ describe('MonitorPreferencesRepository', () => {
       rename: vi.fn().mockRejectedValue(new Error('disk full')),
       rm,
     })
-    await expect(
-      failing.save('user', { searchMode: 'fast', deckMode: 'pol' }),
-    ).rejects.toThrow('disk full')
+    await expect(failing.save('user', { deckMode: 'pol' })).rejects.toThrow('disk full')
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('.tmp'), { force: true })
   })
 })

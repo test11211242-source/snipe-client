@@ -20,18 +20,23 @@ import {
   captureProfileCollectionFingerprint,
   type CaptureConfigurationFileSystem,
 } from './capture-configuration-repository'
+import { v4CaptureFixture } from '../../../tests/capture-fixtures'
+import {
+  LegacyCaptureConfigurationSchema,
+  type LegacyCaptureConfiguration,
+} from './capture-profile-migration'
 
 function required<T>(value: T | null | undefined): T {
   if (value === undefined || value === null) throw new Error('Missing test value')
   return value
 }
 
-function configuration(
+function legacyConfiguration(
   userId: string,
   revision = 1,
   sourceLabel = 'Game',
-): CaptureConfiguration {
-  const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
+): LegacyCaptureConfiguration {
+  const unsigned: Omit<LegacyCaptureConfiguration, 'fingerprint'> = {
     schemaVersion: 1,
     userId,
     revision,
@@ -70,7 +75,18 @@ function configuration(
       },
     },
   }
-  return { ...unsigned, fingerprint: captureConfigurationFingerprint(unsigned) }
+  return LegacyCaptureConfigurationSchema.parse({
+    ...unsigned,
+    fingerprint: createHash('sha256').update(JSON.stringify(unsigned)).digest('hex'),
+  })
+}
+
+function configuration(
+  userId: string,
+  revision = 1,
+  sourceLabel = 'Game',
+): CaptureConfiguration {
+  return v4CaptureFixture(legacyConfiguration(userId, revision, sourceLabel))
 }
 
 function userHash(userId: string): string {
@@ -82,6 +98,10 @@ function legacyPath(directory: string, userId: string): string {
 }
 
 function profilePath(directory: string, userId: string): string {
+  return join(directory, `${userHash(userId)}.profiles.v3.json`)
+}
+
+function legacyProfilePath(directory: string, userId: string): string {
   return join(directory, `${userHash(userId)}.profiles.v2.json`)
 }
 
@@ -158,7 +178,7 @@ describe('capture profile data model', () => {
       configuration: configuration('user'),
     }
     const base = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       userId: 'user',
       revision: 1,
       fingerprint: '0'.repeat(64),
@@ -184,7 +204,7 @@ describe('capture profile data model', () => {
 describe('CaptureConfigurationRepository migration', () => {
   it('migrates the current directory deterministically and retains the legacy input', async () => {
     const userId = 'legacy-user'
-    const legacy = `${JSON.stringify(configuration(userId), null, 2)}\n`
+    const legacy = `${JSON.stringify(legacyConfiguration(userId), null, 2)}\n`
     const { fs, files } = memoryFileSystem(
       new Map([[legacyPath('/config', userId), legacy]]),
     )
@@ -208,7 +228,14 @@ describe('CaptureConfigurationRepository migration', () => {
     })
     expect(files.get(legacyPath('/config', userId))).toBe(legacy)
     expect(files.has(profilePath('/config', userId))).toBe(true)
-    await expect(first.load(userId)).resolves.toEqual(configuration(userId))
+    await expect(first.load(userId)).resolves.toMatchObject({
+      sourceBinding: { identity: legacyConfiguration(userId).source },
+      calibration: {
+        nicknameRegion: legacyConfiguration(userId).regions.normal,
+        topLeftEvidenceRegion: legacyConfiguration(userId).regions.precise,
+        validationStatus: 'imported',
+      },
+    })
 
     const firstProfileId = required(status).activeProfileId
     files.delete(profilePath('/config', userId))
@@ -220,13 +247,16 @@ describe('CaptureConfigurationRepository migration', () => {
 
   it('can migrate from an optional separate legacy directory', async () => {
     const userId = 'separate-legacy-user'
-    const legacy = JSON.stringify(configuration(userId))
+    const legacy = JSON.stringify(legacyConfiguration(userId))
     const { fs, files } = memoryFileSystem(
       new Map([[legacyPath('/legacy', userId), legacy]]),
     )
     const target = repository('/profiles', fs, '/legacy')
 
-    await expect(target.load(userId)).resolves.toEqual(configuration(userId))
+    await expect(target.load(userId)).resolves.toMatchObject({
+      sourceBinding: { identity: legacyConfiguration(userId).source },
+      calibration: { validationStatus: 'imported' },
+    })
     expect(files.get(legacyPath('/legacy', userId))).toBe(legacy)
     expect(files.has(profilePath('/profiles', userId))).toBe(true)
   })
@@ -255,7 +285,7 @@ describe('CaptureConfigurationRepository profiles', () => {
     const activated = await target.activate('user', secondaryId, 3)
     expect(activated).toMatchObject({ revision: 4, activeProfileId: secondaryId })
     await expect(target.load('user')).resolves.toMatchObject({
-      source: { label: 'Game' },
+      sourceBinding: { identity: { label: 'Game' } },
     })
 
     const rebound = await target.rebind(
@@ -303,7 +333,7 @@ describe('CaptureConfigurationRepository profiles', () => {
     })
     await expect(target.load('user')).resolves.toMatchObject({
       revision: 7,
-      source: { label: 'Updated Game' },
+      sourceBinding: { identity: { label: 'Updated Game' } },
     })
     await expect(target.delete('user', primaryId)).rejects.toBeInstanceOf(
       CannotDeleteLastCaptureProfileError,
@@ -423,7 +453,7 @@ describe('CaptureConfigurationRepository profiles', () => {
     expect(await target.list('user-a')).toMatchObject({ revision: 3, profileCount: 3 })
     expect(await target.list('user-b')).toMatchObject({ revision: 1, profileCount: 1 })
     expect(
-      [...files.keys()].filter((path) => path.endsWith('.profiles.v2.json')),
+      [...files.keys()].filter((path) => path.endsWith('.profiles.v3.json')),
     ).toHaveLength(2)
     expect([...files.keys()].join()).not.toContain('user-a')
   })
@@ -438,7 +468,7 @@ describe('CaptureConfigurationRepository corruption and atomic writes', () => {
     const path = profilePath('/profiles', userId)
     const corrupt = required(files.get(path)).replace('Game', 'Tampered')
     files.set(path, corrupt)
-    const legacy = JSON.stringify(configuration(userId, 9, 'Legacy'))
+    const legacy = JSON.stringify(legacyConfiguration(userId, 9, 'Legacy'))
     files.set(legacyPath('/profiles', userId), legacy)
 
     await expect(target.load(userId)).rejects.toBeInstanceOf(
@@ -481,5 +511,132 @@ describe('CaptureConfigurationRepository corruption and atomic writes', () => {
 
     await expect(target.save(configuration('42'))).rejects.toThrow('disk full')
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('.tmp'), { force: true })
+  })
+})
+
+function legacyCollection(userId: string, count: number) {
+  const ids = profileIdSequence()
+  const profiles = Array.from({ length: count }, (_, index) => ({
+    profileId: ids(),
+    profileName: `Emulator ${index + 1}`,
+    createdAt: '2026-07-01T12:00:00.000Z',
+    updatedAt: '2026-07-01T12:00:00.000Z',
+    configuration: legacyConfiguration(userId, 1, `Emulator ${index + 1}`),
+  }))
+  const unsigned = {
+    schemaVersion: 2,
+    userId,
+    revision: 7,
+    activeProfileId: profiles.at(-1)?.profileId ?? '00000000-0000-4000-8000-000000000001',
+    profiles,
+  }
+  return {
+    ...unsigned,
+    fingerprint: createHash('sha256').update(JSON.stringify(unsigned)).digest('hex'),
+  }
+}
+
+describe('capture-profiles.v3 to v4 migration', () => {
+  it.each([1, 20])(
+    'losslessly imports %i profiles with stable identities and honest provenance',
+    async (count) => {
+      const old = legacyCollection('user', count)
+      const input = JSON.stringify(old)
+      const { fs, files } = memoryFileSystem(
+        new Map([[legacyProfilePath('/v3', 'user'), input]]),
+      )
+      const target = repository('/v4', fs, '/v3')
+      const summary = required(await target.list('user'))
+      expect(summary).toMatchObject({
+        revision: 7,
+        activeProfileId: old.activeProfileId,
+        profileCount: count,
+      })
+      for (const previous of old.profiles) {
+        const migrated = required(await target.get('user', previous.profileId))
+        expect(migrated).toMatchObject({
+          profileId: previous.profileId,
+          profileName: previous.profileName,
+          createdAt: previous.createdAt,
+          updatedAt: previous.updatedAt,
+          configuration: {
+            sourceBinding: {
+              identity: previous.configuration.source,
+              lastVerifiedAt: null,
+            },
+            calibration: {
+              referenceFrameSize: previous.configuration.frameSize,
+              nicknameRegion: previous.configuration.regions.normal,
+              topLeftEvidenceRegion: previous.configuration.regions.precise,
+              triggerRegion: previous.configuration.regions.trigger,
+              triggerProfile: previous.configuration.triggerProfile,
+              expectedLayout: null,
+              gameViewport: null,
+              validationStatus: 'imported',
+              provenance: { nickname: { origin: 'imported', confidence: null } },
+            },
+          },
+        })
+      }
+      expect(files.get(legacyProfilePath('/v3', 'user'))).toBe(input)
+      const migratedBytes = files.get(profilePath('/v4', 'user'))
+      await repository('/v4', fs, '/v3').list('user')
+      expect(files.get(profilePath('/v4', 'user'))).toBe(migratedBytes)
+    },
+  )
+
+  it('validates every old profile before writing any v4 replacement', async () => {
+    const old = legacyCollection('user', 20)
+    required(old.profiles[19]).configuration.fingerprint = 'f'.repeat(64)
+    const { fs, files } = memoryFileSystem(
+      new Map([[legacyProfilePath('/v3', 'user'), JSON.stringify(old)]]),
+    )
+    await expect(repository('/v4', fs, '/v3').list('user')).rejects.toBeInstanceOf(
+      CaptureProfileStoreCorruptError,
+    )
+    expect(files.has(profilePath('/v4', 'user'))).toBe(false)
+  })
+
+  it('resumes interrupted prediction association migration before committing the collection', async () => {
+    const old = legacyCollection('user', 2)
+    const input = JSON.stringify(old)
+    const { fs, files } = memoryFileSystem(
+      new Map([[legacyProfilePath('/v3', 'user'), input]]),
+    )
+    let failed = false
+    const migratePredictionReference = vi.fn((_user: string, profileId: string) => {
+      if (!failed && profileId === old.profiles[1]?.profileId) {
+        failed = true
+        throw new Error('interrupted association write')
+      }
+      return Promise.resolve()
+    })
+    const target = new CaptureConfigurationRepository('/v4', fs, {
+      legacyDirectory: '/v3',
+      migratePredictionReference,
+    })
+    await expect(target.list('user')).rejects.toBeInstanceOf(
+      CaptureProfileStoreCorruptError,
+    )
+    expect(files.has(profilePath('/v4', 'user'))).toBe(false)
+    await expect(target.list('user')).resolves.toMatchObject({ profileCount: 2 })
+    expect(files.get(legacyProfilePath('/v3', 'user'))).toBe(input)
+    expect(migratePredictionReference).toHaveBeenCalledTimes(4)
+  })
+
+  it('rejects an unknown v4 schema instead of silently reimporting old data', async () => {
+    const old = legacyCollection('user', 1)
+    const { fs, files } = memoryFileSystem(
+      new Map([
+        [profilePath('/v3', 'user'), JSON.stringify(old)],
+        [profilePath('/v4', 'user'), JSON.stringify({ schemaVersion: 99 })],
+      ]),
+    )
+    await expect(repository('/v4', fs, '/v3').list('user')).rejects.toBeInstanceOf(
+      CaptureProfileStoreCorruptError,
+    )
+    expect(files.get(profilePath('/v4', 'user'))).toBe(
+      JSON.stringify({ schemaVersion: 99 }),
+    )
   })
 })

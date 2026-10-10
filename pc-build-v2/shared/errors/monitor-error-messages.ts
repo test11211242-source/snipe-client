@@ -8,6 +8,12 @@ export const MONITOR_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.f
   CAPTURE_NO_FRAME: 'Источник захвата не передал ни одного кадра.',
   CAPTURE_FRAME_INVALID: 'Источник передал некорректный кадр.',
   CAPTURE_GEOMETRY_CHANGED: 'Размеры источника изменились. Настройте захват заново.',
+  CAPTURE_CALIBRATION_INVALID:
+    'Калибровка профиля изменилась или требует проверки. Настройте захват заново.',
+  SEARCH_RETRY_STALE: 'Поиск уже заменён новой попыткой.',
+  SEARCH_RETRY_EXPIRED: 'Время повторного поиска истекло.',
+  SEARCH_RETRY_UNAVAILABLE: 'Повторный поиск сейчас недоступен.',
+  HISTORY_STORAGE_FAILED: 'Не удалось прочитать или сохранить историю сессий.',
   MONITOR_INTERNAL_FAILED: 'Внутренняя ошибка локального мониторинга.',
   MONITOR_PROTOCOL_INVALID: 'Локальный процесс передал некорректные данные.',
   MONITOR_EXITED_EARLY: 'Мониторинг завершился до готовности источника.',

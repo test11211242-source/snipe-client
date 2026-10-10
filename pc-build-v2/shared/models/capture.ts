@@ -155,17 +155,56 @@ export const CapturePreferenceSchema = z.discriminatedUnion('kind', [
     .strict(),
 ])
 
-export const CaptureConfigurationSchema = z
+export const CalibrationProvenanceSchema = z
+  .object({
+    origin: z.enum(['manual', 'imported', 'auto']),
+    confidence: z.number().min(0).max(1).nullable(),
+    analyzerVersion: z.string().min(1).max(32).nullable(),
+  })
+  .strict()
+
+export const SourceBindingSchema = z
+  .object({
+    identity: CapturePreferenceSchema,
+    lastVerifiedAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+
+export const LayoutCalibrationSchema = z
   .object({
     schemaVersion: z.literal(1),
+    calibrationId: z.uuid(),
+    revision: z.number().int().positive(),
+    referenceFrameSize: PixelSizeSchema,
+    coordinateSpace: z.literal('full_frame_normalized'),
+    gameViewport: NormalizedRectSchema.nullable(),
+    expectedLayout: z.string().min(1).max(80).nullable(),
+    triggerRegion: NormalizedRectSchema,
+    nicknameRegion: NormalizedRectSchema,
+    topLeftEvidenceRegion: NormalizedRectSchema,
+    triggerProfile: TriggerProfileSchema,
+    provenance: z
+      .object({
+        trigger: CalibrationProvenanceSchema,
+        nickname: CalibrationProvenanceSchema,
+        topLeftEvidence: CalibrationProvenanceSchema,
+        viewport: CalibrationProvenanceSchema,
+      })
+      .strict(),
+    validationStatus: z.enum(['validated', 'imported', 'needs_validation']),
+    calibratedAt: z.iso.datetime(),
+  })
+  .strict()
+
+export const CaptureConfigurationSchema = z
+  .object({
+    schemaVersion: z.literal(2),
     userId: z.string().min(1).max(128),
     revision: z.number().int().positive(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     committedAt: z.iso.datetime(),
-    source: CapturePreferenceSchema,
-    frameSize: PixelSizeSchema,
-    regions: NormalizedRegionsSchema,
-    triggerProfile: TriggerProfileSchema,
+    sourceBinding: SourceBindingSchema,
+    calibration: LayoutCalibrationSchema,
   })
   .strict()
 
@@ -186,7 +225,7 @@ export const CaptureProfileSchema = z
 
 export const CaptureProfileCollectionSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     userId: z.string().min(1).max(128),
     revision: z.number().int().positive(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -250,6 +289,20 @@ export const CaptureProfileSummarySchema = z
     committedAt: z.iso.datetime(),
     sourceKind: CaptureSourceKindSchema,
     sourceLabel: z.string().min(1).max(300),
+    sourceHealth: z
+      .object({
+        state: z.enum([
+          'available',
+          'missing',
+          'metadata_unavailable',
+          'ambiguous',
+          'unknown',
+        ]),
+        reason: z.string().min(1).max(64).nullable(),
+      })
+      .strict(),
+    calibrationHealth: z.enum(['validated', 'imported', 'needs_validation']),
+    resultConfigured: z.boolean(),
   })
   .strict()
 
@@ -332,6 +385,8 @@ export type RegionKind = z.infer<typeof RegionKindSchema>
 export type NormalizedRegions = z.infer<typeof NormalizedRegionsSchema>
 export type TriggerProfile = z.infer<typeof TriggerProfileSchema>
 export type CapturePreference = z.infer<typeof CapturePreferenceSchema>
+export type SourceBinding = z.infer<typeof SourceBindingSchema>
+export type LayoutCalibration = z.infer<typeof LayoutCalibrationSchema>
 export type CaptureConfiguration = z.infer<typeof CaptureConfigurationSchema>
 export type CaptureProfile = z.infer<typeof CaptureProfileSchema>
 export type CaptureProfileCollection = z.infer<typeof CaptureProfileCollectionSchema>

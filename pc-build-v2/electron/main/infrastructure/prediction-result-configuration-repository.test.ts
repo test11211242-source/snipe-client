@@ -10,6 +10,7 @@ import {
   type PredictionResultFileSystem,
 } from './prediction-result-configuration-repository'
 import { migratedCaptureProfileId } from './capture-configuration-repository'
+import { v4CaptureFixture } from '../../../tests/capture-fixtures'
 
 const FIRST_PROFILE = migratedCaptureProfileId('user-1')
 const SECOND_PROFILE = '00000000-0000-4000-8000-000000000002'
@@ -143,5 +144,72 @@ describe('PredictionResultConfigurationRepository profiles', () => {
     const repository = new PredictionResultConfigurationRepository('/results', fs)
 
     await expect(repository.load(userId, FIRST_PROFILE)).resolves.toBeNull()
+  })
+})
+
+describe('prediction result references during v4 capture migration', () => {
+  it('maps only the exact validated old profile reference and preserves result calibration', async () => {
+    const previous = configuration('user-1')
+    const hash = createHash('sha256').update('user-1').digest('hex')
+    const path = join('/old', `${hash}.${FIRST_PROFILE}.json`)
+    const { fs, files } = memoryFileSystem(new Map([[path, JSON.stringify(previous)]]))
+    const capture = v4CaptureFixture({
+      schemaVersion: 1,
+      userId: 'user-1',
+      revision: 3,
+      committedAt: previous.committedAt,
+      source: previous.source,
+      frameSize: previous.frameSize,
+      regions: {
+        trigger: previous.trigger,
+        normal: previous.data,
+        precise: previous.data,
+      },
+      triggerProfile: previous.triggerProfile,
+      fingerprint: 'a'.repeat(64),
+    })
+    const repository = new PredictionResultConfigurationRepository('/new', fs, '/old')
+    await repository.migrateCaptureReference(
+      'user-1',
+      FIRST_PROFILE,
+      3,
+      'b'.repeat(64),
+      capture,
+    )
+    await expect(repository.load('user-1', FIRST_PROFILE)).resolves.toBeNull()
+    await repository.migrateCaptureReference(
+      'user-1',
+      SECOND_PROFILE,
+      3,
+      'a'.repeat(64),
+      capture,
+    )
+    await expect(repository.load('user-1', SECOND_PROFILE)).resolves.toBeNull()
+    await repository.migrateCaptureReference(
+      'user-1',
+      FIRST_PROFILE,
+      3,
+      'a'.repeat(64),
+      capture,
+    )
+    const migrated = await repository.load('user-1', FIRST_PROFILE)
+    expect(migrated).toMatchObject({
+      captureProfileId: FIRST_PROFILE,
+      captureConfigurationFingerprint: capture.fingerprint,
+      trigger: previous.trigger,
+      data: previous.data,
+      triggerProfile: previous.triggerProfile,
+      source: previous.source,
+      frameSize: previous.frameSize,
+    })
+    expect(files.get(path)).toBe(JSON.stringify(previous))
+    await repository.migrateCaptureReference(
+      'user-1',
+      FIRST_PROFILE,
+      3,
+      'a'.repeat(64),
+      capture,
+    )
+    await expect(repository.load('user-1', FIRST_PROFILE)).resolves.toEqual(migrated)
   })
 })

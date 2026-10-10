@@ -33,10 +33,14 @@ export const AppSettingsViewSchema = z
     reducedMotion: z.boolean(),
     launchAtStartup: z.boolean(),
     diagnosticsEnabled: z.boolean(),
+    autoStartMonitoring: z.boolean(),
+    closeToTray: z.boolean(),
+    notifyOpponentFound: z.boolean(),
   })
   .strict()
 export const AppSettingsPayloadSchema = z.object({}).strict()
-export const AppSettingsUpdateSchema = AppSettingsViewSchema
+export const AppSettingsUpdateSchema = AppSettingsViewSchema.partial()
+export type AppSettingsUpdate = z.infer<typeof AppSettingsUpdateSchema>
 export const OpenLogFolderResultSchema = z.object({ opened: z.boolean() }).strict()
 export const BootstrapFailurePayloadSchema = z
   .object({

@@ -1,15 +1,14 @@
 import { z } from 'zod'
 
 import {
-  CaptureConfigurationSchema,
-  NormalizedRegionsSchema,
+  PixelSizeSchema,
+  NormalizedRectSchema,
   TriggerProfileSchema,
 } from '../models/capture'
-import { SearchModeSchema } from '../models/monitor'
 import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
 
 const ProtocolBaseSchema = z.object({
-  protocolVersion: z.literal(2),
+  protocolVersion: z.literal(3),
   sessionId: z.uuid(),
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 })
@@ -49,11 +48,16 @@ export const MonitorLimitsSchema = z
 export const MonitorStartPayloadSchema = z
   .object({
     selector: MonitorCaptureSelectorSchema,
-    configuredFrameSize: CaptureConfigurationSchema.shape.frameSize,
-    regions: NormalizedRegionsSchema,
+    configuredFrameSize: PixelSizeSchema,
+    regions: z
+      .object({
+        trigger: NormalizedRectSchema,
+        nicknameRegion: NormalizedRectSchema,
+        topLeftEvidenceRegion: NormalizedRectSchema,
+      })
+      .strict(),
     triggerProfile: TriggerProfileSchema,
-    searchMode: SearchModeSchema,
-    captureDelaySeconds: z.number().min(0).max(5),
+    capturePolicy: z.literal('immediate_nickname'),
     limits: MonitorLimitsSchema,
     prediction: PredictionRuntimeProfileSchema.nullable(),
   })
@@ -85,6 +89,7 @@ export const MonitorTriggeredEventSchema = ProtocolBaseSchema.extend({
   payload: z
     .object({
       timestamp: z.iso.datetime(),
+      triggerId: z.uuid(),
     })
     .strict(),
 }).strict()
@@ -110,6 +115,7 @@ export const MonitorActionEventSchema = ProtocolBaseSchema.extend({
   payload: z
     .object({
       timestamp: z.iso.datetime(),
+      triggerId: z.uuid(),
       width: z.number().int().positive().max(8192),
       height: z.number().int().positive().max(8192),
       byteLength: z

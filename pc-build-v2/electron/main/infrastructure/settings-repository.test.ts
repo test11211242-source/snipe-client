@@ -24,9 +24,15 @@ describe('settings schema', () => {
         reduceMotion: true,
       }),
     ).toEqual({
-      version: 1,
+      version: 2,
       appearance: { theme: 'operational-dark', reducedMotion: true },
-      application: { launchAtStartup: true, diagnosticsEnabled: false },
+      application: {
+        launchAtStartup: true,
+        diagnosticsEnabled: false,
+        autoStartMonitoring: true,
+        closeToTray: true,
+        notifyOpponentFound: true,
+      },
     })
   })
 

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as nodeFs } from 'node:fs'
 import { join } from 'node:path'
+import { z } from 'zod'
 
 import {
   MonitorPreferencesSchema,
@@ -24,7 +25,6 @@ export const nodeMonitorPreferencesFileSystem: MonitorPreferencesFileSystem = {
 }
 
 export const DEFAULT_MONITOR_PREFERENCES: MonitorPreferences = Object.freeze({
-  searchMode: 'fast',
   deckMode: 'pol',
 })
 
@@ -45,12 +45,40 @@ export class MonitorPreferencesRepository {
   constructor(
     private readonly directory: string,
     private readonly fs: MonitorPreferencesFileSystem = nodeMonitorPreferencesFileSystem,
+    private readonly legacyDirectory?: string,
   ) {}
 
   async load(userId: string): Promise<MonitorPreferences> {
     try {
-      const value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
-      return MonitorPreferencesSchema.parse(JSON.parse(value) as unknown)
+      let value: string
+      try {
+        value = await this.fs.readFile(join(this.directory, fileName(userId)), 'utf8')
+      } catch (error) {
+        if (!isMissing(error) || this.legacyDirectory === undefined) throw error
+        const legacy = z
+          .object({
+            searchMode: z.enum(['fast', 'precise']),
+            deckMode: MonitorPreferencesSchema.shape.deckMode,
+          })
+          .strict()
+          .parse(
+            JSON.parse(
+              await this.fs.readFile(
+                join(this.legacyDirectory, fileName(userId)),
+                'utf8',
+              ),
+            ),
+          )
+        return await this.save(userId, { deckMode: legacy.deckMode })
+      }
+      const stored = z
+        .object({
+          schemaVersion: z.literal(2),
+          preferences: MonitorPreferencesSchema,
+        })
+        .strict()
+        .parse(JSON.parse(value))
+      return stored.preferences
     } catch (error) {
       if (isMissing(error)) return { ...DEFAULT_MONITOR_PREFERENCES }
       throw error
@@ -65,7 +93,7 @@ export class MonitorPreferencesRepository {
     try {
       await this.fs.writeFile(
         temporary,
-        `${JSON.stringify(preferences, null, 2)}\n`,
+        `${JSON.stringify({ schemaVersion: 2, preferences }, null, 2)}\n`,
         'utf8',
       )
       await this.fs.rename(temporary, destination)

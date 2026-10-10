@@ -4,7 +4,7 @@ import type { AppSnapshot } from '../models/application'
 import type { AuthView } from '../models/auth'
 import type { RealtimeStatus } from '../models/network'
 import type { LoginPayload, RegisterPayload } from './auth-ipc'
-import type { AppSettingsView, HelloResult } from './app'
+import type { AppSettingsView, AppSettingsUpdate, HelloResult } from './app'
 import type {
   CapturePreparationResponse,
   CaptureProfileCommand,
@@ -21,7 +21,7 @@ import type {
   CaptureStatus,
 } from '../models/capture'
 import type { SetupFrame, SetupSessionView } from '../models/setup'
-import type { MonitorPreferences, MonitorView } from '../models/monitor'
+import type { MonitorPreferences, MonitorResult, MonitorView } from '../models/monitor'
 import type {
   WidgetSettings,
   WidgetSettingsPatch,
@@ -43,7 +43,7 @@ export interface CrToolsApi {
   hello: () => Promise<HelloResult>
   getAppSnapshot: () => Promise<AppSnapshot>
   getAppSettings: () => Promise<AppSettingsView>
-  updateAppSettings: (settings: AppSettingsView) => Promise<AppSettingsView>
+  updateAppSettings: (settings: AppSettingsUpdate) => Promise<AppSettingsView>
   openLogFolder: () => Promise<{ opened: boolean }>
   reportBootstrapFailure: (cause: BootstrapFailure) => Promise<void>
   getAuthView: () => Promise<AuthView>
@@ -85,6 +85,11 @@ export interface CrToolsApi {
   onMonitorViewChanged: (listener: (view: MonitorView) => void) => () => void
   startMonitor: () => Promise<MonitorView>
   stopMonitor: () => Promise<MonitorView>
+  retryMonitorSearch: (payload: { attemptId: string }) => Promise<MonitorView>
+  getMonitorHistory: (payload: {
+    offset: number
+    limit: number
+  }) => Promise<MonitorResult[]>
   getMonitorPreferences: () => Promise<MonitorPreferences>
   updateMonitorPreferences: (
     preferences: MonitorPreferences,

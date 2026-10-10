@@ -35,10 +35,13 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = Object.freeze({
   locked: false,
   opacity: 0.96,
   displayMode: 'detailed',
+  normalWidth: WIDGET_DECK_WIDTH,
+  compactWidth: 520,
+  compactMode: false,
   bounds: {
     x: null,
     y: null,
-    width: WIDGET_DETAILED_WIDTH,
+    width: WIDGET_DECK_WIDTH,
     height: WIDGET_DETAILED_HEIGHT,
   },
 })
@@ -71,13 +74,32 @@ export class WidgetSettingsRepository {
   constructor(
     private readonly directory: string,
     private readonly fs: WidgetSettingsFileSystem = nodeWidgetSettingsFileSystem,
+    private readonly legacyDirectory?: string,
   ) {}
 
   async load(userId: string): Promise<WidgetSettings> {
     const source = join(this.directory, fileName(userId))
     let value: string
     try {
-      value = await this.fs.readFile(source, 'utf8')
+      try {
+        value = await this.fs.readFile(source, 'utf8')
+      } catch (error) {
+        if (!isMissing(error) || this.legacyDirectory === undefined) throw error
+        const old: unknown = JSON.parse(
+          await this.fs.readFile(join(this.legacyDirectory, fileName(userId)), 'utf8'),
+        )
+        const oldSettings = WidgetSettingsSchema.omit({
+          normalWidth: true,
+          compactWidth: true,
+          compactMode: true,
+        }).parse(old)
+        return await this.save(userId, {
+          ...oldSettings,
+          normalWidth: oldSettings.bounds.width,
+          compactWidth: 520,
+          compactMode: false,
+        })
+      }
     } catch (error) {
       if (isMissing(error)) return structuredClone(DEFAULT_WIDGET_SETTINGS)
       throw error
@@ -90,8 +112,11 @@ export class WidgetSettingsRepository {
       await this.quarantine(source)
       return structuredClone(DEFAULT_WIDGET_SETTINGS)
     }
-    const current = WidgetSettingsSchema.safeParse(raw)
-    if (current.success) return current.data
+    const current = z
+      .object({ schemaVersion: z.literal(3), settings: WidgetSettingsSchema })
+      .strict()
+      .safeParse(raw)
+    if (current.success) return current.data.settings
     const legacy = LegacyWidgetSettingsSchema.safeParse(raw)
     if (legacy.success) {
       return this.save(userId, {
@@ -100,6 +125,9 @@ export class WidgetSettingsRepository {
         locked: legacy.data.locked,
         opacity: legacy.data.opacity,
         displayMode: legacy.data.compactMode ? 'deck' : 'detailed',
+        normalWidth: legacy.data.compactMode ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
+        compactWidth: 520,
+        compactMode: false,
         bounds: {
           x: legacy.data.bounds.x,
           y: legacy.data.bounds.y,
@@ -118,7 +146,11 @@ export class WidgetSettingsRepository {
     const destination = join(this.directory, fileName(userId))
     const temporary = `${destination}.${randomUUID()}.tmp`
     try {
-      await this.fs.writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+      await this.fs.writeFile(
+        temporary,
+        `${JSON.stringify({ schemaVersion: 3, settings }, null, 2)}\n`,
+        'utf8',
+      )
       await this.fs.rename(temporary, destination)
     } catch (error) {
       await this.fs.rm(temporary, { force: true })

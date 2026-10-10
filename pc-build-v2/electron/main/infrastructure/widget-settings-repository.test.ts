@@ -101,6 +101,9 @@ describe('WidgetSettingsRepository', () => {
       opacity: 0.7,
       displayMode: 'deck',
       bounds: { x: 120, y: 80, width: 360, height: 300 },
+      normalWidth: 360,
+      compactWidth: 520,
+      compactMode: false,
     })
     expect([...files.keys()]).toEqual([path])
     expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
@@ -142,8 +145,11 @@ describe('WidgetSettingsRepository', () => {
       bounds: { x: 120, y: 80, width: 500, height: 620 },
     })
     expect(JSON.parse(files.get(path) ?? '{}')).toMatchObject({
-      displayMode: 'deck',
-      bounds: { x: 120, y: 80, width: 500, height: 620 },
+      schemaVersion: 3,
+      settings: {
+        displayMode: 'deck',
+        bounds: { x: 120, y: 80, width: 500, height: 620 },
+      },
     })
   })
 

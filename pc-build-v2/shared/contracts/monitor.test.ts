@@ -4,11 +4,8 @@ import { MonitorPreferencesPayloadSchema, MonitorViewResultSchema } from './moni
 import { MonitorProcessEventSchema, MonitorStartPayloadSchema } from './monitor-protocol'
 
 describe('monitor renderer contracts', () => {
-  it('accepts only the two monitor preference enums', () => {
-    expect(
-      MonitorPreferencesPayloadSchema.parse({ searchMode: 'fast', deckMode: 'pol' }),
-    ).toEqual({
-      searchMode: 'fast',
+  it('accepts only deck mode, rejecting obsolete search policy preferences', () => {
+    expect(MonitorPreferencesPayloadSchema.parse({ deckMode: 'pol' })).toEqual({
       deckMode: 'pol',
     })
     expect(() =>
@@ -23,7 +20,7 @@ describe('monitor renderer contracts', () => {
   it('rejects private process and server fields from MonitorView', () => {
     const base = {
       state: 'STOPPED',
-      preferences: { searchMode: 'fast', deckMode: 'pol' },
+      preferences: { deckMode: 'pol' },
       readiness: { authenticated: true, captureConfigured: true, sourceAvailable: null },
       error: null,
       startedAt: null,
@@ -37,6 +34,11 @@ describe('monitor renderer contracts', () => {
         serviceErrors: 0,
       },
       results: [],
+      runIntent: false,
+      search: null,
+      session: null,
+      summary: null,
+      historyError: null,
     }
     expect(MonitorViewResultSchema.parse(base)).toEqual(base)
     for (const field of [
@@ -52,14 +54,14 @@ describe('monitor renderer contracts', () => {
     }
   })
 
-  it('requires a finite bounded capture delay in the monitor process payload', () => {
+  it('requires immediate nickname capture with both semantic regions', () => {
     const base = {
       selector: { kind: 'window' as const, windowHwnd: '123' },
       configuredFrameSize: { width: 1920, height: 1080 },
       regions: {
         trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
-        normal: { x: 0, y: 0, width: 0.5, height: 0.5 },
-        precise: { x: 0, y: 0, width: 1, height: 1 },
+        nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+        topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
       },
       triggerProfile: {
         schemaVersion: 3,
@@ -82,8 +84,7 @@ describe('monitor renderer contracts', () => {
           cropAreaRatio: 1,
         },
       },
-      searchMode: 'precise',
-      captureDelaySeconds: 2.2,
+      capturePolicy: 'immediate_nickname',
       limits: {
         fps: 10,
         maxImageBytes: 10 * 1024 * 1024,
@@ -96,22 +97,28 @@ describe('monitor renderer contracts', () => {
       },
       prediction: null,
     }
-    expect(MonitorStartPayloadSchema.parse(base).captureDelaySeconds).toBe(2.2)
-    expect(
-      MonitorStartPayloadSchema.safeParse({ ...base, captureDelaySeconds: -0.1 }).success,
-    ).toBe(false)
-    expect(
-      MonitorStartPayloadSchema.safeParse({ ...base, captureDelaySeconds: 5.1 }).success,
-    ).toBe(false)
+    expect(MonitorStartPayloadSchema.parse(base).capturePolicy).toBe('immediate_nickname')
+    for (const extra of [
+      { searchMode: 'precise' },
+      { captureDelaySeconds: 2.2 },
+      { capturePolicy: 'delayed_evidence' },
+    ]) {
+      expect(MonitorStartPayloadSchema.safeParse({ ...base, ...extra }).success).toBe(
+        false,
+      )
+    }
   })
 
-  it('accepts the protocol v2 immediate triggered event only', () => {
+  it('accepts only protocol v3 triggered events with correlation identity', () => {
     const event = {
-      protocolVersion: 2,
+      protocolVersion: 3,
       sessionId: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
       sequence: 2,
       type: 'triggered',
-      payload: { timestamp: '2026-07-12T12:00:00.000Z' },
+      payload: {
+        timestamp: '2026-07-12T12:00:00.000Z',
+        triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+      },
     }
     expect(MonitorProcessEventSchema.parse(event)).toEqual(event)
     expect(

@@ -17,6 +17,12 @@ import {
   type CaptureProfileCollection,
   type CaptureProfileCollectionStatus,
 } from '../../../shared/models/capture'
+import {
+  assertLegacyFingerprint,
+  createLayoutCalibration,
+  LegacyCaptureCollectionSchema,
+  LegacyCaptureConfigurationSchema,
+} from './capture-profile-migration'
 
 export interface CaptureConfigurationFileSystem {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
@@ -37,11 +43,15 @@ export const nodeCaptureConfigurationFileSystem: CaptureConfigurationFileSystem 
 export const DEFAULT_CAPTURE_PROFILE_NAME = 'Основной'
 
 export interface CaptureConfigurationRepositoryOptions {
-  /**
-   * Directory containing schemaVersion 1 `<user-hash>.json` files. It defaults to
-   * `directory`, which lets the current bootstrap migrate in place while retaining the old file.
-   */
+  /** Read-only rollback input; never removed or rewritten. */
   legacyDirectory?: string
+  migratePredictionReference?: (
+    userId: string,
+    profileId: string,
+    oldRevision: number,
+    oldFingerprint: string,
+    configuration: CaptureConfiguration,
+  ) => Promise<void>
   now?: () => Date
   createProfileId?: () => string
 }
@@ -122,7 +132,7 @@ function legacyUserFileName(userId: string): string {
 }
 
 function profileUserFileName(userId: string): string {
-  return `${userFileStem(userId)}.profiles.v2.json`
+  return `${userFileStem(userId)}.profiles.v3.json`
 }
 
 export function migratedCaptureProfileId(userId: string): string {
@@ -246,8 +256,11 @@ function collectionStatus(
       configurationRevision: profile.configuration.revision,
       configurationFingerprint: profile.configuration.fingerprint,
       committedAt: profile.configuration.committedAt,
-      sourceKind: profile.configuration.source.kind,
-      sourceLabel: profile.configuration.source.label,
+      sourceKind: profile.configuration.sourceBinding.identity.kind,
+      sourceLabel: profile.configuration.sourceBinding.identity.label,
+      sourceHealth: { state: 'unknown', reason: null },
+      calibrationHealth: profile.configuration.calibration.validationStatus,
+      resultConfigured: false,
     })),
   })
 }
@@ -258,14 +271,11 @@ export class CaptureConfigurationRepository {
   private readonly createProfileId: () => string
   private mutationQueue: Promise<void> = Promise.resolve()
 
-  /**
-   * `directory` stores `*.profiles.v2.json`. The optional third argument can point migration at
-   * another legacy directory; omitting it reads schemaVersion 1 files from `directory` itself.
-   */
+  /** All mutations are serialized; the v4 root is authoritative after import. */
   constructor(
     private readonly directory: string,
     private readonly fs: CaptureConfigurationFileSystem = nodeCaptureConfigurationFileSystem,
-    options: CaptureConfigurationRepositoryOptions = {},
+    private readonly options: CaptureConfigurationRepositoryOptions = {},
   ) {
     this.legacyDirectory = options.legacyDirectory ?? directory
     this.now = options.now ?? (() => new Date())
@@ -302,7 +312,7 @@ export class CaptureConfigurationRepository {
         )
         await this.writeCollection(
           signCollection({
-            schemaVersion: 2,
+            schemaVersion: 3,
             userId: validated.userId,
             revision: 1,
             activeProfileId: profileId,
@@ -520,10 +530,13 @@ export class CaptureConfigurationRepository {
         userId: profile.configuration.userId,
         revision: profile.configuration.revision + 1,
         committedAt: this.timestamp(),
-        source: validatedSource,
-        frameSize: frameSize ?? profile.configuration.frameSize,
-        regions: profile.configuration.regions,
-        triggerProfile: profile.configuration.triggerProfile,
+        sourceBinding: { identity: validatedSource, lastVerifiedAt: null },
+        calibration: {
+          ...profile.configuration.calibration,
+          referenceFrameSize:
+            frameSize ?? profile.configuration.calibration.referenceFrameSize,
+          validationStatus: 'needs_validation',
+        },
       })
       const profiles = [...collection.profiles]
       profiles[index] = {
@@ -581,7 +594,7 @@ export class CaptureConfigurationRepository {
     activeProfileId = collection.activeProfileId,
   ): CaptureProfileCollection {
     return signCollection({
-      schemaVersion: 2,
+      schemaVersion: 3,
       userId: collection.userId,
       revision: collection.revision + 1,
       activeProfileId,
@@ -607,41 +620,91 @@ export class CaptureConfigurationRepository {
       }
     }
 
-    const legacyContent = await this.readOptional(
-      join(this.legacyDirectory, legacyUserFileName(userId)),
+    const legacyProfiles = await this.readOptional(
+      join(this.legacyDirectory, `${userFileStem(userId)}.profiles.v2.json`),
     )
+    const legacyContent =
+      legacyProfiles ??
+      (await this.readOptional(join(this.legacyDirectory, legacyUserFileName(userId))))
     if (legacyContent === null) return null
-
-    let configuration: CaptureConfiguration
     try {
-      configuration = validateConfiguration(
-        CaptureConfigurationSchema.parse(JSON.parse(legacyContent) as unknown),
-      )
-      if (configuration.userId !== userId) {
-        throw new Error('Legacy capture configuration userId does not match its file')
+      const old =
+        legacyProfiles === null
+          ? (() => {
+              const configuration = LegacyCaptureConfigurationSchema.parse(
+                JSON.parse(legacyContent),
+              )
+              assertLegacyFingerprint(configuration)
+              const profileId = migratedCaptureProfileId(userId)
+              return {
+                userId: configuration.userId,
+                revision: 1,
+                activeProfileId: profileId,
+                profiles: [
+                  {
+                    profileId,
+                    profileName: DEFAULT_CAPTURE_PROFILE_NAME,
+                    createdAt: configuration.committedAt,
+                    updatedAt: configuration.committedAt,
+                    configuration,
+                  },
+                ],
+              }
+            })()
+          : LegacyCaptureCollectionSchema.parse(JSON.parse(legacyContent))
+      if ('fingerprint' in old && typeof old.fingerprint === 'string') {
+        assertLegacyFingerprint(old as typeof old & { fingerprint: string })
       }
+      if (old.userId !== userId) throw new Error('Legacy capture user does not match')
+      const profiles = old.profiles.map((profile) => {
+        assertLegacyFingerprint(profile.configuration)
+        const legacy = profile.configuration
+        if (legacy.userId !== userId)
+          throw new Error('Legacy capture profile user does not match')
+        const configuration = signConfiguration({
+          schemaVersion: 2,
+          userId,
+          revision: legacy.revision,
+          committedAt: legacy.committedAt,
+          sourceBinding: { identity: legacy.source, lastVerifiedAt: null },
+          calibration: createLayoutCalibration(
+            profile.profileId,
+            legacy.revision,
+            legacy.frameSize,
+            legacy.regions,
+            legacy.triggerProfile,
+            legacy.committedAt,
+            'imported',
+          ),
+        })
+        return { ...profile, configuration }
+      })
+      const migrated = signCollection({
+        schemaVersion: 3,
+        userId,
+        revision: old.revision,
+        activeProfileId: old.activeProfileId,
+        profiles,
+      })
+      // References commit before the authoritative capture record. A crash retries
+      // this exact validated mapping; the callback must be idempotent.
+      for (const [index, profile] of profiles.entries()) {
+        const previous = old.profiles[index]
+        if (previous !== undefined) {
+          await this.options.migratePredictionReference?.(
+            userId,
+            profile.profileId,
+            previous.configuration.revision,
+            previous.configuration.fingerprint,
+            profile.configuration,
+          )
+        }
+      }
+      await this.writeCollection(migrated)
+      return migrated
     } catch (error) {
       throw new CaptureProfileStoreCorruptError(userId, 'legacy configuration', error)
     }
-
-    const profileId = migratedCaptureProfileId(userId)
-    const migrated = signCollection({
-      schemaVersion: 2,
-      userId,
-      revision: 1,
-      activeProfileId: profileId,
-      profiles: [
-        {
-          profileId,
-          profileName: DEFAULT_CAPTURE_PROFILE_NAME,
-          createdAt: configuration.committedAt,
-          updatedAt: configuration.committedAt,
-          configuration,
-        },
-      ],
-    })
-    await this.writeCollection(migrated)
-    return migrated
   }
 
   private async readOptional(path: string): Promise<string | null> {

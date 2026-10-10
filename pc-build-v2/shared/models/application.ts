@@ -15,7 +15,7 @@ export const AppSnapshotSchema = z
   .object({
     lifecycle: ApplicationLifecycleStateSchema,
     version: z.string().min(1),
-    settingsVersion: z.literal(1),
+    settingsVersion: z.literal(2),
   })
   .strict()
 
