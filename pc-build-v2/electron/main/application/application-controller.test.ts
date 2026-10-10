@@ -317,3 +317,65 @@ describe('automatic monitor launch intent', () => {
     expect(test.monitor.start).not.toHaveBeenCalled()
   })
 })
+
+describe('review regression startup visibility and auto-start', () => {
+  it('#2 consumes launch-in-tray before user-driven logout and login transitions', async () => {
+    const args = [...process.argv]
+    process.argv.push('--launch-in-tray')
+    try {
+      const test = autoStartHarness(false)
+      await test.sync(authenticated('A'))
+      expect(test.windows.ensureMainWindow).toHaveBeenLastCalledWith(false)
+      await test.sync({ state: 'UNAUTHENTICATED', user: null, error: null })
+      expect(test.windows.ensureAuthWindow).toHaveBeenLastCalledWith(true)
+      await test.sync(authenticated('B'))
+      expect(test.windows.ensureMainWindow).toHaveBeenLastCalledWith(true)
+    } finally {
+      process.argv = args
+    }
+  })
+  it('#10 does not serialize an unfinished monitor start with window transitions', async () => {
+    const test = autoStartHarness(true)
+    const gate = Promise.withResolvers<ReturnType<typeof monitorViewFixture>>()
+    test.monitor.start.mockReturnValue(gate.promise)
+    let returned = false
+    const sync = test.sync(authenticated('A')).then(() => {
+      returned = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const finishedBeforeMonitor = returned
+    gate.resolve(monitorViewFixture())
+    await sync
+    expect(finishedBeforeMonitor).toBe(true)
+  })
+  it('#10 isolates auto-start read failures from a successful window transition', async () => {
+    const test = autoStartHarness(true)
+    test.monitor.getView.mockRejectedValue(new Error('Corrupt capture store'))
+    await expect(test.sync(authenticated('A'))).resolves.toBeUndefined()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(test.windows.ensureMainWindow).toHaveBeenCalledOnce()
+    await test.sync({ state: 'UNAUTHENTICATED', user: null, error: null })
+    expect(test.windows.ensureAuthWindow).toHaveBeenCalledOnce()
+  })
+})
+
+describe('review regression detached auto-start generation', () => {
+  it('#10 never launches a stale user after an auth transition during the readiness read', async () => {
+    const test = autoStartHarness(true)
+    const gate = Promise.withResolvers<ReturnType<typeof monitorViewFixture>>()
+    test.monitor.getView.mockReturnValueOnce(gate.promise)
+    await test.sync(authenticated('A'))
+    await test.sync({ state: 'UNAUTHENTICATED', user: null, error: null })
+    gate.resolve(
+      monitorViewFixture({
+        readiness: {
+          authenticated: true,
+          captureConfigured: true,
+          sourceAvailable: false,
+        },
+      }),
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(test.monitor.start).not.toHaveBeenCalled()
+  })
+})

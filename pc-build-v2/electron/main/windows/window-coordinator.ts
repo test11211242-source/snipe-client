@@ -209,6 +209,7 @@ export class WindowCoordinator {
   #mainLoadPromise: Promise<BrowserWindow> | null = null
   #mainCreationGeneration = 0
   #sessionEndHandler: (() => void) | null = null
+  #sessionQueryHandler: (() => void) | null = null
 
   constructor(
     private readonly logger: StructuredLogger,
@@ -221,6 +222,10 @@ export class WindowCoordinator {
 
   setSessionEndHandler(handler: () => void): void {
     this.#sessionEndHandler = handler
+  }
+
+  setSessionQueryHandler(handler: () => void): void {
+    this.#sessionQueryHandler = handler
   }
 
   mainWindowCommand(action: WindowAction): WindowView {
@@ -295,10 +300,9 @@ export class WindowCoordinator {
     }
     const area = screen.getPrimaryDisplay().workArea
     const desired = saved ?? { x: null, y: null, width: 1100, height: 700 }
-    const clamped = clampWidgetBoundsToWorkAreas(
-      desired,
-      screen.getAllDisplays().map((display) => display.workArea),
-    )
+    const workAreas = screen.getAllDisplays().map((display) => display.workArea)
+    workAreas.unshift(area)
+    const clamped = clampWidgetBoundsToWorkAreas(desired, workAreas)
     const bounds = {
       ...clamped,
       minWidth: Math.min(420, area.width),
@@ -322,9 +326,12 @@ export class WindowCoordinator {
     })
 
     this.register('main', window, renderer.url)
+    if (saved?.maximized && !show) window.once('show', () => window.maximize())
     window.once('ready-to-show', () => {
-      if (saved?.maximized) window.maximize()
-      if (show) window.show()
+      if (show) {
+        if (saved?.maximized) window.maximize()
+        window.show()
+      }
     })
 
     try {
@@ -681,7 +688,10 @@ export class WindowCoordinator {
         window.hide()
       }
     })
-    window.on('query-session-end', () => this.#sessionEndHandler?.())
+    window.on('query-session-end', () => {
+      void this.flushMainState()
+      this.#sessionQueryHandler?.()
+    })
     window.on('session-end', () => this.#sessionEndHandler?.())
     if (kind === 'main') {
       const saveBounds = (): void => {

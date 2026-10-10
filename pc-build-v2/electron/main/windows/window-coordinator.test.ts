@@ -6,6 +6,7 @@ import type { StructuredLogger } from '../infrastructure/structured-logger'
 const electronMocks = vi.hoisted(() => ({
   browserWindowConstructed: vi.fn<(options: unknown, instance: unknown) => void>(),
   loadFile: vi.fn<(path: string) => Promise<void>>(),
+  displays: [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
 }))
 
 vi.mock('electron', () => {
@@ -67,7 +68,7 @@ vi.mock('electron', () => {
       getPrimaryDisplay: () => ({
         workArea: { x: 0, y: 0, width: 1920, height: 1080 },
       }),
-      getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+      getAllDisplays: () => electronMocks.displays,
     },
   }
 })
@@ -87,6 +88,7 @@ describe('WindowCoordinator auth shell', () => {
     electronMocks.browserWindowConstructed.mockClear()
     electronMocks.loadFile.mockReset().mockResolvedValue(undefined)
     vi.stubEnv('ELECTRON_RENDERER_URL', '')
+    electronMocks.displays = [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }]
   })
 
   afterEach(() => {
@@ -623,7 +625,7 @@ describe('WindowCoordinator auth shell', () => {
       )?.[1] as () => void
       handler()
     }
-    expect(ending).toHaveBeenCalledTimes(2)
+    expect(ending).toHaveBeenCalledOnce()
     coordinator.close('main', 'shutdown')
     event.preventDefault.mockClear()
     close(event)
@@ -659,7 +661,7 @@ describe('WindowCoordinator auth shell', () => {
       ([name]) => name === 'ready-to-show',
     )?.[1] as () => void
     ready()
-    expect(mocked.maximize).toHaveBeenCalledOnce()
+    expect(mocked.maximize).not.toHaveBeenCalled()
     expect(mocked.show).not.toHaveBeenCalled()
     const resized = mocked.on.mock.calls.find(
       ([name]) => name === 'resize',
@@ -702,6 +704,68 @@ describe('WindowCoordinator auth shell', () => {
     expect(electronMocks.browserWindowConstructed.mock.calls[1]?.[0]).toMatchObject({
       width: 480,
       height: 640,
+    })
+  })
+  it('review regression #9 defers hidden saved maximization until the first show', async () => {
+    const coordinator = new WindowCoordinator(
+      { warn: vi.fn() } as never,
+      {
+        load: vi.fn().mockResolvedValue({
+          schemaVersion: 1,
+          x: 0,
+          y: 0,
+          width: 1100,
+          height: 700,
+          maximized: true,
+        }),
+        save: vi.fn(),
+      } as never,
+    )
+    const window = (await coordinator.ensureMainWindow(false)) as unknown as Record<
+      'once' | 'maximize',
+      Mock
+    >
+    const ready = window.once.mock.calls.find(
+      ([name]) => name === 'ready-to-show',
+    )?.[1] as (() => void) | undefined
+    if (ready === undefined) throw new Error('Missing ready event')
+    ready()
+    expect(window.maximize).not.toHaveBeenCalled()
+    const show = window.once.mock.calls.find(([name]) => name === 'show')?.[1] as
+      (() => void) | undefined
+    if (show === undefined) throw new Error('Missing deferred show event')
+    show()
+    expect(window.maximize).toHaveBeenCalledOnce()
+  })
+  it('review regression #19 flushes query-session-end without shutting down a cancellable logoff', async () => {
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const ending = vi.fn()
+    const flushing = vi.spyOn(coordinator, 'flushMainState').mockResolvedValue(undefined)
+    coordinator.setSessionEndHandler(ending)
+    const window = (await coordinator.ensureMainWindow()) as unknown as Record<'on', Mock>
+    const query = window.on.mock.calls.find(
+      ([name]) => name === 'query-session-end',
+    )?.[1] as (() => void) | undefined
+    const end = window.on.mock.calls.find(([name]) => name === 'session-end')?.[1] as
+      (() => void) | undefined
+    if (query === undefined || end === undefined)
+      throw new Error('Missing session events')
+    query()
+    await Promise.resolve()
+    expect(flushing).toHaveBeenCalledOnce()
+    expect(ending).not.toHaveBeenCalled()
+    end()
+    expect(ending).toHaveBeenCalledOnce()
+  })
+  it('review regression #21 centers an unpositioned main window on the primary display', async () => {
+    electronMocks.displays = [
+      { workArea: { x: -1920, y: 0, width: 1920, height: 1080 } },
+      { workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+    ]
+    await new WindowCoordinator({ warn: vi.fn() } as never).ensureMainWindow()
+    expect(electronMocks.browserWindowConstructed.mock.calls[0]?.[0]).toMatchObject({
+      x: 410,
+      y: 190,
     })
   })
 })

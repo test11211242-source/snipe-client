@@ -906,7 +906,7 @@ describe('review regression monitor ownership and persistence', () => {
     const memory = foundResult(new Date('2026-07-12T12:00:00.000Z'))
     const repository = {
       load: vi.fn().mockRejectedValue(new Error('EBUSY')),
-      save: vi.fn().mockResolvedValue(undefined),
+      save: vi.fn<MonitorJournalRepository['save']>().mockResolvedValue(undefined),
     }
     const test = harness(
       undefined,
@@ -930,27 +930,20 @@ describe('review regression monitor ownership and persistence', () => {
     expect(test.supervisor.getCurrentView().historyError).toBeNull()
     await test.supervisor.start()
     await test.supervisor.stop()
-    expect(repository.save).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        results: expect.arrayContaining([
-          persisted,
-          expect.objectContaining({ id: memory.id }),
-        ]),
-      }),
+    expect(repository.save.mock.calls.at(-1)?.[0]?.results).toEqual(
+      expect.arrayContaining([persisted, expect.objectContaining({ id: memory.id })]),
     )
   })
 
   it('#4 polling an auth transition finalizes with auth_change, not user', async () => {
     const repository = {
-      load: vi
-        .fn()
-        .mockResolvedValue({
-          schemaVersion: 1,
-          userId: '42',
-          results: [],
-          encounters: [],
-          sessions: [],
-        }),
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [],
+        encounters: [],
+        sessions: [],
+      }),
       save: vi.fn().mockResolvedValue(undefined),
     }
     const test = harness(
@@ -1016,15 +1009,13 @@ describe('review regression monitor ownership and persistence', () => {
 
   it('#16 publishes results and reports synchronous journal-save errors without throwing', async () => {
     const repository = {
-      load: vi
-        .fn()
-        .mockResolvedValue({
-          schemaVersion: 1,
-          userId: '42',
-          results: [],
-          encounters: [],
-          sessions: [],
-        }),
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [],
+        encounters: [],
+        sessions: [],
+      }),
       save: vi.fn(() => {
         throw new Error('Invalid journal')
       }),

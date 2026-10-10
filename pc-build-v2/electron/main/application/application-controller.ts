@@ -43,7 +43,8 @@ export class ApplicationController {
   #authGeneration = 0
   #requestedUserId: string | null | undefined
   readonly #autoStartedUsers = new Set<string>()
-  readonly #launchInTray = process.argv.includes('--launch-in-tray')
+  #startHidden = process.argv.includes('--launch-in-tray')
+  #startupSync = false
 
   constructor(
     private readonly electronApp: App,
@@ -92,7 +93,15 @@ export class ApplicationController {
         this.lifecycle.state !== 'STOPPED',
     )
     this.windows.setSessionEndHandler(() => {
+      // Only session-end commits to shutdown; a query can still be cancelled by Windows.
       void this.requestShutdown()
+    })
+    this.windows.setSessionQueryHandler(() => {
+      void Promise.all([this.monitor.flushJournal(), this.logger.flush()]).catch(
+        (error: unknown) => {
+          this.logger.warn('Session query flush failed', { error })
+        },
+      )
     })
     this.lifecycle.transitionTo('AUTHENTICATING')
 
@@ -152,7 +161,8 @@ export class ApplicationController {
     }
 
     this.logger.info('Opening authentication shell', this.getSnapshot())
-    await this.windows.ensureAuthWindow(!this.#launchInTray)
+    this.#startupSync = true
+    await this.windows.ensureAuthWindow(!this.#startHidden)
     this.logger.info('Authentication shell ready', this.getSnapshot())
     this.#disposeAuthSubscription = this.auth.subscribe((view) =>
       this.queueWindowSync(view),
@@ -164,6 +174,8 @@ export class ApplicationController {
     }
     if (generation === this.#authGeneration) this.queueWindowSync(initialView)
     await this.#windowSync
+    this.#startupSync = false
+    this.#startHidden = false
     this.logger.info('Application auth and network core ready', this.getSnapshot())
   }
 
@@ -275,7 +287,8 @@ export class ApplicationController {
       ) {
         this.lifecycle.transitionTo('READY')
       }
-      await this.windows.ensureMainWindow(!this.#launchInTray)
+      await this.windows.ensureMainWindow(!this.#startHidden)
+      if (!this.#startupSync) this.#startHidden = false
       void this.images.start().catch((error: unknown) => {
         this.logger.warn('Card image cache warmup failed', { error })
       })
@@ -287,11 +300,8 @@ export class ApplicationController {
       void this.tray?.refresh()
       if (!this.#autoStartedUsers.has(view.user.id)) {
         this.#autoStartedUsers.add(view.user.id)
-        if (this.settings.getView().autoStartMonitoring) {
-          const monitorView = await this.monitor.getView()
-          if (generation !== this.#authGeneration) return
-          if (monitorView.readiness.captureConfigured) await this.monitor.start()
-        }
+        if (this.settings.getView().autoStartMonitoring)
+          void this.autoStart(view.user.id, generation)
       }
       return
     }
@@ -308,9 +318,26 @@ export class ApplicationController {
     this.#activeUserId = null
     this.setup.cancelForAuthTransition()
     if (this.lifecycle.state === 'READY') this.lifecycle.transitionTo('RECOVERING')
-    await this.windows.ensureAuthWindow(!this.#launchInTray)
+    await this.windows.ensureAuthWindow(!this.#startHidden)
+    if (!this.#startupSync) this.#startHidden = false
     this.windows.close('main', 'auth-transition')
     void this.tray?.refresh()
+  }
+
+  private async autoStart(userId: string, generation: number): Promise<void> {
+    try {
+      const view = await this.monitor.getView()
+      if (
+        generation !== this.#authGeneration ||
+        this.#activeUserId !== userId ||
+        this.lifecycle.state === 'SHUTTING_DOWN' ||
+        this.lifecycle.state === 'STOPPED'
+      )
+        return
+      if (view.readiness.captureConfigured) await this.monitor.start()
+    } catch (error) {
+      this.logger.warn('Automatic monitor start failed', { error })
+    }
   }
 
   private getSnapshot(): AppSnapshot {
