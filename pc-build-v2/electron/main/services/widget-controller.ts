@@ -2,10 +2,6 @@ import { ApplicationError } from '../../../shared/errors/application-error'
 import { WIDGET_IPC_CHANNELS } from '../../../shared/contracts/widget-ipc'
 import type { MonitorResult } from '../../../shared/models/monitor'
 import {
-  WIDGET_DECK_HEIGHT,
-  WIDGET_DECK_WIDTH,
-  WIDGET_DETAILED_HEIGHT,
-  WIDGET_DETAILED_WIDTH,
   WidgetBoundsSchema,
   WidgetSettingsPatchSchema,
   WidgetSettingsSchema,
@@ -31,6 +27,7 @@ function projectResult(result: MonitorResult | null): WidgetResult | null {
     kind: result.kind,
     timestamp: result.timestamp,
     searchedNickname: result.searchedNickname,
+    reprocessed: result.reprocessed,
   }
   if (result.kind === 'player_found') {
     return {
@@ -55,6 +52,7 @@ export class WidgetController {
   #userId: string | null = null
   #settings: WidgetSettings | null = null
   #disposeMonitor: (() => void) | null = null
+  #disposeMonitorView: (() => void) | null = null
   #disposeBounds: (() => void) | null = null
   #boundsTimer: ReturnType<typeof setTimeout> | null = null
   #generation = 0
@@ -66,7 +64,7 @@ export class WidgetController {
   constructor(
     private readonly monitor: Pick<
       MonitorSupervisor,
-      'getLatestResult' | 'subscribeResults'
+      'getLatestResult' | 'subscribeResults' | 'subscribeViews' | 'getCurrentView'
     >,
     private readonly repository: WidgetSettingsRepository,
     private readonly windows: WindowCoordinator,
@@ -88,6 +86,7 @@ export class WidgetController {
     this.#disposeMonitor = this.monitor.subscribeResults((result) =>
       this.acceptResult(result),
     )
+    this.#disposeMonitorView = this.monitor.subscribeViews(() => this.publishView())
     this.#disposeBounds = this.windows.onWidgetBoundsChanged((bounds) =>
       this.acceptBounds(bounds),
     )
@@ -97,6 +96,8 @@ export class WidgetController {
     ++this.#generation
     this.#disposeMonitor?.()
     this.#disposeMonitor = null
+    this.#disposeMonitorView?.()
+    this.#disposeMonitorView = null
     this.#disposeBounds?.()
     this.#disposeBounds = null
     const flushBounds = this.#boundsTimer !== null
@@ -126,6 +127,10 @@ export class WidgetController {
       settings,
       visible: this.windows.isWidgetVisible(),
       result: projectResult(this.monitor.getLatestResult()),
+      monitorState: this.monitor.getCurrentView().state,
+      runIntent: this.monitor.getCurrentView().runIntent,
+      search: this.monitor.getCurrentView().search,
+      scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
     })
   }
 
@@ -172,24 +177,24 @@ export class WidgetController {
   async updateSettings(rawPatch: WidgetSettingsPatch): Promise<WidgetSettings> {
     const userId = this.requireUserId()
     const generation = this.#generation
-    const patch = WidgetSettingsPatchSchema.parse(rawPatch) as WidgetSettingsPatch
+    const patch = WidgetSettingsPatchSchema.parse(rawPatch)
     return this.enqueueSettingsMutation(async () => {
       this.assertSession(userId, generation)
       const current = this.requireSettings()
-      const modeChanged =
-        patch.displayMode !== undefined && patch.displayMode !== current.displayMode
+      const compactMode = patch.compactMode ?? current.compactMode
+      const width = compactMode
+        ? (patch.compactWidth ?? current.compactWidth)
+        : (patch.normalWidth ?? current.normalWidth)
+      const modeChanged = compactMode !== current.compactMode
+      const sizeChanged = modeChanged || width !== current.bounds.width
       const settings = WidgetSettingsSchema.parse({
         ...current,
         ...patch,
-        bounds: modeChanged
+        bounds: sizeChanged
           ? {
               ...current.bounds,
-              width:
-                patch.displayMode === 'deck' ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
-              height:
-                patch.displayMode === 'deck'
-                  ? WIDGET_DECK_HEIGHT
-                  : WIDGET_DETAILED_HEIGHT,
+              width,
+              height: modeChanged ? (compactMode ? 160 : 360) : current.bounds.height,
             }
           : current.bounds,
       })
@@ -199,7 +204,7 @@ export class WidgetController {
       const latestBounds = this.requireSettings().bounds
       this.#settings = {
         ...saved,
-        bounds: modeChanged
+        bounds: sizeChanged
           ? { ...saved.bounds, x: latestBounds.x, y: latestBounds.y }
           : latestBounds,
       }
@@ -239,7 +244,13 @@ export class WidgetController {
     const parsed = WidgetBoundsSchema.safeParse(rawBounds)
     if (!parsed.success) return
     const bounds = parsed.data
-    this.#settings = { ...this.#settings, bounds }
+    this.#settings = {
+      ...this.#settings,
+      bounds,
+      ...(this.#settings.compactMode
+        ? { compactWidth: Math.max(440, bounds.width) }
+        : { normalWidth: Math.max(300, bounds.width) }),
+    }
     if (this.#boundsTimer !== null) clearTimeout(this.#boundsTimer)
     this.#boundsTimer = setTimeout(() => {
       this.#boundsTimer = null

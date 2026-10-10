@@ -72,6 +72,9 @@ describe('App shell', () => {
           reducedMotion: false,
           launchAtStartup: false,
           diagnosticsEnabled: false,
+          autoStartMonitoring: true,
+          closeToTray: true,
+          notifyOpponentFound: true,
         }),
         updateAppSettings: vi
           .fn()
@@ -132,7 +135,7 @@ describe('App shell', () => {
         }),
         getMonitorView: vi.fn().mockResolvedValue({
           state: 'STOPPED',
-          preferences: { searchMode: 'fast', deckMode: 'pol' },
+          preferences: { deckMode: 'pol' },
           readiness: {
             authenticated: true,
             captureConfigured: false,
@@ -150,6 +153,11 @@ describe('App shell', () => {
             serviceErrors: 0,
           },
           results: [],
+          runIntent: false,
+          search: null,
+          session: null,
+          summary: null,
+          historyError: null,
         }),
         onMonitorViewChanged: vi.fn((listener: (view: MonitorView) => void) => {
           pushedMonitorView = listener
@@ -159,9 +167,7 @@ describe('App shell', () => {
         }),
         startMonitor: vi.fn(),
         stopMonitor: vi.fn(),
-        getMonitorPreferences: vi
-          .fn()
-          .mockResolvedValue({ searchMode: 'fast', deckMode: 'pol' }),
+        getMonitorPreferences: vi.fn().mockResolvedValue({ deckMode: 'pol' }),
         updateMonitorPreferences: vi.fn(),
         getWidgetStatus: vi.fn().mockResolvedValue({
           settings: {
@@ -171,6 +177,9 @@ describe('App shell', () => {
             opacity: 0.96,
             displayMode: 'detailed',
             bounds: { x: null, y: null, width: 420, height: 360 },
+            normalWidth: 360,
+            compactWidth: 520,
+            compactMode: false,
           },
           visible: false,
           hasResult: false,
@@ -235,7 +244,7 @@ describe('App shell', () => {
     act(() => {
       pushedMonitorView?.({
         state: 'READY',
-        preferences: { searchMode: 'fast', deckMode: 'pol' },
+        preferences: { deckMode: 'pol' },
         readiness: {
           authenticated: true,
           captureConfigured: true,
@@ -267,8 +276,21 @@ describe('App shell', () => {
               clan: 'Push',
             },
             decks: [],
+            reprocessed: false,
+            capturePolicy: null,
+            sessionId: null,
+            triggerId: null,
+            attemptId: null,
+            profileId: null,
+            calibrationRevision: null,
+            repeat: null,
           },
         ],
+        runIntent: false,
+        search: null,
+        session: null,
+        summary: null,
+        historyError: null,
       })
     })
 
@@ -554,6 +576,9 @@ describe('App shell', () => {
           createdAt: '2026-10-02T12:00:00.000Z',
           updatedAt: '2026-10-02T12:00:00.000Z',
           committedAt: '2026-10-02T12:00:00.000Z',
+          sourceHealth: { state: 'available', reason: null },
+          calibrationHealth: 'validated',
+          resultConfigured: false,
         },
       ],
     })
@@ -593,6 +618,9 @@ describe('App shell', () => {
           updatedAt: '2026-10-02T12:00:00.000Z',
           committedAt: '2026-10-02T12:00:00.000Z',
           sourceKind: 'window',
+          sourceHealth: { state: 'available', reason: null },
+          calibrationHealth: 'validated',
+          resultConfigured: false,
         },
       ],
     })
@@ -704,6 +732,9 @@ describe('App shell', () => {
       reducedMotion: true,
       launchAtStartup: false,
       diagnosticsEnabled: false,
+      autoStartMonitoring: true,
+      closeToTray: true,
+      notifyOpponentFound: true,
     })
     const view = render(<App />)
     await screen.findAllByText('operator')
@@ -717,7 +748,7 @@ describe('App shell', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce({
         state: 'STOPPED',
-        preferences: { searchMode: 'fast', deckMode: 'pol' },
+        preferences: { deckMode: 'pol' },
         readiness: {
           authenticated: true,
           captureConfigured: false,
@@ -735,6 +766,11 @@ describe('App shell', () => {
           serviceErrors: 0,
         },
         results: [],
+        runIntent: false,
+        search: null,
+        session: null,
+        summary: null,
+        historyError: null,
       })
 
     render(<App />)
@@ -782,6 +818,9 @@ describe('App shell', () => {
         opacity: 0.96,
         displayMode: 'detailed' as const,
         bounds: { x: null, y: null, width: 420, height: 360 },
+        normalWidth: 360,
+        compactWidth: 520,
+        compactMode: false,
       },
       visible: false,
       hasResult: false,
@@ -823,6 +862,9 @@ describe('App shell', () => {
         opacity: 0.96,
         displayMode: 'detailed' as const,
         bounds: { x: null, y: null, width: 420, height: 360 },
+        normalWidth: 360,
+        compactWidth: 520,
+        compactMode: false,
       },
       visible: false,
       hasResult: true,

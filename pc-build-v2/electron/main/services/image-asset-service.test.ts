@@ -32,6 +32,14 @@ function result(iconUrl: string): MonitorResult {
         cards: [{ name: 'Knight', level: null, evolutionLevel: null, iconUrl }],
       },
     ],
+    reprocessed: false,
+    capturePolicy: null,
+    sessionId: null,
+    triggerId: null,
+    attemptId: null,
+    profileId: null,
+    calibrationRevision: null,
+    repeat: null,
   }
 }
 

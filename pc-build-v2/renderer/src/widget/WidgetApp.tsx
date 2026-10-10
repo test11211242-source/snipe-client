@@ -20,12 +20,18 @@ function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
   const rightBounds = right.settings.bounds
   return (
     left.result?.id === right.result?.id &&
+    left.result?.reprocessed === right.result?.reprocessed &&
     left.visible === right.visible &&
     left.settings.autoOpen === right.settings.autoOpen &&
     left.settings.alwaysOnTop === right.settings.alwaysOnTop &&
     left.settings.locked === right.settings.locked &&
     left.settings.opacity === right.settings.opacity &&
     left.settings.displayMode === right.settings.displayMode &&
+    left.settings.compactMode === right.settings.compactMode &&
+    left.monitorState === right.monitorState &&
+    left.runIntent === right.runIntent &&
+    left.search?.attemptId === right.search?.attemptId &&
+    left.search?.phase === right.search?.phase &&
     leftBounds.x === rightBounds.x &&
     leftBounds.y === rightBounds.y &&
     leftBounds.width === rightBounds.width &&
@@ -209,7 +215,8 @@ export function WidgetApp(): React.JSX.Element {
     if (key === 'p') patch = { alwaysOnTop: !settings.alwaysOnTop }
     if (key === 'l') patch = { locked: !settings.locked }
     if (key === 'm') {
-      patch = { displayMode: settings.displayMode === 'deck' ? 'detailed' : 'deck' }
+      const compact = settings.compactMode || settings.displayMode === 'deck'
+      patch = { displayMode: compact ? 'detailed' : 'deck', compactMode: !compact }
     }
     if (patch === null) return
     event.preventDefault()
@@ -258,7 +265,8 @@ export function WidgetApp(): React.JSX.Element {
     Math.max(0, (found?.decks.length ?? 1) - 1),
   )
   const deck = found?.decks[selectedDeck] ?? null
-  const compactMode = view?.settings.displayMode === 'deck'
+  const compactMode =
+    view?.settings.compactMode === true || view?.settings.displayMode === 'deck'
   const playerName =
     found?.player.name ?? result?.searchedNickname ?? 'Ожидание соперника'
   const feedback = saving
@@ -333,7 +341,8 @@ export function WidgetApp(): React.JSX.Element {
             onClick={() => {
               if (view !== null) {
                 void enqueueSettings({
-                  displayMode: view.settings.displayMode === 'deck' ? 'detailed' : 'deck',
+                  displayMode: compactMode ? 'detailed' : 'deck',
+                  compactMode: !compactMode,
                 })
               }
             }}
@@ -453,9 +462,11 @@ export function WidgetApp(): React.JSX.Element {
         </footer>
       )}
 
-      {failed && view !== null && (
+      {(failed || result?.reprocessed === true) && view !== null && (
         <div className="widget-stale-notice" role="status">
-          Показан последний результат
+          {result?.reprocessed === true
+            ? 'Переобработано · вне статистики сессии'
+            : 'Показан последний результат'}
         </div>
       )}
       <div className="widget-feedback" data-visible={feedback !== ''} aria-live="polite">

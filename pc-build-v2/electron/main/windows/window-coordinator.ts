@@ -9,11 +9,16 @@ import {
   WIDGET_MAX_WIDTH,
   WIDGET_MIN_HEIGHT,
   WIDGET_MIN_WIDTH,
+  WIDGET_COMPACT_MIN_WIDTH,
   WidgetBoundsSchema,
   type WidgetBounds,
   type WidgetSettings,
 } from '../../../shared/models/widget'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
+import type {
+  MainWindowState,
+  MainWindowStateRepository,
+} from '../infrastructure/main-window-state-repository'
 
 export type WindowKind = 'main' | 'auth' | 'setup' | 'widget'
 export type WindowCloseReason =
@@ -197,24 +202,93 @@ export class WindowCoordinator {
   >()
   readonly #widgetBoundsListeners = new Set<(bounds: WidgetBounds) => void>()
   #widgetLoadPromise: Promise<void> | null = null
+  #userClosePolicy: ((kind: WindowKind) => boolean) | null = null
+  #mainStateTimer: ReturnType<typeof setTimeout> | null = null
+  #mainState: MainWindowState | null = null
+  #mainLoadPromise: Promise<BrowserWindow> | null = null
+  #mainCreationGeneration = 0
+  #sessionEndHandler: (() => void) | null = null
 
-  constructor(private readonly logger: StructuredLogger) {}
+  constructor(
+    private readonly logger: StructuredLogger,
+    private readonly mainStateRepository?: MainWindowStateRepository,
+  ) {}
 
-  async ensureMainWindow(): Promise<BrowserWindow> {
+  setUserClosePolicy(policy: (kind: WindowKind) => boolean): void {
+    this.#userClosePolicy = policy
+  }
+
+  setSessionEndHandler(handler: () => void): void {
+    this.#sessionEndHandler = handler
+  }
+
+  async flushMainState(): Promise<void> {
+    clearTimeout(this.#mainStateTimer ?? undefined)
+    this.#mainStateTimer = null
+    if (this.#mainState !== null) {
+      await this.mainStateRepository?.save(this.#mainState).catch((error: unknown) => {
+        this.logger.warn('Main window bounds save failed', { error })
+      })
+    }
+  }
+
+  ensureMainWindow(show = true): Promise<BrowserWindow> {
+    if (this.#mainLoadPromise !== null) {
+      return this.#mainLoadPromise.then((window) => {
+        if (show && !window.isDestroyed()) {
+          if (window.isMinimized()) window.restore()
+          window.show()
+          window.focus()
+        }
+        return window
+      })
+    }
     const existing = this.#registry.get('main')?.window
     if (existing !== undefined && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
-      return existing
+      if (show) {
+        if (existing.isMinimized()) existing.restore()
+        existing.show()
+        existing.focus()
+      }
+      return Promise.resolve(existing)
     }
-
-    const renderer = this.getRenderer('index.html')
-    const bounds = fitWindowBounds(
-      screen.getPrimaryDisplay().workArea,
-      { width: 1180, height: 760 },
-      { width: 720, height: 560 },
+    const operation = this.createMainWindow(show, this.#mainCreationGeneration).finally(
+      () => {
+        if (this.#mainLoadPromise === operation) this.#mainLoadPromise = null
+      },
     )
+    this.#mainLoadPromise = operation
+    return operation
+  }
+
+  private async createMainWindow(
+    show: boolean,
+    generation: number,
+  ): Promise<BrowserWindow> {
+    const renderer = this.getRenderer('index.html')
+    let saved: MainWindowState | null = null
+    try {
+      saved = (await this.mainStateRepository?.load()) ?? null
+    } catch (error) {
+      this.logger.warn('Main window bounds load failed', { error })
+    }
+    if (generation !== this.#mainCreationGeneration) {
+      throw new ApplicationError(
+        'MAIN_WINDOW_CANCELLED',
+        'Main window creation was cancelled',
+      )
+    }
+    const area = screen.getPrimaryDisplay().workArea
+    const desired = saved ?? { x: null, y: null, width: 1100, height: 700 }
+    const clamped = clampWidgetBoundsToWorkAreas(
+      desired,
+      screen.getAllDisplays().map((display) => display.workArea),
+    )
+    const bounds = {
+      ...clamped,
+      minWidth: Math.min(420, area.width),
+      minHeight: Math.min(360, area.height),
+    }
     const window = new BrowserWindow({
       ...bounds,
       show: false,
@@ -232,23 +306,38 @@ export class WindowCoordinator {
     })
 
     this.register('main', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
+    window.once('ready-to-show', () => {
+      if (saved?.maximized) window.maximize()
+      if (show) window.show()
+    })
 
-    if (renderer.development) {
-      await window.loadURL(renderer.url)
-    } else {
-      await window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    try {
+      if (renderer.development) {
+        await window.loadURL(renderer.url)
+      } else {
+        await window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+      }
+    } catch (error) {
+      const registered = this.#registry.get('main')
+      if (registered?.window === window) {
+        registered.closeReason = 'auth-transition'
+        this.#registry.delete('main')
+      }
+      if (!window.isDestroyed()) window.destroy()
+      throw error
     }
 
     return window
   }
 
-  async ensureAuthWindow(): Promise<BrowserWindow> {
+  async ensureAuthWindow(show = true): Promise<BrowserWindow> {
     const existing = this.#registry.get('auth')?.window
     if (existing !== undefined && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
+      if (show) {
+        if (existing.isMinimized()) existing.restore()
+        existing.show()
+        existing.focus()
+      }
       return existing
     }
 
@@ -275,7 +364,9 @@ export class WindowCoordinator {
     })
 
     this.register('auth', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
+    window.once('ready-to-show', () => {
+      if (show) window.show()
+    })
     if (renderer.development) {
       await window.loadURL(renderer.url)
     } else {
@@ -334,7 +425,10 @@ export class WindowCoordinator {
     const bounds = clampWidgetBoundsToWorkAreas(settings.bounds, workAreas)
     const window = new BrowserWindow({
       ...bounds,
-      minWidth: Math.min(WIDGET_MIN_WIDTH, bounds.width),
+      minWidth: Math.min(
+        settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
+        bounds.width,
+      ),
       minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
       maxWidth: WIDGET_MAX_WIDTH,
       maxHeight: WIDGET_MAX_HEIGHT,
@@ -447,7 +541,6 @@ export class WindowCoordinator {
     if (settings.alwaysOnTop) window.moveTop()
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
-    window.setMinimumSize(WIDGET_MIN_WIDTH, WIDGET_MIN_HEIGHT)
     window.setAspectRatio(0)
     window.setOpacity(settings.opacity)
     registered.suppressBoundsEvents = true
@@ -455,6 +548,13 @@ export class WindowCoordinator {
       const bounds = clampWidgetBoundsToWorkAreas(
         settings.bounds,
         screen.getAllDisplays().map((display) => display.workArea),
+      )
+      window.setMinimumSize(
+        Math.min(
+          settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
+          bounds.width,
+        ),
+        Math.min(WIDGET_MIN_HEIGHT, bounds.height),
       )
       window.setBounds(bounds)
     } finally {
@@ -520,6 +620,7 @@ export class WindowCoordinator {
   }
 
   close(kind: WindowKind, reason: Exclude<WindowCloseReason, 'user'>): void {
+    if (kind === 'main') ++this.#mainCreationGeneration
     const registered = this.#registry.get(kind)
     if (registered === undefined || registered.window.isDestroyed()) return
     registered.closeReason = reason
@@ -561,6 +662,7 @@ export class WindowCoordinator {
   }
 
   closeAll(reason: Exclude<WindowCloseReason, 'user'> = 'shutdown'): void {
+    ++this.#mainCreationGeneration
     for (const registered of this.#registry.values()) {
       registered.closeReason = reason
       this.rejectWidgetReadiness(
@@ -595,6 +697,29 @@ export class WindowCoordinator {
     }
     this.#registry.set(kind, registered)
 
+    window.on('close', (event) => {
+      if (registered.closeReason === 'user' && this.#userClosePolicy?.(kind)) {
+        event.preventDefault()
+        window.hide()
+      }
+    })
+    window.on('query-session-end', () => this.#sessionEndHandler?.())
+    window.on('session-end', () => this.#sessionEndHandler?.())
+    if (kind === 'main') {
+      const saveBounds = (): void => {
+        if (window.isDestroyed()) return
+        const bounds = window.getNormalBounds()
+        this.#mainState = { schemaVersion: 1, ...bounds, maximized: window.isMaximized() }
+        clearTimeout(this.#mainStateTimer ?? undefined)
+        this.#mainStateTimer = setTimeout(() => {
+          void this.flushMainState()
+        }, 300)
+      }
+      window.on('move', saveBounds)
+      window.on('resize', saveBounds)
+      window.on('maximize', saveBounds)
+      window.on('unmaximize', saveBounds)
+    }
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event, navigationUrl) => {
       if (!isAllowedRendererUrl(navigationUrl, rendererUrl)) {

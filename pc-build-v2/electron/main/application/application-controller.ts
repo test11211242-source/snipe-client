@@ -26,6 +26,7 @@ import type { ReprocessedResultService } from '../services/reprocessed-result-se
 import type { CapturePreparationService } from '../services/capture-preparation-service'
 import type { CaptureProfileService } from '../services/capture-profile-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
+import type { TrayController } from '../services/tray-controller'
 import { ApplicationLifecycle } from './lifecycle'
 import { installDenyAllSessionPermissions } from '../services/session-permissions'
 
@@ -39,6 +40,8 @@ export class ApplicationController {
   #activeUserId: string | null = null
   #authGeneration = 0
   #requestedUserId: string | null | undefined
+  readonly #autoStartedUsers = new Set<string>()
+  readonly #launchInTray = process.argv.includes('--launch-in-tray')
 
   constructor(
     private readonly electronApp: App,
@@ -58,6 +61,7 @@ export class ApplicationController {
     private readonly updater: UpdateService,
     private readonly capturePreparations: CapturePreparationService,
     private readonly captureProfiles: CaptureProfileService,
+    private readonly tray?: TrayController,
   ) {}
 
   async start(): Promise<void> {
@@ -75,6 +79,18 @@ export class ApplicationController {
     this.updater.start()
 
     await this.settings.start()
+    this.tray?.start()
+    this.windows.setUserClosePolicy(
+      (kind) =>
+        this.tray !== undefined &&
+        (kind === 'main' || kind === 'auth') &&
+        this.settings.getView().closeToTray &&
+        this.lifecycle.state !== 'SHUTTING_DOWN' &&
+        this.lifecycle.state !== 'STOPPED',
+    )
+    this.windows.setSessionEndHandler(() => {
+      void this.requestShutdown()
+    })
     this.lifecycle.transitionTo('AUTHENTICATING')
 
     const disposeAppIpc = registerAppIpc({
@@ -131,7 +147,7 @@ export class ApplicationController {
     }
 
     this.logger.info('Opening authentication shell', this.getSnapshot())
-    await this.windows.ensureAuthWindow()
+    await this.windows.ensureAuthWindow(!this.#launchInTray)
     this.logger.info('Authentication shell ready', this.getSnapshot())
     this.#disposeAuthSubscription = this.auth.subscribe((view) =>
       this.queueWindowSync(view),
@@ -174,7 +190,9 @@ export class ApplicationController {
       }
     })
     this.electronApp.on('window-all-closed', () => {
-      if (this.lifecycle.state === 'READY') void this.requestShutdown()
+      if (this.tray === undefined || !this.settings.getView().closeToTray) {
+        void this.requestShutdown()
+      }
     })
     this.electronApp.on('before-quit', (event) => {
       if (this.lifecycle.state !== 'STOPPED') {
@@ -194,9 +212,10 @@ export class ApplicationController {
       .then(async () => {
         if (generation === this.#authGeneration) await this.syncWindows(view)
       })
-      .catch((error: unknown) =>
-        this.logger.error('Window auth transition failed', { error }),
-      )
+      .catch((error: unknown) => {
+        if (generation === this.#authGeneration) this.#requestedUserId = undefined
+        this.logger.error('Window auth transition failed', { error })
+      })
   }
 
   private async syncWindows(view: AuthView): Promise<void> {
@@ -214,7 +233,7 @@ export class ApplicationController {
           await this.widget.stop('auth-transition')
         }
         this.images.stop()
-        await this.monitor.stop()
+        await this.monitor.stop('auth_change')
         this.monitor.setUserContext(view.user.id)
         this.#activeUserId = view.user.id
       }
@@ -258,7 +277,7 @@ export class ApplicationController {
       ) {
         this.lifecycle.transitionTo('READY')
       }
-      await this.windows.ensureMainWindow()
+      await this.windows.ensureMainWindow(!this.#launchInTray)
       void this.images.start().catch((error: unknown) => {
         this.logger.warn('Card image cache warmup failed', { error })
       })
@@ -267,6 +286,15 @@ export class ApplicationController {
       this.streamer.start()
       this.windows.close('auth', 'auth-transition')
       this.realtime.start()
+      void this.tray?.refresh()
+      if (!this.#autoStartedUsers.has(view.user.id)) {
+        this.#autoStartedUsers.add(view.user.id)
+        if (this.settings.getView().autoStartMonitoring) {
+          const monitorView = await this.monitor.getView()
+          if (generation !== this.#authGeneration) return
+          if (monitorView.readiness.captureConfigured) await this.monitor.start()
+        }
+      }
       return
     }
 
@@ -277,14 +305,15 @@ export class ApplicationController {
     this.images.stop()
     await this.streamer.stop()
     await this.widget.stop('auth-transition')
-    await this.monitor.stop()
+    await this.monitor.stop('auth_change')
     this.monitor.setUserContext(null)
     this.#activeUserId = null
     this.windows.close('setup', 'auth-transition')
     this.setup.cancelForAuthTransition()
     if (this.lifecycle.state === 'READY') this.lifecycle.transitionTo('RECOVERING')
-    await this.windows.ensureAuthWindow()
+    await this.windows.ensureAuthWindow(!this.#launchInTray)
     this.windows.close('main', 'auth-transition')
+    void this.tray?.refresh()
   }
 
   private getSnapshot(): AppSnapshot {
@@ -303,6 +332,7 @@ export class ApplicationController {
 
     this.auth.cancelPendingOperations()
     ++this.#authGeneration
+    this.tray?.stop()
     await this.updater.stop()
     this.#disposeIpc?.()
     this.#disposeIpc = undefined
@@ -316,9 +346,10 @@ export class ApplicationController {
     this.images.stop()
     await this.streamer.stop()
     await this.widget.stop('shutdown')
-    await this.monitor.stop()
+    await this.monitor.stop('exit')
     await this.capturePreparations.stop()
     this.setup.cancelForAuthTransition()
+    await this.windows.flushMainState()
     this.windows.closeAll('shutdown')
     this.lifecycle.transitionTo('STOPPED')
     this.logger.info('Application stopped cleanly')

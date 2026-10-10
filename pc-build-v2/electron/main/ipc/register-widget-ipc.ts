@@ -12,7 +12,6 @@ import {
   WidgetStatusResultSchema,
   WidgetViewResultSchema,
 } from '../../../shared/contracts/widget-ipc'
-import type { WidgetSettingsPatch } from '../../../shared/models/widget'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { ImageAssetService } from '../services/image-asset-service'
 import type { WidgetController } from '../services/widget-controller'
@@ -52,9 +51,7 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
   })
   ipcMain.handle(MAIN_WIDGET_IPC_CHANNELS.updateSettings, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
-    const settings = WidgetSettingsPatchPayloadSchema.parse(
-      rawPayload,
-    ) as WidgetSettingsPatch
+    const settings = WidgetSettingsPatchPayloadSchema.parse(rawPayload)
     return WidgetSettingsResultSchema.parse(
       await dependencies.widget.updateSettings(settings),
     )
@@ -77,9 +74,7 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
   })
   ipcMain.handle(WIDGET_IPC_CHANNELS.updateSettings, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'widget')
-    const settings = WidgetSettingsPatchPayloadSchema.parse(
-      rawPayload,
-    ) as WidgetSettingsPatch
+    const settings = WidgetSettingsPatchPayloadSchema.parse(rawPayload)
     return WidgetSettingsResultSchema.parse(
       await dependencies.widget.updateSettings(settings),
     )

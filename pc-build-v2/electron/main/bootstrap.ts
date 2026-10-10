@@ -66,6 +66,9 @@ import { ReprocessedResultService } from './services/reprocessed-result-service'
 import { PreparedCaptureProcessService } from './services/prepared-capture-process-service'
 import { CapturePreparationService } from './services/capture-preparation-service'
 import { CaptureProfileService } from './services/capture-profile-service'
+import { MainWindowStateRepository } from './infrastructure/main-window-state-repository'
+import { MonitorJournalRepository } from './infrastructure/monitor-journal-repository'
+import { TrayController } from './services/tray-controller'
 
 app.setName('CR Tools V2')
 
@@ -81,7 +84,12 @@ const logger = new StructuredLogger(logSink.write, {
     }
   },
 })
-const windows = new WindowCoordinator(logger)
+const windows = new WindowCoordinator(
+  logger,
+  new MainWindowStateRepository(
+    join(app.getPath('userData'), 'main-window-bounds.v1.json'),
+  ),
+)
 const server = createProductionServerConfig()
 const api = new ApiClient(server, globalThis.fetch, logger)
 const identityProvider = import.meta.env.PROD
@@ -106,14 +114,25 @@ const auth = new AuthSession(api, secrets, identity, new ApiAuthSessionRevoker(a
 const authenticatedApi = new AuthenticatedApiClient(api, auth)
 const realtime = new WebSocketSession(server.webSocketUrl, auth, logger)
 const settingsRepository = new SettingsRepository(
-  join(app.getPath('userData'), 'settings.v1.json'),
+  join(app.getPath('userData'), 'settings.v2.json'),
   logger,
   nodeSettingsFileSystem,
+  join(app.getPath('userData'), 'settings.v1.json'),
 )
 const settings = new AppSettingsController(settingsRepository, app, logger)
+const predictionResults = new PredictionResultConfigurationRepository(
+  join(app.getPath('userData'), 'prediction-result-config.v4'),
+  nodePredictionResultFileSystem,
+  join(app.getPath('userData'), 'prediction-result-config.v3'),
+)
 const captureConfigurations = new CaptureConfigurationRepository(
-  join(app.getPath('userData'), 'capture-profiles.v3'),
+  join(app.getPath('userData'), 'capture-profiles.v4'),
   nodeCaptureConfigurationFileSystem,
+  {
+    legacyDirectory: join(app.getPath('userData'), 'capture-profiles.v3'),
+    migratePredictionReference: (...args) =>
+      predictionResults.migrateCaptureReference(...args),
+  },
 )
 const pythonRoot = import.meta.env.PROD
   ? join(process.resourcesPath, 'python')
@@ -152,17 +171,14 @@ const capturePreparations = new CapturePreparationService(
   preparedCaptureProcess,
 )
 const monitorPreferences = new MonitorPreferencesRepository(
-  join(app.getPath('userData'), 'monitor-preferences.v1'),
+  join(app.getPath('userData'), 'monitor-preferences.v2'),
   nodeMonitorPreferencesFileSystem,
+  join(app.getPath('userData'), 'monitor-preferences.v1'),
 )
 const targetResolver = new CaptureTargetResolver(
   auth,
   captureConfigurations,
   captureSources,
-)
-const predictionResults = new PredictionResultConfigurationRepository(
-  join(app.getPath('userData'), 'prediction-result-config.v3'),
-  nodePredictionResultFileSystem,
 )
 const setup = new SetupSessionService(
   capture,
@@ -191,6 +207,8 @@ const monitor = new MonitorSupervisor(
   targetResolver,
   monitorProcess,
   ocr,
+  undefined,
+  new MonitorJournalRepository(join(app.getPath('userData'), 'monitor-journal.v1')),
 )
 const predictionPreferences = new PredictionPreferencesRepository(
   join(app.getPath('userData'), 'prediction-preferences.v1'),
@@ -235,8 +253,9 @@ const streamer = new StreamerService(
   clipboard,
 )
 const widgetSettings = new WidgetSettingsRepository(
-  join(app.getPath('userData'), 'widget-settings.v2'),
+  join(app.getPath('userData'), 'widget-settings.v3'),
   nodeWidgetSettingsFileSystem,
+  join(app.getPath('userData'), 'widget-settings.v2'),
 )
 const widget = new WidgetController(monitor, widgetSettings, windows)
 const images = new ImageAssetService(monitor, globalThis.fetch, {
@@ -248,6 +267,7 @@ const notifications = new NotificationService(
   monitor,
   () => Notification.isSupported(),
   (options) => new Notification(options),
+  () => settings.getView().notifyOpponentFound,
 )
 const reprocessedResults = new ReprocessedResultService(realtime, auth, monitor)
 const updatePublicKey = readFileSync(
@@ -269,6 +289,14 @@ const updater = new UpdateService({
   platform: () => process.platform,
   publicKey: updatePublicKey,
 })
+const tray = new TrayController(
+  monitor,
+  captureProfiles,
+  widget,
+  () => windows.focusActiveWindow(),
+  () => requestApplicationShutdown(),
+  logger,
+)
 const application = new ApplicationController(
   app,
   windows,
@@ -287,6 +315,7 @@ const application = new ApplicationController(
   updater,
   capturePreparations,
   captureProfiles,
+  tray,
 )
 requestApplicationShutdown = () => application.requestShutdown()
 

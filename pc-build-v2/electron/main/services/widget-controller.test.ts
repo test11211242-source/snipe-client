@@ -1,32 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { MonitorResult } from '../../../shared/models/monitor'
+import { MonitorResultSchema, type MonitorResult } from '../../../shared/models/monitor'
 import type { WidgetSettings } from '../../../shared/models/widget'
 import { DEFAULT_WIDGET_SETTINGS } from '../infrastructure/widget-settings-repository'
 import { WidgetController } from './widget-controller'
+import { monitorViewFixture } from '../../../tests/monitor-fixtures'
 
-const found = (id: string): MonitorResult => ({
-  id,
-  kind: 'player_found',
-  timestamp: '2026-07-12T12:00:00.000Z',
-  searchMode: 'fast',
-  deckMode: 'pol',
-  searchedNickname: 'Player',
-  player: { name: 'Player', tag: '#TAG', rating: 2000, clan: 'Clan' },
-  decks: [
-    {
-      label: 'PoL',
-      cards: [
-        {
-          name: 'Knight',
-          level: 14,
-          evolutionLevel: 1,
-          iconUrl: 'https://api-assets.clashroyale.com/card.png',
-        },
-      ],
-    },
-  ],
-})
+const found = (id: string): MonitorResult =>
+  MonitorResultSchema.parse({
+    id,
+    kind: 'player_found',
+    timestamp: '2026-07-12T12:00:00.000Z',
+    searchMode: 'fast',
+    deckMode: 'pol',
+    searchedNickname: 'Player',
+    player: { name: 'Player', tag: '#TAG', rating: 2000, clan: 'Clan' },
+    decks: [
+      {
+        label: 'PoL',
+        cards: [
+          {
+            name: 'Knight',
+            level: 14,
+            evolutionLevel: 1,
+            iconUrl: 'https://api-assets.clashroyale.com/card.png',
+          },
+        ],
+      },
+    ],
+  })
 
 function deferred() {
   let resolve!: () => void
@@ -48,6 +50,8 @@ function harness(autoOpen = true) {
       resultListener = listener
       return vi.fn()
     }),
+    subscribeViews: vi.fn(() => vi.fn()),
+    getCurrentView: vi.fn(() => monitorViewFixture({ state: 'READY', runIntent: true })),
   }
   const repository = {
     load: vi.fn().mockResolvedValue({ ...DEFAULT_WIDGET_SETTINGS, autoOpen }),
@@ -97,15 +101,17 @@ describe('WidgetController', () => {
     const test = harness()
     await test.controller.start('user')
     const first = found('29d970c1-fc4f-4bea-a767-8f108d3b8739')
-    test.result({
-      id: '1b9da80f-e290-4ea6-ac83-ff2e212cdb2a',
-      kind: 'player_not_found',
-      timestamp: first.timestamp,
-      searchMode: 'fast',
-      deckMode: 'pol',
-      searchedNickname: 'Ghost',
-      message: 'not found',
-    })
+    test.result(
+      MonitorResultSchema.parse({
+        id: '1b9da80f-e290-4ea6-ac83-ff2e212cdb2a',
+        kind: 'player_not_found',
+        timestamp: first.timestamp,
+        searchMode: 'fast',
+        deckMode: 'pol',
+        searchedNickname: 'Ghost',
+        message: 'not found',
+      }),
+    )
     test.result(first)
     test.result(first)
     await vi.waitFor(() =>
@@ -115,6 +121,13 @@ describe('WidgetController', () => {
     await vi.waitFor(() =>
       expect(test.windows.showWidgetInactive).toHaveBeenCalledTimes(2),
     )
+  })
+
+  it('projects the standalone reprocessed marker without private capture data', async () => {
+    const test = harness()
+    await test.controller.start('user')
+    test.result({ ...found('39d970c1-fc4f-4bea-a767-8f108d3b8739'), reprocessed: true })
+    expect(test.controller.getView().result).toMatchObject({ reprocessed: true })
   })
 
   it('does not auto-open when disabled and closes only widget on logout', async () => {
@@ -185,23 +198,31 @@ describe('WidgetController', () => {
     )
   })
 
-  it('snaps the window to canonical bounds when display mode changes', async () => {
+  it('switches to compact width and restores the resized normal width', async () => {
     vi.useFakeTimers()
     const test = harness()
     await test.controller.start('user')
     test.bounds({ x: 80, y: 90, width: 600, height: 700 })
 
-    const deck = await test.controller.updateSettings({ displayMode: 'deck' })
+    const deck = await test.controller.updateSettings({
+      compactMode: true,
+      displayMode: 'deck',
+    })
     expect(deck).toMatchObject({
       displayMode: 'deck',
-      bounds: { x: 80, y: 90, width: 360, height: 300 },
+      compactMode: true,
+      bounds: { x: 80, y: 90, width: 520, height: 160 },
     })
     expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(deck)
 
-    const detailed = await test.controller.updateSettings({ displayMode: 'detailed' })
+    const detailed = await test.controller.updateSettings({
+      compactMode: false,
+      displayMode: 'detailed',
+    })
     expect(detailed).toMatchObject({
       displayMode: 'detailed',
-      bounds: { x: 80, y: 90, width: 420, height: 360 },
+      compactMode: false,
+      bounds: { x: 80, y: 90, width: 600, height: 360 },
     })
   })
 

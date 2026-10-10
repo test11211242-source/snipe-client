@@ -23,6 +23,7 @@ import {
   WidgetStatusResultSchema,
 } from '../../../shared/contracts/widget-ipc'
 import { registerWidgetIpc } from '../ipc/register-widget-ipc'
+import { monitorViewFixture } from '../../../tests/monitor-fixtures'
 
 function authenticated(userId: string): AuthView {
   return {
@@ -79,6 +80,8 @@ describe('ApplicationController user context', () => {
         setUserContext: vi.fn(),
         getLatestResult: () => null,
         subscribeResults: vi.fn(() => vi.fn()),
+        subscribeViews: vi.fn(() => vi.fn()),
+        getCurrentView: () => monitorViewFixture(),
       }
       const widget = new WidgetController(monitor, repository as never, windows as never)
       registerWidgetIpc({
@@ -90,7 +93,7 @@ describe('ApplicationController user context', () => {
       const controller = new ApplicationController(
         {} as never,
         windows as never,
-        {} as never,
+        { getView: () => ({ autoStartMonitoring: false }) } as never,
         { error: vi.fn() } as never,
         {} as never,
         { start: vi.fn(), stop: vi.fn() } as never,
@@ -178,7 +181,7 @@ describe('ApplicationController user context', () => {
       const controller = new ApplicationController(
         {} as never,
         windows as never,
-        {} as never,
+        { getView: () => ({ autoStartMonitoring: false }) } as never,
         {} as never,
         {} as never,
         realtime as never,
@@ -228,4 +231,89 @@ describe('ApplicationController user context', () => {
       expect(setup.cancelForAuthTransition).toHaveBeenCalledTimes(3)
     },
   )
+})
+
+function autoStartHarness(configured: boolean, autoStartMonitoring = true) {
+  const monitor = {
+    stop: vi.fn().mockResolvedValue(undefined),
+    setUserContext: vi.fn(),
+    getView: vi.fn().mockResolvedValue(
+      monitorViewFixture({
+        readiness: {
+          authenticated: true,
+          captureConfigured: configured,
+          sourceAvailable: false,
+        },
+      }),
+    ),
+    start: vi
+      .fn()
+      .mockResolvedValue(
+        monitorViewFixture({ state: 'WAITING_SOURCE', runIntent: true }),
+      ),
+  }
+  const windows = {
+    ensureMainWindow: vi.fn().mockResolvedValue(undefined),
+    ensureAuthWindow: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+  }
+  const service = {
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+  }
+  const controller = new ApplicationController(
+    {} as never,
+    windows as never,
+    { getView: () => ({ autoStartMonitoring }) } as never,
+    { warn: vi.fn(), error: vi.fn() } as never,
+    {} as never,
+    service as never,
+    {} as never,
+    { cancelForAuthTransition: vi.fn() } as never,
+    monitor as never,
+    service as never,
+    service as never,
+    service as never,
+    service as never,
+    service as never,
+    {} as never,
+    service as never,
+    {} as never,
+  )
+  // Exercise the existing main-owned auth synchronization without booting real Electron.
+  const internal = controller as unknown as {
+    syncWindows: (view: AuthView) => Promise<void>
+  }
+  return {
+    monitor,
+    windows,
+    sync: (view: AuthView) => internal.syncWindows(view),
+  }
+}
+
+describe('automatic monitor launch intent', () => {
+  it('starts a configured but missing source once, not again on restore or auth refresh', async () => {
+    const test = autoStartHarness(true)
+    await test.sync(authenticated('A'))
+    expect(test.monitor.start).toHaveBeenCalledOnce()
+    await test.monitor.stop()
+    await test.sync(authenticated('A'))
+    await test.sync(authenticated('A'))
+    expect(test.monitor.start).toHaveBeenCalledOnce()
+    await test.sync({ state: 'UNAUTHENTICATED', user: null, error: null })
+    await test.sync(authenticated('A'))
+    expect(test.monitor.start).toHaveBeenCalledOnce()
+    await test.sync(authenticated('B'))
+    expect(test.monitor.start).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])('does not auto-start for configured=%s enabled=%s', async (configured, enabled) => {
+    const test = autoStartHarness(configured, enabled)
+    await test.sync(authenticated('A'))
+    expect(test.windows.ensureMainWindow).toHaveBeenCalledOnce()
+    expect(test.monitor.start).not.toHaveBeenCalled()
+  })
 })

@@ -4,6 +4,7 @@ import {
   AppSettingsUpdateSchema,
   AppSettingsViewSchema,
   type AppSettingsView,
+  type AppSettingsUpdate,
 } from '../../../shared/contracts/app'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import {
@@ -32,20 +33,26 @@ export class AppSettingsController {
   getView(): AppSettingsView {
     return AppSettingsViewSchema.parse({
       reducedMotion: this.#settings.appearance.reducedMotion,
-      launchAtStartup: this.#settings.application.launchAtStartup,
-      diagnosticsEnabled: this.#settings.application.diagnosticsEnabled,
+      ...this.#settings.application,
     })
   }
 
-  update(rawView: AppSettingsView): Promise<AppSettingsView> {
+  update(rawView: AppSettingsUpdate): Promise<AppSettingsView> {
     const view = AppSettingsUpdateSchema.parse(rawView)
     const operation = this.#mutation.then(async () => {
       const next: Settings = {
         ...this.#settings,
-        appearance: { ...this.#settings.appearance, reducedMotion: view.reducedMotion },
+        appearance: {
+          ...this.#settings.appearance,
+          ...(view.reducedMotion === undefined
+            ? {}
+            : { reducedMotion: view.reducedMotion }),
+        },
         application: {
-          launchAtStartup: view.launchAtStartup,
-          diagnosticsEnabled: view.diagnosticsEnabled,
+          ...this.#settings.application,
+          ...Object.fromEntries(
+            Object.entries(view).filter(([key]) => key !== 'reducedMotion'),
+          ),
         },
       }
       await this.repository.save(next)
@@ -64,6 +71,7 @@ export class AppSettingsController {
     if (this.platform() === 'win32') {
       this.application.setLoginItemSettings({
         openAtLogin: this.#settings.application.launchAtStartup,
+        args: ['--launch-in-tray'],
       })
     }
   }

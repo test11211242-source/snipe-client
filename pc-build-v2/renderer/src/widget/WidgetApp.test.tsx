@@ -5,7 +5,7 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/widget-settings-repository'
-import type { WidgetView } from '../../../shared/models/widget'
+import { WidgetSettingsSchema, type WidgetView } from '../../../shared/models/widget'
 import { WidgetApp } from './WidgetApp'
 
 const primaryCard = {
@@ -28,11 +28,16 @@ const primaryCards = [
 const widgetView: WidgetView = {
   settings: DEFAULT_WIDGET_SETTINGS,
   visible: true,
+  monitorState: 'READY',
+  runIntent: true,
+  search: null,
+  scale: 1,
   result: {
     id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
     kind: 'player_found',
     timestamp: '2026-07-12T12:00:00.000Z',
     searchedNickname: 'Opponent',
+    reprocessed: false,
     player: { name: 'Opponent', tag: '#TAG', rating: 2000, clan: 'Clan' },
     decks: [
       { label: 'PoL', cards: primaryCards },
@@ -112,6 +117,21 @@ describe('WidgetApp', () => {
 
     expect(screen.getByRole('heading', { name: 'Instant Opponent' })).toBeVisible()
     expect(window.crToolsWidget.getView).toHaveBeenCalledOnce()
+  })
+
+  it('marks a reprocessed entry while keeping its opponent visible', async () => {
+    render(<WidgetApp />)
+    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
+    const result = widgetView.result
+    if (result === null) throw new Error('Missing result fixture')
+    act(() =>
+      pushedView?.({
+        ...widgetView,
+        result: { ...result, reprocessed: true },
+      }),
+    )
+    expect(screen.getByText('Переобработано · вне статистики сессии')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
   })
 
   it('does not lose a pushed opponent while a setting is being saved', async () => {
@@ -268,6 +288,7 @@ describe('WidgetApp', () => {
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
         displayMode: 'deck',
+        compactMode: true,
       }),
     )
 
@@ -298,7 +319,7 @@ describe('WidgetApp', () => {
       Promise.resolve(serverView),
     )
     vi.mocked(window.crToolsWidget.updateSettings).mockImplementation((patch) => {
-      const settings = { ...serverView.settings, ...patch }
+      const settings = WidgetSettingsSchema.parse({ ...serverView.settings, ...patch })
       serverView = { ...serverView, settings }
       return Promise.resolve(settings)
     })
@@ -313,6 +334,7 @@ describe('WidgetApp', () => {
     )
     expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(1, {
       displayMode: 'deck',
+      compactMode: true,
     })
     expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(2, {
       opacity: 0.91,

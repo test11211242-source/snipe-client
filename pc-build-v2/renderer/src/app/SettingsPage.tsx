@@ -121,7 +121,7 @@ export function SettingsPage({
     setBusy('application')
     setMutationError(null)
     try {
-      onAppSettings(await window.crTools.updateAppSettings({ ...appSettings, ...patch }))
+      onAppSettings(await window.crTools.updateAppSettings(patch))
       showSaved('Настройки приложения сохранены')
     } catch {
       setMutationError('Не удалось сохранить настройки приложения.')
@@ -293,6 +293,30 @@ export function SettingsPage({
             />
           ) : (
             <div className="settings-form">
+              <Toggle
+                label="Начинать мониторинг при запуске"
+                detail="После входа запускает сохранённый профиль; отсутствующее окно ждём автоматически."
+                checked={appSettings.autoStartMonitoring}
+                disabled={controlsDisabled}
+                onChange={(autoStartMonitoring) =>
+                  void updateApplication({ autoStartMonitoring })
+                }
+              />
+              <Toggle
+                label="Закрытие окна сворачивает в трей"
+                detail="Мониторинг продолжает работать. Для завершения выберите «Выход» в трее."
+                checked={appSettings.closeToTray}
+                disabled={controlsDisabled}
+                onChange={(closeToTray) => void updateApplication({ closeToTray })}
+              />
+              <Toggle
+                label="Сообщать о найденном сопернике"
+                checked={appSettings.notifyOpponentFound}
+                disabled={controlsDisabled}
+                onChange={(notifyOpponentFound) =>
+                  void updateApplication({ notifyOpponentFound })
+                }
+              />
               <Toggle
                 label="Уменьшить движение"
                 detail="Отключает декоративные анимации и переходы интерфейса."

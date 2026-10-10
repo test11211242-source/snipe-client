@@ -56,7 +56,7 @@ export class NotificationService {
       .trim()
       .slice(0, 80)
     this.create({
-      title: 'CR Tools V2: player found',
+      title: 'CR Tools V2: соперник найден',
       body: `${name}${clan ? ` - ${clan}` : ''}`.slice(0, 160),
     }).show()
   }

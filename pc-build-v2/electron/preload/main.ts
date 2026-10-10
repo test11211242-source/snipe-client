@@ -44,6 +44,9 @@ import {
   MonitorPreferencesPayloadSchema,
   MonitorPreferencesResultSchema,
   MonitorViewResultSchema,
+  RetrySearchPayloadSchema,
+  MonitorHistoryPayloadSchema,
+  MonitorHistoryResultSchema,
 } from '../../shared/contracts/monitor-ipc'
 import {
   EmptyWidgetPayloadSchema,
@@ -269,6 +272,18 @@ const api: CrToolsApi = Object.freeze({
         EmptyMonitorPayloadSchema.parse({}),
       ),
     ),
+  retryMonitorSearch: async (rawPayload: unknown) => {
+    const payload = RetrySearchPayloadSchema.parse(rawPayload)
+    return MonitorViewResultSchema.parse(
+      await ipcRenderer.invoke(MONITOR_IPC_CHANNELS.retrySearch, payload),
+    )
+  },
+  getMonitorHistory: async (rawPayload: unknown) => {
+    const payload = MonitorHistoryPayloadSchema.parse(rawPayload)
+    return MonitorHistoryResultSchema.parse(
+      await ipcRenderer.invoke(MONITOR_IPC_CHANNELS.getHistory, payload),
+    )
+  },
   getMonitorPreferences: async () =>
     MonitorPreferencesResultSchema.parse(
       await ipcRenderer.invoke(

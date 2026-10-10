@@ -24,6 +24,14 @@ const found: MonitorResult = {
       ],
     },
   ],
+  reprocessed: false,
+  capturePolicy: null,
+  sessionId: null,
+  triggerId: null,
+  attemptId: null,
+  profileId: null,
+  calibrationRevision: null,
+  repeat: null,
 }
 
 describe('NotificationService', () => {
