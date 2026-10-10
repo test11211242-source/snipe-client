@@ -125,6 +125,7 @@ export class MonitorSupervisor {
   #retryTimer: ReturnType<typeof setTimeout> | null = null
   #retryPromise: Promise<MonitorView> | null = null
   #journal: MonitorJournal | null = null
+  #journalWritable = false
   #journalWrite: Promise<void> | null = null
   #sessionTags = new Map<string, number>()
   #sessionRepeats = new Set<string>()
@@ -148,7 +149,7 @@ export class MonitorSupervisor {
       if (this.#view.state === 'STOPPED' || this.#view.state === 'FAILED') {
         this.setUserContext(user?.id ?? null)
       } else {
-        void this.stop()
+        void this.stop('auth_change')
         return this.redactedView(user !== null)
       }
     }
@@ -200,6 +201,10 @@ export class MonitorSupervisor {
     await this.loadJournal(userId, generation)
     if (!this.isUserContextCurrent(userId, generation)) return []
     return (this.#journal?.results ?? this.#view.results).slice(offset, offset + limit)
+  }
+
+  flushJournal(): Promise<void> {
+    return this.#journalWrite ?? Promise.resolve()
   }
 
   retrySearch(attemptId: string): Promise<MonitorView> {
@@ -325,6 +330,7 @@ export class MonitorSupervisor {
     this.cancelRecovery()
     this.clearRetry()
     this.#journal = null
+    this.#journalWritable = false
     this.#sessionTags.clear()
     this.#sessionRepeats.clear()
     this.#bindingFingerprint = null
@@ -788,7 +794,12 @@ export class MonitorSupervisor {
       result = MonitorResultSchema.parse({ ...result, ...correlation })
       const retryable =
         result.kind === 'service_error' && result.retryable && !result.authBlocked
-      if (retryable && action.image.byteLength <= 10 * 1024 * 1024) {
+      if (
+        retryable &&
+        action.image.byteLength <= 10 * 1024 * 1024 &&
+        this.#view.search?.attemptId === attemptId &&
+        this.#pendingAction === null
+      ) {
         this.#retry = { action, attemptId, expiresAt: this.now().getTime() + 120_000 }
         if (this.#retryTimer !== null) clearTimeout(this.#retryTimer)
         this.#retryTimer = setTimeout(() => {
@@ -922,7 +933,6 @@ export class MonitorSupervisor {
         result,
         ...history.filter((entry) => entry.id !== result.id),
       ].slice(0, HISTORY_LIMIT)
-      this.persistJournal()
     }
     this.patch({
       stats,
@@ -931,6 +941,7 @@ export class MonitorSupervisor {
         ...this.#view.results.filter((entry) => entry.id !== result.id),
       ].slice(0, 20),
     })
+    this.persistJournal()
     for (const listener of this.#resultListeners) {
       try {
         void Promise.resolve(listener(MonitorResultSchema.parse(result))).catch(
@@ -1090,7 +1101,7 @@ export class MonitorSupervisor {
   }
 
   private async loadJournal(userId: string, contextGeneration: number): Promise<void> {
-    if (this.#journal?.userId === userId) return
+    if (this.#journal?.userId === userId && this.#journalWritable) return
     let journal: MonitorJournal
     try {
       journal =
@@ -1098,39 +1109,93 @@ export class MonitorSupervisor {
           ? { schemaVersion: 1, userId, results: [], encounters: [], sessions: [] }
           : await this.journalRepository.load(userId)
     } catch {
-      journal = { schemaVersion: 1, userId, results: [], encounters: [], sessions: [] }
-      if (this.isUserContextCurrent(userId, contextGeneration)) {
+      if (
+        this.isUserContextCurrent(userId, contextGeneration) &&
+        !(this.#journal?.userId === userId && this.#journalWritable)
+      ) {
+        if (this.#journal?.userId !== userId)
+          this.#journal = {
+            schemaVersion: 1,
+            userId,
+            results: [],
+            encounters: [],
+            sessions: [],
+          }
         this.patch({
           historyError: {
             code: 'HISTORY_STORAGE_FAILED',
-            message: 'Не удалось прочитать историю сессий.',
+            message:
+              'Не удалось прочитать историю сессий. Новые записи пока хранятся только в памяти.',
           },
         })
       }
+      return
     }
     if (!this.isUserContextCurrent(userId, contextGeneration)) return
-    if (this.#journal?.userId === userId) return
+    if (this.#journal?.userId === userId && this.#journalWritable) return
+    const memory = this.#journal
+    if (memory?.userId === userId) {
+      if (memory.results.length > 0) {
+        const results = new Map(journal.results.map((entry) => [entry.id, entry]))
+        for (const entry of memory.results) results.set(entry.id, entry)
+        journal.results = [...results.values()].sort(
+          (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp),
+        )
+      }
+      if (memory.encounters.length > 0) {
+        const encounters = new Map(
+          journal.encounters.map((entry) => [entry.resultId, entry]),
+        )
+        for (const entry of memory.encounters) encounters.set(entry.resultId, entry)
+        journal.encounters = [...encounters.values()].sort(
+          (a, b) => Date.parse(a.at) - Date.parse(b.at),
+        )
+      }
+      if (memory.sessions.length > 0) {
+        const sessions = new Map(
+          journal.sessions.map((entry) => [entry.sessionId, entry]),
+        )
+        for (const entry of memory.sessions) sessions.set(entry.sessionId, entry)
+        journal.sessions = [...sessions.values()].sort(
+          (a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
+        )
+      }
+    }
     pruneJournal(journal, this.now())
     this.#journal = journal
+    this.#journalWritable = true
+    this.patch({ historyError: null })
   }
 
   private persistJournal(): void {
     const journal = this.#journal
-    if (journal === null) return
+    if (
+      journal === null ||
+      !this.#journalWritable ||
+      this.journalRepository === undefined
+    )
+      return
     pruneJournal(journal, this.now())
     const generation = this.#userContextGeneration
-    const writing = this.journalRepository?.save(journal)
-    if (writing === undefined) return
-    this.#journalWrite = writing.catch(() => {
-      if (this.isUserContextCurrent(journal.userId, generation)) {
-        this.patch({
-          historyError: {
-            code: 'HISTORY_STORAGE_FAILED',
-            message: 'Не удалось сохранить историю сессий.',
-          },
-        })
-      }
-    })
+    const repository = this.journalRepository
+    const snapshot = {
+      ...journal,
+      results: [...journal.results],
+      encounters: [...journal.encounters],
+      sessions: [...journal.sessions],
+    }
+    this.#journalWrite = Promise.resolve()
+      .then(() => repository.save(snapshot))
+      .catch(() => {
+        if (this.isUserContextCurrent(journal.userId, generation)) {
+          this.patch({
+            historyError: {
+              code: 'HISTORY_STORAGE_FAILED',
+              message: 'Не удалось сохранить историю сессий.',
+            },
+          })
+        }
+      })
   }
 
   private transition(state: MonitorState, patch: Partial<MonitorView> = {}): void {

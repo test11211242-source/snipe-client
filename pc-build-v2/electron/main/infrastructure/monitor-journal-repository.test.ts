@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -136,5 +136,48 @@ describe('bounded monitor journal', () => {
       imageBase64: 'private-crop',
     } as unknown as MonitorJournal['results'][number])
     expect(() => repository.save(value)).toThrow()
+  })
+})
+
+describe('review regression journal loading and retention', () => {
+  it('#1 drops invalid records independently without rewriting the source on load', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'snipe-review-journal-'))
+    directories.push(directory)
+    const value = journal()
+    const valid = result()
+    const raw = {
+      ...value,
+      results: [valid, { kind: 'old-invalid-record' }],
+      encounters: [
+        { tag: '#ABC', day: '2026-07-12', at: valid.timestamp, resultId: valid.id },
+        { invalid: true },
+      ],
+      sessions: [{ invalid: true }],
+    }
+    const path = join(
+      directory,
+      `${createHash('sha256').update(value.userId).digest('hex')}.json`,
+    )
+    const bytes = JSON.stringify(raw)
+    await writeFile(path, bytes)
+    await expect(
+      new MonitorJournalRepository(directory).load(value.userId),
+    ).resolves.toMatchObject({
+      results: [valid],
+      encounters: [raw.encounters[0]],
+      sessions: [],
+    })
+    expect(await readFile(path, 'utf8')).toBe(bytes)
+  })
+  it('#17 retains exactly seven local calendar days including today', () => {
+    const value = journal()
+    const now = new Date(2026, 6, 12, 12)
+    const first = result(new Date(2026, 6, 6, 0))
+    value.results = [result(new Date(2026, 6, 5, 23, 59, 59)), first, result(now)]
+    pruneJournal(value, now)
+    expect(value.results).toEqual([
+      first,
+      expect.objectContaining({ timestamp: now.toISOString() }),
+    ])
   })
 })

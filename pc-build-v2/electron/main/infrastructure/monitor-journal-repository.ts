@@ -36,17 +36,38 @@ const JournalSchema = z
   .strict()
 export type MonitorJournal = z.infer<typeof JournalSchema>
 
+const JournalLoadSchema = JournalSchema.extend({
+  results: z.array(z.unknown()).max(HISTORY_LIMIT),
+  encounters: z.array(z.unknown()).max(ENCOUNTER_LIMIT),
+  sessions: z.array(z.unknown()).max(SESSION_LIMIT),
+})
+
+function validRecords<T>(schema: z.ZodType<T>, values: readonly unknown[]): T[] {
+  const records: T[] = []
+  for (const value of values) {
+    const parsed = schema.safeParse(value)
+    if (parsed.success) records.push(parsed.data)
+  }
+  return records
+}
+
 export class MonitorJournalRepository {
   #operation: Promise<void> = Promise.resolve()
   constructor(private readonly directory: string) {}
 
   async load(userId: string): Promise<MonitorJournal> {
     try {
-      const parsed = JournalSchema.parse(
+      const parsed = JournalLoadSchema.parse(
         JSON.parse(await fs.readFile(this.path(userId), 'utf8')),
       )
       if (parsed.userId !== userId) throw new Error('Journal user mismatch')
-      return parsed
+      return {
+        schemaVersion: 1,
+        userId,
+        results: validRecords(MonitorResultSchema, parsed.results),
+        encounters: validRecords(EncounterSchema, parsed.encounters),
+        sessions: validRecords(MonitorSessionSchema, parsed.sessions),
+      }
     } catch (error) {
       if (
         typeof error === 'object' &&
@@ -88,7 +109,8 @@ export class MonitorJournalRepository {
 
 export function pruneJournal(journal: MonitorJournal, now: Date): void {
   const oldest = new Date(now)
-  oldest.setDate(oldest.getDate() - RETENTION_DAYS)
+  oldest.setDate(oldest.getDate() - (RETENTION_DAYS - 1))
+  oldest.setHours(0, 0, 0, 0)
   const cutoff = oldest.getTime()
   journal.results = journal.results
     .filter((result) => Date.parse(result.timestamp) >= cutoff)

@@ -808,7 +808,7 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
 })
 
 describe('monitor shutdown journal durability', () => {
-  it('waits for the finalize-once journal snapshot before returning from Stop or Exit', async () => {
+  it('review regression #15: waits for the finalize-once journal snapshot before returning from Stop or Exit', async () => {
     const gate = Promise.withResolvers<undefined>()
     const repository = {
       load: vi.fn().mockResolvedValue({
@@ -830,8 +830,7 @@ describe('monitor shutdown journal durability', () => {
     const stopped = test.supervisor.stop('exit').then(() => {
       returned = true
     })
-    await Promise.resolve()
-    await Promise.resolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
     expect(returned).toBe(false)
     expect(repository.save).toHaveBeenCalledOnce()
     expect(repository.save).toHaveBeenCalledWith(
@@ -898,5 +897,154 @@ describe('legacy reprocessed results without server correlation', () => {
       repeatEncounters: 1,
       distinctRepeatedOpponents: 1,
     })
+  })
+})
+
+describe('review regression monitor ownership and persistence', () => {
+  it('#1 keeps a failed journal read memory-only and merges it after a successful retry', async () => {
+    const persisted = foundResult(new Date('2026-07-12T11:00:00.000Z'))
+    const memory = foundResult(new Date('2026-07-12T12:00:00.000Z'))
+    const repository = {
+      load: vi.fn().mockRejectedValue(new Error('EBUSY')),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    test.supervisor.addExternalResult(memory)
+    await test.supervisor.stop()
+    expect(repository.save).not.toHaveBeenCalled()
+    repository.load.mockResolvedValue({
+      schemaVersion: 1,
+      userId: '42',
+      results: [persisted],
+      encounters: [],
+      sessions: [],
+    })
+    expect(await test.supervisor.getHistory()).toEqual(
+      expect.arrayContaining([persisted, expect.objectContaining({ id: memory.id })]),
+    )
+    expect(test.supervisor.getCurrentView().historyError).toBeNull()
+    await test.supervisor.start()
+    await test.supervisor.stop()
+    expect(repository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        results: expect.arrayContaining([
+          persisted,
+          expect.objectContaining({ id: memory.id }),
+        ]),
+      }),
+    )
+  })
+
+  it('#4 polling an auth transition finalizes with auth_change, not user', async () => {
+    const repository = {
+      load: vi
+        .fn()
+        .mockResolvedValue({
+          schemaVersion: 1,
+          userId: '42',
+          results: [],
+          encounters: [],
+          sessions: [],
+        }),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    test.user('43')
+    await test.supervisor.getView()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(repository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessions: [expect.objectContaining({ stopReason: 'auth_change' })],
+      }),
+    )
+  })
+
+  it('#5 does not re-arm a superseded retry crop while newer work is pending', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    const old = deferred<ReturnType<typeof MonitorResultSchema.parse>>()
+    const next = deferred<ReturnType<typeof foundResult>>()
+    test.ocr.process.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
+    const action = {
+      triggerId: randomUUID(),
+      timestamp: '2026-07-12T12:00:00.000Z',
+      width: 10,
+      height: 10,
+      image: Buffer.from('crop'),
+    }
+    test.listener()?.onTriggered(action.timestamp, action.triggerId)
+    test.listener()?.onAction(action)
+    const attemptId = test.supervisor.getCurrentView().search?.attemptId
+    if (attemptId === undefined) throw new Error('Missing attempt')
+    const newer = { ...action, triggerId: randomUUID() }
+    test.listener()?.onTriggered(newer.timestamp, newer.triggerId)
+    test.listener()?.onAction(newer)
+    old.resolve(
+      MonitorResultSchema.parse({
+        id: randomUUID(),
+        timestamp: action.timestamp,
+        kind: 'service_error',
+        searchMode: 'fast',
+        deckMode: 'pol',
+        searchedNickname: null,
+        message: 'busy',
+        retryable: true,
+        authBlocked: false,
+      }),
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    try {
+      await expect(test.supervisor.retrySearch(attemptId)).rejects.toMatchObject({
+        code: 'SEARCH_RETRY_STALE',
+      })
+    } finally {
+      next.resolve(foundResult(new Date(action.timestamp)))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await test.supervisor.stop()
+    }
+  })
+
+  it('#16 publishes results and reports synchronous journal-save errors without throwing', async () => {
+    const repository = {
+      load: vi
+        .fn()
+        .mockResolvedValue({
+          schemaVersion: 1,
+          userId: '42',
+          results: [],
+          encounters: [],
+          sessions: [],
+        }),
+      save: vi.fn(() => {
+        throw new Error('Invalid journal')
+      }),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    expect(() =>
+      test.supervisor.addExternalResult(
+        foundResult(new Date('2026-07-12T12:00:00.000Z')),
+      ),
+    ).not.toThrow()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      results: [expect.anything()],
+      historyError: { code: 'HISTORY_STORAGE_FAILED' },
+    })
+    await test.supervisor.stop()
   })
 })
