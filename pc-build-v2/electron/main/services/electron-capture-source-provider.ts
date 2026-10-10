@@ -1,6 +1,7 @@
 import { execFile as nodeExecFile } from 'node:child_process'
 
 import { BrowserWindow, desktopCapturer, screen } from 'electron'
+import { ApplicationError } from '../../../shared/errors/application-error'
 
 import type {
   CaptureSourceProvider,
@@ -244,6 +245,7 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
   constructor(
     private readonly physicalDisplays: PhysicalDisplayResolver = resolveWindowsPhysicalDisplays,
     private readonly windowMetadata: WindowMetadataResolver = resolveWindowsWindowMetadata,
+    private readonly logger?: { warn: (message: string, context: unknown) => void },
   ) {}
 
   async enumerate(thumbnailSize: { width: number; height: number }) {
@@ -255,15 +257,32 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     const handles = sources
       .map((source) => /^window:(\d+):0$/.exec(source.id)?.[1])
       .filter((value): value is string => value !== undefined)
+    const startedAt = Date.now()
     const metadata = new Map(
-      (await this.windowMetadata(handles).catch(() => [])).map((entry) => [
-        entry.windowHwnd,
-        entry,
-      ]),
+      (
+        await this.windowMetadata(handles).catch((cause: unknown) => {
+          this.logger?.warn('Capture metadata helper unavailable', {
+            stage: 'window-metadata',
+            durationMs: Date.now() - startedAt,
+            errorClass: cause instanceof Error ? cause.name : 'Unknown',
+          })
+          throw new ApplicationError(
+            'SOURCE_METADATA_UNAVAILABLE',
+            'Window metadata is unavailable',
+            { cause },
+          )
+        })
+      ).map((entry) => [entry.windowHwnd, entry]),
     )
     return sources.map<ElectronCaptureSource>((source) => {
       const handle = /^window:(\d+):0$/.exec(source.id)?.[1]
       const details = handle === undefined ? undefined : metadata.get(handle)
+      if (handle !== undefined && details?.executableLabel == null) {
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Window identity metadata is unavailable',
+        )
+      }
       return {
         id: source.id,
         name: source.name,
@@ -289,22 +308,34 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     })
     const source = sources.find((candidate) => candidate.id === `window:${windowHwnd}:0`)
     if (source === undefined) return undefined
-    const details = (await this.windowMetadata([windowHwnd]).catch(() => [])).find(
-      (entry) => entry.windowHwnd === windowHwnd,
-    )
+    const startedAt = Date.now()
+    const details = (
+      await this.windowMetadata([windowHwnd]).catch((cause: unknown) => {
+        this.logger?.warn('Capture metadata helper unavailable', {
+          stage: 'bound-window-metadata',
+          durationMs: Date.now() - startedAt,
+          errorClass: cause instanceof Error ? cause.name : 'Unknown',
+        })
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Window metadata is unavailable',
+          { cause },
+        )
+      })
+    ).find((entry) => entry.windowHwnd === windowHwnd)
+    if (details?.executableLabel == null) {
+      throw new ApplicationError(
+        'SOURCE_METADATA_UNAVAILABLE',
+        'Window identity metadata is unavailable',
+      )
+    }
     return {
       id: source.id,
       name: source.name,
       displayId: source.display_id,
       thumbnail: source.thumbnail,
-      ...(details === undefined
-        ? {}
-        : {
-            ownerProcessId: details.ownerProcessId,
-            ...(details.executableLabel === null
-              ? {}
-              : { executableLabel: details.executableLabel }),
-          }),
+      ownerProcessId: details.ownerProcessId,
+      executableLabel: details.executableLabel,
     }
   }
 
@@ -338,7 +369,19 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
         },
       }
     })
-    const windowsDisplays = await this.physicalDisplays().catch(() => [])
+    const startedAt = Date.now()
+    const windowsDisplays = await this.physicalDisplays().catch((cause: unknown) => {
+      this.logger?.warn('Capture metadata helper unavailable', {
+        stage: 'display-metadata',
+        durationMs: Date.now() - startedAt,
+        errorClass: cause instanceof Error ? cause.name : 'Unknown',
+      })
+      throw new ApplicationError(
+        'SOURCE_METADATA_UNAVAILABLE',
+        'Display metadata is unavailable',
+        { cause },
+      )
+    })
     const electronCounts = new Map<string, number>()
     const windowsByBounds = new Map<string, WindowsPhysicalDisplay[]>()
     const windowsDeviceCounts = new Map<string, number>()

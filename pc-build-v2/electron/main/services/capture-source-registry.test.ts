@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ApplicationError } from '../../../shared/errors/application-error'
 
 import type {
   CaptureSourceProvider,
@@ -40,6 +41,34 @@ function source(
 }
 
 describe('CaptureSourceRegistry', () => {
+  it('preserves metadata-unavailable distinctly from an absent source without selecting fallback', async () => {
+    const enumerate = vi
+      .fn()
+      .mockRejectedValue(
+        new ApplicationError('SOURCE_METADATA_UNAVAILABLE', 'Metadata unavailable'),
+      )
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate,
+      displays: vi.fn().mockResolvedValue([]),
+      ownWindowHandles: () => new Set(),
+    }
+    const registry = new CaptureSourceRegistry(provider)
+    const preference = {
+      kind: 'window' as const,
+      label: 'Game',
+      titleHint: 'Game',
+      executableLabel: 'Game.exe',
+      windowHwnd: '12',
+    }
+    await expect(registry.resolvePreference(preference)).rejects.toMatchObject({
+      code: 'SOURCE_METADATA_UNAVAILABLE',
+    })
+    enumerate.mockResolvedValueOnce([])
+    await expect(registry.resolvePreference(preference)).rejects.toMatchObject({
+      code: 'SOURCE_NOT_FOUND',
+    })
+  })
   it('returns selectable sources before previews and coalesces preview loads without changing keys', async () => {
     let finishPreviews!: (sources: ElectronCaptureSource[]) => void
     const sources = [source('window:12:0', 'Game', '', 20)]

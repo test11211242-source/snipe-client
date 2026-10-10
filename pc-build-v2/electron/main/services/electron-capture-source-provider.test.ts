@@ -106,14 +106,43 @@ describe('ElectronCaptureSourceProvider display mapping', () => {
     const provider = new ElectronCaptureSourceProvider(() =>
       Promise.reject(new Error('unavailable')),
     )
-    const displays = await provider.displays()
-    expect(displays).toHaveLength(2)
-    expect(displays[0]).not.toHaveProperty('deviceName')
-    expect(displays[1]).not.toHaveProperty('deviceName')
+    await expect(provider.displays()).rejects.toMatchObject({
+      code: 'SOURCE_METADATA_UNAVAILABLE',
+    })
   })
 })
 
 describe('ElectronCaptureSourceProvider window metadata', () => {
+  it.each(['reject', 'missing', 'executable'])(
+    'fails closed with typed unavailable metadata: %s',
+    async (mode) => {
+      electron.sources = [
+        {
+          id: 'window:42:0',
+          name: 'Private title',
+          display_id: '',
+          thumbnail: { isEmpty: () => false },
+        },
+      ]
+      const metadata = vi.fn()
+      if (mode === 'reject')
+        metadata.mockRejectedValue(new Error('helper timeout with private output'))
+      else
+        metadata.mockResolvedValue(
+          mode === 'missing'
+            ? []
+            : [{ windowHwnd: '42', ownerProcessId: 123, executableLabel: null }],
+        )
+      const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+      await expect(provider.enumerate({ width: 0, height: 0 })).rejects.toMatchObject({
+        code: 'SOURCE_METADATA_UNAVAILABLE',
+      })
+      await expect(provider.resolveWindow('42')).rejects.toMatchObject({
+        code: 'SOURCE_METADATA_UNAVAILABLE',
+      })
+      await expect(provider.resolveWindow('99')).resolves.toBeUndefined()
+    },
+  )
   it('resolves only the selected window metadata and loads previews without PowerShell', async () => {
     electron.sources = ['42', '43', '44'].map((handle) => ({
       id: `window:${handle}:0`,
