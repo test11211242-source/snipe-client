@@ -1,3 +1,4 @@
+import type { BootstrapFailure } from './app'
 import type { AccountMutationResult } from './streamer-ipc'
 import type { AppSnapshot } from '../models/application'
 import type { AuthView } from '../models/auth'
@@ -44,25 +45,7 @@ export interface CrToolsApi {
   getAppSettings: () => Promise<AppSettingsView>
   updateAppSettings: (settings: AppSettingsView) => Promise<AppSettingsView>
   openLogFolder: () => Promise<{ opened: boolean }>
-  reportBootstrapFailure: (cause: {
-    capability:
-      | 'protocol'
-      | 'snapshot'
-      | 'auth'
-      | 'realtime'
-      | 'capture'
-      | 'profiles'
-      | 'monitor'
-      | 'widget'
-      | 'settings'
-      | 'update'
-    code:
-      | 'AUTH_REQUIRED'
-      | 'SOURCE_METADATA_UNAVAILABLE'
-      | 'WIDGET_NOT_READY'
-      | 'INVALID_RESPONSE'
-      | 'IPC_FAILED'
-  }) => Promise<void>
+  reportBootstrapFailure: (cause: BootstrapFailure) => Promise<void>
   getAuthView: () => Promise<AuthView>
   logout: () => Promise<AuthView>
   getRealtimeStatus: () => Promise<RealtimeStatus>

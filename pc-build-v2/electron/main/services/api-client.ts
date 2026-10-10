@@ -50,12 +50,13 @@ function statusError(status: number, body: unknown): ApiError {
       code === 'ACCOUNT_TAG_INVALID' ||
       code === 'ACCOUNT_NOT_FOUND' ||
       code === 'ACCOUNT_LIMIT_REACHED' ||
-      code === 'CLASH_API_UNAVAILABLE'
+      code === 'CLASH_API_UNAVAILABLE' ||
+      code === 'ACCOUNT_SAVE_UNAVAILABLE'
     ) {
       return createApiError(
         code,
         readServerMessage(body) ?? 'Account operation failed',
-        code === 'CLASH_API_UNAVAILABLE',
+        code === 'CLASH_API_UNAVAILABLE' || code === 'ACCOUNT_SAVE_UNAVAILABLE',
         status,
       )
     }

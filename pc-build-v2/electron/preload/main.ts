@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { z } from 'zod'
 
 import {
   OpenLogFolderResultSchema,
@@ -84,18 +85,37 @@ const updateEmpty = async (channel: string) =>
     await ipcRenderer.invoke(channel, EmptyUpdatePayloadSchema.parse({})),
   )
 
+async function bootstrapResult<T>(
+  schema: z.ZodType<T>,
+  request: Promise<unknown>,
+): Promise<T> {
+  let value: unknown
+  try {
+    value = await request
+  } catch {
+    throw new Error('IPC_FAILED')
+  }
+  const result = schema.safeParse(value)
+  if (!result.success) throw new Error('INVALID_RESPONSE')
+  return result.data
+}
+
 const api: CrToolsApi = Object.freeze({
   hello: async () => {
     const payload = HelloPayloadSchema.parse({
       protocolVersion: 1,
       client: 'main-renderer',
     })
-    return HelloResultSchema.parse(await ipcRenderer.invoke(IPC_CHANNELS.hello, payload))
+    return bootstrapResult(
+      HelloResultSchema,
+      ipcRenderer.invoke(IPC_CHANNELS.hello, payload),
+    )
   },
   getAppSnapshot: async () => {
     const payload = AppSnapshotPayloadSchema.parse({})
-    return AppSnapshotResultSchema.parse(
-      await ipcRenderer.invoke(IPC_CHANNELS.getSnapshot, payload),
+    return bootstrapResult(
+      AppSnapshotResultSchema,
+      ipcRenderer.invoke(IPC_CHANNELS.getSnapshot, payload),
     )
   },
   openLogFolder: async () =>
@@ -109,11 +129,9 @@ const api: CrToolsApi = Object.freeze({
     )
   },
   getAppSettings: async () =>
-    AppSettingsViewSchema.parse(
-      await ipcRenderer.invoke(
-        IPC_CHANNELS.getSettings,
-        AppSettingsPayloadSchema.parse({}),
-      ),
+    bootstrapResult(
+      AppSettingsViewSchema,
+      ipcRenderer.invoke(IPC_CHANNELS.getSettings, AppSettingsPayloadSchema.parse({})),
     ),
   updateAppSettings: async (rawPayload: unknown) => {
     const payload = AppSettingsUpdateSchema.parse(rawPayload)
@@ -122,8 +140,9 @@ const api: CrToolsApi = Object.freeze({
     )
   },
   getAuthView: async () =>
-    AuthViewResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      AuthViewResultSchema,
+      ipcRenderer.invoke(
         MAIN_NETWORK_IPC_CHANNELS.getAuthView,
         EmptyPayloadSchema.parse({}),
       ),
@@ -136,8 +155,9 @@ const api: CrToolsApi = Object.freeze({
       ),
     ),
   getRealtimeStatus: async () =>
-    RealtimeStatusResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      RealtimeStatusResultSchema,
+      ipcRenderer.invoke(
         MAIN_NETWORK_IPC_CHANNELS.getRealtimeStatus,
         EmptyPayloadSchema.parse({}),
       ),
@@ -174,15 +194,17 @@ const api: CrToolsApi = Object.freeze({
     )
   },
   getCaptureStatus: async () =>
-    CaptureStatusResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      CaptureStatusResultSchema,
+      ipcRenderer.invoke(
         MAIN_CAPTURE_IPC_CHANNELS.getStatus,
         EmptyCapturePayloadSchema.parse({}),
       ),
     ),
   getCaptureProfiles: async () =>
-    CaptureProfilesResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      CaptureProfilesResultSchema,
+      ipcRenderer.invoke(
         MAIN_CAPTURE_IPC_CHANNELS.getProfiles,
         EmptyCapturePayloadSchema.parse({}),
       ),
@@ -218,8 +240,9 @@ const api: CrToolsApi = Object.freeze({
     )
   },
   getMonitorView: async () =>
-    MonitorViewResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      MonitorViewResultSchema,
+      ipcRenderer.invoke(
         MONITOR_IPC_CHANNELS.getView,
         EmptyMonitorPayloadSchema.parse({}),
       ),
@@ -260,8 +283,9 @@ const api: CrToolsApi = Object.freeze({
     )
   },
   getWidgetStatus: async () =>
-    WidgetStatusResultSchema.parse(
-      await ipcRenderer.invoke(
+    bootstrapResult(
+      WidgetStatusResultSchema,
+      ipcRenderer.invoke(
         MAIN_WIDGET_IPC_CHANNELS.getStatus,
         EmptyWidgetPayloadSchema.parse({}),
       ),
@@ -403,7 +427,11 @@ const api: CrToolsApi = Object.freeze({
         OverlayCopyPayloadSchema.parse({ kind }),
       ),
     ),
-  getUpdateView: () => updateEmpty(UPDATE_IPC_CHANNELS.getView),
+  getUpdateView: () =>
+    bootstrapResult(
+      UpdateViewResultSchema,
+      ipcRenderer.invoke(UPDATE_IPC_CHANNELS.getView, EmptyUpdatePayloadSchema.parse({})),
+    ),
   checkForUpdate: () => updateEmpty(UPDATE_IPC_CHANNELS.check),
   downloadUpdate: () => updateEmpty(UPDATE_IPC_CHANNELS.download),
   cancelUpdate: () => updateEmpty(UPDATE_IPC_CHANNELS.cancel),

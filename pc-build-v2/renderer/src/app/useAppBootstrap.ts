@@ -58,7 +58,7 @@ function loadResource<T>(
           state: 'error',
           error,
           cause:
-            reason instanceof Error && reason.name === 'ZodError'
+            reason instanceof Error && reason.message === 'INVALID_RESPONSE'
               ? 'INVALID_RESPONSE'
               : 'IPC_FAILED',
         }))
@@ -153,7 +153,7 @@ export function useAppBootstrap(): {
     ): Promise<T> =>
       request.catch((reason: unknown) => {
         const code =
-          reason instanceof Error && reason.name === 'ZodError'
+          reason instanceof Error && reason.message === 'INVALID_RESPONSE'
             ? 'INVALID_RESPONSE'
             : 'IPC_FAILED'
         void window.crTools

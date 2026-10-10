@@ -123,6 +123,56 @@ function service(child: FakeChild, treeKill = vi.fn().mockResolvedValue(undefine
 afterEach(() => vi.useRealTimers())
 
 describe('MonitorProcessService', () => {
+  it('lets Python report no-frame after cold startup before the fallback watchdog', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const test = service(child)
+    const events = listener()
+    const started = test.value.start(payload(), events)
+    const rejected = expect(started).rejects.toMatchObject({ code: 'CAPTURE_NO_FRAME' })
+    await vi.advanceTimersByTimeAsync(5_000 + 7_000)
+    expect(events.onFatal).not.toHaveBeenCalled()
+    child.event(1, 'fatal', {
+      code: 'CAPTURE_NO_FRAME',
+      message: 'No frame',
+      stage: 'start',
+    })
+    child.emit('close', 0, null)
+    await rejected
+  })
+
+  it('re-reports stderr on the injected clock and flushes the remaining counters at exit', async () => {
+    let clock = 0
+    const child = new FakeChild()
+    const logger = { info: vi.fn(), warn: vi.fn() }
+    const monitor = new MonitorProcessService(
+      'python.exe',
+      'monitor_engine.py',
+      logger,
+      () => child,
+      vi.fn(),
+      { setTimeout, clearTimeout, now: () => clock },
+    )
+    const started = monitor.start(payload(), listener())
+    child.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
+    await started
+    child.stderr.write('first\n')
+    clock = 4_999
+    child.stderr.write('second\n')
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+    clock = 5_000
+    child.stderr.write('third\n')
+    expect(logger.warn).toHaveBeenCalledTimes(2)
+    expect(logger.warn.mock.calls[1]?.[1]).toMatchObject({ bytes: 13, lines: 2 })
+    child.stderr.write('tail')
+    const stopped = monitor.stop()
+    child.emit('close', 0, null)
+    await stopped
+    expect(logger.warn.mock.calls[2]).toEqual([
+      'Monitor final diagnostics suppressed',
+      { bytes: 4, lines: 0, incompleteLineBytes: 4 },
+    ])
+  })
   it('drains unlimited lifetime stderr with bounded rate-limited metadata', async () => {
     const child = new FakeChild()
     const test = service(child)
@@ -245,7 +295,7 @@ describe('MonitorProcessService', () => {
     const timedOutExpectation = expect(waiting).rejects.toMatchObject({
       code: 'MONITOR_READY_TIMEOUT',
     })
-    await vi.advanceTimersByTimeAsync(8_000)
+    await vi.advanceTimersByTimeAsync(15_000)
     await timedOutExpectation
     expect(timeoutService.treeKill).toHaveBeenCalledWith(4321)
     timedOut.emit('close', 1, null)

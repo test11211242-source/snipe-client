@@ -52,15 +52,10 @@ export const BootstrapFailurePayloadSchema = z
       'settings',
       'update',
     ]),
-    code: z.enum([
-      'AUTH_REQUIRED',
-      'SOURCE_METADATA_UNAVAILABLE',
-      'WIDGET_NOT_READY',
-      'INVALID_RESPONSE',
-      'IPC_FAILED',
-    ]),
+    code: z.enum(['INVALID_RESPONSE', 'IPC_FAILED']),
   })
   .strict()
+export type BootstrapFailure = z.infer<typeof BootstrapFailurePayloadSchema>
 
 export type HelloResult = z.infer<typeof HelloResultSchema>
 export type AppSettingsView = z.infer<typeof AppSettingsViewSchema>

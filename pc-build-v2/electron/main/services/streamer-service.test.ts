@@ -130,6 +130,7 @@ describe('StreamerService', () => {
     'ACCOUNT_NOT_FOUND',
     'ACCOUNT_LIMIT_REACHED',
     'CLASH_API_UNAVAILABLE',
+    'ACCOUNT_SAVE_UNAVAILABLE',
     'UNAUTHORIZED',
     'VALIDATION_FAILED',
   ] as const)('returns an IPC-safe account error: %s', async (code) => {

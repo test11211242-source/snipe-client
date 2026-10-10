@@ -3,12 +3,8 @@ import { z } from 'zod'
 import { PublicErrorSchema } from '../errors/application-error'
 
 const ShortTextSchema = z.string().max(300)
-const TagSchema = z
-  .string()
-  .trim()
-  .min(2)
-  .max(20)
-  .regex(/^#?[0289PYLQGRJCUV]+$/i)
+export const GAME_ACCOUNT_TAG_PATTERN = /^#?[0289PYLQGRJCUV]{3,15}$/i
+const TagSchema = z.string().trim().min(2).max(20).regex(GAME_ACCOUNT_TAG_PATTERN)
 const CountSchema = z.number().int().nonnegative().max(1_000_000)
 export const MAX_STREAMER_ACCOUNTS = 20
 

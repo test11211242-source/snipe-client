@@ -2,12 +2,24 @@ import { useId, useState } from 'react'
 
 import {
   MAX_STREAMER_ACCOUNTS,
+  GAME_ACCOUNT_TAG_PATTERN,
   type StreamerView,
 } from '../../../../shared/models/streamer'
 import { Button } from '../ui'
 import type { StreamerRunner } from './types'
 
-const TAG_PATTERN = /^#?[0289PYLQGRJCUV]+$/i
+const ACCOUNT_ERROR_MESSAGES = {
+  ACCOUNT_TAG_INVALID: 'Проверьте формат тега Clash Royale.',
+  ACCOUNT_NOT_FOUND: 'Аккаунт с таким тегом не найден в Clash Royale.',
+  ACCOUNT_LIMIT_REACHED: 'Достигнут лимит аккаунтов. Удалите ненужный аккаунт.',
+  CLASH_API_UNAVAILABLE: 'API Clash Royale временно недоступен. Повторите позже.',
+  ACCOUNT_SAVE_UNAVAILABLE: 'Не удалось сохранить аккаунт. Повторите позже.',
+  UNAUTHORIZED: 'Требуется повторный вход.',
+  FORBIDDEN: 'Добавление аккаунтов недоступно для этого профиля.',
+  STREAMER_ROLE_REQUIRED: 'Для добавления аккаунтов требуется роль стримера.',
+  STREAMER_CANCELLED: 'Добавление отменено при смене профиля.',
+  UNKNOWN: 'Сервер не подтвердил сохранение аккаунта. Повторите попытку.',
+} as const
 
 export function AccountManager({
   accounts,
@@ -23,8 +35,11 @@ export function AccountManager({
   const [tag, setTag] = useState('')
   const [alias, setAlias] = useState('')
   const tagErrorId = useId()
-  const [accountMessage, setAccountMessage] = useState<string | null>(null)
-  const tagInvalid = tag.trim().length > 0 && !TAG_PATTERN.test(tag.trim())
+  const [accountMessage, setAccountMessage] = useState<{
+    text: string
+    warning: boolean
+  } | null>(null)
+  const tagInvalid = tag.trim().length > 0 && !GAME_ACCOUNT_TAG_PATTERN.test(tag.trim())
   const limitReached = accounts.length >= MAX_STREAMER_ACCOUNTS
 
   const addAccount = async (): Promise<void> => {
@@ -35,26 +50,20 @@ export function AccountManager({
         alias: alias.trim(),
       })
       if (!response.ok) {
-        const messages = {
-          ACCOUNT_TAG_INVALID: 'Проверьте формат тега Clash Royale.',
-          ACCOUNT_NOT_FOUND: 'Аккаунт с таким тегом не найден в Clash Royale.',
-          ACCOUNT_LIMIT_REACHED: 'Достигнут лимит аккаунтов. Удалите ненужный аккаунт.',
-          CLASH_API_UNAVAILABLE: 'API Clash Royale временно недоступен. Повторите позже.',
-          UNAUTHORIZED: 'Требуется повторный вход.',
-          FORBIDDEN: 'Добавление аккаунтов недоступно для этого профиля.',
-          STREAMER_ROLE_REQUIRED: 'Для добавления аккаунтов требуется роль стримера.',
-          STREAMER_CANCELLED: 'Добавление отменено при смене профиля.',
-          UNKNOWN: 'Сервер не подтвердил сохранение аккаунта. Повторите попытку.',
-        }
-        setAccountMessage(messages[response.error.code])
-        throw new Error('Account was not saved')
+        setAccountMessage({
+          text: ACCOUNT_ERROR_MESSAGES[response.error.code],
+          warning: false,
+        })
+        return null
       }
       if (response.warning !== null) {
-        setAccountMessage(
-          response.warning === 'TITLE_UPDATE_FAILED'
-            ? 'Аккаунт сохранён, но название Twitch не обновлено.'
-            : 'Аккаунт сохранён, но список не удалось обновить. Обновите данные.',
-        )
+        setAccountMessage({
+          text:
+            response.warning === 'TITLE_UPDATE_FAILED'
+              ? 'Аккаунт сохранён, но название Twitch не обновлено.'
+              : 'Аккаунт сохранён, но список не удалось обновить. Обновите данные.',
+          warning: true,
+        })
       }
       return response.view
     })
@@ -91,7 +100,10 @@ export function AccountManager({
             maxLength={20}
             placeholder="#TAG"
             disabled={busy !== null || limitReached}
-            onChange={(event) => setTag(event.target.value)}
+            onChange={(event) => {
+              setTag(event.target.value)
+              setAccountMessage(null)
+            }}
           />
           {tagInvalid && (
             <small className="field-error" id={tagErrorId}>
@@ -106,7 +118,10 @@ export function AccountManager({
             maxLength={100}
             placeholder="Основной"
             disabled={busy !== null || limitReached}
-            onChange={(event) => setAlias(event.target.value)}
+            onChange={(event) => {
+              setAlias(event.target.value)
+              setAccountMessage(null)
+            }}
           />
         </label>
         <Button
@@ -118,8 +133,13 @@ export function AccountManager({
         </Button>
       </div>
       {accountMessage !== null && (
-        <small className="field-error" role="status">
-          {accountMessage}
+        <small
+          className={
+            accountMessage.warning ? 'streamer-lead compact-lead' : 'field-error'
+          }
+          role="status"
+        >
+          {accountMessage.text}
         </small>
       )}
       {limitReached && (
@@ -156,19 +176,27 @@ export function AccountManager({
                       window.crTools.removeStreamTitleAccount(account.tag),
                     )
                   } else {
+                    setAccountMessage(null)
                     void run('account-enable', async () => {
                       const response = await window.crTools.addStreamTitleAccount({
                         tag: account.tag,
                         alias: account.alias || account.name,
                       })
                       if (!response.ok) {
-                        setAccountMessage('Сервер не подтвердил включение аккаунта.')
-                        throw new Error('Account was not enabled')
+                        setAccountMessage({
+                          text: ACCOUNT_ERROR_MESSAGES[response.error.code],
+                          warning: false,
+                        })
+                        return null
                       }
                       if (response.warning !== null)
-                        setAccountMessage(
-                          'Аккаунт сохранён, но обновление названия или списка не завершено.',
-                        )
+                        setAccountMessage({
+                          text:
+                            response.warning === 'TITLE_UPDATE_FAILED'
+                              ? 'Аккаунт сохранён, но название Twitch не обновлено.'
+                              : 'Аккаунт сохранён, но список не удалось обновить. Обновите данные.',
+                          warning: true,
+                        })
                       return response.view
                     })
                   }

@@ -18,6 +18,7 @@ describe('ApiClient', () => {
     [400, 'ACCOUNT_LIMIT_REACHED'],
     [409, 'ACCOUNT_LIMIT_REACHED'],
     [503, 'CLASH_API_UNAVAILABLE'],
+    [503, 'ACCOUNT_SAVE_UNAVAILABLE'],
   ] as const)(
     'preserves allowlisted account code regardless of status: %s/%s',
     async (status, code) => {

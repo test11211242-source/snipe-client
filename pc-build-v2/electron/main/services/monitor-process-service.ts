@@ -10,7 +10,8 @@ import {
   type MonitorStartPayload,
 } from '../../../shared/contracts/monitor-protocol'
 
-const READY_TIMEOUT_MS = 8_000
+// Python owns its 7-second no-frame deadline; allow 8 seconds for cold startup.
+const READY_TIMEOUT_MS = 15_000
 const STOP_TIMEOUT_MS = 3_000
 const FORCE_TIMEOUT_MS = 2_000
 const KILLER_TIMEOUT_MS = 1_000
@@ -70,6 +71,7 @@ export interface MonitorTimers {
     milliseconds: number,
   ) => ReturnType<typeof setTimeout>
   clearTimeout: (timer: ReturnType<typeof setTimeout>) => void
+  now?: () => number
 }
 
 export interface MonitorAction {
@@ -519,7 +521,7 @@ export class MonitorProcessService {
       MAX_STDERR_LINE_BYTES,
       owned.stderrLineBytes + bytes.length - offset,
     )
-    const now = Date.now()
+    const now = (this.timers.now ?? Date.now)()
     if (now >= owned.stderrReportAt) {
       this.logger.warn('Monitor worker diagnostics suppressed', {
         bytes: owned.stderrBytes,

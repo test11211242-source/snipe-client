@@ -138,10 +138,30 @@ describe('StreamerPage', () => {
 
   afterEach(() => vi.restoreAllMocks())
   it.each([
+    ['#P0', false],
+    ['#P0Y', true],
+    [`#${'P'.repeat(15)}`, true],
+    [`#${'P'.repeat(16)}`, false],
+  ] as const)(
+    'uses the shared account tag limits in the old form: %s',
+    async (tagValue, valid) => {
+      render(<StreamerPage auth={auth} />)
+      await screen.findByText('Twitch @caster')
+      fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+      const tag = screen.getAllByLabelText('Тег аккаунта')[0]
+      const add = screen.getAllByRole('button', { name: 'Добавить аккаунт' })[0]
+      if (!tag || !add) throw new Error('Missing form')
+      fireEvent.change(tag, { target: { value: tagValue } })
+      if (valid) expect(add).toBeEnabled()
+      else expect(add).toBeDisabled()
+    },
+  )
+  it.each([
     ['ACCOUNT_TAG_INVALID', 'Проверьте формат тега Clash Royale.'],
     ['UNAUTHORIZED', 'Требуется повторный вход.'],
     ['ACCOUNT_NOT_FOUND', 'Аккаунт с таким тегом не найден в Clash Royale.'],
     ['CLASH_API_UNAVAILABLE', 'API Clash Royale временно недоступен. Повторите позже.'],
+    ['ACCOUNT_SAVE_UNAVAILABLE', 'Не удалось сохранить аккаунт. Повторите позже.'],
     ['ACCOUNT_LIMIT_REACHED', 'Достигнут лимит аккаунтов. Удалите ненужный аккаунт.'],
     ['UNKNOWN', 'Сервер не подтвердил сохранение аккаунта. Повторите попытку.'],
   ])(
@@ -166,8 +186,49 @@ describe('StreamerPage', () => {
       expect(tag).toHaveValue('#P0Y')
       expect(alias).toHaveValue('My alias')
       expect(screen.queryByText('private upstream body')).not.toBeInTheDocument()
+      expect(
+        screen.queryByText('Не удалось изменить список аккаунтов.'),
+      ).not.toBeInTheDocument()
     },
   )
+  it.each([
+    ['ACCOUNT_NOT_FOUND', 'Аккаунт с таким тегом не найден в Clash Royale.'],
+    ['CLASH_API_UNAVAILABLE', 'API Clash Royale временно недоступен. Повторите позже.'],
+    ['ACCOUNT_SAVE_UNAVAILABLE', 'Не удалось сохранить аккаунт. Повторите позже.'],
+    ['UNAUTHORIZED', 'Требуется повторный вход.'],
+  ])('preserves the specific re-enable outcome: %s', async (code, message) => {
+    const disabledView: StreamerView = {
+      ...view,
+      title: {
+        ...view.title,
+        accounts: [
+          {
+            tag: '#P0Y',
+            name: 'Game',
+            alias: 'Alias',
+            enabled: false,
+            currentRank: null,
+            currentElo: null,
+          },
+        ],
+      },
+    }
+    vi.mocked(window.crTools.getStreamerView).mockResolvedValue(disabledView)
+    vi.mocked(window.crTools.setStreamerSectionActive).mockResolvedValue(disabledView)
+    vi.mocked(window.crTools.refreshStreamer).mockResolvedValue(disabledView)
+    vi.mocked(window.crTools.addStreamTitleAccount).mockResolvedValueOnce({
+      ok: false,
+      error: { code, detail: 'private' },
+    } as never)
+    render(<StreamerPage auth={auth} />)
+    await screen.findByText('Twitch @caster')
+    fireEvent.click(screen.getByRole('tab', { name: 'Название стрима' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Включить' }))
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(
+      screen.queryByText('Не удалось изменить список аккаунтов.'),
+    ).not.toBeInTheDocument()
+  })
   it.each(['TITLE_UPDATE_FAILED', 'REFRESH_FAILED'] as const)(
     'reports saved-with-warning and clears only saved inputs: %s',
     async (warning) => {
@@ -192,6 +253,9 @@ describe('StreamerPage', () => {
         ),
       ).toBeVisible()
       expect(tag).toHaveValue('')
+      expect(screen.getByText(/Аккаунт сохранён, но/)).not.toHaveClass('field-error')
+      fireEvent.change(tag, { target: { value: '#P0Y9' } })
+      expect(screen.queryByText(/Аккаунт сохранён, но/)).not.toBeInTheDocument()
     },
   )
 

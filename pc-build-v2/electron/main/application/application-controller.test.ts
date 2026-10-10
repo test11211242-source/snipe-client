@@ -39,7 +39,7 @@ function authenticated(userId: string): AuthView {
 }
 
 describe('ApplicationController user context', () => {
-  it.each(['ready', 'logout', 'switch', 'disk-retry'])(
+  it.each(['ready', 'logout', 'switch', 'disk-retry', 'refresh'])(
     'fences a real deferred widget load before renderer status: %s',
     async (mode) => {
       let release!: () => void
@@ -110,7 +110,10 @@ describe('ApplicationController user context', () => {
         syncWindows: (view: AuthView) => Promise<void>
         queueWindowSync: (view: AuthView) => void
       }
-      const start = internal.syncWindows(authenticated('A'))
+      const start =
+        mode === 'refresh'
+          ? Promise.resolve(internal.queueWindowSync(authenticated('A')))
+          : internal.syncWindows(authenticated('A'))
       await vi.waitFor(() => expect(repository.load).toHaveBeenCalled())
       expect(windows.ensureMainWindow).not.toHaveBeenCalled()
       if (mode === 'logout' || mode === 'switch') {
@@ -119,6 +122,10 @@ describe('ApplicationController user context', () => {
             ? { state: 'UNAUTHENTICATED', user: null, error: null }
             : authenticated('B'),
         )
+      }
+      if (mode === 'refresh') {
+        internal.queueWindowSync(authenticated('A'))
+        internal.queueWindowSync(authenticated('A'))
       }
       release()
       await start

@@ -108,7 +108,8 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
     setError(null)
     try {
       const nextView = await operation()
-      if (!mounted.current || generation !== viewGeneration.current) return null
+      if (nextView === null || !mounted.current || generation !== viewGeneration.current)
+        return null
       setView(nextView)
       return nextView
     } catch (cause) {

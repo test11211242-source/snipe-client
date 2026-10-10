@@ -1,3 +1,4 @@
+import { MONITOR_ERROR_MESSAGES } from '../../../shared/errors/monitor-error-messages'
 import type { AuthState, UserRole } from '../../../shared/models/auth'
 import type { RealtimeStatus } from '../../../shared/models/network'
 import type { UpdateState } from '../../../shared/models/update'
@@ -51,35 +52,10 @@ export function formatDeckCount(count: number): string {
 }
 
 export function publicErrorMessage(code: string, fallback: string): string {
+  const monitorMessage = MONITOR_ERROR_MESSAGES[code]
+  if (monitorMessage !== undefined) return monitorMessage
   const messages: Readonly<Record<string, string>> = {
     AUTH_REQUIRED: 'Требуется повторный вход в профиль.',
-    SOURCE_NOT_FOUND: 'Сохранённый источник захвата не найден.',
-    SOURCE_AMBIGUOUS:
-      'Найдено несколько подходящих источников. Выберите источник заново.',
-    CAPTURE_SOURCE_CLOSED: 'Источник захвата был закрыт.',
-    CAPTURE_START_FAILED: 'Не удалось запустить захват выбранного источника.',
-    CAPTURE_NO_FRAME: 'Источник захвата не передал ни одного кадра.',
-    CAPTURE_FRAME_INVALID: 'Источник передал некорректный кадр.',
-    CAPTURE_GEOMETRY_CHANGED: 'Размеры источника изменились. Настройте захват заново.',
-    MONITOR_INTERNAL_FAILED: 'Внутренняя ошибка локального мониторинга.',
-    MONITOR_FRAME_FAILED: 'Не удалось обработать кадр источника.',
-    MONITOR_PROTOCOL_INVALID: 'Локальный процесс передал некорректные данные.',
-    MONITOR_EXITED_EARLY: 'Мониторинг завершился до готовности источника.',
-    SOURCE_METADATA_UNAVAILABLE:
-      'Не удалось проверить метаданные источника. Повторите попытку.',
-    MONITOR_START_FAILED: 'Не удалось запустить локальный мониторинг.',
-    MONITOR_READY_TIMEOUT: 'Источник захвата не ответил вовремя.',
-    MONITOR_PROCESS_EXITED: 'Локальный процесс мониторинга неожиданно завершился.',
-    MONITOR_FAILED: 'Не удалось запустить локальный мониторинг.',
-    MONITOR_PROCESS_OWNED: 'Мониторинг уже запущен.',
-    MONITOR_START_CANCELLED: 'Запуск мониторинга отменён.',
-    MONITOR_STOP_TIMEOUT: 'Процесс мониторинга не остановился вовремя.',
-    MONITOR_ACTION_INVALID: 'Мониторинг передал некорректное изображение.',
-    MONITOR_DUPLICATE_READY: 'Процесс мониторинга повторно сообщил о готовности.',
-    MONITOR_PROTOCOL_ORDER: 'Нарушен порядок сообщений локального мониторинга.',
-    MONITOR_PROTOCOL_SEQUENCE: 'Нарушена последовательность сообщений мониторинга.',
-    MONITOR_PROTOCOL_OVERSIZED:
-      'Процесс мониторинга превысил допустимый размер сообщения.',
     RUNTIME_INTEGRITY_FAILED:
       'Компоненты локального мониторинга повреждены. Обновите или переустановите приложение.',
     REQUEST_TIMEOUT: 'Сервис не ответил вовремя. Повторите операцию.',

@@ -5,7 +5,10 @@ import type {
   StreamTitlePreview,
   StreamTitleSettings,
 } from '../../../../shared/models/streamer'
-import { MAX_STREAMER_ACCOUNTS } from '../../../../shared/models/streamer'
+import {
+  GAME_ACCOUNT_TAG_PATTERN,
+  MAX_STREAMER_ACCOUNTS,
+} from '../../../../shared/models/streamer'
 import { Button, Status } from '../ui'
 import {
   ConfirmedButton,
@@ -18,7 +21,6 @@ import { AccountManager } from './AccountManager'
 import { useDraft } from './state'
 import type { StreamerRunner } from './types'
 
-const TAG_PATTERN = /^#?[0289PYLQGRJCUV]+$/i
 const TEMPLATE_TOKENS = [
   ['{rank}', 'место'],
   ['{elo}', 'ELO или лига'],
@@ -63,7 +65,7 @@ export function TitleTab({
   const selectedManualTag = settings.manualAccountTag.replace('#', '').toUpperCase()
   const manualTagInvalid =
     settings.accountDisplayMode === 'manual' &&
-    (!TAG_PATTERN.test(settings.manualAccountTag.trim()) ||
+    (!GAME_ACCOUNT_TAG_PATTERN.test(settings.manualAccountTag.trim()) ||
       !enabledAccounts.some(
         (account) => account.tag.replace('#', '').toUpperCase() === selectedManualTag,
       ))

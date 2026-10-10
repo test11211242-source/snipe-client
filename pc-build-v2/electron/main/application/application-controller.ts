@@ -38,6 +38,7 @@ export class ApplicationController {
   #windowSync: Promise<void> = Promise.resolve()
   #activeUserId: string | null = null
   #authGeneration = 0
+  #requestedUserId: string | null | undefined
 
   constructor(
     private readonly electronApp: App,
@@ -167,7 +168,7 @@ export class ApplicationController {
     this.electronApp.on('second-instance', () => this.windows.focusActiveWindow())
     this.electronApp.on('activate', () => {
       if (this.lifecycle.state === 'READY') {
-        this.queueWindowSync(this.auth.getView())
+        this.queueWindowSync(this.auth.getView(), true)
       } else {
         void this.windows.ensureAuthWindow()
       }
@@ -183,7 +184,11 @@ export class ApplicationController {
     })
   }
 
-  private queueWindowSync(view: AuthView): void {
+  private queueWindowSync(view: AuthView, force = false): void {
+    const requestedUserId = view.state === 'AUTHENTICATED' ? view.user?.id : null
+    if (!force && requestedUserId != null && requestedUserId === this.#requestedUserId)
+      return
+    this.#requestedUserId = requestedUserId
     const generation = ++this.#authGeneration
     this.#windowSync = this.#windowSync
       .then(async () => {
