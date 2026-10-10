@@ -668,6 +668,9 @@ export function CapturePage({
                     {profile.isActive && <span>Активный</span>}
                   </div>
                   <small title={profile.sourceLabel}>{profile.sourceLabel}</small>
+                  {profile.sourceHealth.reason === 'SOURCE_REBIND_REQUIRED' && (
+                    <small>Требуется перепривязка источника</small>
+                  )}
                 </div>
                 <div className="capture-profile-actions">
                   {!profile.isActive && (

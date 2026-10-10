@@ -55,7 +55,9 @@ export function HomePage({
     ['PREFLIGHT', 'STARTING', 'READY', 'WAITING_SOURCE', 'STOPPING'].includes(
       monitorState,
     )
-  const sourceUnavailable = monitorView?.readiness.sourceAvailable === false
+  const sourceUnavailable =
+    monitorView?.readiness.sourceAvailable === false ||
+    monitorView?.error?.code === 'SOURCE_REBIND_REQUIRED'
   const activeProfile = profiles?.profiles.find((profile) => profile.isActive) ?? null
   const canStart = authenticated && configured && !active && !commandBusy
   const canStop = active && monitorState !== 'STOPPING' && !commandBusy
@@ -425,6 +427,16 @@ function getHomePresentation(
       title: 'Выберите источник захвата',
       description: 'Укажите окно Clash Royale или монитор перед запуском распознавания.',
       action: 'Выбрать источник',
+      tone: 'warning',
+    }
+  }
+  if (view.error?.code === 'SOURCE_REBIND_REQUIRED') {
+    return {
+      kicker: 'Требуется настройка',
+      title: 'Требуется перепривязка источника',
+      description:
+        'Выберите окно игры заново, чтобы сохранить проверяемую идентичность приложения, затем проверьте зоны захвата.',
+      action: 'Перепривязать источник',
       tone: 'warning',
     }
   }

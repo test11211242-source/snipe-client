@@ -105,4 +105,39 @@ export class CaptureTargetResolver {
       ),
     }
   }
+
+  async resolveProfiles(
+    profileIds: readonly string[],
+  ): Promise<ReadonlyMap<string, ApplicationError | null>> {
+    const user = this.auth.getView().user
+    if (user === null)
+      throw new ApplicationError('AUTH_REQUIRED', 'Sign in to inspect capture sources')
+    const profiles = await Promise.all(
+      profileIds.map((profileId) => this.repository.get(user.id, profileId)),
+    )
+    const present = profiles.filter((profile) => profile !== null)
+    const outcomes = await this.registry.resolvePreferences(
+      present.map((profile) => profile.configuration.sourceBinding.identity),
+    )
+    const health = new Map<string, ApplicationError | null>()
+    profileIds.forEach((profileId, index) => {
+      if (profiles[index] === null)
+        health.set(
+          profileId,
+          new ApplicationError(
+            'CAPTURE_PROFILE_NOT_FOUND',
+            'Capture profile no longer exists',
+          ),
+        )
+    })
+    outcomes.forEach((outcome, index) => {
+      const profile = present[index]
+      if (profile !== undefined)
+        health.set(
+          profile.profileId,
+          outcome instanceof ApplicationError ? outcome : null,
+        )
+    })
+    return health
+  }
 }

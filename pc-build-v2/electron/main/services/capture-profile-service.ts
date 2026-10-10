@@ -59,12 +59,15 @@ export class CaptureProfileService {
     if (user === null) return CaptureProfilesViewSchema.parse(this.emptyView())
     const status = await this.repository.list(user.id)
     if (status !== null) {
+      const sourceHealth = await this.targetResolver.resolveProfiles(
+        status.profiles.map((profile) => profile.profileId),
+      )
       await Promise.all(
         status.profiles.map(async (profile) => {
-          try {
-            await this.targetResolver.resolveProfile(profile.profileId)
+          const error = sourceHealth.get(profile.profileId)
+          if (error === null) {
             profile.sourceHealth = { state: 'available', reason: null }
-          } catch (error) {
+          } else {
             const code =
               error instanceof ApplicationError
                 ? error.code
@@ -78,6 +81,8 @@ export class CaptureProfileService {
                     : 'metadata_unavailable',
               reason: code,
             }
+            if (code === 'SOURCE_REBIND_REQUIRED')
+              profile.calibrationHealth = 'needs_validation'
           }
           const result = await this.resultRepository?.load(user.id, profile.profileId)
           profile.resultConfigured =

@@ -661,21 +661,24 @@ export class CaptureConfigurationRepository {
         const legacy = profile.configuration
         if (legacy.userId !== userId)
           throw new Error('Legacy capture profile user does not match')
+        const calibration = createLayoutCalibration(
+          profile.profileId,
+          legacy.revision,
+          legacy.frameSize,
+          legacy.regions,
+          legacy.triggerProfile,
+          legacy.committedAt,
+          'imported',
+        )
+        if (legacy.source.kind === 'window' && legacy.source.executableLabel === null)
+          calibration.validationStatus = 'needs_validation'
         const configuration = signConfiguration({
           schemaVersion: 2,
           userId,
           revision: legacy.revision,
           committedAt: legacy.committedAt,
           sourceBinding: { identity: legacy.source, lastVerifiedAt: null },
-          calibration: createLayoutCalibration(
-            profile.profileId,
-            legacy.revision,
-            legacy.frameSize,
-            legacy.regions,
-            legacy.triggerProfile,
-            legacy.committedAt,
-            'imported',
-          ),
+          calibration,
         })
         return { ...profile, configuration }
       })

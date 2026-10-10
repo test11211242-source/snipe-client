@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreviewPayload } from '../../../shared/contracts/capture-ipc'
 import type { MonitorView } from '../../../shared/models/monitor'
 import { SetupSessionViewSchema } from '../../../shared/models/setup'
+import { CaptureProfileSummarySchema } from '../../../shared/models/capture'
+import type { CaptureProfileSummary } from '../../../shared/models/capture'
 import { App } from './App'
 
 function deferred<T>() {
@@ -17,6 +19,26 @@ function deferred<T>() {
 }
 
 let pushedMonitorView: ((view: MonitorView) => void) | null = null
+
+function profileSummary(
+  identity: Pick<
+    CaptureProfileSummary,
+    'profileId' | 'profileName' | 'isActive' | 'sourceLabel'
+  >,
+): CaptureProfileSummary {
+  return CaptureProfileSummarySchema.parse({
+    ...identity,
+    createdAt: '2026-10-02T12:00:00.000Z',
+    updatedAt: '2026-10-02T12:00:00.000Z',
+    committedAt: '2026-10-02T12:00:00.000Z',
+    configurationRevision: 1,
+    configurationFingerprint: 'a'.repeat(64),
+    sourceKind: 'window',
+    sourceHealth: { state: 'unknown', reason: null },
+    calibrationHealth: 'validated',
+    resultConfigured: false,
+  })
+}
 
 describe('App shell', () => {
   it.each([true, false])(
@@ -341,22 +363,22 @@ describe('App shell', () => {
   })
 
   it('switches the active capture profile from the home page', async () => {
-    const primary = {
+    const primary = profileSummary({
       profileId: '00000000-0000-4000-8000-000000000001',
       profileName: 'Основной',
       isActive: true,
       sourceLabel: 'Emulator 1',
-    }
-    const secondary = {
+    })
+    const secondary = profileSummary({
       profileId: '00000000-0000-4000-8000-000000000002',
       profileName: 'Второй',
       isActive: false,
       sourceLabel: 'Emulator 2',
-    }
+    })
     vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
       revision: 1,
       activeProfileId: primary.profileId,
-      profiles: [primary, secondary] as never,
+      profiles: [primary, secondary],
     })
     const monitor = await window.crTools.getMonitorView()
     vi.mocked(window.crTools.activateCaptureProfile).mockResolvedValue({
@@ -366,7 +388,7 @@ describe('App shell', () => {
         profiles: [
           { ...primary, isActive: false },
           { ...secondary, isActive: true },
-        ] as never,
+        ],
       },
       monitor,
       capture: { configured: true, revision: 1, sourceLabel: 'Emulator 2' },
@@ -386,22 +408,22 @@ describe('App shell', () => {
   })
 
   it('does not let an older focus refresh overwrite a profile mutation snapshot', async () => {
-    const primary = {
+    const primary = profileSummary({
       profileId: '00000000-0000-4000-8000-000000000001',
       profileName: 'Основной',
       isActive: true,
       sourceLabel: 'Emulator 1',
-    }
-    const secondary = {
+    })
+    const secondary = profileSummary({
       profileId: '00000000-0000-4000-8000-000000000002',
       profileName: 'Второй',
       isActive: false,
       sourceLabel: 'Emulator 2',
-    }
+    })
     const staleProfiles = {
       revision: 1,
       activeProfileId: primary.profileId,
-      profiles: [primary, secondary] as never,
+      profiles: [primary, secondary],
     }
     const nextProfiles = {
       revision: 2,
@@ -409,7 +431,7 @@ describe('App shell', () => {
       profiles: [
         { ...primary, isActive: false },
         { ...secondary, isActive: true },
-      ] as never,
+      ],
     }
     vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue(staleProfiles)
     const monitor = await window.crTools.getMonitorView()
@@ -706,12 +728,12 @@ describe('App shell', () => {
   })
 
   it('duplicates a profile and enters source rebinding without browser prompts', async () => {
-    const primary = {
+    const primary = profileSummary({
       profileId: '00000000-0000-4000-8000-000000000001',
       profileName: 'Основной',
       isActive: true,
       sourceLabel: 'BlueStacks 1',
-    }
+    })
     const duplicate = {
       ...primary,
       profileId: '00000000-0000-4000-8000-000000000002',
@@ -722,14 +744,14 @@ describe('App shell', () => {
     vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
       revision: 1,
       activeProfileId: primary.profileId,
-      profiles: [primary] as never,
+      profiles: [primary],
     })
     const monitor = await window.crTools.getMonitorView()
     vi.mocked(window.crTools.duplicateCaptureProfile).mockResolvedValue({
       profiles: {
         revision: 2,
         activeProfileId: primary.profileId,
-        profiles: [primary, duplicate] as never,
+        profiles: [primary, duplicate],
       },
       monitor,
       capture: { configured: true, revision: 1, sourceLabel: 'BlueStacks 1' },
@@ -1207,5 +1229,53 @@ describe('App shell', () => {
         'Служба захвата не запустилась. Повторите выбор источника.',
       ),
     ).toBeVisible()
+  })
+  it('review regression #3 presents missing executable identity as rebind required', async () => {
+    vi.mocked(window.crTools.getCaptureProfiles).mockResolvedValue({
+      revision: 1,
+      activeProfileId: '00000000-0000-4000-8000-000000000001',
+      profiles: [
+        {
+          profileId: '00000000-0000-4000-8000-000000000001',
+          profileName: 'Imported',
+          isActive: true,
+          sourceLabel: 'Game',
+          configurationRevision: 1,
+          configurationFingerprint: 'a'.repeat(64),
+          sourceKind: 'window',
+          createdAt: '2026-10-02T12:00:00.000Z',
+          updatedAt: '2026-10-02T12:00:00.000Z',
+          committedAt: '2026-10-02T12:00:00.000Z',
+          sourceHealth: {
+            state: 'metadata_unavailable',
+            reason: 'SOURCE_REBIND_REQUIRED',
+          },
+          calibrationHealth: 'needs_validation',
+          resultConfigured: false,
+        },
+      ],
+    })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Захват' }))
+    expect(await screen.findByText('Требуется перепривязка источника')).toBeVisible()
+    expect(screen.queryByText('Ждём окно игры…')).not.toBeInTheDocument()
+  })
+  it('review regression #3 routes the failed monitor rebind action to capture instead of waiting or retrying', async () => {
+    const base = await window.crTools.getMonitorView()
+    vi.mocked(window.crTools.getMonitorView).mockResolvedValue({
+      ...base,
+      state: 'FAILED',
+      runIntent: false,
+      readiness: { ...base.readiness, captureConfigured: true, sourceAvailable: false },
+      error: { code: 'SOURCE_REBIND_REQUIRED', message: 'Identity missing' },
+    })
+    render(<App />)
+    expect(
+      await screen.findByRole('heading', { name: 'Требуется перепривязка источника' }),
+    ).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Перепривязать источник' }))
+    expect(await screen.findByRole('button', { name: 'Добавить профиль' })).toBeVisible()
+    expect(window.crTools.startMonitor).not.toHaveBeenCalled()
+    expect(screen.queryByText('Ждём окно игры…')).not.toBeInTheDocument()
   })
 })

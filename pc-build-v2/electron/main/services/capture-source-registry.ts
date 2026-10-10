@@ -345,13 +345,83 @@ export class CaptureSourceRegistry {
   }
 
   async resolvePreference(preference: CapturePreference): Promise<SetupCaptureSelector> {
+    if (preference.kind === 'window' && preference.executableLabel === null)
+      throw new ApplicationError(
+        'SOURCE_REBIND_REQUIRED',
+        'Choose the window again to save its executable identity',
+      )
     const [sources, displays] = await Promise.all([
       this.provider.enumerate({ width: 0, height: 0 }),
       preference.kind === 'display' ? this.provider.displays() : Promise.resolve([]),
     ])
+    return this.matchPreference(
+      preference,
+      sources,
+      displays,
+      this.provider.ownWindowHandles(),
+      true,
+    )
+  }
 
+  async resolvePreferences(
+    preferences: readonly CapturePreference[],
+  ): Promise<readonly (SetupCaptureSelector | ApplicationError)[]> {
+    if (preferences.length === 0) return []
+    const [enumeration, displayList] = await Promise.allSettled([
+      this.provider.enumerate({ width: 0, height: 0 }),
+      preferences.some((preference) => preference.kind === 'display')
+        ? this.provider.displays()
+        : Promise.resolve([]),
+    ])
+    const sources = enumeration.status === 'fulfilled' ? enumeration.value : []
+    const displays = displayList.status === 'fulfilled' ? displayList.value : []
+    const enumerationError =
+      enumeration.status === 'rejected' ? this.metadataError(enumeration.reason) : null
+    const displayError =
+      displayList.status === 'rejected' ? this.metadataError(displayList.reason) : null
+    const ownHandles = this.provider.ownWindowHandles()
+    return Promise.all(
+      preferences.map(async (preference) => {
+        if (preference.kind === 'window' && preference.executableLabel === null)
+          return new ApplicationError(
+            'SOURCE_REBIND_REQUIRED',
+            'Choose the window again to save its executable identity',
+          )
+        if (enumerationError !== null) return enumerationError
+        if (preference.kind === 'display' && displayError !== null) return displayError
+        try {
+          // Profile health uses this one snapshot, without spawning per-window metadata probes.
+          return await this.matchPreference(
+            preference,
+            sources,
+            displays,
+            ownHandles,
+            false,
+          )
+        } catch (error) {
+          return this.metadataError(error)
+        }
+      }),
+    )
+  }
+
+  private metadataError(error: unknown): ApplicationError {
+    return error instanceof ApplicationError
+      ? error
+      : new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Source identity is unavailable',
+        )
+  }
+
+  private async matchPreference(
+    preference: CapturePreference,
+    sources: readonly ElectronCaptureSource[],
+    displays: readonly ElectronDisplayInfo[],
+    ownHandles: ReadonlySet<string>,
+    recheckUnverifiableWindow: boolean,
+  ): Promise<SetupCaptureSelector> {
     if (preference.kind === 'window') {
-      const ownHandles = this.provider.ownWindowHandles()
       const unverifiable = sources.find(
         (source) =>
           source.metadataAvailable === false &&
@@ -363,7 +433,11 @@ export class CaptureSourceRegistry {
       )
       if (unverifiable !== undefined) {
         const hwnd = parseElectronWindowHandle(unverifiable.id)
-        if (hwnd !== null && this.provider.resolveWindow !== undefined) {
+        if (
+          recheckUnverifiableWindow &&
+          hwnd !== null &&
+          this.provider.resolveWindow !== undefined
+        ) {
           const current = await this.provider.resolveWindow(hwnd)
           if (current === undefined)
             throw new ApplicationError('SOURCE_NOT_FOUND', 'The configured window closed')

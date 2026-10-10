@@ -233,7 +233,7 @@ describe('CaptureConfigurationRepository migration', () => {
       calibration: {
         nicknameRegion: legacyConfiguration(userId).regions.normal,
         topLeftEvidenceRegion: legacyConfiguration(userId).regions.precise,
-        validationStatus: 'imported',
+        validationStatus: 'needs_validation',
       },
     })
 
@@ -255,7 +255,7 @@ describe('CaptureConfigurationRepository migration', () => {
 
     await expect(target.load(userId)).resolves.toMatchObject({
       sourceBinding: { identity: legacyConfiguration(userId).source },
-      calibration: { validationStatus: 'imported' },
+      calibration: { validationStatus: 'needs_validation' },
     })
     expect(files.get(legacyPath('/legacy', userId))).toBe(legacy)
     expect(files.has(profilePath('/profiles', userId))).toBe(true)
@@ -572,7 +572,7 @@ describe('capture-profiles.v3 to v4 migration', () => {
               triggerProfile: previous.configuration.triggerProfile,
               expectedLayout: null,
               gameViewport: null,
-              validationStatus: 'imported',
+              validationStatus: 'needs_validation',
               provenance: { nickname: { origin: 'imported', confidence: null } },
             },
           },
@@ -638,5 +638,19 @@ describe('capture-profiles.v3 to v4 migration', () => {
     expect(files.get(profilePath('/v4', 'user'))).toBe(
       JSON.stringify({ schemaVersion: 99 }),
     )
+  })
+})
+
+describe('review regression migrated source identity', () => {
+  it('#3 flags imported profiles without executable identity for validation', async () => {
+    const old = legacyCollection('user', 1)
+    const { fs } = memoryFileSystem(
+      new Map([[legacyProfilePath('/v3', 'user'), JSON.stringify(old)]]),
+    )
+    const target = repository('/v4', fs, '/v3')
+    const migrated = required(
+      await target.get('user', required(old.profiles[0]).profileId),
+    )
+    expect(migrated.configuration.calibration.validationStatus).toBe('needs_validation')
   })
 })

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CaptureProfileCollectionStatus } from '../../../shared/models/capture'
+import { ApplicationError } from '../../../shared/errors/application-error'
 import { CaptureProfileService } from './capture-profile-service'
 
 const PRIMARY_ID = '00000000-0000-4000-8000-000000000001'
@@ -94,7 +95,15 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     restartIfActive: vi.fn().mockResolvedValue(monitorView),
     invalidateCaptureTarget: vi.fn().mockReturnValue(monitorView),
   }
-  const targetResolver = { resolveProfile: vi.fn().mockResolvedValue({}) }
+  const targetResolver = {
+    resolveProfile: vi.fn().mockResolvedValue({}),
+    resolveProfiles: vi.fn().mockResolvedValue(
+      new Map([
+        [PRIMARY_ID, null],
+        [SECONDARY_ID, null],
+      ]),
+    ),
+  }
   const service = new CaptureProfileService(
     {
       getView: () => ({ user: { id: userId } }),
@@ -231,5 +240,35 @@ describe('CaptureProfileService', () => {
       ),
     ).rejects.toMatchObject({ code: 'CAPTURE_PROFILE_GEOMETRY_MISMATCH' })
     expect(repository.rebind).not.toHaveBeenCalled()
+  })
+})
+
+describe('review regression profile source projection', () => {
+  it('#8 uses one batched source snapshot rather than resolving each profile', async () => {
+    const test = harness()
+    await test.service.getView()
+    expect(test.targetResolver.resolveProfiles).toHaveBeenCalledExactlyOnceWith([
+      PRIMARY_ID,
+      SECONDARY_ID,
+    ])
+    expect(test.targetResolver.resolveProfile).not.toHaveBeenCalled()
+  })
+})
+
+describe('review regression rebind-required profile health', () => {
+  it('#3 projects missing identity as metadata_unavailable and needs_validation', async () => {
+    const test = harness()
+    test.targetResolver.resolveProfiles.mockResolvedValue(
+      new Map<string, ApplicationError | null>([
+        [PRIMARY_ID, new ApplicationError('SOURCE_REBIND_REQUIRED', 'Identity missing')],
+        [SECONDARY_ID, null],
+      ]),
+    )
+    const view = await test.service.getView()
+    expect(view.profiles[0]).toMatchObject({
+      sourceHealth: { state: 'metadata_unavailable', reason: 'SOURCE_REBIND_REQUIRED' },
+      calibrationHealth: 'needs_validation',
+    })
+    expect(view.profiles[1]).toMatchObject({ sourceHealth: { state: 'available' } })
   })
 })
