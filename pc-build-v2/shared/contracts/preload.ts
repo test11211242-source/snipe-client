@@ -122,6 +122,7 @@ export interface CrToolsApi {
   getWidgetStatus: () => Promise<WidgetStatus>
   showWidget: () => Promise<WidgetStatus>
   toggleWidget: () => Promise<WidgetStatus>
+  getCardAsset: (request: CardAssetRequest) => Promise<CardAssetResult>
   updateWidgetSettings: (patch: WidgetSettingsPatch) => Promise<WidgetSettings>
   getStreamerView: () => Promise<StreamerView>
   refreshStreamer: () => Promise<StreamerView>

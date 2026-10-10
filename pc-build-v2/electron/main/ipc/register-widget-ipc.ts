@@ -60,6 +60,11 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
     EmptyWidgetPayloadSchema.parse(rawPayload)
     return WidgetStatusResultSchema.parse(await dependencies.widget.toggle())
   })
+  ipcMain.handle(MAIN_WIDGET_IPC_CHANNELS.getCardAsset, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const request = CardAssetRequestSchema.parse(rawPayload)
+    return CardAssetResultSchema.parse(await dependencies.images.getCardAsset(request))
+  })
   ipcMain.handle(MAIN_WIDGET_IPC_CHANNELS.updateSettings, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const settings = WidgetSettingsPatchPayloadSchema.parse(rawPayload)

@@ -72,6 +72,8 @@ import {
   MonitorHistoryResultSchema,
 } from '../../shared/contracts/monitor-ipc'
 import {
+  CardAssetRequestSchema,
+  CardAssetResultSchema,
   EmptyWidgetPayloadSchema,
   MAIN_WIDGET_IPC_CHANNELS,
   WidgetSettingsPatchPayloadSchema,
@@ -407,6 +409,12 @@ const api: CrToolsApi = Object.freeze<CrToolsApi>({
         EmptyWidgetPayloadSchema.parse({}),
       ),
     ),
+  getCardAsset: async (rawRequest: unknown) => {
+    const request = CardAssetRequestSchema.parse(rawRequest)
+    return CardAssetResultSchema.parse(
+      await ipcRenderer.invoke(MAIN_WIDGET_IPC_CHANNELS.getCardAsset, request),
+    )
+  },
   updateWidgetSettings: async (rawPayload: unknown) => {
     const payload = WidgetSettingsPatchPayloadSchema.parse(rawPayload)
     return WidgetSettingsResultSchema.parse(
