@@ -62,17 +62,24 @@ generic IPC, or generic settings API. Auth and main windows expose separate narr
 preload APIs. Every call is runtime-validated on both sides, and main verifies the
 sender WebContents ID and renderer URL through the one window registry.
 
-Settings use strict Zod schemas, contain no secrets, and are written atomically to
-`userData/settings.v1.json`. The pure defaults and migration helpers and the file
-system boundary make the repository testable.
+Settings use strict Zod schemas and atomic `userData/settings.v2.json` writes.
+The v1 settings file remains rollback input. Defaults enable automatic monitoring,
+close-to-tray and opponent notifications; Windows login startup and diagnostics stay
+disabled. Typed patches are serialized so concurrent updates do not replace unrelated
+fields. Login-item launches carry `--launch-in-tray`; ordinary launches show main.
+The native tray offers status, start/stop, profile switching, overlay show/lock,
+restore and Exit. User close hides the window while monitoring continues; Exit,
+updates and Windows session shutdown bypass hiding. Main bounds/maximized state use
+the separate `userData/main-window-bounds.v1.json` file.
 
 Local widget settings are strict per-user atomic files under
-`userData/widget-settings.v2/`. Defaults enable auto-open and always-on-top, leave the
-window movable, and open the V1-style full layout at `420x360`. The compact layout uses
-`360x300`; both remain freely resizable between the bounded Windows limits. Position and
-size are saved after user move/resize events.
-Valid legacy `compactMode` settings are migrated; malformed or out-of-range files are
-quarantined before defaults are loaded.
+`userData/widget-settings.v3/`, importing v2 without deleting it. Defaults enable
+auto-open and always-on-top and use normal width 360. Compact mode starts at width 520
+and restores the saved normal width on exit. Width-derived scale is
+`clamp(width/360, 0.86, 1.5)`, never an independently persisted value. Compact minimum
+width is 440; minimum height is 80 rather than the obsolete 280. Native bounds are
+clamped to current work areas, including when a display is smaller than those minima.
+Position and size are saved after user move/resize events.
 
 M0 service readiness loads the authenticated user's widget settings before opening
 the main renderer. A failed load keeps authentication visible rather than inventing
@@ -80,10 +87,10 @@ settings. Logout/user switches fence pending loads. Monitor stderr is drained as
 rate-limited diagnostic counters and never terminates capture by lifetime volume;
 stdout remains a strict protocol. Metadata helper failures are reported separately
 from absent/ambiguous sources, without relaxing exact identity matching.
-Only helper-wide failures fail the source list. Individual unverifiable windows
-remain disabled; a bound window that closes during metadata lookup is not-found.
-Title-change identity hints/layout validation and automatic source recovery remain
-deferred to M1; M0 intentionally retains exact-title matching.
+Individual unverifiable windows remain disabled; a bound window that closes during
+metadata lookup is not-found. A display-helper failure leaves windows in the picker
+and disables unverifiable displays. Recovery never relaxes exact title/executable
+identity or calibrated fixed-ROI matching.
 
 Sanitized asynchronous diagnostics rotate under `userData/logs` (five files of at
 most 1 MiB each, bounded pending writes). Disk failures do not stop monitoring.
@@ -99,11 +106,18 @@ and can be retried later, distinct from game API outages. Codes, not HTTP status
 identify account causes; raw server responses never reach the old form's messages.
 
 Capture configuration is separate and per server user under
-`userData/capture-profiles.v3/`. It stores normalized regions, compact color-independent
-structural trigger maps, non-sensitive source preference metadata, revision, and
-fingerprint. It never stores screenshots, RGB templates, raw source IDs, HWNDs, tokens,
-or full executable paths. Setup posts a schema-version 2 compatibility projection to
-`/api/user/me/ocr-regions` first, then atomically commits the local configuration.
+`userData/capture-profiles.v4/` (collection schema 3, configuration schema 2).
+It separates private `SourceBinding` identity from `LayoutCalibration`, with semantic
+nickname/evidence/trigger regions, structural templates, revision and fingerprint.
+V3 collection and legacy single-config imports preserve IDs, names, timestamps,
+active profile, geometry and template quality; old files remain untouched. Imports
+have unknown viewport/layout and null whole-layout confidence, not fabricated
+automatic-calibration quality. Prediction result references migrate only from the
+exact validated old profile revision/fingerprint. No migration contacts the server.
+There are no screenshots, RGB templates, tokens or full executable paths on disk.
+A saved HWND is a private binding hint, never a renderer source identifier.
+Setup still posts the schema-version 2 `/api/user/me/ocr-regions` compatibility
+projection before atomically committing the canonical local model.
 
 The production origin is fixed to `https://api.artcsworld.xyz`; realtime uses
 `wss://api.artcsworld.xyz/ws`. The refresh token is encrypted with Electron
@@ -155,22 +169,27 @@ Window capture uses a validated signed-64-bit decimal HWND with `window_hwnd`.
 
 ## Monitor And Results
 
-M4 is implemented. Monitoring never auto-starts. Start performs auth, per-user preference,
-capture-configuration, and exact durable-source preflight before spawning one owned Python
-worker. Saved window preferences require an exact title and, when present, exact executable
-label; zero and duplicate matches fail with actionable errors. Display resolution remains
-fail-closed.
+Monitoring auto-starts once per authenticated user per process launch when an active
+configuration exists and the setting is enabled. Start performs auth, per-user
+preference, calibration and exact durable-source preflight before spawning one owned
+Python worker. Missing/closed/unavailable or ambiguous sources enter `WAITING_SOURCE`
+with run intent retained; bounded 1/2/5/10/15-second resolution backoff can resume only
+the unchanged saved binding/calibration. Unknown executable identity cannot fall back
+by title alone. Explicit Stop, auth change, active profile deletion and Exit cancel
+recovery; ambiguity never selects an arbitrary source.
 
 Monitor preferences are strict per-user atomic files under
-`userData/monitor-preferences.v1/` with `fast`/`pol` defaults. The renderer can read or
-change only search mode and deck mode while stopped. It receives a bounded `MonitorView`;
-tokens, HWNDs, selectors, trigger templates, source images, raw OCR/model responses, and
-unbounded server data never cross the preload boundary.
+`userData/monitor-preferences.v2/` with deck mode `pol` by default. The v1 importer
+keeps deck mode and drops search mode. Deck mode can change while monitoring for the
+next captured attempt; an in-flight attempt and its manual retry keep their original
+parameters. Renderer views contain no tokens, HWNDs, selectors, trigger templates,
+source images or raw OCR/model responses.
 
-The private monitor protocol is JSON-lines protocol version 1. Main sends one validated
-start command and an eventual stop command. Python emits monotonic, session-bound `ready`,
-`action`, `fatal`, and `stopped` events. Action PNG base64 exists only on this private pipe,
-is decoded immediately in main, and is never logged or sent to a renderer. Worker readiness
+The private monitor protocol is JSON-lines version 3. Main sends one validated start
+command and an eventual stop command. Python emits monotonic, session-bound `ready`,
+`triggered`, `action`, prediction, diagnostic, `fatal` and `stopped` events with trigger IDs.
+Action PNG base64 exists only on the private pipe and is decoded immediately in main,
+never logged or sent to a renderer. Worker readiness
 has a 15-second deadline, allowing the worker's 7-second no-frame deadline plus
 an 8-second cold-start margin; stop is graceful first and then uses Windows process-tree
 termination. Stdout lines, stderr diagnostics, image dimensions/bytes, event ordering, and
@@ -181,11 +200,35 @@ bounded edge/orientation correlation with ORB alignment only when the analyzed t
 supports it. Setup also generates a transient V1 grayscale projection using V1's actual
 hex-character aHash distance semantics; it rejects selections without enough luminance
 contrast to be safe in V1. Trigger rectangles are canonicalized to source pixels before
-analysis and persistence. The monitor crops the configured fast or precise source-local
-physical-pixel region and emits a bounded PNG. OCR uses only
+analysis and persistence. The monitor uses the fixed saved trigger ROI and crops the
+nickname region from the same confirmation frame. There is no 2.2-second delay,
+fast/precise runtime branch, whole-frame trigger scan or automatic second search.
+Both calibrated data regions remain available in the canonical model. OCR uses only
 `POST https://api.artcsworld.xyz/api/ocr/process`, a 150-second deadline, owner
 cancellation, and one auth refresh after 401. Player found, player not found, recognition
 failure, service/network failure, and blocked auth remain distinct.
+
+The HTTP compatibility adapter sends `search_mode=fast`. Search progress pushes
+trigger/attempt/profile/calibration IDs and capturing/requesting/completed/failed phase.
+Only retryable, non-auth service failures retain one crop in RAM (maximum 10 MiB,
+120 seconds); manual retry coalesces clicks, uses the original parameters, and counts
+each actual request. New triggers, source loss, Stop, auth changes and expiry release it.
+The old renderer remains supported by the narrow contracts; the new UI consumes these
+views rather than inspecting capture identity or private process state.
+
+Sessions retain their ID through source waiting and safe runtime restarts. Duration
+includes waiting, and Stop/Exit finalizes and flushes a summary once. Repeat counts
+use canonical player tags, never nicknames; the current-session count is independent
+of earlier-today repeat marks. “Today” is the OS-local calendar day across sessions.
+The journal retains at most 2,000 results, 40,000 minimal encounter index entries and
+100 summaries for seven days; the renderer's latest 20 results are only a view cap.
+Re-delivery of a known result/trigger replaces that encounter instead of creating
+another meeting. History storage errors are visible but do not disable capture.
+Private crops/screenshots are never journaled.
+Legacy `ocr_reprocessed` events have no structured server correlation and are kept as
+standalone entries marked `reprocessed`, visible in history and the overlay. They
+never affect session counters, the repeat-encounter index or the session summary.
+No nickname guessing or server changes are used to merge them.
 
 Development source execution uses `python/monitor_engine.py`. Production packages include
 the managed Python runtime and verify its bounded size/SHA-256 inventory before the first
