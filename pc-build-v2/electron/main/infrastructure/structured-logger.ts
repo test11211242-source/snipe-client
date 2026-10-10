@@ -56,7 +56,9 @@ export function redactSensitive(
                 ) &&
                 /^[A-Za-z0-9_:/.-]{1,120}$/.test(item) &&
                 !item.includes('?') &&
-                !item.includes('@')
+                !item.includes('@') &&
+                (!(key === 'path' || key === 'endpoint') ||
+                  /^\/api\/[A-Za-z0-9_/-]+$/.test(item))
               ? item
               : redactSensitive(item, seen, depth + 1),
         ]),
@@ -79,6 +81,8 @@ function defaultWriter(record: LogRecord): void {
 
 export class StructuredLogger {
   #diagnosticsEnabled = false
+  #failedRecords = 0
+  #reportedFailedRecords = 0
 
   constructor(
     private readonly writer: LogWriter = defaultWriter,
@@ -87,6 +91,10 @@ export class StructuredLogger {
       openFolder: () => Promise<boolean>
     },
   ) {}
+
+  get failedRecords(): number {
+    return this.#failedRecords
+  }
 
   async flush(): Promise<void> {
     await this.diagnostics?.flush()
@@ -133,8 +141,18 @@ export class StructuredLogger {
     }
     try {
       if (context !== undefined) record.context = redactSensitive(context)
+      if (this.#failedRecords > this.#reportedFailedRecords) {
+        this.writer({
+          timestamp: record.timestamp,
+          level: 'warn',
+          message: 'Diagnostic writer failures',
+          context: { failedRecords: this.#failedRecords },
+        })
+        this.#reportedFailedRecords = this.#failedRecords
+      }
       this.writer(record)
     } catch {
+      this.#failedRecords = Math.min(Number.MAX_SAFE_INTEGER, this.#failedRecords + 1)
       // Diagnostics must not interrupt capture, IPC or shutdown.
     }
   }

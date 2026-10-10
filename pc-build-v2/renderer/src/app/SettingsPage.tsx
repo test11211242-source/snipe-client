@@ -152,6 +152,19 @@ export function SettingsPage({
     }
   }
 
+  const openLogs = async (): Promise<void> => {
+    setBusy('open-logs')
+    setMutationError(null)
+    try {
+      const result = await window.crTools.openLogFolder()
+      if (!result.opened) setMutationError('Не удалось открыть папку локальных логов.')
+    } catch {
+      setMutationError('Не удалось открыть папку локальных логов.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const controlsDisabled = busy !== null
   const updateTone =
     updateView?.state === 'FAILED'
@@ -305,6 +318,9 @@ export function SettingsPage({
                   void updateApplication({ diagnosticsEnabled })
                 }
               />
+              <Button disabled={controlsDisabled} onClick={() => void openLogs()}>
+                Открыть папку логов
+              </Button>
             </div>
           )}
         </Section>

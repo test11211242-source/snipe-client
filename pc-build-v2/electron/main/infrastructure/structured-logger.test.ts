@@ -3,6 +3,32 @@ import { describe, expect, it } from 'vitest'
 import { StructuredLogger, redactSensitive, type LogRecord } from './structured-logger'
 
 describe('StructuredLogger redaction', () => {
+  it('allows only API endpoints rather than filesystem paths', () => {
+    expect(
+      redactSensitive({ path: 'C:/Users/private/data', endpoint: '/home/private/file' }),
+    ).toEqual({ path: '[REDACTED]', endpoint: '[REDACTED]' })
+    expect(
+      redactSensitive({ path: '/api/auth/me', endpoint: '/api/ocr/process' }),
+    ).toEqual({ path: '/api/auth/me', endpoint: '/api/ocr/process' })
+  })
+
+  it('counts failed writer calls and emits a safe recovery summary', () => {
+    let denied = true
+    const records: LogRecord[] = []
+    const logger = new StructuredLogger((record) => {
+      if (denied) throw new Error('private failure')
+      records.push(record)
+    })
+    logger.warn('safe')
+    expect(logger.failedRecords).toBe(1)
+    denied = false
+    logger.info('recovered')
+    expect(records[0]).toMatchObject({
+      message: 'Diagnostic writer failures',
+      context: { failedRecords: 1 },
+    })
+    expect(records[1]?.message).toBe('recovered')
+  })
   it('drops unsafe error messages, private fields, binary data and nested URL secrets', () => {
     const context: Record<string, unknown> = {
       error: new Error('password=private https://example.com/?token=private'),

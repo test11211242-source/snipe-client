@@ -18,6 +18,21 @@ function deferred<T>() {
 let pushedMonitorView: ((view: MonitorView) => void) | null = null
 
 describe('App shell', () => {
+  it.each([true, false])(
+    'opens the fixed log folder and reports failure safely: %s',
+    async (opened) => {
+      vi.mocked(window.crTools.openLogFolder).mockResolvedValueOnce({ opened })
+      render(<App />)
+      await screen.findAllByText('operator')
+      fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Открыть папку логов' }))
+      await waitFor(() => expect(window.crTools.openLogFolder).toHaveBeenCalledWith())
+      if (!opened)
+        expect(
+          await screen.findByText('Не удалось открыть папку локальных логов.'),
+        ).toBeVisible()
+    },
+  )
   it('records a safe bootstrap capability cause and retries without losing other data', async () => {
     vi.mocked(window.crTools.getWidgetStatus).mockRejectedValueOnce(
       new Error('password=private user@example.com'),
