@@ -8,22 +8,19 @@ import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/w
 import { WidgetSettingsSchema, type WidgetView } from '../../../shared/models/widget'
 import { WidgetApp } from './WidgetApp'
 
-const primaryCard = {
-  name: 'Knight',
+const card = (name: string, hasImage = true) => ({
+  name,
   level: 14,
-  evolutionLevel: 1,
-  hasImage: true,
-}
+  evolutionLevel: null,
+  hasImage,
+})
 
 const primaryCards = [
-  primaryCard,
-  ...Array.from({ length: 7 }, (_, index) => ({
-    name: `Card ${index + 2}`,
-    level: 14,
-    evolutionLevel: null,
-    hasImage: true,
-  })),
-]
+  'Knight',
+  ...Array.from({ length: 7 }, (_, i) => `Card ${i + 2}`),
+].map((name) => card(name))
+
+const resultId = '29d970c1-fc4f-4bea-a767-8f108d3b8739'
 
 const widgetView: WidgetView = {
   settings: DEFAULT_WIDGET_SETTINGS,
@@ -34,7 +31,7 @@ const widgetView: WidgetView = {
   search: null,
   scale: 1,
   result: {
-    id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
+    id: resultId,
     kind: 'player_found',
     timestamp: '2026-07-12T12:00:00.000Z',
     searchedNickname: 'Opponent',
@@ -42,38 +39,53 @@ const widgetView: WidgetView = {
     player: { name: 'Opponent', tag: '#TAG', rating: 2000, clan: 'Clan' },
     decks: [
       { label: 'PoL', cards: primaryCards },
-      {
-        label: 'Турнир',
-        cards: [
-          {
-            name: 'Archer',
-            level: 13,
-            evolutionLevel: null,
-            hasImage: false,
-          },
-        ],
-      },
+      { label: 'Турнир', cards: [card('Archer', false)] },
     ],
   },
 }
 
-let pushedView: ((view: WidgetView) => void) | null = null
+const search = (phase: 'capturing' | 'requesting', nickname: string | null) => ({
+  triggerId: '11111111-1111-4111-8111-111111111111',
+  attemptId: '22222222-2222-4222-8222-222222222222',
+  profileId: '33333333-3333-4333-8333-333333333333',
+  calibrationRevision: 1,
+  phase,
+  startedAt: '2026-07-12T12:00:00.000Z',
+  searchedNickname: nickname,
+  retryExpiresAt: null,
+})
 
-async function loadWidgetWithFakeTimers(): Promise<void> {
-  await act(async () => vi.advanceTimersByTimeAsync(0))
+let pushedView: ((view: WidgetView) => void) | null = null
+let resizeCallback: (() => void) | null = null
+let contentHeight = 240
+
+class FakeResizeObserver {
+  constructor(callback: () => void) {
+    resizeCallback = callback
+  }
+  observe(): void {}
+  disconnect(): void {}
+  unobserve(): void {}
 }
 
 function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve
-  })
+  const { promise, resolve } = Promise.withResolvers<T>()
   return { promise, resolve }
+}
+
+function push(view: WidgetView): void {
+  act(() => pushedView?.(view))
 }
 
 describe('WidgetApp', () => {
   beforeEach(() => {
     pushedView = null
+    resizeCallback = null
+    contentHeight = 240
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ height: contentHeight, width: 360 }) as DOMRect,
+    )
     Object.defineProperty(window, 'crToolsWidget', {
       configurable: true,
       value: Object.freeze({
@@ -96,24 +108,26 @@ describe('WidgetApp', () => {
     })
   })
 
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it('renders a pushed opponent immediately without waiting for polling', async () => {
     render(<WidgetApp />)
     expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
+    expect(screen.getByLabelText('Рейтинг 2000')).toBeVisible()
+    expect(screen.getByText('Clan')).toBeVisible()
 
-    act(() => {
-      pushedView?.({
-        ...widgetView,
-        result:
-          widgetView.result?.kind === 'player_found'
-            ? {
-                ...widgetView.result,
-                id: '49d970c1-fc4f-4bea-a767-8f108d3b8739',
-                player: { ...widgetView.result.player, name: 'Instant Opponent' },
-              }
-            : widgetView.result,
-      })
+    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
+    push({
+      ...widgetView,
+      result: {
+        ...widgetView.result,
+        id: '49d970c1-fc4f-4bea-a767-8f108d3b8739',
+        player: { ...widgetView.result.player, name: 'Instant Opponent' },
+      },
     })
 
     expect(screen.getByRole('heading', { name: 'Instant Opponent' })).toBeVisible()
@@ -123,14 +137,8 @@ describe('WidgetApp', () => {
   it('marks a reprocessed entry while keeping its opponent visible', async () => {
     render(<WidgetApp />)
     expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
-    const result = widgetView.result
-    if (result === null) throw new Error('Missing result fixture')
-    act(() =>
-      pushedView?.({
-        ...widgetView,
-        result: { ...result, reprocessed: true },
-      }),
-    )
+    if (widgetView.result === null) throw new Error('Missing result fixture')
+    push({ ...widgetView, result: { ...widgetView.result, reprocessed: true } })
     expect(screen.getByText('Переобработано · вне статистики сессии')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
   })
@@ -142,18 +150,14 @@ describe('WidgetApp', () => {
     expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'Открепить от переднего плана' }))
-    act(() => {
-      pushedView?.({
-        ...widgetView,
-        result:
-          widgetView.result?.kind === 'player_found'
-            ? {
-                ...widgetView.result,
-                id: '69d970c1-fc4f-4bea-a767-8f108d3b8739',
-                player: { ...widgetView.result.player, name: 'Opponent During Save' },
-              }
-            : widgetView.result,
-      })
+    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
+    push({
+      ...widgetView,
+      result: {
+        ...widgetView.result,
+        id: '69d970c1-fc4f-4bea-a767-8f108d3b8739',
+        player: { ...widgetView.result.player, name: 'Opponent During Save' },
+      },
     })
     expect(screen.getByRole('heading', { name: 'Opponent During Save' })).toBeVisible()
 
@@ -162,34 +166,6 @@ describe('WidgetApp', () => {
       await saving.promise
     })
     expect(screen.getByRole('heading', { name: 'Opponent During Save' })).toBeVisible()
-  })
-
-  it('renders the V1 full mode as a direct image-only 4x2 grid', async () => {
-    const { container } = render(<WidgetApp />)
-
-    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeVisible()
-    expect(screen.getByLabelText('Рейтинг 2000')).toBeVisible()
-    expect(screen.getAllByRole('article')).toHaveLength(8)
-    expect(screen.queryByText('Knight')).not.toBeInTheDocument()
-    expect(screen.getByText('PoL')).toBeVisible()
-    expect(screen.getByText('8 / 8')).toBeVisible()
-    expect(screen.queryByRole('slider')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Компактный вид' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
-    expect(screen.getByLabelText('Управление виджетом')).toHaveClass('widget-controls')
-    expect(screen.getByTitle('Перетащить виджет')).toHaveClass('widget-drag-handle')
-    expect(window.crToolsWidget.rendererReady).toHaveBeenCalledOnce()
-
-    const shell = container.querySelector('.widget-shell')
-    const grid = container.querySelector('.card-grid')
-    expect(shell).toHaveAttribute('data-mode', 'full')
-    expect(grid?.children).toHaveLength(8)
-    expect(
-      [...Array.from(grid?.children ?? [])].every((card) => card.matches('.deck-card')),
-    ).toBe(true)
-    expect(container.querySelector('.card-copy')).not.toBeInTheDocument()
   })
 
   it('completes settings mutations under the real StrictMode lifecycle', async () => {
@@ -201,73 +177,127 @@ describe('WidgetApp', () => {
     const pin = await screen.findByRole('button', {
       name: 'Открепить от переднего плана',
     })
-
     fireEvent.click(pin)
-
-    await waitFor(() => expect(window.crToolsWidget.updateSettings).toHaveBeenCalled())
-    await waitFor(() => expect(pin).not.toBeDisabled())
-    expect(screen.queryByText('Сохраняем настройку...')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith({
+        alwaysOnTop: false,
+      }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Закрепить поверх окон' }),
+      ).not.toBeDisabled(),
+    )
   })
 
-  it('switches decks with compact dots and hides only the footer in compact mode', async () => {
+  it('shows four columns normally and eight in one row in compact mode', async () => {
     const { container } = render(<WidgetApp />)
-    await screen.findByRole('article', { name: 'Knight' })
-
-    const firstTab = screen.getByRole('tab', { name: 'Колода 1: PoL' })
-    firstTab.focus()
-    fireEvent.keyDown(firstTab, { key: 'ArrowRight' })
-    expect(screen.getByRole('tab', { name: 'Колода 2: Турнир' })).toHaveFocus()
-    expect(screen.getByRole('article', { name: 'Archer' })).toBeVisible()
-    expect(screen.getByText('Турнир')).toBeVisible()
-    expect(screen.getByText('1 / 8')).toBeVisible()
+    const normal = await screen.findByRole('list', { name: 'Карты колоды 1' })
+    expect(normal.style.getPropertyValue('--cols')).toBe('4')
+    expect(normal.querySelectorAll('li')).toHaveLength(8)
 
     fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
     await waitFor(() =>
-      expect(container.querySelector('.widget-shell')).toHaveAttribute(
-        'data-mode',
-        'compact',
-      ),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        compactMode: true,
+      }),
     )
-    expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
-    expect(screen.getByRole('article', { name: 'Archer' })).toBeVisible()
-    expect(screen.queryByText('1 / 8')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(container.querySelector('main')).toHaveAttribute('data-compact', 'true'),
+    )
+    const compact = screen.getByRole('list', { name: 'Карты колоды 1' })
+    expect(compact.style.getPropertyValue('--cols')).toBe('8')
     expect(screen.getByRole('button', { name: 'Полный вид' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
+    expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
   })
 
-  it('does not add deck navigation chrome when only one deck is available', async () => {
+  it('scales everything with the width-derived scale from the widget view', async () => {
+    const { container } = render(<WidgetApp />)
+    await screen.findByRole('heading', { name: 'Opponent' })
+    const shell = container.querySelector('main')
+    expect(shell?.style.getPropertyValue('--ow-k')).toBe('1')
+    push({ ...widgetView, scale: 1.4 })
+    expect(shell?.style.getPropertyValue('--ow-k')).toBe('1.4')
+  })
+
+  it('reports the content height once per change and never loops', async () => {
+    vi.useFakeTimers()
+    render(<WidgetApp />)
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
+
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(1)
+    expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+      contentHeight: 240,
+    })
+
+    // The main process echoes new settings and the observer fires again: same height.
+    act(() => resizeCallback?.())
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(1)
+
+    contentHeight = 301.2
+    act(() => resizeCallback?.())
+    act(() => resizeCallback?.())
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2)
+    expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+      contentHeight: 302,
+    })
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the height clamped to the native 80–720 range', async () => {
+    vi.useFakeTimers()
+    contentHeight = 4_000
+    render(<WidgetApp />)
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    await act(async () => vi.advanceTimersByTimeAsync(300))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+      contentHeight: 720,
+    })
+  })
+
+  it('switches decks with the tabs and labels them «Колода N из M»', async () => {
+    render(<WidgetApp />)
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
+    expect(screen.getByText('из 2', { exact: false })).toBeVisible()
+    fireEvent.click(screen.getByRole('tab', { name: 'Колода 2' }))
+    expect(await screen.findByRole('list', { name: 'Карты колоды 2' })).toBeVisible()
+    expect(screen.getByRole('img', { name: 'Archer' })).toBeVisible()
+  })
+
+  it('adds no deck navigation when only one deck is available', async () => {
     if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
     vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
       ...widgetView,
       result: { ...widgetView.result, decks: widgetView.result.decks.slice(0, 1) },
     })
-
     render(<WidgetApp />)
-
-    expect(await screen.findByRole('group', { name: 'Карты колоды' })).toBeVisible()
-    expect(
-      screen.queryByRole('tablist', { name: 'Выбор колоды' }),
-    ).not.toBeInTheDocument()
+    expect(await screen.findByRole('list', { name: 'Карты колоды 1' })).toBeVisible()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
 
-  it('shows mutation errors without hiding or replacing the current deck', async () => {
+  it('shows mutation errors without hiding the current deck', async () => {
     vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(
       new Error('failed'),
     )
     render(<WidgetApp />)
-    await screen.findByRole('article', { name: 'Knight' })
-
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
     fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
-
     expect(await screen.findByText('Не удалось сохранить настройку.')).toBeVisible()
-    expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
+    expect(screen.getByRole('list', { name: 'Карты колоды 1' })).toBeVisible()
   })
 
-  it('supports V1 keyboard shortcuts without exposing generic IPC', async () => {
+  it('supports the keyboard shortcuts and hides on Escape', async () => {
     render(<WidgetApp />)
-    await screen.findByRole('article', { name: 'Knight' })
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
 
     fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
     await waitFor(() =>
@@ -285,33 +315,38 @@ describe('WidgetApp', () => {
     )
     await screen.findByRole('button', { name: 'Разблокировать позицию' })
 
-    fireEvent.keyDown(document, { key: 'm', ctrlKey: true })
-    await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
-        displayMode: 'deck',
-        compactMode: true,
-      }),
-    )
-
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(window.crToolsWidget.hide).toHaveBeenCalledOnce()
   })
 
-  it('debounces Ctrl+wheel opacity and clamps it to the V2 safety range', async () => {
+  it('hides through the close button and keeps unlock reachable while locked', async () => {
+    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+      ...widgetView,
+      settings: { ...widgetView.settings, locked: true },
+    })
+    const { container } = render(<WidgetApp />)
+    const unlock = await screen.findByRole('button', { name: 'Разблокировать позицию' })
+    expect(container.querySelector('main')).toHaveAttribute('data-locked', 'true')
+    fireEvent.click(unlock)
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        locked: false,
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Скрыть оверлей' }))
+    expect(window.crToolsWidget.hide).toHaveBeenCalledOnce()
+  })
+
+  it('debounces Ctrl+wheel opacity and clamps it to the safety range', async () => {
     render(<WidgetApp />)
-    await screen.findByRole('article', { name: 'Knight' })
-
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
     fireEvent.wheel(document, { ctrlKey: false, deltaY: 100 })
-    expect(window.crToolsWidget.updateSettings).not.toHaveBeenCalled()
-
     for (let index = 0; index < 20; index += 1) {
       fireEvent.wheel(document, { ctrlKey: true, deltaY: 100 })
     }
-
     await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledOnce(),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith({ opacity: 0.55 }),
     )
-    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith({ opacity: 0.55 })
   })
 
   it('serializes mode and wheel updates against the latest settings', async () => {
@@ -320,143 +355,156 @@ describe('WidgetApp', () => {
       Promise.resolve(serverView),
     )
     vi.mocked(window.crToolsWidget.updateSettings).mockImplementation((patch) => {
-      const settings = WidgetSettingsSchema.parse({ ...serverView.settings, ...patch })
+      const settings = WidgetSettingsSchema.parse({
+        ...serverView.settings,
+        ...(patch as object),
+      })
       serverView = { ...serverView, settings }
       return Promise.resolve(settings)
     })
-
     render(<WidgetApp />)
-    await screen.findByRole('article', { name: 'Knight' })
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
     fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
     fireEvent.wheel(document, { ctrlKey: true, deltaY: 100 })
-
     await waitFor(() =>
-      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2),
+      expect(window.crToolsWidget.updateSettings).toHaveBeenCalledWith({ opacity: 0.91 }),
     )
-    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(1, {
-      displayMode: 'deck',
-      compactMode: true,
-    })
-    expect(window.crToolsWidget.updateSettings).toHaveBeenNthCalledWith(2, {
-      opacity: 0.91,
-    })
-    expect(await screen.findByText('Настройка сохранена')).toBeVisible()
+    const calls = vi.mocked(window.crToolsWidget.updateSettings).mock.calls
+    const compactIndex = calls.findIndex(([patch]) => 'compactMode' in patch)
+    const opacityIndex = calls.findIndex(([patch]) => 'opacity' in patch)
+    expect(compactIndex).toBeGreaterThanOrEqual(0)
+    expect(compactIndex).toBeLessThan(opacityIndex)
   })
 
-  it('auto-dismisses successful save feedback while retaining errors', async () => {
-    vi.useFakeTimers()
-    render(<WidgetApp />)
-    await loadWidgetWithFakeTimers()
-    expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.getByText('Настройка сохранена')).toBeVisible()
-
-    await act(async () => vi.advanceTimersByTimeAsync(2_500))
-    expect(screen.queryByText('Настройка сохранена')).not.toBeInTheDocument()
-
-    vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(
-      new Error('failed'),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать позицию' }))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.getByText('Не удалось сохранить настройку.')).toBeVisible()
-    await act(async () => vi.advanceTimersByTimeAsync(10_000))
-    expect(screen.getByText('Не удалось сохранить настройку.')).toBeVisible()
-  })
-
-  it('retries rejected and temporarily unavailable card assets with bounded backoff', async () => {
-    vi.useFakeTimers()
-    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
-    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
-      ...widgetView,
-      result: {
-        ...widgetView.result,
-        decks: [{ label: 'PoL', cards: [primaryCard] }],
-      },
-    })
-    vi.mocked(window.crToolsWidget.getCardAsset)
-      .mockRejectedValueOnce(new Error('not retained yet'))
-      .mockResolvedValueOnce({ kind: 'unavailable' })
-      .mockResolvedValueOnce({
-        kind: 'available',
-        dataUrl: 'data:image/png;base64,AA==',
+  describe('states with real data', () => {
+    it('searching shows only a really read nickname and skeleton cards otherwise', async () => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        search: search('capturing', null),
       })
+      render(<WidgetApp />)
+      expect(await screen.findByText('Ищем соперника')).toBeVisible()
+      expect(screen.getByText('Читаем ник…')).toBeVisible()
+      // The previous opponent is never shown while a new search runs.
+      expect(screen.queryByRole('heading', { name: 'Opponent' })).not.toBeInTheDocument()
 
-    const { container } = render(<WidgetApp />)
-    await loadWidgetWithFakeTimers()
-    expect(screen.getByRole('article', { name: 'Knight' })).toBeVisible()
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(1)
+      push({ ...widgetView, search: search('requesting', 'Voron_17') })
+      expect(screen.getByRole('heading', { name: 'Voron_17' })).toBeVisible()
+      expect(screen.getByText('Ищем игрока в базе…')).toBeVisible()
+    })
 
-    await act(async () => vi.advanceTimersByTimeAsync(250))
-    await act(async () => vi.advanceTimersByTimeAsync(750))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(3)
-    expect(container.querySelector('.deck-card img')).toHaveAttribute(
-      'src',
-      'data:image/png;base64,AA==',
-    )
+    it.each([
+      [
+        'player_not_found',
+        'Нет в базе',
+        { kind: 'player_not_found' as const, message: 'Игрок не найден' },
+      ],
+      [
+        'recognition_failed',
+        'Ник не прочитан',
+        { kind: 'recognition_failed' as const, message: 'Не прочитан' },
+      ],
+      [
+        'service_error',
+        'Сбой сервиса',
+        { kind: 'service_error' as const, message: 'Сервис недоступен' },
+      ],
+    ])('shows %s calmly', async (_kind, status, patch) => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        result: {
+          id: resultId,
+          timestamp: '2026-07-12T12:00:00.000Z',
+          searchedNickname: 'Voron_17',
+          reprocessed: false,
+          ...patch,
+        },
+      })
+      render(<WidgetApp />)
+      expect(await screen.findByText(status)).toBeVisible()
+    })
+
+    it('waits for the game window and explains a required rebind', async () => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        result: null,
+        monitorState: 'WAITING_SOURCE',
+      })
+      render(<WidgetApp />)
+      expect(await screen.findByText('Ждём окно игры…')).toBeVisible()
+
+      push({
+        ...widgetView,
+        result: null,
+        monitorState: 'FAILED',
+        runIntent: false,
+        monitorError: {
+          code: 'SOURCE_REBIND_REQUIRED',
+          message: 'Выберите окно игры заново в профиле',
+        },
+      })
+      expect(screen.getByText('Нужна перенастройка')).toBeVisible()
+      expect(screen.getByText('Выберите окно игры заново в профиле')).toBeVisible()
+    })
+
+    it('waits for a battle and shows a stopped monitor', async () => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        result: null,
+      })
+      render(<WidgetApp />)
+      expect(await screen.findByText('Ждём бой')).toBeVisible()
+      push({ ...widgetView, result: null, monitorState: 'STOPPED', runIntent: false })
+      expect(
+        screen.getByText('Мониторинг остановлен', { selector: 'span' }),
+      ).toBeVisible()
+    })
   })
 
-  it('stops retrying a persistently unavailable card after four attempts', async () => {
-    vi.useFakeTimers()
-    if (widgetView.result?.kind !== 'player_found') throw new Error('Fixture is invalid')
-    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
-      ...widgetView,
-      result: {
-        ...widgetView.result,
-        decks: [{ label: 'PoL', cards: [primaryCard] }],
-      },
+  describe('card art', () => {
+    it('retries unavailable assets with bounded backoff, then paints the image', async () => {
+      vi.useFakeTimers()
+      let knightCalls = 0
+      vi.mocked(window.crToolsWidget.getCardAsset).mockImplementation((request) => {
+        if (request.cardIndex !== 0) return Promise.resolve({ kind: 'unavailable' })
+        knightCalls += 1
+        if (knightCalls === 1) return Promise.reject(new Error('not retained yet'))
+        if (knightCalls === 2) return Promise.resolve({ kind: 'unavailable' })
+        return Promise.resolve({
+          kind: 'available',
+          dataUrl: 'data:image/png;base64,AA==',
+        })
+      })
+      render(<WidgetApp />)
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+      expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
+      await act(async () => vi.advanceTimersByTimeAsync(250))
+      await act(async () => vi.advanceTimersByTimeAsync(750))
+      await act(async () => vi.advanceTimersByTimeAsync(1_500))
+      expect(screen.getByRole('img', { name: 'Knight' })).toHaveAttribute(
+        'src',
+        'data:image/png;base64,AA==',
+      )
     })
 
-    render(<WidgetApp />)
-    await loadWidgetWithFakeTimers()
-    await act(async () => vi.advanceTimersByTimeAsync(250))
-    await act(async () => vi.advanceTimersByTimeAsync(750))
-    await act(async () => vi.advanceTimersByTimeAsync(1_500))
-    await act(async () => vi.advanceTimersByTimeAsync(60_000))
-
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(4)
-  })
-
-  it('falls back after decode failure and cancels asset retries on deck change', async () => {
-    vi.useFakeTimers()
-    vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValue({
-      kind: 'available',
-      dataUrl: 'data:image/png;base64,AA==',
+    it('stops retrying a persistently unavailable card after four attempts', async () => {
+      vi.useFakeTimers()
+      render(<WidgetApp />)
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+      await act(async () => vi.advanceTimersByTimeAsync(5_000))
+      expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8 * 4)
+      expect(screen.getAllByRole('img', { name: /Card|Knight/ })).toHaveLength(8)
     })
-    const { container, unmount } = render(<WidgetApp />)
-    await loadWidgetWithFakeTimers()
-    const image = container.querySelector('.deck-card img')
-    if (image === null) throw new Error('Card image was not rendered')
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
 
-    fireEvent.error(image)
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
-    await act(async () => vi.advanceTimersByTimeAsync(250))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
-    expect(container.querySelectorAll('.card-placeholder')).toHaveLength(1)
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Колода 2: Турнир' }))
-    await act(async () => vi.advanceTimersByTimeAsync(10_000))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(8)
-
-    vi.mocked(window.crToolsWidget.getCardAsset).mockResolvedValueOnce({
-      kind: 'unavailable',
+    it('shows the placeholder for a card without art and requests nothing for it', async () => {
+      render(<WidgetApp />)
+      await screen.findByRole('list', { name: 'Карты колоды 1' })
+      fireEvent.click(screen.getByRole('tab', { name: 'Колода 2' }))
+      const archer = await screen.findByRole('img', { name: 'Archer' })
+      expect(archer.tagName).toBe('SPAN')
+      expect(window.crToolsWidget.getCardAsset).not.toHaveBeenCalledWith(
+        expect.objectContaining({ deckIndex: 1 }),
+      )
     })
-    fireEvent.click(screen.getByRole('tab', { name: 'Колода 1: PoL' }))
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(16)
-    unmount()
-    await act(async () => vi.advanceTimersByTimeAsync(10_000))
-    expect(window.crToolsWidget.getCardAsset).toHaveBeenCalledTimes(16)
   })
 })

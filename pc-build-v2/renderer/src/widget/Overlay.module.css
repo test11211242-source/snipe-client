@@ -1,0 +1,149 @@
+/* The overlay window is transparent: the card itself is the surface. */
+:global(html),
+:global(body) {
+  background: transparent;
+  user-select: none;
+}
+
+.shell {
+  --k: var(--ow-k, 1);
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) * var(--k));
+  padding: calc(var(--space-3) * var(--k)) calc(var(--space-4) * var(--k))
+    calc(var(--space-4) * var(--k));
+  border-radius: calc(var(--radius-xl) * var(--k));
+  background: rgb(var(--color-ow-rgb) / 0.94);
+  box-shadow: var(--ring-1);
+  color: var(--color-text);
+  font-size: calc(var(--fs-sm) * var(--k));
+  line-height: var(--lh-base);
+  overflow: hidden;
+}
+.shell[data-pinned='true'] {
+  box-shadow: 0 0 0 1px var(--color-accent-line);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-2) * var(--k));
+  min-width: 0;
+  min-height: calc(var(--control-sm) * var(--k));
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+.shell[data-locked='true'] .top {
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-2) * var(--k));
+  min-width: 0;
+  color: var(--color-text-2);
+  font-size: calc(var(--fs-sm) * var(--k));
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status[data-tone='ok'] {
+  color: var(--color-accent);
+}
+.status[data-tone='warn'] {
+  color: var(--color-warn-ink);
+}
+.status[data-tone='danger'] {
+  color: var(--color-danger-ink);
+}
+.controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+
+.who {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-3) * var(--k));
+  min-width: 0;
+}
+.name {
+  min-width: 0;
+  margin: 0;
+  font-size: calc(var(--fs-xl) * var(--k));
+  font-weight: var(--fw-semi);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * var(--k));
+  flex: none;
+  color: var(--color-text-2);
+  font-size: calc(var(--fs-md) * var(--k));
+  font-variant-numeric: tabular-nums;
+}
+.rating svg {
+  color: var(--color-text-3);
+}
+
+.deck {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: calc(var(--space-2) * var(--k));
+  width: 100%;
+  max-width: calc(var(--cols) * 166px + (var(--cols) - 1) * var(--space-2) * 2);
+  margin: calc(var(--space-1) * var(--k)) auto 0;
+  padding: 0;
+  list-style: none;
+}
+.shell[data-compact='true'] .deck {
+  gap: calc(var(--space-1) * var(--k));
+}
+.deck li {
+  min-width: 0;
+}
+.foot {
+  display: flex;
+  margin-top: calc(var(--space-1) * var(--k));
+}
+.foot > div {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.message {
+  display: grid;
+  gap: calc(var(--space-2) * var(--k));
+  justify-items: center;
+  padding: calc(var(--space-4) * var(--k)) 0 calc(var(--space-2) * var(--k));
+  text-align: center;
+}
+.messageTitle {
+  font-size: calc(var(--fs-lg) * var(--k));
+  white-space: normal;
+}
+.text {
+  margin: 0;
+  color: var(--color-text-2);
+  font-size: calc(var(--fs-sm) * var(--k));
+}
+.notice {
+  margin: 0;
+  color: var(--color-text-3);
+  font-size: calc(var(--fs-xs) * var(--k));
+  text-align: center;
+}
