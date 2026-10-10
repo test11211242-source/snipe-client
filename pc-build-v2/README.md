@@ -66,11 +66,16 @@ Settings use strict Zod schemas and atomic `userData/settings.v2.json` writes.
 The v1 settings file remains rollback input. Defaults enable automatic monitoring,
 close-to-tray and opponent notifications; Windows login startup and diagnostics stay
 disabled. Typed patches are serialized so concurrent updates do not replace unrelated
-fields. Login-item launches carry `--launch-in-tray`; ordinary launches show main.
+fields; explicit undefined values are rejected. Login-item launches carry
+`--launch-in-tray` only through the initial bootstrap, then consume that hidden-start intent.
+Later user-driven logout/login transitions show auth/main; ordinary launches show main.
 The native tray offers status, start/stop, profile switching, overlay show/lock,
 restore and Exit. User close hides the window while monitoring continues; Exit,
 updates and Windows session shutdown bypass hiding. Main bounds/maximized state use
 the separate `userData/main-window-bounds.v1.json` file.
+Saved maximization is deferred until first show for a hidden launch, and an unpositioned
+main window centres on the primary display. `query-session-end` flushes pending
+bounds/journal/log writes without stopping monitoring; only `session-end` commits to shutdown.
 
 Local widget settings are strict per-user atomic files under
 `userData/widget-settings.v3/`, importing v2 without deleting it. Defaults enable
@@ -172,13 +177,17 @@ Window capture uses a validated signed-64-bit decimal HWND with `window_hwnd`.
 ## Monitor And Results
 
 Monitoring auto-starts once per authenticated user per process launch when an active
-configuration exists and the setting is enabled. Start performs auth, per-user
+configuration exists and the setting is enabled. Auto-start is detached, generation-fenced
+and logged independently of auth/window synchronization. Start performs auth, per-user
 preference, calibration and exact durable-source preflight before spawning one owned
 Python worker. Missing/closed/unavailable or ambiguous sources enter `WAITING_SOURCE`
 with run intent retained; bounded 1/2/5/10/15-second resolution backoff can resume only
-the unchanged saved binding/calibration. Unknown executable identity cannot fall back
-by title alone. Explicit Stop, auth change, active profile deletion and Exit cancel
-recovery; ambiguity never selects an arbitrary source.
+the unchanged saved binding/calibration. Unknown executable identity fails with
+`SOURCE_REBIND_REQUIRED`, never title-only recovery or endless source waiting. Such
+imports retain their provenance but need validation; profiles and the old renderer explicitly
+require rebinding. Profile health uses one shared native source/metadata snapshot per view,
+retaining window health if only display metadata fails. Stop, auth change, active profile
+deletion and Exit cancel recovery; ambiguity never selects an arbitrary source.
 
 Monitor preferences are strict per-user atomic files under
 `userData/monitor-preferences.v2/` with deck mode `pol` by default. The v1 importer
@@ -223,9 +232,14 @@ includes waiting, and Stop/Exit finalizes and flushes a summary once. Repeat cou
 use canonical player tags, never nicknames; the current-session count is independent
 of earlier-today repeat marks. “Today” is the OS-local calendar day across sessions.
 The journal retains at most 2,000 results, 40,000 minimal encounter index entries and
-100 summaries for seven days; the renderer's latest 20 results are only a view cap.
+100 summaries for seven OS-local calendar days including today, cut off at midnight six
+dates before today; the renderer's latest 20 results are only a view cap.
 Re-delivery of a known result/trigger replaces that encounter instead of creating
 another meeting. History storage errors are visible but do not disable capture.
+Invalid records are dropped independently on load without rewriting the source. A failed
+non-ENOENT read/root validation blocks disk saves and keeps new records memory-only,
+including on Stop/Exit; the next view/history request retries and merges memory with disk
+after a successful load. Save failures are reported after publishing the result.
 Private crops/screenshots are never journaled.
 Legacy `ocr_reprocessed` events have no structured server correlation and are kept as
 standalone entries marked `reprocessed`, visible in history and the overlay. They
@@ -377,6 +391,9 @@ The existing title endpoint acknowledges settings, not a distinct Twitch applica
 explicit apply returns `unconfirmed` plus `TITLE_APPLICATION_UNCONFIRMED`; the known saved-but-
 Twitch-failed response returns saved success with a warning, while an unrelated gateway failure
 remains an error. Undo uses the existing real server undo operation.
+The allowlisted stable server code `TITLE_SAVED_APPLY_FAILED`, when present, is accepted
+on title settings/enabled/pause; the exact existing localized message remains the fallback.
+The server rollout of that code is a follow-up, not a server change in this client task.
 
 `crTools.h2h.lookup({ requestId, opponentTag, recentLimit })` calls authenticated
 `GET /api/user/me/h2h`. Server statuses `ok`, `none`, `unavailable`, and `no_accounts` remain
@@ -385,9 +402,18 @@ and prevents another request until it expires. Lookups coalesce by canonical tag
 generation, support per-request cancellation, and are cancelled on auth change or main destruction.
 Coverage is only recorded Path of Legends history, not proof that a player exists or has no history.
 No-account and not-found states are never inferred from transport errors.
+The HTTP parser strips additive fields, including nested objects, then projects into strict
+IPC. Real `stale` and `coverage.complete` booleans are preserved. Non-H2H 429 responses
+retain bounded error bodies/messages and attach Retry-After metadata.
 
 Main and widget have only canonical player-tag clipboard commands, not arbitrary clipboard writes.
 Widget settings accept bounded `contentHeight` (80–720), not arbitrary native bounds; normal and
 compact widths remain separately persisted. OBS bearer URLs, JWTs, raw API envelopes, HWNDs, and
 capture selectors never cross these bridges. The existing update view already supplies version,
 release notes, download progress, ready/error state and verified install; no second updater was added.
+
+Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
+the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
+and logs only the error type; it does not invalidate the capture-profile migration. Nickname
+confirmation/action share their trigger UUID, while `prediction_result` has an independent
+event UUID and must not be correlated by it.
