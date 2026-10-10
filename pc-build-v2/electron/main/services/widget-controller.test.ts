@@ -314,4 +314,19 @@ describe('WidgetController', () => {
     expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
     expect(test.windows.close).toHaveBeenCalledWith('widget', 'auth-transition')
   })
+
+  it('persists bounded content height, retains mode widths and coalesces unchanged observer feedback', async () => {
+    const test = harness()
+    await test.controller.start('user')
+    const saved = await test.controller.updateSettings({ contentHeight: 120 })
+    expect(saved.bounds.height).toBe(120)
+    expect(saved).not.toHaveProperty('contentHeight')
+    expect(saved.normalWidth).toBe(DEFAULT_WIDGET_SETTINGS.normalWidth)
+    const saves = test.repository.save.mock.calls.length
+    await test.controller.updateSettings({ contentHeight: 120 })
+    expect(test.repository.save).toHaveBeenCalledTimes(saves)
+    await expect(test.controller.updateSettings({ contentHeight: 79 })).rejects.toThrow()
+    await expect(test.controller.updateSettings({ contentHeight: 721 })).rejects.toThrow()
+    expect(test.windows.applyWidgetSettings).toHaveBeenCalledWith(expect.objectContaining({ bounds: expect.objectContaining({ height: 120 }) }))
+  })
 })

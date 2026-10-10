@@ -178,6 +178,7 @@ export class WidgetController {
     const userId = this.requireUserId()
     const generation = this.#generation
     const patch = WidgetSettingsPatchSchema.parse(rawPatch)
+    const { contentHeight, ...settingsPatch } = patch
     return this.enqueueSettingsMutation(async () => {
       this.assertSession(userId, generation)
       const current = this.requireSettings()
@@ -186,15 +187,17 @@ export class WidgetController {
         ? (patch.compactWidth ?? current.compactWidth)
         : (patch.normalWidth ?? current.normalWidth)
       const modeChanged = compactMode !== current.compactMode
-      const sizeChanged = modeChanged || width !== current.bounds.width
+      const height = contentHeight ?? (modeChanged ? (compactMode ? 160 : 360) : current.bounds.height)
+      const sizeChanged = modeChanged || width !== current.bounds.width || height !== current.bounds.height
+      if (Object.keys(settingsPatch).length === 0 && !sizeChanged) return current
       const settings = WidgetSettingsSchema.parse({
         ...current,
-        ...patch,
+        ...settingsPatch,
         bounds: sizeChanged
           ? {
               ...current.bounds,
               width,
-              height: modeChanged ? (compactMode ? 160 : 360) : current.bounds.height,
+              height,
             }
           : current.bounds,
       })

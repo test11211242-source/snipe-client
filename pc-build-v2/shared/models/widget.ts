@@ -47,6 +47,7 @@ export const WidgetSettingsPatchSchema = WidgetSettingsSchema.pick({
   compactMode: true,
 })
   .partial()
+  .extend({ contentHeight: z.number().int().min(WIDGET_MIN_HEIGHT).max(WIDGET_MAX_HEIGHT).optional() })
   .strict()
   .refine((patch) => Object.values(patch).every((value) => value !== undefined), {
     message: 'Widget setting values cannot be undefined',
