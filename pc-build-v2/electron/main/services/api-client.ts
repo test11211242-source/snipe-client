@@ -215,6 +215,17 @@ export class ApiClient {
         if (value !== undefined) url.searchParams.set(key, String(value))
       }
       const response = await this.fetchImplementation(url.href, init)
+      if ((response.status === 404 && request.path === '/api/user/me/h2h') || response.status === 429) {
+        await response.body?.cancel().catch(() => undefined)
+        const error = statusError(response.status, null)
+        if (response.status === 429) {
+          const raw = response.headers.get('retry-after')
+          const seconds = raw === null ? 1 : Number(raw)
+          error.retryAfterSeconds = Math.min(86400, Math.max(1,
+            Number.isFinite(seconds) ? seconds : (Date.parse(raw ?? '') - Date.now()) / 1000 || 1))
+        }
+        return { ok: false, error }
+      }
 
       const declaredLength = Number(response.headers.get('content-length'))
       if (Number.isFinite(declaredLength) && declaredLength > this.maxJsonBytes) {
