@@ -405,12 +405,18 @@ No-account and not-found states are never inferred from transport errors.
 The HTTP parser strips additive fields, including nested objects, then projects into strict
 IPC. Real `stale` and `coverage.complete` booleans are preserved. Non-H2H 429 responses
 retain bounded error bodies/messages and attach Retry-After metadata.
+Unknown future HTTP `status` or `reasonCode` strings normalize to `unavailable` with the
+allowlisted `H2H_SERVICE_UNAVAILABLE` capability error; they never leak into strict IPC.
 
 Main and widget have only canonical player-tag clipboard commands, not arbitrary clipboard writes.
 Widget settings accept bounded `contentHeight` (80–720), not arbitrary native bounds; normal and
 compact widths remain separately persisted. OBS bearer URLs, JWTs, raw API envelopes, HWNDs, and
 capture selectors never cross these bridges. The existing update view already supplies version,
 release notes, download progress, ready/error state and verified install; no second updater was added.
+Widget views include the public `monitorError` (null when absent). Identity rebinding is
+projected as «Выберите окно игры заново в профиле» in monitor errors and the native tray.
+Session-query and shutdown flushing share one in-flight promise; a settled query can be
+flushed again later if Windows cancels logoff and the user continues working.
 
 Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
 the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
