@@ -88,6 +88,11 @@ body,
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
+  -webkit-app-region: drag;
+}
+
+.setup-header button {
+  -webkit-app-region: no-drag;
 }
 
 .setup-header .eyebrow,

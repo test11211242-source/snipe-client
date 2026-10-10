@@ -1,4 +1,9 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { clipboard, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import {
+  CLIPBOARD_CHANNELS,
+  CopyPlayerTagPayloadSchema,
+  CopyPlayerTagResultSchema,
+} from '../../../shared/contracts/clipboard'
 
 import {
   CardAssetRequestSchema,
@@ -34,6 +39,12 @@ function verify(
 }
 
 export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => void {
+  ipcMain.handle(CLIPBOARD_CHANNELS.widgetCopyTag, (event, rawPayload) => {
+    verify(event, dependencies.windows, 'widget')
+    const payload = CopyPlayerTagPayloadSchema.parse(rawPayload)
+    clipboard.writeText(payload.tag)
+    return CopyPlayerTagResultSchema.parse({ copied: true })
+  })
   ipcMain.handle(MAIN_WIDGET_IPC_CHANNELS.getStatus, (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     EmptyWidgetPayloadSchema.parse(rawPayload)
@@ -86,6 +97,7 @@ export function registerWidgetIpc(dependencies: WidgetIpcDependencies): () => vo
   })
 
   const channels = [
+    CLIPBOARD_CHANNELS.widgetCopyTag,
     ...Object.values(MAIN_WIDGET_IPC_CHANNELS),
     ...Object.values(WIDGET_IPC_CHANNELS),
   ]

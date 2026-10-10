@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { NormalizedRect, RegionKind } from '../../../shared/models/capture'
 import type { SetupSessionView } from '../../../shared/models/setup'
+import type { CrToolsSetupApi } from '../../../shared/contracts/preload'
 import {
   containTransform,
   pointerToNormalized,
@@ -74,7 +75,10 @@ function sameRect(left: NormalizedRect | null, right: NormalizedRect | null): bo
   )
 }
 
-export function SetupApp(): React.JSX.Element {
+export function SetupApp({
+  api = window.crTools.setup,
+  onClose,
+}: { api?: CrToolsSetupApi; onClose?: () => void } = {}): React.JSX.Element {
   const [view, setView] = useState<SetupSessionView | null>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   const [activeRegion, setActiveRegion] = useState<RegionKind>('trigger')
@@ -105,10 +109,10 @@ export function SetupApp(): React.JSX.Element {
 
     void (async () => {
       try {
-        const session = await window.crToolsSetup.getSession()
+        const session = await api.getSession()
         let nextFrameUrl: string | null = null
         if (session.frameSize !== null) {
-          const frame = await window.crToolsSetup.getFrame(command(session))
+          const frame = await api.getFrame(command(session))
           if (
             frame.sessionId !== session.sessionId ||
             frame.generation !== session.generation
@@ -151,7 +155,7 @@ export function SetupApp(): React.JSX.Element {
         frameUrlRef.current = null
       }
     }
-  }, [initialAttempt])
+  }, [initialAttempt, api])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -204,7 +208,7 @@ export function SetupApp(): React.JSX.Element {
     const request = command(current)
     const previous = current.regions[region]
     try {
-      const next = await window.crToolsSetup.setRegion({
+      const next = await api.setRegion({
         ...request,
         region,
         rect,
@@ -305,10 +309,10 @@ export function SetupApp(): React.JSX.Element {
 
   const retryCommit = async (): Promise<void> => {
     const next = await runCommand(
-      (request) => window.crToolsSetup.commit(request),
-      'Не удалось подтвердить сохранение. Сервер мог принять часть изменений; проверьте состояние перед повтором.',
+      (request) => api.commit(request),
+      'Не удалось подтвердить сохранение. Обновите состояние настройки перед повтором.',
     )
-    if (next?.state === 'COMMITTED') scheduleClose()
+    if (next?.state === 'COMMITTED' && next.saveOutcome?.warning == null) scheduleClose()
   }
 
   const switchRegion = async (nextRegion: RegionKind): Promise<void> => {
@@ -333,7 +337,7 @@ export function SetupApp(): React.JSX.Element {
         viewRef.current?.triggerProfile === null
       ) {
         const analyzed = await runCommand(
-          (request) => window.crToolsSetup.analyzeTrigger(request),
+          (request) => api.analyzeTrigger(request),
           'Не удалось найти устойчивую структуру. Выберите область вместе с рамкой или окружающим интерфейсом.',
         )
         if (analyzed?.triggerProfile === null || analyzed === null) return
@@ -363,7 +367,7 @@ export function SetupApp(): React.JSX.Element {
     }
     const request = command(current)
     try {
-      const next = await window.crToolsSetup.finish({
+      const next = await api.finish({
         ...request,
         region,
         rect: draft,
@@ -382,7 +386,7 @@ export function SetupApp(): React.JSX.Element {
       const acceptedRect = next.regions[region]
       setDraft(acceptedRect)
       setFieldsValid(acceptedRect !== null)
-      if (next.state === 'COMMITTED') scheduleClose()
+      if (next.state === 'COMMITTED' && next.saveOutcome?.warning == null) scheduleClose()
     } catch {
       setLocalError('Не удалось завершить настройку. Проверьте области и повторите.')
     } finally {
@@ -391,10 +395,11 @@ export function SetupApp(): React.JSX.Element {
   }
 
   const close = async (): Promise<void> => {
-    const current = viewRef.current
-    if (current === null || !beginOperation()) return
+    if (!beginOperation()) return
     try {
-      await window.crToolsSetup.close(command(current))
+      const current = viewRef.current ?? (await api.getSession())
+      await api.close(command(current))
+      onClose?.()
     } catch {
       setLocalError('Не удалось закрыть настройку. Повторите попытку.')
     } finally {
@@ -432,6 +437,12 @@ export function SetupApp(): React.JSX.Element {
         >
           Повторить
         </button>
+        {onClose !== undefined && (
+          <button type="button" disabled={busy} onClick={() => void close()}>
+            Закрыть настройку
+          </button>
+        )}
+        {localError !== null && <p>{localError}</p>}
       </main>
     )
 
@@ -533,6 +544,33 @@ export function SetupApp(): React.JSX.Element {
               : 'Захват настроен'}
           </h2>
           <p>Приложение подтвердило сохранение конфигурации.</p>
+          {view.saveOutcome?.projection === 'failed' && (
+            <>
+              <p role="alert">
+                Сохранено на этом компьютере, но сервер ещё не получил настройку.
+              </p>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void runCommand(
+                    api.retrySync,
+                    'Не удалось синхронизировать сохранённую настройку.',
+                  )
+                }
+              >
+                Повторить синхронизацию
+              </button>
+            </>
+          )}
+          {view.saveOutcome?.runtime === 'failed' && (
+            <p role="alert">
+              Настройка сохранена, но мониторинг не запустился. Вернитесь в приложение и
+              проверьте его состояние.
+            </p>
+          )}
+          {view.saveOutcome?.runtime === 'waiting_source' && (
+            <p role="status">Настройка сохранена; мониторинг ждёт источник.</p>
+          )}
           <button
             className="primary-button"
             type="button"
@@ -556,8 +594,9 @@ export function SetupApp(): React.JSX.Element {
               'Приложение не смогло получить рабочий кадр.'}
           </p>
           <p className="setup-state-note">
-            Итоговое состояние удалённой конфигурации не подтверждено. Часть изменений
-            могла быть принята сервером.
+            {view.saveOutcome?.local === 'failed'
+              ? 'Настройка не сохранена локально; серверная проекция не изменена.'
+              : 'Настройка не завершена. Проверьте источник и повторите.'}
           </p>
           <button
             className="secondary-button"

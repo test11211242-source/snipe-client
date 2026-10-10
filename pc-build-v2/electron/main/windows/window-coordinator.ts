@@ -1,3 +1,5 @@
+import type { WindowAction, WindowView } from '../../../shared/contracts/window'
+
 import { join, normalize } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -20,9 +22,8 @@ import type {
   MainWindowStateRepository,
 } from '../infrastructure/main-window-state-repository'
 
-export type WindowKind = 'main' | 'auth' | 'setup' | 'widget'
-export type WindowCloseReason =
-  'user' | 'auth-transition' | 'setup-transition' | 'shutdown'
+export type WindowKind = 'main' | 'auth' | 'widget'
+export type WindowCloseReason = 'user' | 'auth-transition' | 'shutdown'
 
 interface RegisteredWindow {
   window: BrowserWindow
@@ -222,6 +223,20 @@ export class WindowCoordinator {
     this.#sessionEndHandler = handler
   }
 
+  mainWindowCommand(action: WindowAction): WindowView {
+    const window = this.#registry.get('main')?.window
+    if (window === undefined || window.isDestroyed()) {
+      throw new ApplicationError('MAIN_WINDOW_UNAVAILABLE', 'Main window is unavailable')
+    }
+    if (action === 'minimize') window.minimize()
+    else if (action === 'maximize') window.maximize()
+    else if (action === 'restore') window.unmaximize()
+    const view = { maximized: window.isMaximized() }
+    // Native close emits the same cancellable user-close event as the titlebar.
+    if (action === 'close') window.close()
+    return view
+  }
+
   async flushMainState(): Promise<void> {
     clearTimeout(this.#mainStateTimer ?? undefined)
     this.#mainStateTimer = null
@@ -292,6 +307,7 @@ export class WindowCoordinator {
     const window = new BrowserWindow({
       ...bounds,
       show: false,
+      frame: false,
       backgroundColor: '#080913',
       title: 'CR Tools V2',
       autoHideMenuBar: true,
@@ -344,8 +360,8 @@ export class WindowCoordinator {
     const renderer = this.getRenderer('auth.html')
     const bounds = fitWindowBounds(
       screen.getPrimaryDisplay().workArea,
-      { width: 920, height: 680 },
-      { width: 680, height: 560 },
+      { width: 480, height: 640 },
+      { width: 420, height: 360 },
     )
     const window = new BrowserWindow({
       ...bounds,
@@ -372,42 +388,6 @@ export class WindowCoordinator {
     } else {
       await window.loadFile(join(import.meta.dirname, '../renderer/auth.html'))
     }
-    return window
-  }
-
-  async ensureSetupWindow(): Promise<BrowserWindow> {
-    const existing = this.#registry.get('setup')?.window
-    if (existing !== undefined && !existing.isDestroyed()) {
-      existing.show()
-      existing.focus()
-      return existing
-    }
-
-    const renderer = this.getRenderer('setup.html')
-    const bounds = fitWindowBounds(
-      screen.getPrimaryDisplay().workArea,
-      { width: 1280, height: 860 },
-      { width: 860, height: 640 },
-    )
-    const window = new BrowserWindow({
-      ...bounds,
-      show: false,
-      backgroundColor: '#080913',
-      title: 'Capture setup | CR Tools V2',
-      autoHideMenuBar: true,
-      webPreferences: {
-        preload: join(import.meta.dirname, '../preload/setup.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        webSecurity: true,
-        devTools: !import.meta.env.PROD,
-      },
-    })
-    this.register('setup', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
-    if (renderer.development) await window.loadURL(renderer.url)
-    else await window.loadFile(join(import.meta.dirname, '../renderer/setup.html'))
     return window
   }
 
@@ -603,9 +583,7 @@ export class WindowCoordinator {
 
   focusActiveWindow(): void {
     const active =
-      this.#registry.get('setup')?.window ??
-      this.#registry.get('main')?.window ??
-      this.#registry.get('auth')?.window
+      this.#registry.get('main')?.window ?? this.#registry.get('auth')?.window
     if (active === undefined || active.isDestroyed()) return
     if (active.isMinimized()) active.restore()
     active.show()

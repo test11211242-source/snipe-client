@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, payload: unknown) => unknown>(),
+  copyTag: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
+  clipboard: { writeText: electron.copyTag },
   ipcMain: {
     handle: vi.fn(
       (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
@@ -14,6 +16,7 @@ vi.mock('electron', () => ({
     removeHandler: vi.fn(),
   },
 }))
+import { CLIPBOARD_CHANNELS } from '../../../shared/contracts/clipboard'
 
 import {
   MAIN_WIDGET_IPC_CHANNELS,
@@ -64,9 +67,56 @@ function harness() {
 
 beforeEach(() => {
   electron.handlers.clear()
+  electron.copyTag.mockClear()
 })
 
 describe('widget IPC boundary', () => {
+  it('bounds dynamic content height on both narrow settings capabilities', async () => {
+    const test = harness()
+    test.widget.updateSettings.mockResolvedValue(DEFAULT_WIDGET_SETTINGS)
+    for (const [channel, kind] of [
+      [MAIN_WIDGET_IPC_CHANNELS.updateSettings, 'main'],
+      [WIDGET_IPC_CHANNELS.updateSettings, 'widget'],
+    ] as const) {
+      const handler = electron.handlers.get(channel)
+      if (handler === undefined) throw new Error('Missing height handler')
+      await expect(handler(test.event, { contentHeight: 120 })).resolves.toEqual(
+        DEFAULT_WIDGET_SETTINGS,
+      )
+      expect(test.windows.assertSender).toHaveBeenLastCalledWith(
+        test.event.sender,
+        test.event.senderFrame.url,
+        kind,
+      )
+      await expect(handler(test.event, { contentHeight: 721 })).rejects.toThrow()
+      await expect(handler(test.event, { contentHeight: 79 })).rejects.toThrow()
+      await expect(
+        handler(test.event, { contentHeight: 120, bounds: {} }),
+      ).rejects.toThrow()
+    }
+    expect(test.widget.updateSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('copies a canonical widget player tag only after its sender and payload pass', () => {
+    const test = harness()
+    const handler = electron.handlers.get(CLIPBOARD_CHANNELS.widgetCopyTag)
+    if (handler === undefined) throw new Error('Missing widget tag copy handler')
+    expect(handler(test.event, { tag: 'jcu' })).toEqual({ copied: true })
+    expect(electron.copyTag).toHaveBeenCalledWith('#JCU')
+    expect(test.windows.assertSender).toHaveBeenCalledWith(
+      test.event.sender,
+      test.event.senderFrame.url,
+      'widget',
+    )
+    expect(() => handler(test.event, { tag: 'BAD' })).toThrow()
+    expect(() => handler(test.event, { tag: 'JCU', text: 'anything' })).toThrow()
+    test.windows.assertSender.mockImplementation(() => {
+      throw new Error('IPC_SENDER_REJECTED')
+    })
+    expect(() => handler(test.event, { tag: 'JCU' })).toThrow('IPC_SENDER_REJECTED')
+    expect(electron.copyTag).toHaveBeenCalledOnce()
+  })
+
   it('accepts only strict user-setting patches and never renderer bounds', async () => {
     const test = harness()
     const handler = electron.handlers.get(MAIN_WIDGET_IPC_CHANNELS.updateSettings)

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
 import type { StructuredLogger } from '../infrastructure/structured-logger'
@@ -45,6 +45,9 @@ vi.mock('electron', () => {
     getNormalBounds = vi.fn(() => ({ x: 0, y: 0, width: 420, height: 360 }))
     isMaximized = vi.fn(() => false)
     maximize = vi.fn()
+    minimize = vi.fn()
+    unmaximize = vi.fn()
+    close = vi.fn()
     isAlwaysOnTop = vi.fn(() => true)
     moveTop = vi.fn()
     setAlwaysOnTop = vi.fn()
@@ -148,9 +151,9 @@ describe('WindowCoordinator auth shell', () => {
     expect(
       resolveDevelopmentRendererUrl('http://127.0.0.1:5173', 'auth.html', false),
     ).toBe('http://127.0.0.1:5173/auth.html')
-    expect(
-      resolveDevelopmentRendererUrl('https://[::1]:5173/', 'setup.html', false),
-    ).toBe('https://[::1]:5173/setup.html')
+    expect(resolveDevelopmentRendererUrl('https://[::1]:5173/', 'auth.html', false)).toBe(
+      'https://[::1]:5173/auth.html',
+    )
     expect(
       resolveDevelopmentRendererUrl('http://user@localhost:5173', 'index.html', false),
     ).toBeNull()
@@ -673,5 +676,32 @@ describe('WindowCoordinator auth shell', () => {
     })
     await vi.advanceTimersByTimeAsync(1_000)
     expect(repository.save).toHaveBeenCalledOnce()
+  })
+
+  it('provides narrow frameless chrome and native close routing, and clamps auth design size', async () => {
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const window = (await coordinator.ensureMainWindow()) as unknown as Record<
+      'minimize' | 'maximize' | 'unmaximize' | 'close' | 'destroy',
+      Mock
+    >
+    expect(electronMocks.browserWindowConstructed.mock.calls[0]?.[0]).toMatchObject({
+      frame: false,
+      width: 1100,
+      height: 700,
+    })
+    coordinator.mainWindowCommand('minimize')
+    coordinator.mainWindowCommand('maximize')
+    coordinator.mainWindowCommand('restore')
+    coordinator.mainWindowCommand('close')
+    expect(window.minimize).toHaveBeenCalledOnce()
+    expect(window.maximize).toHaveBeenCalledOnce()
+    expect(window.unmaximize).toHaveBeenCalledOnce()
+    expect(window.close).toHaveBeenCalledOnce()
+    expect(window.destroy).not.toHaveBeenCalled()
+    await coordinator.ensureAuthWindow()
+    expect(electronMocks.browserWindowConstructed.mock.calls[1]?.[0]).toMatchObject({
+      width: 480,
+      height: 640,
+    })
   })
 })

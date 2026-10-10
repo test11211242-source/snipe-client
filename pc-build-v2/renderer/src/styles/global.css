@@ -381,6 +381,7 @@ summary:focus-visible,
   height: var(--topbar-height);
   border-bottom: 1px solid var(--color-border);
   background: #0d0e12f5;
+  -webkit-app-region: drag;
 }
 
 .topbar > .shell-container {
@@ -389,6 +390,22 @@ summary:focus-visible,
   grid-template-columns: minmax(190px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: clamp(16px, 2vw, 32px);
+}
+
+.topbar button,
+.topbar a,
+.topbar input {
+  -webkit-app-region: no-drag;
+}
+
+.legacy-window-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.legacy-window-controls button {
+  width: 26px;
+  height: 28px;
 }
 
 .page-identity h1 {

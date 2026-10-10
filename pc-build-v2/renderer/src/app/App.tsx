@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import '../styles/global.css'
 import '../styles/streamer.css'
+import { SetupApp } from '../setup/SetupApp'
+import '../styles/setup.css'
 import { CapturePage } from './CapturePage'
 import { authLabel, realtimeLabel, updateStateLabel } from './format'
 import { HomePage } from './HomePage'
@@ -42,6 +44,8 @@ const RESOURCE_LABELS = {
 export function App(): React.JSX.Element {
   const [section, setSection] = useState<SectionId>('home')
   const [shellError, setShellError] = useState<string | null>(null)
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [maximized, setMaximized] = useState(false)
   const pageHeadingRef = useRef<HTMLHeadingElement>(null)
   const firstSectionRender = useRef(true)
   const {
@@ -112,6 +116,16 @@ export function App(): React.JSX.Element {
       setShellError('Не удалось открыть виджет соперника.')
     }
   }
+
+  if (setupOpen)
+    return (
+      <SetupApp
+        onClose={() => {
+          setSetupOpen(false)
+          retry()
+        }}
+      />
+    )
 
   return (
     <div className="workspace">
@@ -222,6 +236,30 @@ export function App(): React.JSX.Element {
                 <LogOut aria-hidden="true" size={17} />
                 <span>Выйти</span>
               </Button>
+              <div className="legacy-window-controls">
+                <button
+                  aria-label="Свернуть окно"
+                  onClick={() => void window.crTools.window.command('minimize')}
+                >
+                  −
+                </button>
+                <button
+                  aria-label={maximized ? 'Восстановить окно' : 'Развернуть окно'}
+                  onClick={() =>
+                    void window.crTools.window
+                      .command(maximized ? 'restore' : 'maximize')
+                      .then((view) => setMaximized(view.maximized))
+                  }
+                >
+                  □
+                </button>
+                <button
+                  aria-label="Закрыть окно"
+                  onClick={() => void window.crTools.window.command('close')}
+                >
+                  ×
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -260,6 +298,7 @@ export function App(): React.JSX.Element {
               onStatus={setCapture}
               onProfiles={setProfiles}
               onMonitor={setMonitor}
+              onSetup={() => setSetupOpen(true)}
             />
           ) : section === 'settings' ? (
             <SettingsPage
@@ -271,7 +310,7 @@ export function App(): React.JSX.Element {
               onUpdateView={setUpdate}
             />
           ) : (
-            <StreamerPage auth={data.auth.value} />
+            <StreamerPage auth={data.auth.value} onSetup={() => setSetupOpen(true)} />
           )}
         </div>
       </main>

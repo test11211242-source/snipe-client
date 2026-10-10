@@ -13,7 +13,13 @@ import { Alert, AsyncState, Button, Tabs } from './ui'
 
 type StreamerTab = 'overview' | 'predictions' | 'title' | 'obs'
 
-export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Element {
+export function StreamerPage({
+  auth,
+  onSetup,
+}: {
+  auth: AuthView | null
+  onSetup?: () => void
+}): React.JSX.Element {
   const [tab, setTab] = useState<StreamerTab>('overview')
   const [view, setView] = useState<StreamerView | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -111,6 +117,7 @@ export function StreamerPage({ auth }: { auth: AuthView | null }): React.JSX.Ele
       if (nextView === null || !mounted.current || generation !== viewGeneration.current)
         return null
       setView(nextView)
+      if (name === 'setup') onSetup?.()
       return nextView
     } catch (cause) {
       if (mounted.current && generation === viewGeneration.current)

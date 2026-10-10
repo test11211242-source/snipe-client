@@ -1,5 +1,28 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import {
+  CLIPBOARD_CHANNELS,
+  CopyPlayerTagPayloadSchema,
+  CopyPlayerTagResultSchema,
+} from '../../shared/contracts/clipboard'
 import type { z } from 'zod'
+import { setupApi } from './setup-api'
+import {
+  H2H_CHANNELS,
+  H2HCancelSchema,
+  H2HLookupResultSchema,
+  H2HRequestSchema,
+} from '../../shared/contracts/h2h'
+import {
+  WINDOW_CHANNEL,
+  WindowCommandSchema,
+  WindowViewSchema,
+} from '../../shared/contracts/window'
+import {
+  TITLE_BUILDER_CHANNELS,
+  CompileTitlePayloadSchema,
+  TitleCompileResultSchema,
+  TitleBuilderSchema,
+} from '../../shared/contracts/title-builder'
 
 import {
   OpenLogFolderResultSchema,
@@ -57,6 +80,9 @@ import {
 } from '../../shared/contracts/widget-ipc'
 import {
   AccountMutationResultSchema,
+  StreamerCommandSchema,
+  StreamerCommandResultSchema,
+  StreamerReadinessSchema,
   EmptyStreamerPayloadSchema,
   OverlayCopyPayloadSchema,
   OverlaySettingsPayloadSchema,
@@ -64,10 +90,7 @@ import {
   STREAMER_IPC_CHANNELS,
   StreamerAccountPayloadSchema,
   StreamerActivePayloadSchema,
-  StreamerBooleanPayloadSchema,
   StreamerConfirmationPayloadSchema,
-  StreamerPausedPayloadSchema,
-  StreamerTagPayloadSchema,
   StreamerViewResultSchema,
   StreamTitlePreviewResultSchema,
   StreamTitleSettingsPayloadSchema,
@@ -103,7 +126,72 @@ async function bootstrapResult<T>(
   return result.data
 }
 
-const api: CrToolsApi = Object.freeze({
+// The old renderer consumes views; writes use the same typed command boundary.
+const streamerCommand = async (raw: unknown) => {
+  const result = StreamerCommandResultSchema.parse(
+    await ipcRenderer.invoke(
+      STREAMER_IPC_CHANNELS.command,
+      StreamerCommandSchema.parse(raw),
+    ),
+  )
+  if (!result.ok) throw new Error(result.error.code)
+  return result
+}
+
+const api: CrToolsApi = Object.freeze<CrToolsApi>({
+  copyPlayerTag: async (tag: string) =>
+    CopyPlayerTagResultSchema.parse(
+      await ipcRenderer.invoke(
+        CLIPBOARD_CHANNELS.mainCopyTag,
+        CopyPlayerTagPayloadSchema.parse({ tag }),
+      ),
+    ),
+  setup: setupApi,
+  h2h: Object.freeze<CrToolsApi['h2h']>({
+    lookup: async (raw) =>
+      H2HLookupResultSchema.parse(
+        await ipcRenderer.invoke(H2H_CHANNELS.lookup, H2HRequestSchema.parse(raw)),
+      ),
+    cancel: async (raw) => {
+      await ipcRenderer.invoke(H2H_CHANNELS.cancel, H2HCancelSchema.parse(raw))
+    },
+  }),
+  window: Object.freeze<CrToolsApi['window']>({
+    command: async (action) =>
+      WindowViewSchema.parse(
+        await ipcRenderer.invoke(WINDOW_CHANNEL, WindowCommandSchema.parse({ action })),
+      ),
+  }),
+  streamer: Object.freeze<CrToolsApi['streamer']>({
+    command: async (raw) =>
+      StreamerCommandResultSchema.parse(
+        await ipcRenderer.invoke(
+          STREAMER_IPC_CHANNELS.command,
+          StreamerCommandSchema.parse(raw),
+        ),
+      ),
+    getReadiness: async () =>
+      StreamerReadinessSchema.parse(
+        await ipcRenderer.invoke(
+          STREAMER_IPC_CHANNELS.readiness,
+          EmptyStreamerPayloadSchema.parse({}),
+        ),
+      ),
+    compileTitle: async (raw) =>
+      TitleCompileResultSchema.parse(
+        await ipcRenderer.invoke(
+          TITLE_BUILDER_CHANNELS.compile,
+          CompileTitlePayloadSchema.parse(raw),
+        ),
+      ),
+    decompileTitle: async (raw) =>
+      TitleBuilderSchema.parse(
+        await ipcRenderer.invoke(
+          TITLE_BUILDER_CHANNELS.decompile,
+          StreamTitleSettingsPayloadSchema.parse(raw),
+        ),
+      ),
+  }),
   hello: async () => {
     const payload = HelloPayloadSchema.parse({
       protocolVersion: 1,
@@ -334,114 +422,113 @@ const api: CrToolsApi = Object.freeze({
         StreamerActivePayloadSchema.parse({ active }),
       ),
     ),
-  connectTwitch: () => streamerEmpty(STREAMER_IPC_CHANNELS.connectTwitch),
-  disconnectTwitch: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.disconnectTwitch,
-        StreamerConfirmationPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  startPredictions: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.startPredictions,
-        PredictionPreferencesPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  stopPredictions: () => streamerEmpty(STREAMER_IPC_CHANNELS.stopPredictions),
+  connectTwitch: async () => (await streamerCommand({ action: 'twitch.connect' })).view,
+  disconnectTwitch: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'twitch.disconnect',
+        ...StreamerConfirmationPayloadSchema.parse(raw),
+      })
+    ).view,
+  startPredictions: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'predictions.start',
+        settings: PredictionPreferencesPayloadSchema.parse(raw),
+      })
+    ).view,
+  stopPredictions: async () =>
+    (await streamerCommand({ action: 'predictions.stop' })).view,
   startStreamerResultSetup: () => streamerEmpty(STREAMER_IPC_CHANNELS.startResultSetup),
-  updateStreamTitle: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.updateTitle,
-        StreamTitleSettingsPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  previewStreamTitle: async (rawPayload: unknown) =>
+  updateStreamTitle: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'title.save',
+        settings: StreamTitleSettingsPayloadSchema.parse(raw),
+      })
+    ).view,
+  previewStreamTitle: async (raw) =>
     StreamTitlePreviewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.previewTitle,
-        StreamTitleSettingsPayloadSchema.parse(rawPayload),
-      ),
+      (
+        await streamerCommand({
+          action: 'title.preview',
+          settings: StreamTitleSettingsPayloadSchema.parse(raw),
+        })
+      ).preview,
     ),
-  setStreamTitleEnabled: async (enabled: boolean) =>
-    StreamerViewResultSchema.parse(
+  setStreamTitleEnabled: async (enabled) =>
+    (await streamerCommand({ action: 'title.enabled', enabled })).view,
+  setStreamTitlePaused: async (paused) =>
+    (await streamerCommand({ action: 'title.paused', paused })).view,
+  addStreamTitleAccount: async (raw) => {
+    const result = StreamerCommandResultSchema.parse(
       await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.setTitleEnabled,
-        StreamerBooleanPayloadSchema.parse({ enabled }),
+        STREAMER_IPC_CHANNELS.command,
+        StreamerCommandSchema.parse({
+          action: 'accounts.add',
+          ...StreamerAccountPayloadSchema.parse(raw),
+        }),
       ),
-    ),
-  setStreamTitlePaused: async (paused: boolean) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.setTitlePaused,
-        StreamerPausedPayloadSchema.parse({ paused }),
-      ),
-    ),
-  addStreamTitleAccount: async (rawPayload: unknown) =>
-    AccountMutationResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.addTitleAccount,
-        StreamerAccountPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  removeStreamTitleAccount: async (tag: string) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.removeTitleAccount,
-        StreamerTagPayloadSchema.parse({ tag }),
-      ),
-    ),
-  resetStreamTitle: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.resetTitle,
-        StreamerConfirmationPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  undoStreamTitle: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.undoTitle,
-        StreamerConfirmationPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  restoreStreamTitle: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.restoreTitle,
-        StreamerConfirmationPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  setDeckSharing: async (enabled: boolean) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.setDeckSharing,
-        StreamerBooleanPayloadSchema.parse({ enabled }),
-      ),
-    ),
-  updateOverlay: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.updateOverlay,
-        OverlaySettingsPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  rotateOverlayToken: async (rawPayload: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.rotateOverlayToken,
-        StreamerConfirmationPayloadSchema.parse(rawPayload),
-      ),
-    ),
-  copyOverlayUrl: async (kind: unknown) =>
-    StreamerViewResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.copyOverlayUrl,
-        OverlayCopyPayloadSchema.parse({ kind }),
-      ),
-    ),
+    )
+    return AccountMutationResultSchema.parse(
+      result.ok
+        ? {
+            ok: true,
+            view: result.view,
+            warning:
+              result.warnings.find(
+                (warning) => warning !== 'TITLE_APPLICATION_UNCONFIRMED',
+              ) ?? null,
+          }
+        : { ok: false, error: result.error },
+    )
+  },
+  removeStreamTitleAccount: async (tag) =>
+    (await streamerCommand({ action: 'accounts.remove', tag })).view,
+  resetStreamTitle: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'title.reset',
+        ...StreamerConfirmationPayloadSchema.parse(raw),
+      })
+    ).view,
+  undoStreamTitle: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'title.undo',
+        ...StreamerConfirmationPayloadSchema.parse(raw),
+      })
+    ).view,
+  restoreStreamTitle: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'title.restore',
+        ...StreamerConfirmationPayloadSchema.parse(raw),
+      })
+    ).view,
+  setDeckSharing: async (enabled) =>
+    (await streamerCommand({ action: 'chat.toggle', enabled })).view,
+  updateOverlay: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'widget.settings',
+        settings: OverlaySettingsPayloadSchema.parse(raw),
+      })
+    ).view,
+  rotateOverlayToken: async (raw) =>
+    (
+      await streamerCommand({
+        action: 'widget.resetToken',
+        ...StreamerConfirmationPayloadSchema.parse(raw),
+      })
+    ).view,
+  copyOverlayUrl: async (kind) =>
+    (
+      await streamerCommand({
+        action: 'widget.copy',
+        ...OverlayCopyPayloadSchema.parse({ kind }),
+      })
+    ).view,
   getUpdateView: () =>
     bootstrapResult(
       UpdateViewResultSchema,

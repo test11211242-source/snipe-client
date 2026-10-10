@@ -4,7 +4,10 @@ import { PublicErrorSchema } from '../errors/application-error'
 
 const ShortTextSchema = z.string().max(300)
 export const GAME_ACCOUNT_TAG_PATTERN = /^#?[0289PYLQGRJCUV]{3,15}$/i
-export const GameAccountTagSchema = z.string().trim().regex(GAME_ACCOUNT_TAG_PATTERN)
+export const GameAccountTagSchema = z
+  .string()
+  .trim()
+  .regex(GAME_ACCOUNT_TAG_PATTERN)
   .transform((tag) => `#${tag.replace(/^#/, '').toUpperCase()}`)
 const TagSchema = GameAccountTagSchema
 const CountSchema = z.number().int().nonnegative().max(1_000_000)

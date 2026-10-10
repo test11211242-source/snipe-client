@@ -26,6 +26,7 @@ import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorSupervisor } from './monitor-supervisor'
 import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
+import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
 
 const ACTIVE_MONITOR_STATES = [
   'PREFLIGHT',
@@ -105,7 +106,7 @@ export class CaptureProfileService {
     this.assertPredictionsStopped()
   }
 
-  async captureSetupCommitted(): Promise<void> {
+  async captureSetupCommitted(): Promise<SetupRuntimeOutcome> {
     this.monitor.invalidateCaptureTarget()
     const monitor = await this.monitor.getView()
     if (
@@ -113,8 +114,12 @@ export class CaptureProfileService {
         monitor.state as (typeof ACTIVE_MONITOR_STATES)[number],
       )
     ) {
-      await this.monitor.restartIfActive()
+      const restarted = await this.monitor.restartIfActive()
+      if (restarted.state === 'READY') return 'ready'
+      if (restarted.state === 'WAITING_SOURCE') return 'waiting_source'
+      return 'failed'
     }
+    return 'not_requested'
   }
 
   runCaptureCommit<T>(operation: () => Promise<T>): Promise<T> {

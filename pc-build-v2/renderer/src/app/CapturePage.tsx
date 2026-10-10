@@ -74,12 +74,14 @@ export function CapturePage({
   onStatus,
   onProfiles,
   onMonitor,
+  onSetup,
 }: {
   status: CaptureStatus | null
   profiles: CaptureProfilesView | null
   onStatus: (status: CaptureStatus) => void
   onProfiles: (profiles: CaptureProfilesView) => void
   onMonitor: (monitor: MonitorView) => void
+  onSetup?: () => void
 }): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<CaptureSourceSnapshot | null>(null)
   const [tab, setTab] = useState<SourceTab>('window')
@@ -576,6 +578,7 @@ export function CapturePage({
         })
         if (currentProfileAction.profileId === null)
           setCreatedProfileId(session.profileId)
+        onSetup?.()
       }
       selectedRef.current = null
       setSelectedKey(null)

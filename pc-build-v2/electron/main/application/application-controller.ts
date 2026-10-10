@@ -11,6 +11,8 @@ import { registerMonitorIpc } from '../ipc/register-monitor-ipc'
 import { registerWidgetIpc } from '../ipc/register-widget-ipc'
 import { registerStreamerIpc } from '../ipc/register-streamer-ipc'
 import { registerUpdateIpc } from '../ipc/register-update-ipc'
+import { registerUiIpc } from '../ipc/register-ui-ipc'
+import type { H2HService } from '../services/h2h-service'
 import type { AuthSession } from '../services/auth-session'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
 import type { SetupSessionService } from '../services/setup-session-service'
@@ -62,6 +64,7 @@ export class ApplicationController {
     private readonly capturePreparations: CapturePreparationService,
     private readonly captureProfiles: CaptureProfileService,
     private readonly tray?: TrayController,
+    private readonly h2h?: H2HService,
   ) {}
 
   async start(): Promise<void> {
@@ -136,6 +139,7 @@ export class ApplicationController {
       logger: this.logger,
       updater: this.updater,
     })
+    const disposeUiIpc = registerUiIpc(this.windows, this.h2h, this.auth)
     this.#disposeIpc = () => {
       disposeAppIpc()
       disposeAuthIpc()
@@ -144,6 +148,7 @@ export class ApplicationController {
       disposeWidgetIpc()
       disposeStreamerIpc()
       disposeUpdateIpc()
+      disposeUiIpc()
     }
 
     this.logger.info('Opening authentication shell', this.getSnapshot())
@@ -170,14 +175,7 @@ export class ApplicationController {
   private bindApplicationEvents(): void {
     this.#disposeWindowSubscription = this.windows.onWindowClosed((kind, reason) => {
       if (reason !== 'user') return
-      if (kind === 'setup') {
-        try {
-          const view = this.setup.getSession()
-          this.setup.cancel(view.sessionId, view.generation)
-        } catch {
-          // A terminal setup needs no cancellation.
-        }
-      } else if (kind !== 'widget') {
+      if (kind !== 'widget') {
         void this.requestShutdown()
       }
     })
@@ -308,7 +306,6 @@ export class ApplicationController {
     await this.monitor.stop('auth_change')
     this.monitor.setUserContext(null)
     this.#activeUserId = null
-    this.windows.close('setup', 'auth-transition')
     this.setup.cancelForAuthTransition()
     if (this.lifecycle.state === 'READY') this.lifecycle.transitionTo('RECOVERING')
     await this.windows.ensureAuthWindow(!this.#launchInTray)

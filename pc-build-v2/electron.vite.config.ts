@@ -22,7 +22,6 @@ export default defineConfig({
         input: {
           auth: resolve(import.meta.dirname, 'electron/preload/auth.ts'),
           main: resolve(import.meta.dirname, 'electron/preload/main.ts'),
-          setup: resolve(import.meta.dirname, 'electron/preload/setup.ts'),
           widget: resolve(import.meta.dirname, 'electron/preload/widget.ts'),
         },
         output: {
@@ -40,7 +39,6 @@ export default defineConfig({
         input: {
           main: resolve(import.meta.dirname, 'renderer/index.html'),
           auth: resolve(import.meta.dirname, 'renderer/auth.html'),
-          setup: resolve(import.meta.dirname, 'renderer/setup.html'),
           widget: resolve(import.meta.dirname, 'renderer/widget.html'),
         },
       },

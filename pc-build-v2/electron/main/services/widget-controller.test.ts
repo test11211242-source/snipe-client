@@ -327,6 +327,6 @@ describe('WidgetController', () => {
     expect(test.repository.save).toHaveBeenCalledTimes(saves)
     await expect(test.controller.updateSettings({ contentHeight: 79 })).rejects.toThrow()
     await expect(test.controller.updateSettings({ contentHeight: 721 })).rejects.toThrow()
-    expect(test.windows.applyWidgetSettings).toHaveBeenCalledWith(expect.objectContaining({ bounds: expect.objectContaining({ height: 120 }) }))
+    expect(test.windows.applyWidgetSettings).toHaveBeenCalledWith(saved)
   })
 })

@@ -187,8 +187,10 @@ export class WidgetController {
         ? (patch.compactWidth ?? current.compactWidth)
         : (patch.normalWidth ?? current.normalWidth)
       const modeChanged = compactMode !== current.compactMode
-      const height = contentHeight ?? (modeChanged ? (compactMode ? 160 : 360) : current.bounds.height)
-      const sizeChanged = modeChanged || width !== current.bounds.width || height !== current.bounds.height
+      const height =
+        contentHeight ?? (modeChanged ? (compactMode ? 160 : 360) : current.bounds.height)
+      const sizeChanged =
+        modeChanged || width !== current.bounds.width || height !== current.bounds.height
       if (Object.keys(settingsPatch).length === 0 && !sizeChanged) return current
       const settings = WidgetSettingsSchema.parse({
         ...current,

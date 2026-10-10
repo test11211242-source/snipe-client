@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewPayload } from '../../../shared/contracts/capture-ipc'
 import type { MonitorView } from '../../../shared/models/monitor'
+import { SetupSessionViewSchema } from '../../../shared/models/setup'
 import { App } from './App'
 
 function deferred<T>() {
@@ -54,9 +55,42 @@ describe('App shell', () => {
   })
   beforeEach(() => {
     pushedMonitorView = null
+    const setupView = SetupSessionViewSchema.parse({
+      sessionId: '00000000-0000-4000-8000-000000000050',
+      generation: 1,
+      state: 'SELECTING',
+      source: { kind: 'window', label: 'Game', titleHint: 'Game', executableLabel: null },
+      profileId: '00000000-0000-4000-8000-000000000030',
+      profileName: 'Новый аккаунт',
+      frameSize: { width: 100, height: 100 },
+      regions: {
+        trigger: null,
+        normal: null,
+        precise: null,
+        resultTrigger: null,
+        resultData: null,
+      },
+      triggerProfile: null,
+      error: null,
+    })
     Object.defineProperty(window, 'crTools', {
       configurable: true,
       value: Object.freeze({
+        window: { command: vi.fn().mockResolvedValue({ maximized: false }) },
+        setup: {
+          getSession: vi.fn().mockResolvedValue(setupView),
+          getFrame: vi.fn().mockResolvedValue({
+            sessionId: setupView.sessionId,
+            generation: setupView.generation,
+            size: setupView.frameSize,
+            byteLength: 3,
+            mimeType: 'image/png',
+            bytes: new Uint8Array(3),
+          }),
+          close: vi
+            .fn()
+            .mockResolvedValue({ ...setupView, state: 'CANCELLED', generation: 2 }),
+        },
         reportBootstrapFailure: vi.fn().mockResolvedValue(undefined),
         openLogFolder: vi.fn().mockResolvedValue({ opened: true }),
         hello: vi.fn().mockResolvedValue({
@@ -534,6 +568,22 @@ describe('App shell', () => {
         expectedRevision: 0,
       }),
     )
+    expect(
+      await screen.findByRole('heading', { name: 'Области распознавания' }),
+    ).toBeVisible()
+    expect(window.crTools.setup.getSession).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить и закрыть' }))
+    await waitFor(() =>
+      expect(window.crTools.setup.close).toHaveBeenCalledWith({
+        sessionId: '00000000-0000-4000-8000-000000000050',
+        generation: 1,
+      }),
+    )
+    expect(await screen.findByRole('button', { name: 'Захват' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(window.crTools.window.command).not.toHaveBeenCalled()
   })
 
   it('does not replace a new profile with a different saved profile sharing its name', async () => {

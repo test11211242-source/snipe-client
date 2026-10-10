@@ -54,6 +54,7 @@ function setupView(overrides: Partial<SetupSessionView> = {}): SetupSessionView 
     },
     triggerProfile: null,
     error: null,
+    saveOutcome: null,
   }
   return { ...base, ...overrides }
 }
@@ -111,6 +112,8 @@ function installApi(initial: SetupSessionView, overrides: Partial<CrToolsSetupAp
   })
   const close = vi.fn<CrToolsSetupApi['close']>(advance)
   const api: CrToolsSetupApi = Object.freeze({
+    startResult: vi.fn(),
+    retrySync: vi.fn(),
     getSession,
     getFrame,
     setRegion,
@@ -122,9 +125,9 @@ function installApi(initial: SetupSessionView, overrides: Partial<CrToolsSetupAp
     close,
     ...overrides,
   })
-  Object.defineProperty(window, 'crToolsSetup', {
+  Object.defineProperty(window, 'crTools', {
     configurable: true,
-    value: api,
+    value: { setup: api },
   })
   return { analyzeTrigger, close, finish, getFrame, getSession, setRegion }
 }

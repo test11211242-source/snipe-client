@@ -1,5 +1,14 @@
+import type { CopyPlayerTagResult } from './clipboard'
 import type { BootstrapFailure } from './app'
-import type { AccountMutationResult } from './streamer-ipc'
+import type {
+  AccountMutationResult,
+  StreamerCommand,
+  StreamerCommandResult,
+  StreamerReadiness,
+} from './streamer-ipc'
+import type { TitleBuilder, TitleCompileResult } from './title-builder'
+import type { H2HRequest, H2HLookupResult } from './h2h'
+import type { WindowAction, WindowView } from './window'
 import type { AppSnapshot } from '../models/application'
 import type { AuthView } from '../models/auth'
 import type { RealtimeStatus } from '../models/network'
@@ -40,6 +49,22 @@ import type {
 import type { UpdateView } from '../models/update'
 
 export interface CrToolsApi {
+  copyPlayerTag: (tag: string) => Promise<CopyPlayerTagResult>
+  setup: CrToolsSetupApi
+  h2h: {
+    lookup: (payload: H2HRequest) => Promise<H2HLookupResult>
+    cancel: (payload: { requestId: string }) => Promise<void>
+  }
+  window: { command: (action: WindowAction) => Promise<WindowView> }
+  streamer: {
+    command: (payload: StreamerCommand) => Promise<StreamerCommandResult>
+    getReadiness: () => Promise<StreamerReadiness>
+    compileTitle: (payload: {
+      settings: StreamTitleSettings
+      builder: TitleBuilder
+    }) => Promise<TitleCompileResult>
+    decompileTitle: (settings: StreamTitleSettings) => Promise<TitleBuilder>
+  }
   hello: () => Promise<HelloResult>
   getAppSnapshot: () => Promise<AppSnapshot>
   getAppSettings: () => Promise<AppSettingsView>
@@ -130,6 +155,7 @@ export interface CrToolsApi {
 }
 
 export interface CrToolsSetupApi {
+  startResult: (payload: CaptureProfileCommand) => Promise<SetupSessionView>
   getSession: () => Promise<SetupSessionView>
   getFrame: (payload: SetupCommand) => Promise<SetupFrame>
   setRegion: (payload: SetRegionPayload) => Promise<SetupSessionView>
@@ -137,6 +163,7 @@ export interface CrToolsSetupApi {
   analyzeTrigger: (payload: SetupCommand) => Promise<SetupSessionView>
   review: (payload: SetupCommand) => Promise<SetupSessionView>
   commit: (payload: SetupCommand) => Promise<SetupSessionView>
+  retrySync: (payload: SetupCommand) => Promise<SetupSessionView>
   cancel: (payload: SetupCommand) => Promise<SetupSessionView>
   close: (payload: SetupCommand) => Promise<SetupSessionView>
 }
@@ -155,6 +182,7 @@ export interface CrToolsAuthApi {
 }
 
 export interface CrToolsWidgetApi {
+  copyPlayerTag: (tag: string) => Promise<CopyPlayerTagResult>
   rendererReady: () => Promise<void>
   getView: () => Promise<WidgetView>
   onViewChanged: (listener: (view: WidgetView) => void) => () => void

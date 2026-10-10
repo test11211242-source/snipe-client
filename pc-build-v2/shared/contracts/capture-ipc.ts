@@ -29,6 +29,7 @@ export const MAIN_CAPTURE_IPC_CHANNELS = Object.freeze({
 })
 
 export const SETUP_IPC_CHANNELS = Object.freeze({
+  startResult: 'setup:start-result',
   getSession: 'setup:get-session',
   getFrame: 'setup:get-frame',
   setRegion: 'setup:set-region',
@@ -37,6 +38,7 @@ export const SETUP_IPC_CHANNELS = Object.freeze({
   review: 'setup:review',
   commit: 'setup:commit',
   cancel: 'setup:cancel',
+  retrySync: 'setup:retry-sync',
   close: 'setup:close',
 })
 
