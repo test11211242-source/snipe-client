@@ -4,7 +4,6 @@ import {
   MonitorResultSchema,
   type DeckMode,
   type MonitorResult,
-  type SearchMode,
 } from '../../../shared/models/monitor'
 import type { ServerConfig } from '../infrastructure/server-config'
 import type { AuthSession } from './auth-session'
@@ -22,7 +21,6 @@ export interface OcrLogger {
 export interface OcrRequest {
   image: Buffer
   timestamp: string
-  searchMode: SearchMode
   deckMode: DeckMode
   signal: AbortSignal
 }
@@ -99,7 +97,7 @@ function serviceResult(
     id: randomUUID(),
     kind: 'service_error',
     timestamp: request.timestamp,
-    searchMode: request.searchMode,
+    searchMode: 'fast',
     deckMode: request.deckMode,
     searchedNickname: null,
     message: message.slice(0, 160),
@@ -160,7 +158,7 @@ export function normalizeOcrResponse(
   const common = {
     id: randomUUID(),
     timestamp: request.timestamp,
-    searchMode: request.searchMode,
+    searchMode: 'fast',
     deckMode: request.deckMode,
     searchedNickname,
   }
@@ -291,12 +289,11 @@ export class OcrApiClient {
       'capture.png',
     )
     form.append('timestamp', request.timestamp)
-    form.append('search_mode', request.searchMode)
+    form.append('search_mode', 'fast')
     form.append('deck_mode', request.deckMode)
     this.logger.debug('OCR request started', {
       endpoint: '/api/ocr/process',
       imageBytes: request.image.byteLength,
-      searchMode: request.searchMode,
       deckMode: request.deckMode,
     })
     try {

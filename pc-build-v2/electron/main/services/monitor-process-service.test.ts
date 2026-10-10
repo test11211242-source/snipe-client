@@ -16,8 +16,8 @@ function payload(): MonitorStartPayload {
     configuredFrameSize: { width: 1920, height: 1080 },
     regions: {
       trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
-      normal: { x: 0, y: 0, width: 0.5, height: 0.5 },
-      precise: { x: 0, y: 0, width: 1, height: 1 },
+      nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+      topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
     },
     triggerProfile: {
       schemaVersion: 3,
@@ -40,8 +40,7 @@ function payload(): MonitorStartPayload {
         cropAreaRatio: 1,
       },
     },
-    searchMode: 'fast',
-    captureDelaySeconds: 0,
+    capturePolicy: 'immediate_nickname',
     limits: {
       fps: 10,
       maxImageBytes: 10 * 1024 * 1024,
@@ -80,7 +79,7 @@ class FakeChild extends EventEmitter implements MonitorChild {
   event(sequence: number, type: string, payloadValue: unknown): void {
     this.stdout.write(
       `${JSON.stringify({
-        protocolVersion: 2,
+        protocolVersion: 3,
         sessionId: this.command()['sessionId'],
         sequence,
         type,
@@ -266,7 +265,7 @@ describe('MonitorProcessService', () => {
       expect.objectContaining({ shell: false, windowsHide: true }),
     )
     expect(child.written.trim().split('\n')).toHaveLength(1)
-    expect(child.command()['protocolVersion']).toBe(2)
+    expect(child.command()['protocolVersion']).toBe(3)
     child.event(1, 'ready', { frameWidth: 1920, frameHeight: 1080 })
     await expect(started).resolves.toBe(child.command()['sessionId'])
     const stopped = monitor.stop()
@@ -352,10 +351,15 @@ describe('MonitorProcessService', () => {
     )
     child.event(3, 'triggered', {
       timestamp: '2026-07-12T12:00:00.000Z',
+      triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
     })
-    expect(processListener.onTriggered).toHaveBeenCalledWith('2026-07-12T12:00:00.000Z')
+    expect(processListener.onTriggered).toHaveBeenCalledWith(
+      '2026-07-12T12:00:00.000Z',
+      '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+    )
     child.event(4, 'action', {
       timestamp: '2026-07-12T12:00:00.000Z',
+      triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
       width: 20,
       height: 10,
       byteLength: image.byteLength,
@@ -366,6 +370,7 @@ describe('MonitorProcessService', () => {
     )
     child.event(5, 'prediction_result', {
       timestamp: '2026-07-12T12:00:01.000Z',
+      triggerId: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
       width: 20,
       height: 10,
       byteLength: image.byteLength,

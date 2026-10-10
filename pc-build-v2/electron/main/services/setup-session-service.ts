@@ -31,6 +31,7 @@ import {
   captureConfigurationFingerprint,
   type CaptureConfigurationRepository,
 } from '../infrastructure/capture-configuration-repository'
+import { createLayoutCalibration } from '../infrastructure/capture-profile-migration'
 import type { ApiClient } from './api-client'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
@@ -284,7 +285,7 @@ export class SetupSessionService {
     }
     return this.start(
       resolved.selector,
-      resolved.configuration.source,
+      resolved.configuration.sourceBinding.identity,
       'predictionResult',
       undefined,
       {
@@ -632,14 +633,23 @@ export class SetupSessionService {
         return this.captureCommitAuthFailure(session, generation)
       }
       const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         userId: user.id,
         revision: (previous?.configuration.revision ?? 0) + 1,
         committedAt: timestamp,
-        source: session.view.source,
-        frameSize: frame.size,
-        regions,
-        triggerProfile,
+        sourceBinding: {
+          identity: session.view.source,
+          lastVerifiedAt: timestamp,
+        },
+        calibration: createLayoutCalibration(
+          previous?.configuration.calibration.calibrationId ?? randomUUID(),
+          (previous?.configuration.calibration.revision ?? 0) + 1,
+          frame.size,
+          regions,
+          triggerProfile,
+          timestamp,
+          'manual',
+        ),
       }
       const config = CaptureConfigurationSchema.parse({
         ...unsigned,
@@ -1001,7 +1011,7 @@ export class SetupSessionService {
     return CaptureStatusSchema.parse({
       configured: config !== null,
       revision: config?.revision ?? null,
-      sourceLabel: config?.source.label ?? null,
+      sourceLabel: config?.sourceBinding.identity.label ?? null,
     })
   }
 

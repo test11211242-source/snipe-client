@@ -26,6 +26,12 @@ export class CaptureTargetResolver {
 
   async resolve(): Promise<ResolvedMonitorTarget> {
     const active = await this.resolveActiveProfile()
+    if (active.configuration.calibration.validationStatus === 'needs_validation') {
+      throw new ApplicationError(
+        'CAPTURE_CALIBRATION_INVALID',
+        'Validate the calibration after rebinding the source',
+      )
+    }
     return { configuration: active.configuration, selector: active.selector }
   }
 
@@ -47,7 +53,7 @@ export class CaptureTargetResolver {
       collectionRevision: active.collectionRevision,
       configuration: active.profile.configuration,
       selector: await this.registry.resolvePreference(
-        active.profile.configuration.source,
+        active.profile.configuration.sourceBinding.identity,
       ),
     }
   }
@@ -65,7 +71,9 @@ export class CaptureTargetResolver {
     }
     return {
       configuration: profile.configuration,
-      selector: await this.registry.resolvePreference(profile.configuration.source),
+      selector: await this.registry.resolvePreference(
+        profile.configuration.sourceBinding.identity,
+      ),
     }
   }
 }

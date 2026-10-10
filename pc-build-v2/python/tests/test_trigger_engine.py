@@ -58,17 +58,16 @@ def profile_for(trigger: np.ndarray) -> dict:
     )
 
 
-def payload(profile: dict, search_mode="fast", capture_delay=0):
+def payload(profile: dict):
     return {
         "configuredFrameSize": {"width": 256, "height": 128},
         "triggerProfile": profile,
         "regions": {
             "trigger": {"x": 0, "y": 0, "width": 0.5, "height": 1},
-            "normal": {"x": 0.5, "y": 0, "width": 0.25, "height": 1},
-            "precise": {"x": 0.5, "y": 0, "width": 0.5, "height": 1},
+            "nicknameRegion": {"x": 0.5, "y": 0, "width": 0.25, "height": 1},
+            "topLeftEvidenceRegion": {"x": 0.5, "y": 0, "width": 0.5, "height": 1},
         },
-        "searchMode": search_mode,
-        "captureDelaySeconds": capture_delay,
+        "capturePolicy": "immediate_nickname",
         "limits": {
             "fps": 10,
             "maxImageBytes": 10 * 1024 * 1024,
@@ -195,23 +194,36 @@ def test_main_trigger_requires_consecutive_frames_and_release_before_rearm() -> 
     assert engine.process(matching, 16.05) is not None
 
 
-def test_precise_capture_uses_a_later_data_frame() -> None:
+def test_nickname_capture_uses_the_same_confirmation_frame() -> None:
     trigger = trigger_image((120, 40, 80))
-    engine = TriggerEngine(payload(profile_for(trigger), "precise", capture_delay=2.2))
-    matching = frame_for(trigger)
-    assert engine.process(matching, 0.0) is None
-    assert engine.process(matching, 0.11) is None
+    engine = TriggerEngine(payload(profile_for(trigger)))
+    first = frame_for(trigger, (1, 2, 3))
+    confirmed = frame_for(trigger, (7, 211, 33))
+    assert engine.process(first, 0.0) is None
+    action = engine.process(confirmed, 0.11)
     assert engine.take_triggered() is True
-
-    later = frame_for(trigger, (7, 211, 33))
-    assert engine.process(later, 2.2) is None
-    action = engine.process(later, 2.31)
     assert action is not None
     encoded, width, height = action
     decoded = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
-    assert (width, height) == (128, 128)
+    assert (width, height) == (64, 128)
     assert decoded is not None
-    assert tuple(int(value) for value in decoded[64, 64]) == (7, 211, 33)
+    assert tuple(int(value) for value in decoded[64, 32]) == (7, 211, 33)
+    assert engine.process(frame_for(trigger, (99, 99, 99)), 2.31) is None
+
+
+def test_trigger_shifted_lower_outside_saved_roi_never_fires() -> None:
+    trigger = trigger_image((120, 40, 80))
+    configured = payload(profile_for(trigger))
+    configured["configuredFrameSize"] = {"width": 256, "height": 256}
+    configured["regions"]["trigger"] = {"x": 0, "y": 0, "width": 0.5, "height": 0.5}
+    engine = TriggerEngine(configured)
+    shifted = np.zeros((256, 256, 3), dtype=np.uint8)
+    shifted[128:, :128] = trigger
+    for index in range(30):
+        assert engine.process(shifted, index * 0.11) is None
+        assert engine.take_triggered() is False
+        assert engine.last_match is not None
+        assert engine.last_match.matched is False
 
 
 def test_prediction_result_uses_shared_matcher_and_two_confirmations() -> None:
@@ -221,7 +233,7 @@ def test_prediction_result_uses_shared_matcher_and_two_confirmations() -> None:
         {
             "configuredFrameSize": configured["configuredFrameSize"],
             "trigger": configured["regions"]["trigger"],
-            "data": configured["regions"]["normal"],
+            "data": configured["regions"]["nicknameRegion"],
             "triggerProfile": configured["triggerProfile"],
         },
         configured["limits"],

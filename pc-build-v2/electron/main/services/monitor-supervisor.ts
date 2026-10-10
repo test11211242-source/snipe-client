@@ -11,6 +11,8 @@ import {
   type MonitorSessionStats,
   type MonitorState,
   type MonitorView,
+  type MonitorSession,
+  type DeckMode,
 } from '../../../shared/models/monitor'
 import { MonitorStartPayloadSchema } from '../../../shared/contracts/monitor-protocol'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
@@ -26,6 +28,28 @@ import {
   PredictionRuntimeProfileSchema,
   type PredictionRuntimeProfile,
 } from '../../../shared/models/prediction-result'
+import {
+  canonicalOpponentTag,
+  HISTORY_LIMIT,
+  localCalendarDay,
+  pruneJournal,
+  type MonitorJournal,
+  type MonitorJournalRepository,
+} from '../infrastructure/monitor-journal-repository'
+
+interface SearchAction extends MonitorAction {
+  triggerId: string
+  deckMode: DeckMode
+}
+
+const RECOVERABLE_SOURCE_CODES: Readonly<Record<string, true>> = {
+  SOURCE_NOT_FOUND: true,
+  SOURCE_AMBIGUOUS: true,
+  SOURCE_METADATA_UNAVAILABLE: true,
+  CAPTURE_SOURCE_CLOSED: true,
+  CAPTURE_NO_FRAME: true,
+}
+const SOURCE_RECOVERY_DELAYS = [1_000, 2_000, 5_000, 10_000] as const
 
 const EMPTY_STATS: MonitorSessionStats = Object.freeze({
   triggers: 0,
@@ -39,9 +63,10 @@ const EMPTY_STATS: MonitorSessionStats = Object.freeze({
 
 const TRANSITIONS: Readonly<Record<MonitorState, readonly MonitorState[]>> = {
   STOPPED: ['PREFLIGHT'],
-  PREFLIGHT: ['STARTING', 'STOPPING', 'FAILED'],
-  STARTING: ['READY', 'STOPPING', 'FAILED'],
-  READY: ['STOPPING', 'FAILED'],
+  PREFLIGHT: ['STARTING', 'STOPPING', 'FAILED', 'WAITING_SOURCE'],
+  STARTING: ['READY', 'STOPPING', 'FAILED', 'WAITING_SOURCE'],
+  READY: ['STOPPING', 'FAILED', 'WAITING_SOURCE'],
+  WAITING_SOURCE: ['PREFLIGHT', 'STOPPING', 'FAILED'],
   STOPPING: ['STOPPED', 'FAILED'],
   FAILED: ['PREFLIGHT', 'STOPPING', 'STOPPED'],
 }
@@ -76,7 +101,7 @@ export class MonitorSupervisor {
   #runController = new AbortController()
   #ocrController: AbortController | null = null
   #ocrActive = false
-  #pendingAction: MonitorAction | null = null
+  #pendingAction: SearchAction | null = null
   #startPromise: Promise<MonitorView> | null = null
   #cancelStart: ((value: MonitorView | PromiseLike<MonitorView>) => void) | null = null
   #stopPromise: Promise<MonitorView> | null = null
@@ -89,6 +114,20 @@ export class MonitorSupervisor {
   #predictionProfile: PredictionRuntimeProfile | null = null
   #userContextId: string | null = null
   #userContextGeneration = 0
+  readonly #viewListeners = new Set<(view: MonitorView) => void>()
+  #recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  #recoveryAttempt = 0
+  #bindingFingerprint: string | null = null
+  #profileId: string | null = null
+  #calibrationRevision: number | null = null
+  #lastTriggerId: string | null = null
+  #retry: { action: SearchAction; attemptId: string; expiresAt: number } | null = null
+  #retryTimer: ReturnType<typeof setTimeout> | null = null
+  #retryPromise: Promise<MonitorView> | null = null
+  #journal: MonitorJournal | null = null
+  #journalWrite: Promise<void> | null = null
+  #sessionTags = new Map<string, number>()
+  #sessionRepeats = new Set<string>()
 
   constructor(
     private readonly auth: AuthSession,
@@ -98,6 +137,7 @@ export class MonitorSupervisor {
     private readonly process: MonitorProcessService,
     private readonly ocr: OcrApiClient,
     private readonly now: () => Date = () => new Date(),
+    private readonly journalRepository?: MonitorJournalRepository,
   ) {
     this.#userContextId = this.auth.getView().user?.id ?? null
   }
@@ -115,6 +155,7 @@ export class MonitorSupervisor {
     const contextGeneration = this.#userContextGeneration
     let configured = false
     if (user !== null) {
+      await this.loadJournal(user.id, contextGeneration)
       const [configuration, preferences] = await Promise.all([
         this.captureConfigurations.load(user.id),
         this.preferences.load(user.id),
@@ -135,18 +176,77 @@ export class MonitorSupervisor {
         sourceAvailable: configured ? this.#view.readiness.sourceAvailable : null,
       },
     })
-    return this.#view
+    return this.getCurrentView()
   }
 
   getCurrentView(): MonitorView {
     return this.auth.getView().user?.id === this.#userContextId
-      ? MonitorViewSchema.parse(this.#view)
+      ? MonitorViewSchema.parse({
+          ...this.#view,
+          session: this.sessionSnapshot(),
+        })
       : this.redactedView(this.auth.getView().user !== null)
+  }
+
+  subscribeViews(listener: (view: MonitorView) => void): () => void {
+    this.#viewListeners.add(listener)
+    return () => this.#viewListeners.delete(listener)
+  }
+
+  async getHistory(offset = 0, limit = 50): Promise<MonitorResult[]> {
+    const userId = this.auth.getView().user?.id ?? null
+    const generation = this.#userContextGeneration
+    if (userId === null || !this.isUserContextCurrent(userId, generation)) return []
+    await this.loadJournal(userId, generation)
+    if (!this.isUserContextCurrent(userId, generation)) return []
+    return (this.#journal?.results ?? this.#view.results).slice(offset, offset + limit)
+  }
+
+  retrySearch(attemptId: string): Promise<MonitorView> {
+    if (this.#retryPromise !== null && this.#retry?.attemptId === attemptId)
+      return this.#retryPromise
+    const retained = this.#retry
+    if (retained?.attemptId !== attemptId) {
+      return Promise.reject(
+        new ApplicationError('SEARCH_RETRY_STALE', 'The search was superseded'),
+      )
+    }
+    if (this.now().getTime() >= retained.expiresAt) {
+      this.clearRetry()
+      return Promise.reject(
+        new ApplicationError('SEARCH_RETRY_EXPIRED', 'The retained crop expired'),
+      )
+    }
+    if (!this.#view.runIntent || this.#ocrActive || this.#view.state !== 'READY') {
+      return Promise.reject(
+        new ApplicationError('SEARCH_RETRY_UNAVAILABLE', 'Search cannot be retried now'),
+      )
+    }
+    const userId = this.auth.getView().user?.id
+    if (userId === undefined || userId !== this.#userContextId) {
+      return Promise.reject(new ApplicationError('AUTH_REQUIRED', 'Sign in to retry'))
+    }
+    const operation = this.processAction(
+      this.#generation,
+      userId,
+      this.#userContextGeneration,
+      retained.action,
+    )
+      .then(() => this.getCurrentView())
+      .finally(() => {
+        if (this.#retryPromise === operation) this.#retryPromise = null
+      })
+    this.#retryPromise = operation
+    return operation
   }
 
   getRetainedResult(resultId: string): MonitorResult | null {
     if (this.auth.getView().user?.id !== this.#userContextId) return null
-    return this.#view.results.find((result) => result.id === resultId) ?? null
+    return (
+      (this.#journal?.results ?? this.#view.results).find(
+        (result) => result.id === resultId,
+      ) ?? null
+    )
   }
 
   getLatestResult(): MonitorResult | null {
@@ -222,6 +322,14 @@ export class MonitorSupervisor {
     this.#ocrActive = false
     this.#pendingAction = null
     this.#predictionProfile = null
+    this.cancelRecovery()
+    this.clearRetry()
+    this.#journal = null
+    this.#sessionTags.clear()
+    this.#sessionRepeats.clear()
+    this.#bindingFingerprint = null
+    this.#profileId = null
+    this.#calibrationRevision = null
     this.patch({
       state: 'STOPPED',
       preferences: { ...DEFAULT_MONITOR_PREFERENCES },
@@ -234,6 +342,11 @@ export class MonitorSupervisor {
       startedAt: null,
       stats: { ...EMPTY_STATS },
       results: [],
+      runIntent: false,
+      search: null,
+      session: null,
+      summary: null,
+      historyError: null,
     })
     return true
   }
@@ -252,6 +365,7 @@ export class MonitorSupervisor {
     if (this.#view.state === 'STOPPING' && this.#stopPromise !== null) {
       return this.#stopPromise.then(() => this.start())
     }
+    this.cancelRecovery()
     const userId = this.auth.getView().user?.id ?? null
     const contextGeneration = this.#userContextGeneration
     const generation = ++this.#generation
@@ -259,16 +373,41 @@ export class MonitorSupervisor {
     this.#runController = new AbortController()
     this.#pendingAction = null
     this.#ocrActive = false
+    const session = this.#view.session
+    const continuing = session?.endedAt === null
+    if (!continuing) {
+      this.#sessionTags.clear()
+      this.#sessionRepeats.clear()
+      this.#bindingFingerprint = null
+    }
+    const startedAt = continuing ? session.startedAt : this.now().toISOString()
     this.transition('PREFLIGHT', {
       error: null,
-      startedAt: null,
-      stats: { ...EMPTY_STATS },
-      results: [],
-      readiness: {
-        authenticated: this.auth.getView().user !== null,
-        captureConfigured: false,
-        sourceAvailable: null,
-      },
+      runIntent: true,
+      startedAt,
+      ...(continuing
+        ? {}
+        : {
+            stats: { ...EMPTY_STATS },
+            results: [],
+            summary: null,
+            session:
+              userId === null
+                ? null
+                : {
+                    sessionId: randomUUID(),
+                    userId,
+                    startedAt,
+                    endedAt: null,
+                    initialProfileId: null,
+                    stopReason: null,
+                    durationMs: 0,
+                    stats: { ...EMPTY_STATS },
+                    repeatEncounters: 0,
+                    distinctRepeatedOpponents: 0,
+                  },
+          }),
+      search: null,
     })
     let cancelStart!: (value: MonitorView | PromiseLike<MonitorView>) => void
     const cancelled = new Promise<MonitorView>((resolve) => {
@@ -288,10 +427,18 @@ export class MonitorSupervisor {
     return operation
   }
 
-  stop(): Promise<MonitorView> {
+  stop(reason: MonitorSession['stopReason'] = 'user'): Promise<MonitorView> {
     ++this.#stopIntentGeneration
+    this.cancelRecovery()
+    this.clearRetry()
+    this.patch({ runIntent: false, search: null })
+    if (reason !== null) this.finalizeSession(reason)
     if (this.#stopPromise !== null) return this.#stopPromise
-    if (this.#view.state === 'STOPPED') return Promise.resolve(this.#view)
+    if (this.#view.state === 'STOPPED') {
+      return this.#journalWrite === null
+        ? Promise.resolve(this.#view)
+        : this.#journalWrite.then(() => this.#view)
+    }
     const cancelStart = this.#cancelStart
     if (this.#view.state === 'PREFLIGHT' || this.#view.state === 'STARTING') {
       this.#startPromise = null
@@ -305,7 +452,8 @@ export class MonitorSupervisor {
     this.transition('STOPPING')
     const operation = this.process
       .stop()
-      .then(() => {
+      .then(async () => {
+        await this.#journalWrite
         if (generation === this.#generation && this.#view.state === 'STOPPING') {
           this.#ocrActive = false
           this.transition('STOPPED', { error: null, startedAt: null })
@@ -328,15 +476,14 @@ export class MonitorSupervisor {
 
   async restart(): Promise<MonitorView> {
     const expectedStopIntent = this.#stopIntentGeneration + 1
-    await this.stop()
+    await this.stop(null)
     if (this.#stopIntentGeneration !== expectedStopIntent) return this.#view
+    this.#bindingFingerprint = null
     return this.start()
   }
 
   restartIfActive(): Promise<MonitorView> {
-    return ['PREFLIGHT', 'STARTING', 'READY'].includes(this.#view.state)
-      ? this.restart()
-      : Promise.resolve(this.#view)
+    return this.#view.runIntent ? this.restart() : Promise.resolve(this.#view)
   }
 
   async getPreferences(): Promise<MonitorPreferences> {
@@ -350,12 +497,6 @@ export class MonitorSupervisor {
   }
 
   async updatePreferences(value: MonitorPreferences): Promise<MonitorPreferences> {
-    if (!['STOPPED', 'FAILED'].includes(this.#view.state)) {
-      throw new ApplicationError(
-        'MONITOR_ACTIVE',
-        'Stop monitoring before changing search preferences',
-      )
-    }
     const user = this.auth.getView().user
     if (user === null)
       throw new ApplicationError('AUTH_REQUIRED', 'Sign in to save preferences')
@@ -379,6 +520,32 @@ export class MonitorSupervisor {
       this.assertCurrent(generation, userId, contextGeneration)
       if (userId === null)
         throw new ApplicationError('AUTH_REQUIRED', 'Sign in to start monitoring')
+      await this.loadJournal(userId, contextGeneration)
+      this.assertCurrent(generation, userId, contextGeneration)
+      const active = await this.captureConfigurations.getActive(userId)
+      this.assertCurrent(generation, userId, contextGeneration)
+      if (active === null)
+        throw new ApplicationError(
+          'CAPTURE_NOT_CONFIGURED',
+          'Configure a capture profile',
+        )
+      if (
+        this.#bindingFingerprint !== null &&
+        this.#bindingFingerprint !== active.profile.configuration.fingerprint
+      ) {
+        throw new ApplicationError(
+          'CAPTURE_CALIBRATION_INVALID',
+          'The capture profile changed during recovery',
+        )
+      }
+      this.#bindingFingerprint = active.profile.configuration.fingerprint
+      this.#profileId = active.profile.profileId
+      this.#calibrationRevision = active.profile.configuration.calibration.revision
+      if (this.#view.session !== null && this.#view.session.initialProfileId === null) {
+        this.patch({
+          session: { ...this.#view.session, initialProfileId: active.profile.profileId },
+        })
+      }
       const [token, preferences, resolved] = await Promise.all([
         this.auth.getAccessToken(),
         this.preferences.load(userId),
@@ -398,11 +565,14 @@ export class MonitorSupervisor {
       this.transition('STARTING')
       const payload = MonitorStartPayloadSchema.parse({
         selector: resolved.selector,
-        configuredFrameSize: resolved.configuration.frameSize,
-        regions: resolved.configuration.regions,
-        triggerProfile: resolved.configuration.triggerProfile,
-        searchMode: preferences.searchMode,
-        captureDelaySeconds: preferences.searchMode === 'precise' ? 2.2 : 0,
+        configuredFrameSize: resolved.configuration.calibration.referenceFrameSize,
+        regions: {
+          trigger: resolved.configuration.calibration.triggerRegion,
+          nicknameRegion: resolved.configuration.calibration.nicknameRegion,
+          topLeftEvidenceRegion: resolved.configuration.calibration.topLeftEvidenceRegion,
+        },
+        triggerProfile: resolved.configuration.calibration.triggerProfile,
+        capturePolicy: 'immediate_nickname',
         limits: {
           fps: 10,
           maxImageBytes: 10 * 1024 * 1024,
@@ -417,8 +587,14 @@ export class MonitorSupervisor {
       })
       this.assertCurrent(generation, userId, contextGeneration)
       await this.process.start(payload, {
-        onTriggered: (timestamp) =>
-          this.acceptTriggered(generation, userId, contextGeneration, timestamp),
+        onTriggered: (timestamp, triggerId) =>
+          this.acceptTriggered(
+            generation,
+            userId,
+            contextGeneration,
+            timestamp,
+            triggerId,
+          ),
         onAction: (action) =>
           this.acceptAction(generation, userId, contextGeneration, action),
         onPredictionResult: (action) =>
@@ -429,7 +605,8 @@ export class MonitorSupervisor {
         },
       })
       this.assertCurrent(generation, userId, contextGeneration)
-      this.transition('READY', { startedAt: this.now().toISOString() })
+      this.#recoveryAttempt = 0
+      this.transition('READY')
     } catch (error) {
       if (!this.isCurrent(generation, userId, contextGeneration)) {
         if (
@@ -443,6 +620,10 @@ export class MonitorSupervisor {
       if (this.#view.state === 'STOPPING' || this.#view.state === 'STOPPED')
         return this.#view
       const failure = publicError(error)
+      if (RECOVERABLE_SOURCE_CODES[failure.code] && this.#view.runIntent) {
+        this.waitForSource(failure)
+        return this.getCurrentView()
+      }
       this.patch({
         readiness: {
           ...this.#view.readiness,
@@ -451,7 +632,8 @@ export class MonitorSupervisor {
             : this.#view.readiness.sourceAvailable,
         },
       })
-      this.transition('FAILED', { error: failure, startedAt: null })
+      this.transition('FAILED', { error: failure, runIntent: false })
+      this.finalizeSession('failed')
     }
     return this.#view
   }
@@ -467,12 +649,18 @@ export class MonitorSupervisor {
       !['STARTING', 'READY'].includes(this.#view.state)
     )
       return
+    this.clearRetry()
+    const captured: SearchAction = {
+      ...action,
+      triggerId: action.triggerId ?? this.#lastTriggerId ?? randomUUID(),
+      deckMode: this.#view.preferences.deckMode,
+    }
     if (this.#ocrActive) {
       if (this.#pendingAction !== null) this.increment('droppedActions')
-      this.#pendingAction = action
+      this.#pendingAction = captured
       return
     }
-    void this.processAction(generation, userId, contextGeneration, action)
+    void this.processAction(generation, userId, contextGeneration, captured)
   }
 
   private acceptTriggered(
@@ -480,12 +668,29 @@ export class MonitorSupervisor {
     userId: string,
     contextGeneration: number,
     timestamp: string,
+    triggerId: string = randomUUID(),
   ): void {
     if (
       !this.isCurrent(generation, userId, contextGeneration) ||
       !['STARTING', 'READY'].includes(this.#view.state)
     )
       return
+    this.#lastTriggerId = triggerId
+    this.clearRetry()
+    if (this.#profileId !== null && this.#calibrationRevision !== null) {
+      this.patch({
+        search: {
+          triggerId,
+          attemptId: randomUUID(),
+          profileId: this.#profileId,
+          calibrationRevision: this.#calibrationRevision,
+          phase: 'capturing',
+          startedAt: timestamp,
+          searchedNickname: null,
+          retryExpiresAt: null,
+        },
+      })
+    }
     for (const listener of this.#battleStartListeners) {
       try {
         void Promise.resolve(listener(timestamp)).catch(() => undefined)
@@ -522,10 +727,38 @@ export class MonitorSupervisor {
     generation: number,
     userId: string,
     contextGeneration: number,
-    action: MonitorAction,
+    action: SearchAction,
   ): Promise<void> {
     if (!this.isCurrent(generation, userId, contextGeneration)) return
     this.#ocrActive = true
+    const attemptId =
+      this.#view.search?.triggerId === action.triggerId &&
+      this.#view.search.phase === 'capturing'
+        ? this.#view.search.attemptId
+        : randomUUID()
+    const deckMode = action.deckMode
+    const correlation = {
+      sessionId: this.#view.session?.sessionId ?? null,
+      triggerId: action.triggerId,
+      attemptId,
+      profileId: this.#profileId,
+      calibrationRevision: this.#calibrationRevision,
+      capturePolicy: 'immediate_nickname' as const,
+    }
+    if (this.#profileId !== null && this.#calibrationRevision !== null) {
+      this.patch({
+        search: {
+          triggerId: action.triggerId,
+          attemptId,
+          profileId: this.#profileId,
+          calibrationRevision: this.#calibrationRevision,
+          phase: 'requesting',
+          startedAt: this.now().toISOString(),
+          searchedNickname: null,
+          retryExpiresAt: null,
+        },
+      })
+    }
     const controller = new AbortController()
     this.#ocrController = controller
     this.increment('requests')
@@ -535,8 +768,7 @@ export class MonitorSupervisor {
         result = await this.ocr.process({
           image: action.image,
           timestamp: action.timestamp,
-          searchMode: this.#view.preferences.searchMode,
-          deckMode: this.#view.preferences.deckMode,
+          deckMode,
           signal: controller.signal,
         })
       } catch {
@@ -544,8 +776,8 @@ export class MonitorSupervisor {
           id: randomUUID(),
           kind: 'service_error',
           timestamp: action.timestamp,
-          searchMode: this.#view.preferences.searchMode,
-          deckMode: this.#view.preferences.deckMode,
+          searchMode: 'fast',
+          deckMode,
           searchedNickname: null,
           message: 'Внутренняя ошибка клиента OCR',
           retryable: true,
@@ -553,6 +785,33 @@ export class MonitorSupervisor {
         })
       }
       if (!this.isCurrent(generation, userId, contextGeneration)) return
+      result = MonitorResultSchema.parse({ ...result, ...correlation })
+      const retryable =
+        result.kind === 'service_error' && result.retryable && !result.authBlocked
+      if (retryable && action.image.byteLength <= 10 * 1024 * 1024) {
+        this.#retry = { action, attemptId, expiresAt: this.now().getTime() + 120_000 }
+        if (this.#retryTimer !== null) clearTimeout(this.#retryTimer)
+        this.#retryTimer = setTimeout(() => {
+          this.clearRetry()
+          if (this.#view.search?.attemptId === attemptId) {
+            this.patch({ search: { ...this.#view.search, retryExpiresAt: null } })
+          }
+        }, 120_000)
+        this.#retryTimer.unref()
+      } else {
+        this.clearRetry()
+      }
+      if (this.#view.search?.attemptId === attemptId) {
+        this.patch({
+          search: {
+            ...this.#view.search,
+            phase: result.kind === 'service_error' ? 'failed' : 'completed',
+            searchedNickname: result.searchedNickname,
+            retryExpiresAt:
+              this.#retry === null ? null : new Date(this.#retry.expiresAt).toISOString(),
+          },
+        })
+      }
       this.addResult(result)
     } finally {
       if (this.isCurrent(generation, userId, contextGeneration)) {
@@ -568,16 +827,110 @@ export class MonitorSupervisor {
   }
 
   private addResult(result: MonitorResult): void {
-    const key =
-      result.kind === 'player_found'
-        ? 'playersFound'
-        : result.kind === 'player_not_found'
-          ? 'playersNotFound'
-          : result.kind === 'recognition_failed'
-            ? 'recognitionFailures'
-            : 'serviceErrors'
-    this.increment(key)
-    this.patch({ results: [result, ...this.#view.results].slice(0, 20) })
+    if (this.auth.getView().user?.id !== this.#userContextId) return
+    const history = this.#journal?.results ?? this.#view.results
+    const previous = history.find(
+      (entry) =>
+        entry.id === result.id ||
+        (!result.reprocessed &&
+          !entry.reprocessed &&
+          ((result.triggerId !== null && entry.triggerId === result.triggerId) ||
+            (result.triggerId === null && entry.timestamp === result.timestamp))),
+    )
+    if (previous !== undefined) {
+      result = MonitorResultSchema.parse({
+        ...result,
+        id: previous.id,
+        sessionId: result.sessionId ?? previous.sessionId,
+        triggerId: result.triggerId ?? previous.triggerId,
+        attemptId: result.attemptId ?? previous.attemptId,
+        profileId: result.profileId ?? previous.profileId,
+        calibrationRevision: result.calibrationRevision ?? previous.calibrationRevision,
+        capturePolicy: result.capturePolicy ?? previous.capturePolicy,
+      })
+    }
+    const counter: Readonly<Record<MonitorResult['kind'], keyof MonitorSessionStats>> = {
+      player_found: 'playersFound',
+      player_not_found: 'playersNotFound',
+      recognition_failed: 'recognitionFailures',
+      service_error: 'serviceErrors',
+    }
+    const stats = { ...this.#view.stats }
+    const currentSession =
+      !result.reprocessed &&
+      this.#view.session?.endedAt === null &&
+      (result.sessionId === null || result.sessionId === this.#view.session.sessionId)
+    if (currentSession) {
+      if (previous === undefined) ++stats[counter[result.kind]]
+      else if (previous.kind !== result.kind) {
+        stats[counter[previous.kind]] = Math.max(0, stats[counter[previous.kind]] - 1)
+        ++stats[counter[result.kind]]
+      }
+    }
+    const tag = result.reprocessed ? null : canonicalOpponentTag(result)
+    const previousTag =
+      previous === undefined || previous.reprocessed
+        ? null
+        : canonicalOpponentTag(previous)
+    if (currentSession && tag !== previousTag) {
+      if (previousTag !== null) {
+        this.#sessionTags.set(
+          previousTag,
+          Math.max(0, (this.#sessionTags.get(previousTag) ?? 1) - 1),
+        )
+      }
+      if (tag !== null) this.#sessionTags.set(tag, (this.#sessionTags.get(tag) ?? 0) + 1)
+      this.#sessionRepeats = new Set(
+        [...this.#sessionTags].filter(([, count]) => count > 1).map(([key]) => key),
+      )
+    }
+    if (this.#journal !== null) {
+      const day = localCalendarDay(new Date(result.timestamp))
+      const today = localCalendarDay(this.now())
+      const earlier =
+        tag === null || day !== today
+          ? undefined
+          : this.#journal.encounters.findLast(
+              (entry) =>
+                entry.tag === tag &&
+                entry.resultId !== result.id &&
+                localCalendarDay(new Date(entry.at)) === today &&
+                Date.parse(entry.at) <= Date.parse(result.timestamp),
+            )
+      result = MonitorResultSchema.parse({
+        ...result,
+        repeat:
+          earlier === undefined
+            ? null
+            : {
+                previousAt: earlier.at,
+                previousResultId: earlier.resultId,
+                localDay: today,
+              },
+      })
+      this.#journal.encounters = this.#journal.encounters.filter(
+        (entry) => entry.resultId !== result.id,
+      )
+      if (tag !== null)
+        this.#journal.encounters.push({
+          tag,
+          day,
+          at: result.timestamp,
+          resultId: result.id,
+        })
+      this.#journal.results = [
+        result,
+        ...history.filter((entry) => entry.id !== result.id),
+      ].slice(0, HISTORY_LIMIT)
+      this.persistJournal()
+    }
+    this.patch({
+      stats,
+      results: [
+        result,
+        ...this.#view.results.filter((entry) => entry.id !== result.id),
+      ].slice(0, 20),
+    })
     for (const listener of this.#resultListeners) {
       try {
         void Promise.resolve(listener(MonitorResultSchema.parse(result))).catch(
@@ -607,11 +960,24 @@ export class MonitorSupervisor {
     ) {
       return
     }
+    if (RECOVERABLE_SOURCE_CODES[error.code] && this.#view.runIntent) {
+      ++this.#generation
+      this.#runController.abort()
+      this.#ocrController?.abort()
+      this.#pendingAction = null
+      this.#ocrActive = false
+      this.clearRetry()
+      this.waitForSource(publicError(error))
+      void this.process.stop()
+      return
+    }
     ++this.#generation
     this.#ocrController?.abort()
     this.#pendingAction = null
     this.#ocrActive = false
-    this.transition('FAILED', { error: publicError(error), startedAt: null })
+    this.transition('FAILED', { error: publicError(error), runIntent: false })
+    this.clearRetry()
+    this.finalizeSession('failed')
     void this.process.stop()
   }
 
@@ -661,6 +1027,112 @@ export class MonitorSupervisor {
     )
   }
 
+  private clearRetry(): void {
+    if (this.#retryTimer !== null) clearTimeout(this.#retryTimer)
+    this.#retryTimer = null
+    this.#retry = null
+  }
+
+  private cancelRecovery(): void {
+    if (this.#recoveryTimer !== null) clearTimeout(this.#recoveryTimer)
+    this.#recoveryTimer = null
+  }
+
+  private waitForSource(error: MonitorView['error']): void {
+    this.cancelRecovery()
+    this.transition('WAITING_SOURCE', {
+      error,
+      search: null,
+      readiness: { ...this.#view.readiness, sourceAvailable: false },
+    })
+    const generation = this.#generation
+    const delay = SOURCE_RECOVERY_DELAYS[this.#recoveryAttempt++] ?? 15_000
+    this.#recoveryTimer = setTimeout(() => {
+      this.#recoveryTimer = null
+      if (
+        generation === this.#generation &&
+        this.#view.runIntent &&
+        this.#view.state === 'WAITING_SOURCE'
+      )
+        void this.start()
+    }, delay)
+    this.#recoveryTimer.unref()
+  }
+
+  private sessionSnapshot(): MonitorSession | null {
+    const session = this.#view.session
+    if (session?.endedAt !== null) return session
+    let repeatEncounters = 0
+    for (const count of this.#sessionTags.values())
+      repeatEncounters += Math.max(0, count - 1)
+    return {
+      ...session,
+      stats: { ...this.#view.stats },
+      durationMs: Math.max(0, this.now().getTime() - Date.parse(session.startedAt)),
+      repeatEncounters,
+      distinctRepeatedOpponents: this.#sessionRepeats.size,
+    }
+  }
+
+  private finalizeSession(reason: NonNullable<MonitorSession['stopReason']>): void {
+    const session = this.sessionSnapshot()
+    if (session?.endedAt !== null) return
+    const summary: MonitorSession = {
+      ...session,
+      endedAt: this.now().toISOString(),
+      stopReason: reason,
+    }
+    this.patch({ session: summary, summary })
+    if (this.#journal !== null) {
+      this.#journal.sessions.push(summary)
+      this.persistJournal()
+    }
+  }
+
+  private async loadJournal(userId: string, contextGeneration: number): Promise<void> {
+    if (this.#journal?.userId === userId) return
+    let journal: MonitorJournal
+    try {
+      journal =
+        this.journalRepository === undefined
+          ? { schemaVersion: 1, userId, results: [], encounters: [], sessions: [] }
+          : await this.journalRepository.load(userId)
+    } catch {
+      journal = { schemaVersion: 1, userId, results: [], encounters: [], sessions: [] }
+      if (this.isUserContextCurrent(userId, contextGeneration)) {
+        this.patch({
+          historyError: {
+            code: 'HISTORY_STORAGE_FAILED',
+            message: 'Не удалось прочитать историю сессий.',
+          },
+        })
+      }
+    }
+    if (!this.isUserContextCurrent(userId, contextGeneration)) return
+    if (this.#journal?.userId === userId) return
+    pruneJournal(journal, this.now())
+    this.#journal = journal
+  }
+
+  private persistJournal(): void {
+    const journal = this.#journal
+    if (journal === null) return
+    pruneJournal(journal, this.now())
+    const generation = this.#userContextGeneration
+    const writing = this.journalRepository?.save(journal)
+    if (writing === undefined) return
+    this.#journalWrite = writing.catch(() => {
+      if (this.isUserContextCurrent(journal.userId, generation)) {
+        this.patch({
+          historyError: {
+            code: 'HISTORY_STORAGE_FAILED',
+            message: 'Не удалось сохранить историю сессий.',
+          },
+        })
+      }
+    })
+  }
+
   private transition(state: MonitorState, patch: Partial<MonitorView> = {}): void {
     if (!TRANSITIONS[this.#view.state].includes(state)) {
       throw new Error(`Invalid monitor transition: ${this.#view.state} -> ${state}`)
@@ -670,6 +1142,13 @@ export class MonitorSupervisor {
 
   private patch(patch: Partial<MonitorView>): void {
     this.#view = MonitorViewSchema.parse({ ...this.#view, ...patch })
+    for (const listener of this.#viewListeners) {
+      try {
+        listener(this.getCurrentView())
+      } catch {
+        /* One-way projection. */
+      }
+    }
   }
 
   private redactedView(authenticated: boolean): MonitorView {
@@ -683,6 +1162,11 @@ export class MonitorSupervisor {
       },
       stats: EMPTY_STATS,
       results: [],
+      runIntent: false,
+      search: null,
+      session: null,
+      summary: null,
+      historyError: null,
     })
   }
 }

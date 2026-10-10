@@ -129,7 +129,10 @@ describe('CaptureSourceRegistry', () => {
     const displays = vi.fn().mockRejectedValue(new Error('slow helper unavailable'))
     const registry = new CaptureSourceRegistry({
       currentProcessId: 1,
-      enumerate: () => Promise.resolve([source('window:12:0', 'Game')]),
+      enumerate: () =>
+        Promise.resolve([
+          { ...source('window:12:0', 'Game'), executableLabel: 'Game.exe' },
+        ]),
       ownWindowHandles: () => new Set(),
       displays,
     })
@@ -138,7 +141,7 @@ describe('CaptureSourceRegistry', () => {
         kind: 'window',
         label: 'Game',
         titleHint: 'Game',
-        executableLabel: null,
+        executableLabel: 'Game.exe',
       }),
     ).resolves.toMatchObject({ windowHwnd: '12' })
     expect(displays).not.toHaveBeenCalled()
@@ -397,6 +400,53 @@ describe('CaptureSourceRegistry', () => {
     ]
     await expect(
       registry.resolvePreference({ kind: 'display', label: 'Display', displayId: '22' }),
+    ).rejects.toMatchObject({ code: 'SOURCE_NOT_FOUND' })
+  })
+})
+
+describe('M1 source picker degraded metadata', () => {
+  it('keeps windows selectable when the display helper fails and marks displays unavailable', async () => {
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: vi
+        .fn()
+        .mockResolvedValue([
+          source('window:12:0', 'Game', '', 20),
+          source('screen:99:0', 'Screen', '99'),
+        ]),
+      displays: vi.fn().mockRejectedValue(new Error('display metadata unavailable')),
+      ownWindowHandles: () => new Set(),
+    }
+    const registry = new CaptureSourceRegistry(provider)
+    const listed = await registry.enumerate()
+    expect(listed.sources).toHaveLength(2)
+    const window = required(listed.sources.find((entry) => entry.kind === 'window'))
+    const display = required(listed.sources.find((entry) => entry.kind === 'display'))
+    expect(window.captureSupported).toBe(true)
+    expect(display.captureSupported).toBe(false)
+    expect(display.unavailableReason).toMatch(/метаданные/)
+    await expect(
+      registry.resolve(window.sourceKey, listed.revision),
+    ).resolves.toMatchObject({
+      selector: { kind: 'window', windowHwnd: '12' },
+    })
+  })
+
+  it('does not recover an absent saved HWND by title alone when executable identity is unknown', async () => {
+    const provider: CaptureSourceProvider = {
+      currentProcessId: 1,
+      enumerate: vi.fn().mockResolvedValue([source('window:13:0', 'Game', '', 20)]),
+      displays: vi.fn().mockResolvedValue([]),
+      ownWindowHandles: () => new Set(),
+    }
+    await expect(
+      new CaptureSourceRegistry(provider).resolvePreference({
+        kind: 'window',
+        label: 'Game',
+        titleHint: 'Game',
+        executableLabel: null,
+        windowHwnd: '12',
+      }),
     ).rejects.toMatchObject({ code: 'SOURCE_NOT_FOUND' })
   })
 })

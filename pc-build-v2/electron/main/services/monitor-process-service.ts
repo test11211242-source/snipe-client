@@ -76,13 +76,14 @@ export interface MonitorTimers {
 
 export interface MonitorAction {
   timestamp: string
+  triggerId?: string
   width: number
   height: number
   image: Buffer
 }
 
 export interface MonitorProcessListener {
-  onTriggered: (timestamp: string) => void
+  onTriggered: (timestamp: string, triggerId?: string) => void
   onAction: (action: MonitorAction) => void
   onPredictionResult: (action: MonitorAction) => void
   onFatal: (error: ApplicationError) => void
@@ -305,7 +306,7 @@ export class MonitorProcessService {
 
     try {
       const command = MonitorStartCommandSchema.parse({
-        protocolVersion: 2,
+        protocolVersion: 3,
         sessionId,
         sequence: 0,
         type: 'start',
@@ -354,7 +355,7 @@ export class MonitorProcessService {
     })
     try {
       const command = MonitorStopCommandSchema.parse({
-        protocolVersion: 2,
+        protocolVersion: 3,
         sessionId: owned.sessionId,
         sequence: owned.lastSequence + 1,
         type: 'stop',
@@ -457,7 +458,7 @@ export class MonitorProcessService {
       return
     }
     if (event.type === 'triggered') {
-      owned.listener.onTriggered(event.payload.timestamp)
+      owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
@@ -479,6 +480,7 @@ export class MonitorProcessService {
       }
       const action = {
         timestamp: event.payload.timestamp,
+        triggerId: event.payload.triggerId,
         width: event.payload.width,
         height: event.payload.height,
         image,

@@ -17,7 +17,6 @@ import type {
   MonitorPreferences,
   MonitorResult,
   MonitorView,
-  SearchMode,
 } from '../../../shared/models/monitor'
 import { formatDeckCount, publicErrorMessage } from './format'
 import { Alert, Button, Section } from './ui'
@@ -53,7 +52,9 @@ export function HomePage({
   const monitorState = monitorView?.state ?? null
   const active =
     monitorState !== null &&
-    ['PREFLIGHT', 'STARTING', 'READY', 'STOPPING'].includes(monitorState)
+    ['PREFLIGHT', 'STARTING', 'READY', 'WAITING_SOURCE', 'STOPPING'].includes(
+      monitorState,
+    )
   const sourceUnavailable = monitorView?.readiness.sourceAvailable === false
   const activeProfile = profiles?.profiles.find((profile) => profile.isActive) ?? null
   const canStart = authenticated && configured && !active && !commandBusy
@@ -198,14 +199,16 @@ export function HomePage({
             </div>
             <h2 id="monitor-title">{hero.title}</h2>
             <p className="monitor-lead">{hero.description}</p>
-            {monitorView?.error !== null && monitorView?.error !== undefined && (
-              <Alert
-                title="Не удалось продолжить"
-                details={<code>{monitorView.error.code}</code>}
-              >
-                {publicErrorMessage(monitorView.error.code, monitorView.error.message)}
-              </Alert>
-            )}
+            {monitorView?.state !== 'WAITING_SOURCE' &&
+              monitorView?.error !== null &&
+              monitorView?.error !== undefined && (
+                <Alert
+                  title="Не удалось продолжить"
+                  details={<code>{monitorView.error.code}</code>}
+                >
+                  {publicErrorMessage(monitorView.error.code, monitorView.error.message)}
+                </Alert>
+              )}
             {commandError !== null && <Alert>{commandError}</Alert>}
             <div className="monitor-actions">
               <Button
@@ -234,16 +237,6 @@ export function HomePage({
               </div>
             )}
             <div className="mode-groups">
-              <ModeGroup<SearchMode>
-                label="Поиск"
-                options={[
-                  ['fast', 'Быстрый'],
-                  ['precise', 'Точный'],
-                ]}
-                value={monitorView?.preferences.searchMode ?? 'fast'}
-                disabled={active || commandBusy || monitorView === null}
-                onChange={(searchMode) => void updatePreference({ searchMode })}
-              />
               <ModeGroup<DeckMode>
                 label="Режим колод"
                 options={[
@@ -251,7 +244,7 @@ export function HomePage({
                   ['gt', 'Турнир'],
                 ]}
                 value={monitorView?.preferences.deckMode ?? 'pol'}
-                disabled={active || commandBusy || monitorView === null}
+                disabled={commandBusy || monitorView === null}
                 onChange={(deckMode) => void updatePreference({ deckMode })}
               />
             </div>
@@ -357,12 +350,6 @@ export function HomePage({
               </dd>
             </div>
             <div>
-              <dt>Поиск</dt>
-              <dd>
-                {monitorView?.preferences.searchMode === 'precise' ? 'Точный' : 'Быстрый'}
-              </dd>
-            </div>
-            <div>
               <dt>Колоды</dt>
               <dd>
                 {monitorView?.preferences.deckMode === 'gt' ? 'Турнир' : 'Путь легенд'}
@@ -439,6 +426,16 @@ function getHomePresentation(
       description: 'Укажите окно Clash Royale или монитор перед запуском распознавания.',
       action: 'Выбрать источник',
       tone: 'warning',
+    }
+  }
+  if (view.state === 'WAITING_SOURCE') {
+    return {
+      kicker: 'Мониторинг включён',
+      title: 'Ждём окно игры…',
+      description:
+        'Поиск продолжится автоматически, когда вернётся проверенный источник.',
+      action: 'Остановить',
+      tone: 'waiting',
     }
   }
   if (sourceUnavailable) {
@@ -553,7 +550,6 @@ function ResultCard({ result }: { result: MonitorResult }): React.JSX.Element {
           .filter((value) => value !== null)
           .join(' · ') || 'Профиль найден'
       : result.message
-  const searchMode = result.searchMode === 'precise' ? 'Точный поиск' : 'Быстрый поиск'
   const deckMode = result.deckMode === 'gt' ? 'Турнир' : 'Путь легенд'
   return (
     <article className="result-card" data-kind={result.kind}>
@@ -570,7 +566,8 @@ function ResultCard({ result }: { result: MonitorResult }): React.JSX.Element {
         </div>
         <p>{detail}</p>
         <span>
-          {searchMode} · {deckMode}
+          {deckMode}
+          {result.reprocessed ? ' · Переобработано · вне статистики сессии' : ''}
           {result.searchedNickname !== null
             ? ` · запрос: ${result.searchedNickname}`
             : ''}

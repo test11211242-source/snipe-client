@@ -273,12 +273,18 @@ describe('SetupSessionService', () => {
       precise_data_area: { x: 100, y: 50 },
       screen_resolution: { width: 1000, height: 500 },
     })
+    const expectedCalibration: unknown = expect.objectContaining({
+      triggerProfile: profile,
+    })
     expect(repository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: '42',
         revision: 1,
-        source: preference,
-        triggerProfile: profile,
+        sourceBinding: {
+          identity: preference,
+          lastVerifiedAt: '2026-07-12T12:00:00.000Z',
+        },
+        calibration: expectedCalibration,
       }),
       expect.objectContaining({ profileName: 'Основной', expectedRevision: 0 }),
     )
@@ -599,7 +605,7 @@ describe('SetupSessionService', () => {
     )
     expect(repository.save).toHaveBeenCalled()
     expect(repository.save.mock.calls[0]?.[0] as unknown).toMatchObject({
-      regions: { trigger: canonical },
+      calibration: { triggerRegion: canonical },
     })
   })
 })

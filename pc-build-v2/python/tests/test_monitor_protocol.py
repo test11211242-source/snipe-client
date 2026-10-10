@@ -13,12 +13,11 @@ def payload():
         "configuredFrameSize": {"width": 1920, "height": 1080},
         "regions": {
             "trigger": {"x": 0, "y": 0, "width": 0.2, "height": 0.2},
-            "normal": {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
-            "precise": {"x": 0, "y": 0, "width": 1, "height": 1},
+            "nicknameRegion": {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
+            "topLeftEvidenceRegion": {"x": 0, "y": 0, "width": 1, "height": 1},
         },
         "triggerProfile": {},
-        "searchMode": "fast",
-        "captureDelaySeconds": 0,
+        "capturePolicy": "immediate_nickname",
         "limits": {
             "fps": 10,
             "maxImageBytes": 10 * 1024 * 1024,
@@ -40,15 +39,15 @@ def line(command):
 def test_strict_versioned_start_and_stop() -> None:
     session_id = str(uuid.uuid4())
     start = {
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
         "payload": payload(),
     }
-    assert read_command(line(start))["payload"]["searchMode"] == "fast"
+    assert read_command(line(start))["payload"]["capturePolicy"] == "immediate_nickname"
     stop = {
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "sessionId": session_id,
         "sequence": 3,
         "type": "stop",
@@ -60,17 +59,17 @@ def test_strict_versioned_start_and_stop() -> None:
             session_id,
             2,
             "triggered",
-            {"timestamp": "2026-07-12T12:00:00.000Z"},
+            {"timestamp": "2026-07-12T12:00:00.000Z", "triggerId": str(uuid.uuid4())},
         )
     )
-    assert triggered["protocolVersion"] == 2
+    assert triggered["protocolVersion"] == 3
     assert triggered["type"] == "triggered"
 
 
 def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
     session_id = str(uuid.uuid4())
     command = {
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
@@ -88,7 +87,7 @@ def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
 
 def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     command = {
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "sessionId": str(uuid.uuid4()),
         "sequence": 0,
         "type": "start",
@@ -98,23 +97,21 @@ def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     with pytest.raises(MonitorProtocolError, match="limits"):
         read_command(line(command))
     command["payload"] = payload()
-    command["payload"]["regions"]["normal"]["x"] = 0.8
+    command["payload"]["regions"]["nicknameRegion"]["x"] = 0.8
     with pytest.raises(MonitorProtocolError, match="bounds"):
         read_command(line(command))
 
 
-def test_accepts_only_bounded_finite_capture_delay() -> None:
+def test_rejects_obsolete_capture_delay_and_search_mode() -> None:
     command = {
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "sessionId": str(uuid.uuid4()),
         "sequence": 0,
         "type": "start",
         "payload": payload(),
     }
-    command["payload"]["captureDelaySeconds"] = 2.2
-    assert read_command(line(command))["payload"]["captureDelaySeconds"] == 2.2
-    for invalid in (-0.1, 5.1, True, float("inf")):
-        command["payload"] = payload()
-        command["payload"]["captureDelaySeconds"] = invalid
-        with pytest.raises(MonitorProtocolError, match="capture delay"):
+    assert read_command(line(command))["payload"]["capturePolicy"] == "immediate_nickname"
+    for obsolete in ({"captureDelaySeconds": 2.2}, {"searchMode": "fast"}):
+        command["payload"] = {**payload(), **obsolete}
+        with pytest.raises(MonitorProtocolError, match="fields"):
             read_command(line(command))

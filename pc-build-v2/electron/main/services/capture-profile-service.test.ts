@@ -18,6 +18,9 @@ function summary(profileId: string, profileName: string, isActive: boolean) {
     committedAt: '2026-07-17T10:00:00.000Z',
     sourceKind: 'window' as const,
     sourceLabel: profileName,
+    sourceHealth: { state: 'unknown' as const, reason: null },
+    calibrationHealth: 'validated' as const,
+    resultConfigured: false,
   }
 }
 
@@ -45,7 +48,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
   const repository = {
     load: vi.fn().mockResolvedValue({
       revision: 1,
-      source: { label: 'Game' },
+      sourceBinding: { identity: { label: 'Game' } },
     }),
     list: vi.fn(() => Promise.resolve(current)),
     get: vi.fn(),
@@ -60,7 +63,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
   }
   const monitorView = {
     state: 'READY' as const,
-    preferences: { searchMode: 'fast' as const, deckMode: 'pol' as const },
+    preferences: { deckMode: 'pol' as const },
     readiness: {
       authenticated: true,
       captureConfigured: true,
@@ -78,6 +81,11 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
       serviceErrors: 0,
     },
     results: [],
+    runIntent: false,
+    search: null,
+    session: null,
+    summary: null,
+    historyError: null,
   }
   const monitor = {
     getView: vi.fn().mockResolvedValue(monitorView),
@@ -181,8 +189,9 @@ describe('CaptureProfileService', () => {
     expect(repository.rename).not.toHaveBeenCalled()
   })
 
-  it('restarts after deleting the active profile even if result cleanup fails', async () => {
+  it('cancels monitoring after active profile deletion even if result cleanup fails', async () => {
     const resultRepository = {
+      load: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockRejectedValue(new Error('disk cleanup failed')),
     }
     const { service, repository, monitor } = harness('stopped', resultRepository)
@@ -195,13 +204,16 @@ describe('CaptureProfileService', () => {
       profiles: { activeProfileId: SECONDARY_ID },
     })
     expect(resultRepository.delete).toHaveBeenCalledWith('user-1', PRIMARY_ID)
-    expect(monitor.restartIfActive).toHaveBeenCalledTimes(1)
+    expect(monitor.stop).toHaveBeenCalledWith('profile_deleted')
+    expect(monitor.restartIfActive).not.toHaveBeenCalled()
   })
 
   it('rejects source rebinding when the aspect ratio would invalidate regions', async () => {
     const { service, repository } = harness()
     repository.get.mockResolvedValue({
-      configuration: { frameSize: { width: 1920, height: 1080 } },
+      configuration: {
+        calibration: { referenceFrameSize: { width: 1920, height: 1080 } },
+      },
     })
 
     await expect(

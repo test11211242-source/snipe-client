@@ -104,10 +104,14 @@ export class CaptureSourceRegistry {
 
   async enumerate(): Promise<CaptureSourceSnapshot> {
     const generation = ++this.#enumerationGeneration
-    const [sources, displays] = await Promise.all([
+    const [sources, displayResult] = await Promise.all([
       this.provider.enumerate({ width: 0, height: 0 }),
-      this.provider.displays(),
+      this.provider.displays().then(
+        (displays) => ({ displays, unavailable: false }),
+        () => ({ displays: [], unavailable: true }),
+      ),
     ])
+    const displays = displayResult.displays
     const displayById = new Map(displays.map((display) => [display.id, display]))
     const ownHandles = this.provider.ownWindowHandles()
     const revision = opaqueKey()
@@ -153,7 +157,30 @@ export class CaptureSourceRegistry {
       }
 
       const display = displayById.get(source.displayId)
-      if (display === undefined) continue
+      if (display === undefined) {
+        if (displayResult.unavailable) {
+          const sourceKey = opaqueKey()
+          entries.set(sourceKey, {
+            rawId: source.id,
+            view: {
+              sourceKey,
+              revision,
+              kind: 'display',
+              label: source.name.slice(0, 300) || 'Экран',
+              detail: null,
+              captureSupported: false,
+              unavailableReason: 'Не удалось проверить метаданные экрана.',
+              preview: null,
+            },
+            displayId: source.displayId,
+            displayDeviceName: null,
+            windowHwnd: null,
+            executableLabel: null,
+            ownerProcessId: null,
+          })
+        }
+        continue
+      }
       const sourceKey = opaqueKey()
       const mapped = display.deviceName !== undefined && display.deviceName.length > 0
       const label = (display.label || source.name || 'Display').slice(0, 300)
@@ -354,9 +381,8 @@ export class CaptureSourceRegistry {
             !ownHandles.has(hwnd) &&
             source.ownerProcessId !== this.provider.currentProcessId &&
             source.metadataAvailable !== false &&
-            source.name === preference.titleHint &&
-            (preference.executableLabel === null ||
-              safeExecutableLabel(source.executableLabel) === preference.executableLabel)
+            preference.executableLabel !== null &&
+            safeExecutableLabel(source.executableLabel) === preference.executableLabel
           )
         })
         if (bound.length === 1) {
@@ -375,7 +401,7 @@ export class CaptureSourceRegistry {
           return false
         }
         return (
-          preference.executableLabel === null ||
+          preference.executableLabel !== null &&
           safeExecutableLabel(source.executableLabel) === preference.executableLabel
         )
       })

@@ -17,7 +17,7 @@ if (!existsSync(python)) {
     { cwd: root, stdio: 'inherit' },
   )
   if (setup.status !== 0) {
-    console.error('Python 3.9+ is required to create the worktree test environment.')
+    console.error('Python 3.10+ is required to create the worktree test environment.')
     process.exit(setup.status ?? 1)
   }
 }
@@ -29,7 +29,7 @@ if (dependencies.status !== 0) {
   console.log('Installing pinned capture dependencies and pytest in .venv.')
   const install = spawnSync(
     python,
-    ['-m', 'pip', 'install', '-r', 'python/requirements.txt', 'pytest'],
+    ['-m', 'pip', 'install', '--no-cache-dir', '-r', 'python/requirements-dev.txt'],
     { cwd: root, stdio: 'inherit' },
   )
   if (install.status !== 0) process.exit(install.status ?? 1)

@@ -433,15 +433,13 @@ class TriggerEngine:
     def __init__(self, payload: dict[str, Any]):
         self.profile = TriggerProfile(payload["triggerProfile"])
         self.trigger_ratio = payload["regions"]["trigger"]
-        self.data_ratio = payload["regions"]["normal" if payload["searchMode"] == "fast" else "precise"]
-        self.capture_delay = float(payload["captureDelaySeconds"])
+        self.data_ratio = payload["regions"]["nicknameRegion"]
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
         self.gate = TemporalGate(
             self.limits["confirmationsNeeded"], self.limits["cooldownSeconds"]
         )
-        self.capture_due_at: float | None = None
         self.triggered = False
         self.last_match: MatchResult | None = None
         self.configured_aspect = (
@@ -461,21 +459,12 @@ class TriggerEngine:
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
             raise GeometryChangedError("capture source aspect ratio changed")
-        if self.capture_due_at is not None:
-            if now < self.capture_due_at:
-                return None
-            self.capture_due_at = None
-            data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
-            return encode_action_png(crop(bgr, data_rect), self.limits)
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
         self.last_match = self.profile.evaluate(crop(bgr, inner))
         if not self.gate.observe(self.last_match.matched, now):
             return None
         self.triggered = True
-        if self.capture_delay > 0:
-            self.capture_due_at = now + self.capture_delay
-            return None
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
 

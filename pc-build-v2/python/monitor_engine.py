@@ -7,6 +7,7 @@ import base64
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -90,13 +91,14 @@ def run(start: dict[str, Any]) -> int:
             now = time.monotonic()
             action = engine.process(bgr, now)
             emit_diagnostic("primary", engine.last_match, now)
+            trigger_id = str(uuid.uuid4())
+            timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             if engine.take_triggered():
                 writer.emit(
                     "triggered",
                     {
-                        "timestamp": datetime.now(timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z")
+                        "timestamp": timestamp,
+                        "triggerId": trigger_id,
                     },
                 )
             if action is not None:
@@ -104,7 +106,8 @@ def run(start: dict[str, Any]) -> int:
                 writer.emit(
                     "action",
                     {
-                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "timestamp": timestamp,
+                        "triggerId": trigger_id,
                         "width": image_width,
                         "height": image_height,
                         "byteLength": len(image),
@@ -120,6 +123,7 @@ def run(start: dict[str, Any]) -> int:
                     "prediction_result",
                     {
                         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "triggerId": str(uuid.uuid4()),
                         "width": image_width,
                         "height": image_height,
                         "byteLength": len(image),
