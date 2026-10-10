@@ -83,6 +83,7 @@ function harness(autoOpen = true) {
   const controller = new WidgetController(monitor, repository as never, windows as never)
   return {
     controller,
+    monitor,
     repository,
     windows,
     result: (value: MonitorResult) => {
@@ -328,5 +329,29 @@ describe('WidgetController', () => {
     await expect(test.controller.updateSettings({ contentHeight: 79 })).rejects.toThrow()
     await expect(test.controller.updateSettings({ contentHeight: 721 })).rejects.toThrow()
     expect(test.windows.applyWidgetSettings).toHaveBeenCalledWith(saved)
+  })
+})
+
+describe('approved review projection followup', () => {
+  it('includes the public rebind instruction in the widget projection', async () => {
+    const test = harness()
+    await test.controller.start('user')
+    test.monitor.getCurrentView.mockReturnValue(
+      monitorViewFixture({
+        state: 'FAILED',
+        runIntent: false,
+        error: {
+          code: 'SOURCE_REBIND_REQUIRED',
+          message: 'Выберите окно игры заново в профиле',
+        },
+      }),
+    )
+    expect(test.controller.getView()).toMatchObject({
+      monitorError: {
+        code: 'SOURCE_REBIND_REQUIRED',
+        message: 'Выберите окно игры заново в профиле',
+      },
+    })
+    await test.controller.stop()
   })
 })

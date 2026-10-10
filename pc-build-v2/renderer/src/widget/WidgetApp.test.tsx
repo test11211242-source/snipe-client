@@ -29,6 +29,7 @@ const widgetView: WidgetView = {
   settings: DEFAULT_WIDGET_SETTINGS,
   visible: true,
   monitorState: 'READY',
+  monitorError: null,
   runIntent: true,
   search: null,
   scale: 1,

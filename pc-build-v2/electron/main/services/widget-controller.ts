@@ -123,13 +123,15 @@ export class WidgetController {
 
   getView(): WidgetView {
     const settings = this.requireSettings()
+    const monitor = this.monitor.getCurrentView()
     return WidgetViewSchema.parse({
       settings,
       visible: this.windows.isWidgetVisible(),
       result: projectResult(this.monitor.getLatestResult()),
-      monitorState: this.monitor.getCurrentView().state,
-      runIntent: this.monitor.getCurrentView().runIntent,
-      search: this.monitor.getCurrentView().search,
+      monitorState: monitor.state,
+      monitorError: monitor.error,
+      runIntent: monitor.runIntent,
+      search: monitor.search,
       scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
     })
   }

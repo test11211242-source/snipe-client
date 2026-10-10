@@ -1,6 +1,7 @@
 export const MONITOR_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   SOURCE_NOT_FOUND: 'Сохранённый источник захвата не найден.',
   SOURCE_AMBIGUOUS: 'Найдено несколько подходящих источников. Выберите источник заново.',
+  SOURCE_REBIND_REQUIRED: 'Выберите окно игры заново в профиле',
   SOURCE_METADATA_UNAVAILABLE:
     'Не удалось проверить метаданные источника. Повторите попытку.',
   CAPTURE_SOURCE_CLOSED: 'Источник захвата был закрыт.',

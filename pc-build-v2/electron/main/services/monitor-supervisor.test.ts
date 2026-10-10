@@ -1039,3 +1039,19 @@ describe('review regression monitor ownership and persistence', () => {
     await test.supervisor.stop()
   })
 })
+
+describe('approved review projection followup', () => {
+  it('publishes a specific rebind instruction instead of a generic retry', async () => {
+    const test = harness()
+    test.targetResolver.resolve.mockRejectedValueOnce(
+      new ApplicationError('SOURCE_REBIND_REQUIRED', 'private diagnostic'),
+    )
+    expect(await test.supervisor.start()).toMatchObject({
+      state: 'FAILED',
+      error: {
+        code: 'SOURCE_REBIND_REQUIRED',
+        message: 'Выберите окно игры заново в профиле',
+      },
+    })
+  })
+})

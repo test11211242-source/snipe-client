@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { MonitorSearchSchema, MonitorStateSchema } from './monitor'
+import {
+  MonitorPublicErrorSchema,
+  MonitorSearchSchema,
+  MonitorStateSchema,
+} from './monitor'
 
 const SafeTextSchema = z.string().trim().min(1).max(160)
 
@@ -119,6 +123,7 @@ export const WidgetViewSchema = z
     visible: z.boolean(),
     result: WidgetResultSchema.nullable(),
     monitorState: MonitorStateSchema,
+    monitorError: MonitorPublicErrorSchema.nullable().default(null),
     runIntent: z.boolean(),
     search: MonitorSearchSchema.nullable(),
     scale: z.number().min(0.86).max(1.5),

@@ -187,3 +187,18 @@ describe('review regression tray click exceptions', () => {
     test.controller.stop()
   })
 })
+
+describe('approved review projection followup', () => {
+  it('projects a specific rebind instruction in the native tray', () => {
+    const test = harness()
+    test.controller.start()
+    test.push(
+      monitorViewFixture({
+        state: 'FAILED',
+        error: { code: 'SOURCE_REBIND_REQUIRED', message: 'Generic retry' },
+      }),
+    )
+    expect(test.menu()[0]?.label).toBe('Выберите окно игры заново в профиле')
+    test.controller.stop()
+  })
+})
