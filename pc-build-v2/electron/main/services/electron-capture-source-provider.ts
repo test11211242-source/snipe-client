@@ -277,17 +277,14 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     return sources.map<ElectronCaptureSource>((source) => {
       const handle = /^window:(\d+):0$/.exec(source.id)?.[1]
       const details = handle === undefined ? undefined : metadata.get(handle)
-      if (handle !== undefined && details?.executableLabel == null) {
-        throw new ApplicationError(
-          'SOURCE_METADATA_UNAVAILABLE',
-          'Window identity metadata is unavailable',
-        )
-      }
       return {
         id: source.id,
         name: source.name,
         displayId: source.display_id,
         thumbnail: source.thumbnail,
+        ...(handle === undefined
+          ? {}
+          : { metadataAvailable: details?.executableLabel != null }),
         ...(details === undefined
           ? {}
           : {
@@ -324,6 +321,12 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
       })
     ).find((entry) => entry.windowHwnd === windowHwnd)
     if (details?.executableLabel == null) {
+      const current = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 0, height: 0 },
+        fetchWindowIcons: false,
+      })
+      if (!current.some((candidate) => candidate.id === source.id)) return undefined
       throw new ApplicationError(
         'SOURCE_METADATA_UNAVAILABLE',
         'Window identity metadata is unavailable',

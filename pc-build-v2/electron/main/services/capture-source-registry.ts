@@ -32,6 +32,7 @@ export interface ElectronCaptureSource {
   thumbnail: CaptureThumbnail
   ownerProcessId?: number
   executableLabel?: string
+  metadataAvailable?: boolean
 }
 
 export interface ElectronDisplayInfo {
@@ -132,8 +133,11 @@ export class CaptureSourceRegistry {
           kind,
           label: source.name.slice(0, 300) || 'Untitled window',
           detail: executableLabel,
-          captureSupported: true,
-          unavailableReason: null,
+          captureSupported: source.metadataAvailable !== false,
+          unavailableReason:
+            source.metadataAvailable === false
+              ? 'Не удалось проверить метаданные этого окна.'
+              : null,
           preview: null,
         }
         entries.set(sourceKey, {
@@ -231,6 +235,12 @@ export class CaptureSourceRegistry {
 
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
     const entry = this.getEntry(sourceKey, revision)
+    if (!entry.view.captureSupported && entry.view.kind === 'window') {
+      throw new ApplicationError(
+        'SOURCE_METADATA_UNAVAILABLE',
+        'Window identity metadata is unavailable',
+      )
+    }
     this.assertExpiredWindowHasIdentity(entry)
     const currentSource =
       entry.windowHwnd !== null && this.provider.resolveWindow !== undefined
@@ -244,6 +254,12 @@ export class CaptureSourceRegistry {
 
     let selector: SetupCaptureSelector
     if (entry.view.kind === 'window' && entry.windowHwnd !== null) {
+      if (currentSource.metadataAvailable === false) {
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Window identity metadata is unavailable',
+        )
+      }
       if (
         parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
         currentSource.name.slice(0, 300) !== entry.view.label ||
@@ -309,6 +325,27 @@ export class CaptureSourceRegistry {
 
     if (preference.kind === 'window') {
       const ownHandles = this.provider.ownWindowHandles()
+      const unverifiable = sources.find(
+        (source) =>
+          source.metadataAvailable === false &&
+          !ownHandles.has(parseElectronWindowHandle(source.id) ?? '') &&
+          source.ownerProcessId !== this.provider.currentProcessId &&
+          (preference.windowHwnd !== undefined
+            ? parseElectronWindowHandle(source.id) === preference.windowHwnd
+            : source.name === preference.titleHint),
+      )
+      if (unverifiable !== undefined) {
+        const hwnd = parseElectronWindowHandle(unverifiable.id)
+        if (hwnd !== null && this.provider.resolveWindow !== undefined) {
+          const current = await this.provider.resolveWindow(hwnd)
+          if (current === undefined)
+            throw new ApplicationError('SOURCE_NOT_FOUND', 'The configured window closed')
+        }
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Configured window identity metadata is unavailable',
+        )
+      }
       if (preference.windowHwnd !== undefined) {
         const bound = sources.filter((source) => {
           const hwnd = parseElectronWindowHandle(source.id)
@@ -316,6 +353,7 @@ export class CaptureSourceRegistry {
             hwnd === preference.windowHwnd &&
             !ownHandles.has(hwnd) &&
             source.ownerProcessId !== this.provider.currentProcessId &&
+            source.metadataAvailable !== false &&
             source.name === preference.titleHint &&
             (preference.executableLabel === null ||
               safeExecutableLabel(source.executableLabel) === preference.executableLabel)
@@ -331,6 +369,7 @@ export class CaptureSourceRegistry {
           hwnd === null ||
           ownHandles.has(hwnd) ||
           source.ownerProcessId === this.provider.currentProcessId ||
+          source.metadataAvailable === false ||
           source.name !== preference.titleHint
         ) {
           return false
