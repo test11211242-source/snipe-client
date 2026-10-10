@@ -80,14 +80,23 @@ settings. Logout/user switches fence pending loads. Monitor stderr is drained as
 rate-limited diagnostic counters and never terminates capture by lifetime volume;
 stdout remains a strict protocol. Metadata helper failures are reported separately
 from absent/ambiguous sources, without relaxing exact identity matching.
+Only helper-wide failures fail the source list. Individual unverifiable windows
+remain disabled; a bound window that closes during metadata lookup is not-found.
+Title-change identity hints/layout validation and automatic source recovery remain
+deferred to M1; M0 intentionally retains exact-title matching.
 
 Sanitized asynchronous diagnostics rotate under `userData/logs` (five files of at
 most 1 MiB each, bounded pending writes). Disk failures do not stop monitoring.
-The main-only `openLogFolder` capability opens that fixed directory; it accepts no
-path. Diagnostics never contain raw worker stderr, exception messages/stacks,
+The old Settings screen's “Открыть папку логов” action uses the main-only
+`openLogFolder` capability for that fixed directory; it accepts no path. Dropped
+records and failed writes are counted and summarized when the disk next accepts
+records or at shutdown. Diagnostics never contain raw worker stderr, exception messages/stacks,
 private images, title/nickname/email fields or credential-bearing URLs.
 Account additions return typed error codes or a saved-with-warning result; old
 servers without codes receive an honest generic message, not a guessed cause.
+Allowlisted save failures (`ACCOUNT_SAVE_UNAVAILABLE`) report that saving failed
+and can be retried later, distinct from game API outages. Codes, not HTTP status,
+identify account causes; raw server responses never reach the old form's messages.
 
 Capture configuration is separate and per server user under
 `userData/capture-profiles.v3/`. It stores normalized regions, compact color-independent
@@ -116,7 +125,7 @@ Starting setup captures the canonical frame before the setup window exists. The 
 wizard maps pointer and numeric coordinates through a letterboxed contain transform and
 stages Trigger, Normal, and Precise regions before analysis/review/commit.
 
-Install the Python environment on Windows with Python 3.9 or newer:
+Install the Python environment on Windows with Python 3.10 or newer:
 
 ```powershell
 py -m venv .venv
@@ -124,6 +133,12 @@ py -m venv .venv
 $env:CR_TOOLS_PYTHON_PATH = "$PWD\.venv\Scripts\python.exe"
 npm run dev
 ```
+
+`npm.cmd run test:python` always uses this worktree's `.venv`, never a global
+pytest. It creates the isolated environment if missing and installs the pinned
+capture requirements plus pytest when test dependencies are missing, then runs
+the suite. First-time setup requires Python 3.10+ on PATH and package-download
+access; subsequent runs use the existing local environment without installation.
 
 Production packaging includes a managed interpreter at
 `resources/python-runtime/python.exe`. `scripts/Build-PortablePython.ps1` downloads the
@@ -156,7 +171,8 @@ The private monitor protocol is JSON-lines protocol version 1. Main sends one va
 start command and an eventual stop command. Python emits monotonic, session-bound `ready`,
 `action`, `fatal`, and `stopped` events. Action PNG base64 exists only on this private pipe,
 is decoded immediately in main, and is never logged or sent to a renderer. Worker readiness
-has an 8-second deadline; stop is graceful first and then uses Windows process-tree
+has a 15-second deadline, allowing the worker's 7-second no-frame deadline plus
+an 8-second cold-start margin; stop is graceful first and then uses Windows process-tree
 termination. Stdout lines, stderr diagnostics, image dimensions/bytes, event ordering, and
 session generations are bounded and validated.
 
