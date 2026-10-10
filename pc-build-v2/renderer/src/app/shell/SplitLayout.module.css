@@ -1,0 +1,126 @@
+.split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+}
+.medium {
+  grid-template-columns: 200px minmax(0, 1fr);
+}
+.mini {
+  grid-template-columns: minmax(0, 1fr);
+}
+.nav {
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--color-line-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow: auto;
+}
+.group {
+  padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--color-text-3);
+  font-weight: var(--fw-medium);
+  margin: 0;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 48px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  text-align: left;
+  color: var(--color-text-2);
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
+}
+.item:hover {
+  background: var(--color-surface-1);
+  color: var(--color-text);
+}
+.item[aria-current='page'] {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  box-shadow: var(--ring-2);
+}
+.item[aria-current='page'] > svg:first-child {
+  color: var(--color-accent);
+}
+.itemText {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+.itemTitle {
+  display: block;
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-md);
+}
+.itemSub {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--color-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.warn {
+  color: var(--color-warn);
+}
+.arrow {
+  color: var(--color-text-3);
+  margin-left: auto;
+}
+.body {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.head {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--color-line-subtle);
+}
+.mini .head {
+  padding: 0 var(--space-4);
+}
+.title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-5) var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.mini .scroll {
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+.scroll > * {
+  flex: none;
+}
