@@ -28,7 +28,7 @@ export const ApiErrorSchema = z
     message: z.string().min(1).max(300),
     retryable: z.boolean(),
     status: z.number().int().min(100).max(599).nullable(),
-    retryAfterSeconds: z.number().nonnegative().max(86400).optional(),
+    retryAfterSeconds: z.number().nonnegative().optional(),
   })
   .strict()
 
