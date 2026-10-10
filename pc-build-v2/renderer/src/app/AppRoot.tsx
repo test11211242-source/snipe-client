@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { useEffect } from 'react'
 
-import { Spinner, State, ToastProvider } from '../ui'
+import { Spinner, ToastProvider } from '../ui'
 import { useAppData } from './appData'
 import { AppDataProvider } from './AppDataProvider'
 import { MainRoute } from './routes/MainRoute'
@@ -10,9 +10,6 @@ import { StreamRoutes } from './routes/StreamRoutes'
 import { MAIN_ROUTE, requiresStreamer, useRouter, type AppRoute } from './router'
 import { RouterProvider } from './RouterProvider'
 import { AppFrame } from './shell/AppFrame'
-
-// Temporary: pre-V2 screens (deleted in M6). Own chunk, own CSS, loaded on first use.
-const LegacyHost = lazy(() => import('./routes/LegacyHost'))
 
 function RouteView({ route }: { route: AppRoute }): React.JSX.Element {
   switch (route.name) {
@@ -24,12 +21,6 @@ function RouteView({ route }: { route: AppRoute }): React.JSX.Element {
       return <StreamRoutes section={route.section} />
     case 'settings':
       return <SettingsRoutes section={route.section} />
-    case 'legacy':
-      return (
-        <Suspense fallback={<State icon="clock" title="Загружаем…" />}>
-          <LegacyHost page={route.page} />
-        </Suspense>
-      )
   }
 }
 

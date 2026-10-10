@@ -20,7 +20,14 @@ import { StreamerProvider } from './StreamerProvider'
 import { useStreamer } from './streamerContext'
 import type { CommandOutcome, StreamerController } from './useStreamerController'
 
+const holder: { current: StreamerController | null } = { current: null }
+function ctl(): StreamerController {
+  if (holder.current === null) throw new Error('controller not mounted')
+  return holder.current
+}
+
 afterEach(() => {
+  holder.current = null
   cleanup()
   vi.restoreAllMocks()
 })
@@ -28,6 +35,11 @@ afterEach(() => {
 function Probe({ onController }: { onController: (c: StreamerController) => void }) {
   onController(useStreamer())
   return null
+}
+
+function parentOf(element: HTMLElement): HTMLElement {
+  if (element.parentElement === null) throw new Error('no parent')
+  return element.parentElement
 }
 
 describe('streamer controller: serial and coalesced commands', () => {
@@ -45,20 +57,17 @@ describe('streamer controller: serial and coalesced commands', () => {
       })
       return gate.promise
     })
-    let controller: StreamerController | null = null
     render(
       <StreamerProvider enabled>
-        <Probe onController={(value) => (controller = value)} />
+        <Probe onController={(value) => (holder.current = value)} />
       </StreamerProvider>,
     )
-    await waitFor(() => expect(controller?.view).not.toBeNull())
+    await waitFor(() => expect(holder.current?.view).not.toBeNull())
 
     const outcomes: Promise<CommandOutcome>[] = []
     act(() => {
       const send = (enabled: boolean): void => {
-        outcomes.push(
-          controller!.command({ action: 'chat.toggle', enabled }, { key: 'chat' }),
-        )
+        outcomes.push(ctl().command({ action: 'chat.toggle', enabled }, { key: 'chat' }))
       }
       send(true) // starts at once
       send(false) // waits
@@ -68,7 +77,7 @@ describe('streamer controller: serial and coalesced commands', () => {
     // Nothing else starts while the first is in flight.
     await Promise.resolve()
     expect(world.fake.command).toHaveBeenCalledTimes(1)
-    expect(controller!.busy).toBe(true)
+    expect(ctl().busy).toBe(true)
 
     await act(async () => {
       release.shift()?.()
@@ -81,25 +90,24 @@ describe('streamer controller: serial and coalesced commands', () => {
       await outcomes[2]
     })
     expect(world.fake.command).toHaveBeenCalledTimes(2)
-    await waitFor(() => expect(controller!.busy).toBe(false))
+    await waitFor(() => expect(ctl().busy).toBe(false))
   })
 
   it('reports a rejected bridge call as a failed outcome and keeps the last good view', async () => {
     const world = installStream()
     world.fake.command.mockRejectedValueOnce(new Error('ipc'))
-    let controller: StreamerController | null = null
     render(
       <StreamerProvider enabled>
-        <Probe onController={(value) => (controller = value)} />
+        <Probe onController={(value) => (holder.current = value)} />
       </StreamerProvider>,
     )
-    await waitFor(() => expect(controller?.view).not.toBeNull())
+    await waitFor(() => expect(holder.current?.view).not.toBeNull())
     let outcome: CommandOutcome | null = null
     await act(async () => {
-      outcome = await controller!.command({ action: 'predictions.stop' })
+      outcome = await ctl().command({ action: 'predictions.stop' })
     })
     expect(outcome).toEqual({ status: 'failed', code: 'IPC_FAILED', detail: null })
-    expect(controller!.view?.twitch.username).toBe('artcs_cr')
+    expect(ctl().view?.twitch.username).toBe('artcs_cr')
   })
 })
 
@@ -116,7 +124,7 @@ describe('requirements link to the owning page', () => {
       },
     )
     const needs = await screen.findByText('Нужно для работы')
-    const block = needs.parentElement as HTMLElement
+    const block = parentOf(needs)
     expect(within(block).getByText('не подключён')).toBeVisible()
     expect(within(block).getByText('не настроены в профиле')).toBeVisible()
     expect(within(block).getByText('не запущен')).toBeVisible()
@@ -142,7 +150,7 @@ describe('requirements link to the owning page', () => {
       { readiness: { accountsCount: 0, twitchConnected: false } },
     )
     const needs = await screen.findByText('Нужно для работы')
-    const block = needs.parentElement as HTMLElement
+    const block = parentOf(needs)
     expect(within(block).getByText('Аккаунты Clash Royale')).toBeVisible()
     expect(within(block).queryByText('Twitch')).not.toBeInTheDocument()
     expect(within(block).getByText(/Twitch виджетам не нужен/)).toBeVisible()
@@ -158,7 +166,7 @@ describe('requirements link to the owning page', () => {
       { readiness: { twitchConnected: null } },
     )
     const needs = await screen.findByText('Нужно для работы')
-    const block = needs.parentElement as HTMLElement
+    const block = parentOf(needs)
     expect(within(block).getAllByText('не удалось проверить').length).toBeGreaterThan(0)
     expect(within(block).queryByText('не подключён')).not.toBeInTheDocument()
   })
