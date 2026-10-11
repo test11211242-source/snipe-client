@@ -258,9 +258,10 @@ const streamer = new StreamerService(
   clipboard,
 )
 const widgetSettings = new WidgetSettingsRepository(
-  join(app.getPath('userData'), 'widget-settings.v3'),
+  join(app.getPath('userData'), 'widget-settings.v4'),
   nodeWidgetSettingsFileSystem,
   join(app.getPath('userData'), 'widget-settings.v2'),
+  join(app.getPath('userData'), 'widget-settings.v3'),
 )
 const widget = new WidgetController(monitor, widgetSettings, windows)
 const images = new ImageAssetService(monitor, globalThis.fetch, {

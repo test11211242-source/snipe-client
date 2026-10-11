@@ -2,6 +2,8 @@ import { ApplicationError } from '../../../shared/errors/application-error'
 import { WIDGET_IPC_CHANNELS } from '../../../shared/contracts/widget-ipc'
 import type { MonitorResult } from '../../../shared/models/monitor'
 import {
+  WIDGET_COMPACT_MIN_WIDTH,
+  WIDGET_COMPACT_MAX_WIDTH,
   WidgetBoundsSchema,
   WidgetSettingsPatchSchema,
   WidgetSettingsSchema,
@@ -189,8 +191,10 @@ export class WidgetController {
         ? (patch.compactWidth ?? current.compactWidth)
         : (patch.normalWidth ?? current.normalWidth)
       const modeChanged = compactMode !== current.compactMode
-      const height =
-        contentHeight ?? (modeChanged ? (compactMode ? 160 : 360) : current.bounds.height)
+      const widthRequested =
+        modeChanged ||
+        (compactMode ? patch.compactWidth !== undefined : patch.normalWidth !== undefined)
+      const height = contentHeight ?? current.bounds.height
       const sizeChanged =
         modeChanged || width !== current.bounds.width || height !== current.bounds.height
       if (Object.keys(settingsPatch).length === 0 && !sizeChanged) return current
@@ -208,12 +212,24 @@ export class WidgetController {
       const saved = await this.repository.save(userId, settings)
       this.assertSession(userId, generation)
 
-      const latestBounds = this.requireSettings().bounds
+      const latest = this.requireSettings()
       this.#settings = {
         ...saved,
+        ...(!widthRequested
+          ? {
+              normalWidth: latest.normalWidth,
+              compactWidth: latest.compactWidth,
+            }
+          : {}),
         bounds: sizeChanged
-          ? { ...saved.bounds, x: latestBounds.x, y: latestBounds.y }
-          : latestBounds,
+          ? {
+              ...saved.bounds,
+              x: latest.bounds.x,
+              y: latest.bounds.y,
+              // A content-height save must not undo a width drag made during its disk write.
+              width: widthRequested ? saved.bounds.width : latest.bounds.width,
+            }
+          : latest.bounds,
       }
       this.windows.applyWidgetSettings(this.#settings)
       this.publishView()
@@ -255,7 +271,12 @@ export class WidgetController {
       ...this.#settings,
       bounds,
       ...(this.#settings.compactMode
-        ? { compactWidth: Math.max(440, bounds.width) }
+        ? {
+            compactWidth: Math.min(
+              WIDGET_COMPACT_MAX_WIDTH,
+              Math.max(WIDGET_COMPACT_MIN_WIDTH, bounds.width),
+            ),
+          }
         : { normalWidth: Math.max(300, bounds.width) }),
     }
     if (this.#boundsTimer !== null) clearTimeout(this.#boundsTimer)
@@ -267,6 +288,7 @@ export class WidgetController {
         void this.persistCurrentSettings(userId, generation).catch(() => undefined)
       }
     }, BOUNDS_SAVE_DELAY_MS)
+    this.publishView()
   }
 
   private requireUserId(): string {

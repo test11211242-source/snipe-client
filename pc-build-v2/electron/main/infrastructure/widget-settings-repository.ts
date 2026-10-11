@@ -8,6 +8,9 @@ import {
   WIDGET_DETAILED_WIDTH,
   WIDGET_DECK_HEIGHT,
   WIDGET_DECK_WIDTH,
+  WIDGET_COMPACT_DEFAULT_WIDTH,
+  WIDGET_COMPACT_MIN_WIDTH,
+  WIDGET_COMPACT_MAX_WIDTH,
   WidgetBoundsSchema,
   WidgetSettingsSchema,
   type WidgetSettings,
@@ -36,7 +39,7 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = Object.freeze({
   opacity: 0.96,
   displayMode: 'detailed',
   normalWidth: WIDGET_DECK_WIDTH,
-  compactWidth: 520,
+  compactWidth: WIDGET_COMPACT_DEFAULT_WIDTH,
   compactMode: false,
   bounds: {
     x: null,
@@ -57,6 +60,27 @@ const LegacyWidgetSettingsSchema = z
   })
   .strict()
 
+const PreviousWidgetSettingsSchema = WidgetSettingsSchema.extend({
+  compactWidth: z.number().int().min(440).max(720),
+})
+
+function migratePrevious(
+  settings: z.infer<typeof PreviousWidgetSettingsSchema>,
+): WidgetSettings {
+  const compactWidth = Math.max(
+    WIDGET_COMPACT_MIN_WIDTH,
+    Math.min(WIDGET_COMPACT_MAX_WIDTH, settings.compactWidth),
+  )
+  return WidgetSettingsSchema.parse({
+    ...settings,
+    compactWidth,
+    bounds: {
+      ...settings.bounds,
+      width: settings.compactMode ? compactWidth : settings.bounds.width,
+    },
+  })
+}
+
 function fileName(userId: string): string {
   return `${createHash('sha256').update(userId).digest('hex')}.json`
 }
@@ -75,6 +99,7 @@ export class WidgetSettingsRepository {
     private readonly directory: string,
     private readonly fs: WidgetSettingsFileSystem = nodeWidgetSettingsFileSystem,
     private readonly legacyDirectory?: string,
+    private readonly previousDirectory?: string,
   ) {}
 
   async load(userId: string): Promise<WidgetSettings> {
@@ -84,7 +109,27 @@ export class WidgetSettingsRepository {
       try {
         value = await this.fs.readFile(source, 'utf8')
       } catch (error) {
-        if (!isMissing(error) || this.legacyDirectory === undefined) throw error
+        if (!isMissing(error)) throw error
+        if (isMissing(error) && this.previousDirectory !== undefined) {
+          try {
+            const previousBytes = await this.fs.readFile(
+              join(this.previousDirectory, fileName(userId)),
+              'utf8',
+            )
+            const previous = z
+              .object({
+                schemaVersion: z.literal(3),
+                settings: PreviousWidgetSettingsSchema,
+              })
+              .strict()
+              .parse(JSON.parse(previousBytes) as unknown)
+            // Write only v4; the complete v3 source remains untouched for lossless recovery.
+            return await this.save(userId, migratePrevious(previous.settings))
+          } catch (previousError) {
+            if (!isMissing(previousError)) throw previousError
+          }
+        }
+        if (this.legacyDirectory === undefined) throw error
         const bytes = await this.fs.readFile(
           join(this.legacyDirectory, fileName(userId)),
           'utf8',
@@ -105,7 +150,7 @@ export class WidgetSettingsRepository {
         return await this.save(userId, {
           ...oldSettings,
           normalWidth: oldSettings.bounds.width,
-          compactWidth: 520,
+          compactWidth: WIDGET_COMPACT_DEFAULT_WIDTH,
           compactMode: false,
         })
       }
@@ -122,7 +167,7 @@ export class WidgetSettingsRepository {
       return structuredClone(DEFAULT_WIDGET_SETTINGS)
     }
     const current = z
-      .object({ schemaVersion: z.literal(3), settings: WidgetSettingsSchema })
+      .object({ schemaVersion: z.literal(4), settings: WidgetSettingsSchema })
       .strict()
       .safeParse(raw)
     if (current.success) return current.data.settings
@@ -135,7 +180,7 @@ export class WidgetSettingsRepository {
         opacity: legacy.data.opacity,
         displayMode: legacy.data.compactMode ? 'deck' : 'detailed',
         normalWidth: legacy.data.compactMode ? WIDGET_DECK_WIDTH : WIDGET_DETAILED_WIDTH,
-        compactWidth: 520,
+        compactWidth: WIDGET_COMPACT_DEFAULT_WIDTH,
         compactMode: false,
         bounds: {
           x: legacy.data.bounds.x,
@@ -157,7 +202,7 @@ export class WidgetSettingsRepository {
     try {
       await this.fs.writeFile(
         temporary,
-        `${JSON.stringify({ schemaVersion: 3, settings }, null, 2)}\n`,
+        `${JSON.stringify({ schemaVersion: 4, settings }, null, 2)}\n`,
         'utf8',
       )
       await this.fs.rename(temporary, destination)

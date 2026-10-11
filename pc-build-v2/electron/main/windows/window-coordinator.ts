@@ -12,6 +12,7 @@ import {
   WIDGET_MIN_HEIGHT,
   WIDGET_MIN_WIDTH,
   WIDGET_COMPACT_MIN_WIDTH,
+  WIDGET_COMPACT_MAX_WIDTH,
   WidgetBoundsSchema,
   type WidgetBounds,
   type WidgetSettings,
@@ -133,7 +134,7 @@ export function persistableWidgetBounds(bounds: WorkAreaBounds): WidgetBounds {
     y: Math.min(32_767, Math.max(-32_768, Math.round(bounds.y))),
     width: Math.min(
       WIDGET_MAX_WIDTH,
-      Math.max(WIDGET_MIN_WIDTH, Math.round(bounds.width)),
+      Math.max(WIDGET_COMPACT_MIN_WIDTH, Math.round(bounds.width)),
     ),
     height: Math.min(
       WIDGET_MAX_HEIGHT,
@@ -431,9 +432,9 @@ export class WindowCoordinator {
         settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
         bounds.width,
       ),
-      minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
-      maxWidth: WIDGET_MAX_WIDTH,
-      maxHeight: WIDGET_MAX_HEIGHT,
+      minHeight: bounds.height,
+      maxWidth: settings.compactMode ? WIDGET_COMPACT_MAX_WIDTH : WIDGET_MAX_WIDTH,
+      maxHeight: bounds.height,
       show: false,
       frame: false,
       transparent: true,
@@ -540,7 +541,7 @@ export class WindowCoordinator {
     if (registered === undefined || registered.window.isDestroyed()) return
     const window = registered.window
     window.setAlwaysOnTop(settings.alwaysOnTop, 'normal')
-    if (settings.alwaysOnTop) window.moveTop()
+    if (settings.alwaysOnTop && window.isVisible()) window.moveTop()
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
     window.setAspectRatio(0)
@@ -551,14 +552,22 @@ export class WindowCoordinator {
         settings.bounds,
         screen.getAllDisplays().map((display) => display.workArea),
       )
+      // Release the previous height constraints before installing the next content height.
+      // Bounds events are suppressed throughout, so this never feeds back as a user resize.
+      window.setMinimumSize(1, 1)
+      window.setMaximumSize(WIDGET_MAX_WIDTH, WIDGET_MAX_HEIGHT)
+      window.setBounds(bounds)
       window.setMinimumSize(
         Math.min(
           settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
           bounds.width,
         ),
-        Math.min(WIDGET_MIN_HEIGHT, bounds.height),
+        bounds.height,
       )
-      window.setBounds(bounds)
+      window.setMaximumSize(
+        settings.compactMode ? WIDGET_COMPACT_MAX_WIDTH : WIDGET_MAX_WIDTH,
+        bounds.height,
+      )
     } finally {
       registered.suppressBoundsEvents = false
     }
@@ -760,7 +769,6 @@ export class WindowCoordinator {
       }
       window.on('move', notifyBounds)
       window.on('resize', notifyBounds)
-      window.on('blur', () => this.restoreWidgetTopmost(window))
       window.webContents.on(
         'did-fail-load',
         (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {

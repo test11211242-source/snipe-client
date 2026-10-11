@@ -41,6 +41,59 @@ function memoryFileSystem(): {
 }
 
 describe('WidgetSettingsRepository', () => {
+  it.each([false, true])(
+    'migrates v3 preserving all preferences and original bytes (compact=%s)',
+    async (compactMode) => {
+      const { fs, files } = memoryFileSystem()
+      const seed = new WidgetSettingsRepository('/v3', fs)
+      await seed.save('one', DEFAULT_WIDGET_SETTINGS)
+      const path = [...files.keys()][0]
+      if (path === undefined) throw new Error('Missing seed path')
+      const previous = {
+        ...DEFAULT_WIDGET_SETTINGS,
+        autoOpen: false,
+        alwaysOnTop: false,
+        locked: true,
+        opacity: 0.7,
+        compactMode,
+        compactWidth: 620,
+        normalWidth: 400,
+        bounds: { x: -120, y: 80, width: compactMode ? 620 : 400, height: 310 },
+      }
+      const bytes = JSON.stringify({ schemaVersion: 3, settings: previous })
+      files.set(path, bytes)
+      const target = new WidgetSettingsRepository('/v4', fs, undefined, '/v3')
+      const expected = {
+        ...previous,
+        compactWidth: 480,
+        bounds: { ...previous.bounds, width: compactMode ? 480 : 400 },
+      }
+      await expect(target.load('one')).resolves.toEqual(expected)
+      expect(files.get(path)).toBe(bytes)
+      await expect(target.load('one')).resolves.toEqual(expected)
+      expect(files.size).toBe(2)
+    },
+  )
+
+  it('persists the narrow compact default and accepts only its 220–480 range', async () => {
+    const { fs } = memoryFileSystem()
+    const repository = new WidgetSettingsRepository('/v4', fs)
+    expect(DEFAULT_WIDGET_SETTINGS.compactWidth).toBe(300)
+    for (const width of [220, 300, 480]) {
+      await repository.save('one', {
+        ...DEFAULT_WIDGET_SETTINGS,
+        compactMode: true,
+        compactWidth: width,
+        bounds: { ...DEFAULT_WIDGET_SETTINGS.bounds, width },
+      })
+      expect((await repository.load('one')).compactWidth).toBe(width)
+    }
+    for (const compactWidth of [219, 481]) {
+      await expect(
+        repository.save('one', { ...DEFAULT_WIDGET_SETTINGS, compactWidth }),
+      ).rejects.toThrow()
+    }
+  })
   it('uses practical defaults and atomically isolates users', async () => {
     const { fs, files } = memoryFileSystem()
     const repository = new WidgetSettingsRepository('/widget', fs)
@@ -102,7 +155,7 @@ describe('WidgetSettingsRepository', () => {
       displayMode: 'deck',
       bounds: { x: 120, y: 80, width: 360, height: 300 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     })
     expect([...files.keys()]).toEqual([path])
@@ -145,7 +198,7 @@ describe('WidgetSettingsRepository', () => {
       bounds: { x: 120, y: 80, width: 500, height: 620 },
     })
     expect(JSON.parse(files.get(path) ?? '{}')).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: {
         displayMode: 'deck',
         bounds: { x: 120, y: 80, width: 500, height: 620 },
