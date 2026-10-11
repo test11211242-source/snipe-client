@@ -4,20 +4,38 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { execFileSync } from 'node:child_process'
 
 test.skip(process.platform !== 'win32', 'Native integration smoke runs on Windows only')
 
 // Only this external test launcher replaces network transports. The app, native
 // windows/tray, preloads, IPC and persistence are the actual built implementation.
-function launcherSource(): string {
-  return `
-import { createRequire } from 'node:module';
+function launcherSource(connected = false): string {
+  const socketSource = `
 import { EventEmitter } from 'node:events';
+export default class SyntheticSocket extends EventEmitter {
+  constructor() {
+    super();
+    globalThis.__desktopSmoke.sockets.push(this);
+    queueMicrotask(() => this.emit(${connected ? "'open'" : "'close', 1006"}));
+  }
+  send(message) {
+    const data = JSON.parse(message);
+    if (${connected} && data.type === 'auth') {
+      queueMicrotask(() => this.emit('message', JSON.stringify({ type: 'connection', status: 'connected' })));
+    }
+    if (data.type === 'ping') queueMicrotask(() => this.emit('message', JSON.stringify({ type: 'pong' })));
+  }
+  close() {}
+}
+`
+  return `
+import { createRequire, registerHooks } from 'node:module';
 const require = createRequire(${JSON.stringify(pathToFileURL(join(process.cwd(), 'package.json')).href)});
 const native = require('electron');
 // Windows login registration is owner-only; never alter it during this smoke.
 native.app.setLoginItemSettings = () => {};
-const probe = globalThis.__desktopSmoke = { trays: [], maxWindows: 0, errors: [] };
+const probe = globalThis.__desktopSmoke = { trays: [], sockets: [], maxWindows: 0, errors: [] };
 native.app.on('browser-window-created', (_event, window) => {
   probe.maxWindows = Math.max(probe.maxWindows, native.BrowserWindow.getAllWindows().length);
   window.webContents.on('console-message', (_event, level, message) => {
@@ -29,14 +47,16 @@ native.Tray.prototype.setToolTip = function (...args) {
   if (!probe.trays.includes(this)) probe.trays.push(this);
   return setToolTip.apply(this, args);
 };
-const wsPath = require.resolve('ws');
-require(wsPath);
-class OfflineSocket extends EventEmitter {
-  constructor() { super(); queueMicrotask(() => this.emit('close', 1006)); }
-  send() {}
-  close() {}
-}
-require.cache[wsPath].exports = OfflineSocket;
+// Intercept ESM resolution, not require.cache: ws's ESM wrapper bypasses index.js.
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === 'ws') return {
+      url: 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(socketSource)}),
+      shortCircuit: true
+    };
+    return nextResolve(specifier, context);
+  }
+});
 const user = { id: 900001, username: 'integration-fixture', email: 'fixture@example.invalid', role: 'premium', roles: ['premium'] };
 globalThis.fetch = async (input) => {
   const pathname = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -282,6 +302,214 @@ app.whenReady().then(async () => {
     })
   } finally {
     await application?.close().catch(() => undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('pinned overlay closes and native vertical drag cannot crop the content-sized deck', async () => {
+  test.setTimeout(120_000)
+  const directory = await mkdtemp(join(tmpdir(), 'cr-tools-widget-fix-'))
+  const launcher = join(directory, 'launch.mjs')
+  await writeFile(launcher, launcherSource(true))
+  const environment: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') environment[key] = value
+  }
+  const application = await electron.launch({
+    executablePath: join(process.cwd(), 'node_modules/electron/dist/electron.exe'),
+    args: [launcher, `--user-data-dir=${directory}`],
+    env: environment,
+  })
+  try {
+    const auth = await application.firstWindow({ timeout: 20_000 })
+    await auth.getByLabel('Почта').fill('fixture@example.invalid')
+    await auth.getByLabel('Пароль', { exact: true }).fill('synthetic-only-password')
+    await auth.getByRole('button', { name: 'Войти', exact: true }).click()
+    const main = await mainPage(application)
+    await main.evaluate(() => window.crTools.getMonitorView())
+    await expect
+      .poll(
+        async () => (await main.evaluate(() => window.crTools.getRealtimeStatus())).state,
+      )
+      .toBe('READY')
+    await application.evaluate(() => {
+      const probe = (
+        globalThis as typeof globalThis & {
+          __desktopSmoke: { sockets: { emit(event: string, message: string): void }[] }
+        }
+      ).__desktopSmoke
+      const socket = probe.sockets.at(-1)
+      if (socket === undefined) throw new Error('Missing synthetic socket')
+      socket.emit(
+        'message',
+        JSON.stringify({
+          type: 'ocr_reprocessed',
+          data: {
+            success: true,
+            searched_nickname: 'Voron_17',
+            player: {
+              name: 'Voron_17',
+              tag: '#P0Y',
+              rating: 2487,
+              clan: 'Северный ветер',
+            },
+            decks: [
+              {
+                name: 'PoL',
+                cards: Array.from({ length: 8 }, (_, index) => ({
+                  name: `Card ${index + 1}`,
+                  level: 14,
+                })),
+              },
+            ],
+          },
+        }),
+      )
+    })
+    for (const state of [
+      { alwaysOnTop: true, locked: false, compactMode: false },
+      { alwaysOnTop: true, locked: true, compactMode: false },
+      { alwaysOnTop: true, locked: true, compactMode: true },
+    ]) {
+      await main.evaluate((patch) => window.crTools.updateWidgetSettings(patch), state)
+      await main.evaluate(() => window.crTools.showWidget())
+      await expect
+        .poll(() =>
+          application.windows().some((page) => page.url().endsWith('/widget.html')),
+        )
+        .toBe(true)
+      const widget = application
+        .windows()
+        .find((page) => page.url().endsWith('/widget.html'))
+      if (widget === undefined) throw new Error('Missing widget renderer')
+      await expect(widget.getByRole('heading', { name: 'Voron_17' })).toBeVisible()
+      const contentHeight = await widget
+        .locator('main')
+        .evaluate((element) => Math.ceil(element.getBoundingClientRect().height))
+      await expect
+        .poll(async () => (await nativeBounds(application, '/widget.html')).height)
+        .toBe(contentHeight)
+      const native = await application.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find((candidate) =>
+          candidate.webContents.getURL().endsWith('/widget.html'),
+        )
+        if (window === undefined) throw new Error('Missing widget')
+        return {
+          minimum: window.getMinimumSize(),
+          maximum: window.getMaximumSize(),
+          handle: window.getNativeWindowHandle().readBigUInt64LE().toString(),
+          pinned: window.isAlwaysOnTop(),
+        }
+      })
+      expect(native.pinned).toBe(true)
+      expect(native.minimum[1]).toBe(contentHeight)
+      expect(native.maximum[1]).toBe(contentHeight)
+      if (!state.locked) {
+        const drag = join(directory, 'drag.ps1')
+        await writeFile(
+          drag,
+          `
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class WidgetDrag {
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+}
+'@
+$hwnd = [IntPtr]::new([long]${native.handle})
+$rect = New-Object WidgetDrag+Rect
+[void][WidgetDrag]::GetWindowRect($hwnd, [ref]$rect)
+[void][WidgetDrag]::SetForegroundWindow($hwnd)
+$x = [int](($rect.Left + $rect.Right) / 2)
+$y = $rect.Bottom - 1
+[void][WidgetDrag]::SetCursorPos($x, $y)
+Start-Sleep -Milliseconds 100
+[WidgetDrag]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+for ($step = 1; $step -le 12; $step++) {
+  [void][WidgetDrag]::SetCursorPos($x, ($y - $step * 10))
+  Start-Sleep -Milliseconds 20
+}
+[WidgetDrag]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+`,
+        )
+        execFileSync('pwsh.exe', ['-NoProfile', '-File', drag], {
+          timeout: 15_000,
+          stdio: 'pipe',
+        })
+        expect((await nativeBounds(application, '/widget.html')).height).toBe(
+          contentHeight,
+        )
+        const cardsFit = await widget
+          .getByRole('list', { name: 'Карты колоды 1' })
+          .evaluate(
+            (element) => element.getBoundingClientRect().bottom <= window.innerHeight,
+          )
+        expect(cardsFit).toBe(true)
+        await application.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find((candidate) =>
+            candidate.webContents.getURL().endsWith('/widget.html'),
+          )
+          if (window === undefined) throw new Error('Missing widget')
+          window.setSize(480, window.getBounds().height)
+        })
+        await expect
+          .poll(async () =>
+            Number(
+              await widget
+                .locator('main')
+                .evaluate((element) =>
+                  (element as HTMLElement).style.getPropertyValue('--ow-k'),
+                ),
+            ),
+          )
+          .toBe(480 / 360)
+        await expect
+          .poll(async () => (await nativeBounds(application, '/widget.html')).height)
+          .toBe(
+            await widget
+              .locator('main')
+              .evaluate((element) => Math.ceil(element.getBoundingClientRect().height)),
+          )
+        expect((await nativeBounds(application, '/widget.html')).height).toBeGreaterThan(
+          contentHeight,
+        )
+      }
+      await widget.locator('main').hover()
+      await widget.getByRole('button', { name: 'Скрыть оверлей' }).click()
+      await expect
+        .poll(() =>
+          application.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()
+              .find((candidate) =>
+                candidate.webContents.getURL().endsWith('/widget.html'),
+              )
+              ?.isVisible(),
+          ),
+        )
+        .toBe(false)
+      // Late content-height feedback must not raise the hidden topmost HWND either.
+      await widget.evaluate(() =>
+        window.crToolsWidget.updateSettings({
+          contentHeight: Math.ceil(
+            document.querySelector('main')?.getBoundingClientRect().height ?? 80,
+          ),
+        }),
+      )
+      await widget.waitForTimeout(250)
+      expect(
+        await application.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()
+            .find((candidate) => candidate.webContents.getURL().endsWith('/widget.html'))
+            ?.isVisible(),
+        ),
+      ).toBe(false)
+    }
+  } finally {
+    await application.close()
     await rm(directory, { recursive: true, force: true })
   }
 })

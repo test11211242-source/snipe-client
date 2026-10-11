@@ -249,7 +249,7 @@ const widgetView = (spec) => {
       displayMode: 'detailed',
       bounds: { x: null, y: null, width, height: 360 },
       normalWidth: compact ? 360 : width,
-      compactWidth: compact ? width : 520,
+      compactWidth: compact ? width : 300,
       compactMode: compact,
     },
     visible: true,
@@ -999,7 +999,7 @@ const widgetStatus = {
     displayMode: 'detailed',
     bounds: { x: null, y: null, width: 360, height: 300 },
     normalWidth: 360,
-    compactWidth: 520,
+    compactWidth: 300,
     compactMode: false,
   },
 }

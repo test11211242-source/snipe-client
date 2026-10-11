@@ -101,14 +101,16 @@ Saved maximization is deferred until first show for a hidden launch, and an unpo
 main window centres on the primary display. `query-session-end` flushes pending
 bounds/journal/log writes without stopping monitoring; only `session-end` commits to shutdown.
 
-Local widget settings are strict per-user atomic files under
-`userData/widget-settings.v3/`, importing v2 without deleting it. Defaults enable
-auto-open and always-on-top and use normal width 360. Compact mode starts at width 520
-and restores the saved normal width on exit. Width-derived scale is
-`clamp(width/360, 0.86, 1.5)`, never an independently persisted value. Compact minimum
-width is 440; minimum height is 80 rather than the obsolete 280. Native bounds are
-clamped to current work areas, including when a display is smaller than those minima.
-Position and size are saved after user move/resize events.
+Local widget settings are strict per-user atomic schema-4 files under
+`userData/widget-settings.v4/`. Migration preserves the original v3 files byte-for-byte
+(and still imports v2); only an out-of-range compact width is clamped to the new range.
+All other preferences, remembered normal width, position and height survive. Defaults enable
+auto-open and always-on-top, use normal width 360 (300–720) and compact width 300 (220–480).
+Widths are remembered separately. Width-derived scale is `clamp(width/360, 0.86, 1.5)`,
+never an independently persisted value. Height comes only from measured content (80–720);
+native minimum and maximum height both follow that measurement, allowing width-only resize.
+Native bounds fit current work areas. User moves/width changes are saved after a debounce;
+programmatic height changes suppress bounds feedback and identical content reports are deduped.
 
 M0 service readiness loads the authenticated user's widget settings before opening
 the main renderer. A failed load keeps authentication visible rather than inventing
@@ -304,6 +306,20 @@ Widget controls are keyboard-focusable and labeled: pin, position lock, compact 
 deck tabs, and hide. Escape hides the overlay; removed Ctrl+P/L/M shortcuts do nothing.
 Ctrl+wheel adjusts bounded opacity; Settings exposes width, opacity, and the same window
 behavior. Application updates have their own Settings page.
+
+Compact mode is a minimal nickname/medals header and a two-row, four-column deck.
+Multiple decks use tiny inline numbers; clan, status, tag and notices are omitted.
+Controls float over the card on hover or keyboard focus without consuming a row.
+Normal mode retains status, clan and full deck tabs (only for multiple decks).
+Both views hug their contents. Medals use the original `rating.png` and purple `#8B5CF6`
+(old widget commit `234d114`, `--warning`), shared with opponent/history/palette ratings.
+Pinned widgets hide exactly like unpinned ones: no blur-time `moveTop()` can undo hiding,
+and settings/content feedback never raises a hidden window.
+
+Overlay visual acceptance scenarios are `tests/visual/scenarios-widget-fix.json`.
+The integrated Windows smoke also exercises pinned/locked/compact close, native content-height
+limits, a real vertical mouse drag, width-driven scaling and late height feedback after hiding,
+using temporary userData and synthetic encounters without contacting the server.
 
 ## Streamer Workspace
 
