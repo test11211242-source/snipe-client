@@ -95,6 +95,12 @@ It is printed explicitly in release logs. Production use, another leaf version,
 another advisory or incomplete audit data still stops publication. Re-review this
 assessment when upstream publishes a fix or the downloader/cache setup changes.
 
+The 2026-10-11 test build updates the lockfile's dev-only `source-map-js` from
+1.2.1 to patched 1.2.2 for GHSA-68fv-2mgg-jv7q:
+https://github.com/advisories/GHSA-68fv-2mgg-jv7q.
+This fixes the audit blocker without adding an advisory exception or changing
+the application version.
+
 CR Tools V2 is Windows-only and intentionally has no Authenticode certificate. Every fresh
 installer or update can therefore trigger an unavoidable Windows SmartScreen "Unknown
 publisher" warning. The Ed25519 manifest signature authenticates update metadata and the
