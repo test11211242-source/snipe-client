@@ -30,6 +30,9 @@ Manually verify an upgrade using the app or a disposable Windows user/VM.
 Packaged smoke teardown allows bounded Windows file-deletion retries for
 Chromium profile handles released after application shutdown; native-window,
 clean-exit and IPC assertions remain mandatory.
+The native-window clean-exit smoke seeds only its isolated profile with
+`closeToTray: false`: the rewrite intentionally hides a closed window in the tray
+by default instead of quitting.
 
 The in-app install handoff uses `resources/installer-helper.exe`, compiled locally
 with the Windows .NET Framework compiler during `build:app` and shipped as an
