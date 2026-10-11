@@ -1,15 +1,21 @@
 import { z } from 'zod'
+import {
+  MonitorPublicErrorSchema,
+  MonitorSearchSchema,
+  MonitorStateSchema,
+} from './monitor'
 
 const SafeTextSchema = z.string().trim().min(1).max(160)
 
 export const WIDGET_MIN_WIDTH = 300
 export const WIDGET_MAX_WIDTH = 720
-export const WIDGET_MIN_HEIGHT = 280
+export const WIDGET_MIN_HEIGHT = 80
 export const WIDGET_MAX_HEIGHT = 720
 export const WIDGET_DECK_WIDTH = 360
 export const WIDGET_DECK_HEIGHT = 300
 export const WIDGET_DETAILED_WIDTH = 420
 export const WIDGET_DETAILED_HEIGHT = 360
+export const WIDGET_COMPACT_MIN_WIDTH = 440
 
 export const WidgetBoundsSchema = z
   .object({
@@ -28,6 +34,9 @@ export const WidgetSettingsSchema = z
     opacity: z.number().min(0.55).max(1),
     displayMode: z.enum(['deck', 'detailed']),
     bounds: WidgetBoundsSchema,
+    normalWidth: z.number().int().min(WIDGET_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
+    compactWidth: z.number().int().min(WIDGET_COMPACT_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
+    compactMode: z.boolean(),
   })
   .strict()
 
@@ -37,8 +46,19 @@ export const WidgetSettingsPatchSchema = WidgetSettingsSchema.pick({
   locked: true,
   opacity: true,
   displayMode: true,
+  normalWidth: true,
+  compactWidth: true,
+  compactMode: true,
 })
   .partial()
+  .extend({
+    contentHeight: z
+      .number()
+      .int()
+      .min(WIDGET_MIN_HEIGHT)
+      .max(WIDGET_MAX_HEIGHT)
+      .optional(),
+  })
   .strict()
   .refine((patch) => Object.values(patch).every((value) => value !== undefined), {
     message: 'Widget setting values cannot be undefined',
@@ -67,6 +87,7 @@ const WidgetResultBaseSchema = z.object({
   id: z.uuid(),
   timestamp: z.iso.datetime(),
   searchedNickname: SafeTextSchema.nullable(),
+  reprocessed: z.boolean().default(false),
 })
 
 export const WidgetResultSchema = z.discriminatedUnion('kind', [
@@ -101,6 +122,11 @@ export const WidgetViewSchema = z
     settings: WidgetSettingsSchema,
     visible: z.boolean(),
     result: WidgetResultSchema.nullable(),
+    monitorState: MonitorStateSchema,
+    monitorError: MonitorPublicErrorSchema.nullable().default(null),
+    runIntent: z.boolean(),
+    search: MonitorSearchSchema.nullable(),
+    scale: z.number().min(0.86).max(1.5),
   })
   .strict()
 
@@ -115,9 +141,7 @@ export const WidgetStatusSchema = z
 export type WidgetBounds = z.infer<typeof WidgetBoundsSchema>
 export type WidgetDisplayMode = WidgetSettings['displayMode']
 export type WidgetSettings = z.infer<typeof WidgetSettingsSchema>
-export type WidgetSettingsPatch = Partial<
-  Pick<WidgetSettings, 'autoOpen' | 'alwaysOnTop' | 'locked' | 'opacity' | 'displayMode'>
->
+export type WidgetSettingsPatch = z.infer<typeof WidgetSettingsPatchSchema>
 export type WidgetResult = z.infer<typeof WidgetResultSchema>
 export type WidgetView = z.infer<typeof WidgetViewSchema>
 export type WidgetStatus = z.infer<typeof WidgetStatusSchema>

@@ -1,0 +1,1233 @@
+[
+  {
+    "name": "stream-overview-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-overview-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-overview-notwitch-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "zones": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-overview-notwitch-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "zones": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-twitch-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-twitch-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-twitch-off-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-twitch-off-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-twitch-pending-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "pending"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-twitch-pending-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "pending"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Twitch-канал\") })()"]
+  },
+  {
+    "name": "stream-predictions-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "zones": true
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "zones": true
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-notready-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "zones": false,
+        "monitoring": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-notready-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "zones": false,
+        "monitoring": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-active-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "active"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-active-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "active"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-title-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "full"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "full"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-custom-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "chips"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-custom-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "chips"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-raw-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "raw"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-raw-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "raw"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-notwitch-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-notwitch-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Название стрима\") })()"]
+  },
+  {
+    "name": "stream-title-edited-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "title": "full"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('stream', \"Название стрима\") })()",
+      "(async () => { window.__h.click('Коротко', 'main button'); await window.__h.sleep(900) })()"
+    ]
+  },
+  {
+    "name": "stream-chat-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Колоды в чат\") })()"]
+  },
+  {
+    "name": "stream-chat-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Колоды в чат\") })()"]
+  },
+  {
+    "name": "stream-chat-notwitch-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "monitoring": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Колоды в чат\") })()"]
+  },
+  {
+    "name": "stream-chat-notwitch-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "monitoring": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Колоды в чат\") })()"]
+  },
+  {
+    "name": "stream-widgets-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-nourl-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "urls": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-nourl-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "urls": false
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-loading-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {},
+      "frame": "hang"
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-loading-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {},
+      "frame": "hang"
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()"]
+  },
+  {
+    "name": "stream-widgets-error-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {},
+      "frame": "hang"
+    },
+    "steps": [
+      "(async () => { await window.__h.go('stream', \"Виджеты для OBS\") })()",
+      "(async () => { await window.__h.sleep(16500) })()"
+    ]
+  },
+  {
+    "name": "stream-partial-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "partial": true
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-partial-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "partial": true
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "stream-loadfail-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "loadFail": true
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "settings-app-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": ["(async () => { await window.__h.go('settings', \"Приложение\") })()"]
+  },
+  {
+    "name": "settings-app-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": ["(async () => { await window.__h.go('settings', \"Приложение\") })()"]
+  },
+  {
+    "name": "settings-overlay-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Оверлей соперника\") })()"
+    ]
+  },
+  {
+    "name": "settings-overlay-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Оверлей соперника\") })()"
+    ]
+  },
+  {
+    "name": "settings-accounts-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()"
+    ]
+  },
+  {
+    "name": "settings-accounts-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()"
+    ]
+  },
+  {
+    "name": "settings-acc-invalid-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_TAG_INVALID"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2Q-L0\"); h.type('Название (необязательно)', \"\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-invalid-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_TAG_INVALID"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2Q-L0\"); h.type('Название (необязательно)', \"\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-notfound-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-notfound-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-limit-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_LIMIT_REACHED"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-limit-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_LIMIT_REACHED"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-server-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_SAVE_UNAVAILABLE"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-server-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "ACCOUNT_SAVE_UNAVAILABLE"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-clash-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "CLASH_API_UNAVAILABLE"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-clash-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "accountError": "CLASH_API_UNAVAILABLE"
+      }
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()",
+      "(async () => { const h = window.__h; h.type('Тег Clash Royale', \"#8Y2QL0\"); h.type('Название (необязательно)', \"Новый\"); await h.sleep(100); h.click('Добавить', 'button'); await h.sleep(500) })()"
+    ]
+  },
+  {
+    "name": "settings-acc-player-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "player": true
+    },
+    "steps": [
+      "(async () => { await window.__h.go('settings', \"Аккаунты Clash Royale\") })()"
+    ]
+  },
+  {
+    "name": "settings-updates-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "UP_TO_DATE",
+        "availableVersion": null,
+        "releaseNotes": []
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "UP_TO_DATE",
+        "availableVersion": null,
+        "releaseNotes": []
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-available-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "AVAILABLE",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-available-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "AVAILABLE",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-downloading-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": {
+          "downloadedBytes": 58720256,
+          "totalBytes": 155189248,
+          "percent": 38
+        },
+        "error": null,
+        "state": "DOWNLOADING",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-downloading-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": {
+          "downloadedBytes": 58720256,
+          "totalBytes": 155189248,
+          "percent": 38
+        },
+        "error": null,
+        "state": "DOWNLOADING",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-ready-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "READY",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-ready-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": null,
+        "state": "READY",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-failed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": {
+          "code": "DOWNLOAD_FAILED",
+          "message": "Нет связи с сервером обновлений. Прежняя версия работает.",
+          "retryable": true
+        },
+        "state": "FAILED",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "settings-updates-failed-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "update": {
+        "currentVersion": "2.5.0",
+        "critical": false,
+        "progress": null,
+        "error": {
+          "code": "DOWNLOAD_FAILED",
+          "message": "Нет связи с сервером обновлений. Прежняя версия работает.",
+          "retryable": true
+        },
+        "state": "FAILED",
+        "availableVersion": "2.6.0",
+        "releaseNotes": [
+          "Профили стали быстрее переключаться, а список виден сразу.",
+          "Оверлей показывает до пяти колод соперника.",
+          "Исправлено: пропавшее окно игры больше не считается ошибкой."
+        ]
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('settings', \"Обновления\") })()"]
+  },
+  {
+    "name": "auth-boot",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "BOOTSTRAPPING",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        },
+        "hang": true
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-boot-error",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "ERROR",
+          "user": null,
+          "error": {
+            "code": "NETWORK_UNAVAILABLE",
+            "message": "Нет связи с сервером. Проверьте интернет и повторите.",
+            "retryable": true,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-login",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-login-creds",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": {
+            "code": "UNAUTHORIZED",
+            "message": "Неверная почта или пароль",
+            "retryable": false,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.type('Почта', 'art.cs@example.ru'); h.type('Пароль', 'password123'); await h.sleep(100) })()"
+    ],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-login-network",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": {
+            "code": "NETWORK_UNAVAILABLE",
+            "message": "Нет связи с сервером",
+            "retryable": true,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.type('Почта', 'art.cs@example.ru'); h.type('Пароль', 'password123'); await h.sleep(100) })()"
+    ],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-login-blocked",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "BLOCKED",
+          "user": null,
+          "error": {
+            "code": "FORBIDDEN",
+            "message": "Доступ к аккаунту закрыт. Подписка не активна.",
+            "retryable": false,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-login-replaced",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": {
+            "code": "UNAUTHORIZED",
+            "message": "Выполнен вход на другом устройстве",
+            "retryable": false,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-register",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [
+      "(async () => { window.__h.click('Регистрация', 'button'); await window.__h.sleep(300) })()"
+    ],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-register-fields",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [
+      "(async () => { window.__h.click('Регистрация', 'button'); await window.__h.sleep(300) })()",
+      "(async () => { const h = window.__h; h.type('Почта', 'art.cs@example'); h.type('Имя пользователя', 'A'); h.type('Ключ приглашения', 'abc!'); h.type('Пароль', '•••••'); await h.sleep(100); h.click('Создать аккаунт', 'button'); await h.sleep(400) })()"
+    ],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-register-invite",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": {
+            "code": "VALIDATION_FAILED",
+            "message": "Ключ приглашения не подходит",
+            "retryable": false,
+            "status": null
+          }
+        },
+        "update": {
+          "state": "IDLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": null,
+          "critical": false,
+          "releaseNotes": [],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [
+      "(async () => { window.__h.click('Регистрация', 'button'); await window.__h.sleep(300) })()",
+      "(async () => { const h = window.__h; h.type('Почта', 'art.cs@example.ru'); h.type('Имя пользователя', 'ArtCS'); h.type('Ключ приглашения', 'INV-7Q2L-9XKD'); h.type('Пароль', 'password123'); await h.sleep(100) })()"
+    ],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-update",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "DOWNLOADING",
+          "currentVersion": "2.5.0",
+          "availableVersion": "2.6.0",
+          "critical": true,
+          "releaseNotes": [
+            "Профили стали быстрее переключаться, а список виден сразу.",
+            "Оверлей показывает до пяти колод соперника.",
+            "Исправлено: пропавшее окно игры больше не считается ошибкой."
+          ],
+          "progress": {
+            "downloadedBytes": 58720256,
+            "totalBytes": 155189248,
+            "percent": 38
+          },
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-update-available",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "AVAILABLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": "2.6.0",
+          "critical": true,
+          "releaseNotes": [
+            "Профили стали быстрее переключаться, а список виден сразу.",
+            "Оверлей показывает до пяти колод соперника.",
+            "Исправлено: пропавшее окно игры больше не считается ошибкой."
+          ],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  },
+  {
+    "name": "auth-update-strip",
+    "width": 480,
+    "height": 640,
+    "fixture": {
+      "authWindow": {
+        "view": {
+          "state": "UNAUTHENTICATED",
+          "user": null,
+          "error": null
+        },
+        "update": {
+          "state": "AVAILABLE",
+          "currentVersion": "2.5.0",
+          "availableVersion": "2.6.0",
+          "critical": false,
+          "releaseNotes": [
+            "Профили стали быстрее переключаться, а список виден сразу.",
+            "Оверлей показывает до пяти колод соперника.",
+            "Исправлено: пропавшее окно игры больше не считается ошибкой."
+          ],
+          "progress": null,
+          "error": null
+        }
+      }
+    },
+    "steps": [],
+    "page": "auth.html"
+  }
+]

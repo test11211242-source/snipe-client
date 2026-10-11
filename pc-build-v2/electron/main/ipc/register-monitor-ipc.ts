@@ -6,6 +6,9 @@ import {
   MonitorPreferencesPayloadSchema,
   MonitorPreferencesResultSchema,
   MonitorViewResultSchema,
+  RetrySearchPayloadSchema,
+  MonitorHistoryPayloadSchema,
+  MonitorHistoryResultSchema,
 } from '../../../shared/contracts/monitor-ipc'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { MonitorSupervisor } from '../services/monitor-supervisor'
@@ -59,11 +62,25 @@ export function registerMonitorIpc(dependencies: MonitorIpcDependencies): () => 
       await dependencies.monitor.updatePreferences(preferences),
     )
   })
-  const disposeResults = dependencies.monitor.subscribeResults(() => {
+  ipcMain.handle(MONITOR_IPC_CHANNELS.retrySearch, async (event, rawPayload) => {
+    verify(event, dependencies.windows)
+    const payload = RetrySearchPayloadSchema.parse(rawPayload)
+    return MonitorViewResultSchema.parse(
+      await dependencies.monitor.retrySearch(payload.attemptId),
+    )
+  })
+  ipcMain.handle(MONITOR_IPC_CHANNELS.getHistory, async (event, rawPayload) => {
+    verify(event, dependencies.windows)
+    const payload = MonitorHistoryPayloadSchema.parse(rawPayload)
+    return MonitorHistoryResultSchema.parse(
+      await dependencies.monitor.getHistory(payload.offset, payload.limit),
+    )
+  })
+  const disposeResults = dependencies.monitor.subscribeViews((view) => {
     dependencies.windows.sendToRenderer(
       'main',
       MONITOR_IPC_CHANNELS.viewChanged,
-      MonitorViewResultSchema.parse(dependencies.monitor.getCurrentView()),
+      MonitorViewResultSchema.parse(view),
     )
   })
   const channels = Object.values(MONITOR_IPC_CHANNELS)

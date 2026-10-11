@@ -1,0 +1,71 @@
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-5);
+  background: var(--color-accent-soft);
+  border-bottom: 1px solid var(--color-accent-line);
+}
+.warn {
+  background: var(--color-warn-soft);
+  border-bottom-color: var(--color-warn-line);
+}
+.icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  flex: none;
+}
+.warn .icon {
+  background: var(--color-warn);
+  color: var(--color-warn-ink);
+}
+.text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.text b {
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+}
+.text span {
+  color: var(--color-text-2);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 260px;
+  max-width: 40vw;
+}
+.progress > :first-child {
+  flex: 1;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.compact {
+  padding: var(--space-1) var(--space-3);
+}
+.compact .text span {
+  display: none;
+}

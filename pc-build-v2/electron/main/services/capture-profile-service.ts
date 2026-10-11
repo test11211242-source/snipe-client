@@ -25,8 +25,15 @@ import {
 import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorSupervisor } from './monitor-supervisor'
+import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
+import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
 
-const ACTIVE_MONITOR_STATES = ['PREFLIGHT', 'STARTING', 'READY'] as const
+const ACTIVE_MONITOR_STATES = [
+  'PREFLIGHT',
+  'STARTING',
+  'READY',
+  'WAITING_SOURCE',
+] as const
 
 export interface CaptureProfileMutationResult {
   profiles: CaptureProfilesView
@@ -51,6 +58,43 @@ export class CaptureProfileService {
     const user = this.auth.getView().user
     if (user === null) return CaptureProfilesViewSchema.parse(this.emptyView())
     const status = await this.repository.list(user.id)
+    if (status !== null) {
+      const sourceHealth = await this.targetResolver.resolveProfiles(
+        status.profiles.map((profile) => profile.profileId),
+      )
+      await Promise.all(
+        status.profiles.map(async (profile) => {
+          const error = sourceHealth.get(profile.profileId)
+          if (error === null) {
+            profile.sourceHealth = { state: 'available', reason: null }
+          } else {
+            const code =
+              error instanceof ApplicationError
+                ? error.code
+                : 'SOURCE_METADATA_UNAVAILABLE'
+            profile.sourceHealth = {
+              state:
+                code === 'SOURCE_NOT_FOUND'
+                  ? 'missing'
+                  : code === 'SOURCE_AMBIGUOUS'
+                    ? 'ambiguous'
+                    : 'metadata_unavailable',
+              reason: code,
+            }
+            if (code === 'SOURCE_REBIND_REQUIRED')
+              profile.calibrationHealth = 'needs_validation'
+          }
+          const result = await this.resultRepository?.load(user.id, profile.profileId)
+          profile.resultConfigured =
+            result != null &&
+            predictionResultMatchesCapture(result, {
+              profileId: profile.profileId,
+              configurationRevision: profile.configurationRevision,
+              configurationFingerprint: profile.configurationFingerprint,
+            })
+        }),
+      )
+    }
     this.assertAuthContext({ userId: user.id, generation })
     return CaptureProfilesViewSchema.parse(
       status === null
@@ -67,7 +111,7 @@ export class CaptureProfileService {
     this.assertPredictionsStopped()
   }
 
-  async captureSetupCommitted(): Promise<void> {
+  async captureSetupCommitted(): Promise<SetupRuntimeOutcome> {
     this.monitor.invalidateCaptureTarget()
     const monitor = await this.monitor.getView()
     if (
@@ -75,8 +119,12 @@ export class CaptureProfileService {
         monitor.state as (typeof ACTIVE_MONITOR_STATES)[number],
       )
     ) {
-      await this.monitor.restartIfActive()
+      const restarted = await this.monitor.restartIfActive()
+      if (restarted.state === 'READY') return 'ready'
+      if (restarted.state === 'WAITING_SOURCE') return 'waiting_source'
+      return 'failed'
     }
+    return 'not_requested'
   }
 
   runCaptureCommit<T>(operation: () => Promise<T>): Promise<T> {
@@ -200,10 +248,6 @@ export class CaptureProfileService {
       const deletingActive = current.activeProfileId === profileId
       if (deletingActive) {
         this.assertPredictionsStopped()
-        const replacement = current.profiles.find(
-          (profile) => profile.profileId !== profileId,
-        )
-        if (replacement !== undefined) await this.resolveProfile(replacement.profileId)
       }
       this.assertAuthContext(context)
       try {
@@ -214,7 +258,7 @@ export class CaptureProfileService {
       this.assertAuthContext(context)
       if (deletingActive) {
         this.monitor.invalidateCaptureTarget()
-        await this.monitor.restartIfActive()
+        await this.monitor.stop('profile_deleted')
       }
       await this.resultRepository?.delete(userId, profileId).catch(() => undefined)
       this.assertAuthContext(context)
@@ -236,7 +280,8 @@ export class CaptureProfileService {
       if (profile === null)
         throw this.publicFailure(new CaptureProfileNotFoundError(profileId))
       const configuredAspect =
-        profile.configuration.frameSize.width / profile.configuration.frameSize.height
+        profile.configuration.calibration.referenceFrameSize.width /
+        profile.configuration.calibration.referenceFrameSize.height
       const nextAspect = frameSize.width / frameSize.height
       if (Math.abs(nextAspect / configuredAspect - 1) > 0.02) {
         throw new ApplicationError(
@@ -273,27 +318,19 @@ export class CaptureProfileService {
     generation: number
   }): Promise<CaptureProfileMutationResult> {
     this.assertAuthContext(context)
-    const [configuration, status, monitor] = await Promise.all([
+    const [configuration, profiles, monitor] = await Promise.all([
       this.repository.load(context.userId),
-      this.repository.list(context.userId),
+      this.getView(),
       this.monitor.getView(),
     ])
     this.assertAuthContext(context)
     return {
-      profiles: CaptureProfilesViewSchema.parse(
-        status === null
-          ? this.emptyView()
-          : {
-              revision: status.revision,
-              activeProfileId: status.activeProfileId,
-              profiles: status.profiles,
-            },
-      ),
+      profiles,
       monitor,
       capture: CaptureStatusSchema.parse({
         configured: configuration !== null,
         revision: configuration?.revision ?? null,
-        sourceLabel: configuration?.source.label ?? null,
+        sourceLabel: configuration?.sourceBinding.identity.label ?? null,
       }),
     }
   }

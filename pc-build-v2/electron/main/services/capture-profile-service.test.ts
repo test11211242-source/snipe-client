@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CaptureProfileCollectionStatus } from '../../../shared/models/capture'
+import { ApplicationError } from '../../../shared/errors/application-error'
 import { CaptureProfileService } from './capture-profile-service'
 
 const PRIMARY_ID = '00000000-0000-4000-8000-000000000001'
@@ -18,6 +19,9 @@ function summary(profileId: string, profileName: string, isActive: boolean) {
     committedAt: '2026-07-17T10:00:00.000Z',
     sourceKind: 'window' as const,
     sourceLabel: profileName,
+    sourceHealth: { state: 'unknown' as const, reason: null },
+    calibrationHealth: 'validated' as const,
+    resultConfigured: false,
   }
 }
 
@@ -45,7 +49,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
   const repository = {
     load: vi.fn().mockResolvedValue({
       revision: 1,
-      source: { label: 'Game' },
+      sourceBinding: { identity: { label: 'Game' } },
     }),
     list: vi.fn(() => Promise.resolve(current)),
     get: vi.fn(),
@@ -60,7 +64,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
   }
   const monitorView = {
     state: 'READY' as const,
-    preferences: { searchMode: 'fast' as const, deckMode: 'pol' as const },
+    preferences: { deckMode: 'pol' as const },
     readiness: {
       authenticated: true,
       captureConfigured: true,
@@ -78,6 +82,11 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
       serviceErrors: 0,
     },
     results: [],
+    runIntent: false,
+    search: null,
+    session: null,
+    summary: null,
+    historyError: null,
   }
   const monitor = {
     getView: vi.fn().mockResolvedValue(monitorView),
@@ -86,7 +95,15 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     restartIfActive: vi.fn().mockResolvedValue(monitorView),
     invalidateCaptureTarget: vi.fn().mockReturnValue(monitorView),
   }
-  const targetResolver = { resolveProfile: vi.fn().mockResolvedValue({}) }
+  const targetResolver = {
+    resolveProfile: vi.fn().mockResolvedValue({}),
+    resolveProfiles: vi.fn().mockResolvedValue(
+      new Map([
+        [PRIMARY_ID, null],
+        [SECONDARY_ID, null],
+      ]),
+    ),
+  }
   const service = new CaptureProfileService(
     {
       getView: () => ({ user: { id: userId } }),
@@ -181,8 +198,9 @@ describe('CaptureProfileService', () => {
     expect(repository.rename).not.toHaveBeenCalled()
   })
 
-  it('restarts after deleting the active profile even if result cleanup fails', async () => {
+  it('cancels monitoring after active profile deletion even if result cleanup fails', async () => {
     const resultRepository = {
+      load: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockRejectedValue(new Error('disk cleanup failed')),
     }
     const { service, repository, monitor } = harness('stopped', resultRepository)
@@ -195,13 +213,16 @@ describe('CaptureProfileService', () => {
       profiles: { activeProfileId: SECONDARY_ID },
     })
     expect(resultRepository.delete).toHaveBeenCalledWith('user-1', PRIMARY_ID)
-    expect(monitor.restartIfActive).toHaveBeenCalledTimes(1)
+    expect(monitor.stop).toHaveBeenCalledWith('profile_deleted')
+    expect(monitor.restartIfActive).not.toHaveBeenCalled()
   })
 
   it('rejects source rebinding when the aspect ratio would invalidate regions', async () => {
     const { service, repository } = harness()
     repository.get.mockResolvedValue({
-      configuration: { frameSize: { width: 1920, height: 1080 } },
+      configuration: {
+        calibration: { referenceFrameSize: { width: 1920, height: 1080 } },
+      },
     })
 
     await expect(
@@ -219,5 +240,35 @@ describe('CaptureProfileService', () => {
       ),
     ).rejects.toMatchObject({ code: 'CAPTURE_PROFILE_GEOMETRY_MISMATCH' })
     expect(repository.rebind).not.toHaveBeenCalled()
+  })
+})
+
+describe('review regression profile source projection', () => {
+  it('#8 uses one batched source snapshot rather than resolving each profile', async () => {
+    const test = harness()
+    await test.service.getView()
+    expect(test.targetResolver.resolveProfiles).toHaveBeenCalledExactlyOnceWith([
+      PRIMARY_ID,
+      SECONDARY_ID,
+    ])
+    expect(test.targetResolver.resolveProfile).not.toHaveBeenCalled()
+  })
+})
+
+describe('review regression rebind-required profile health', () => {
+  it('#3 projects missing identity as metadata_unavailable and needs_validation', async () => {
+    const test = harness()
+    test.targetResolver.resolveProfiles.mockResolvedValue(
+      new Map<string, ApplicationError | null>([
+        [PRIMARY_ID, new ApplicationError('SOURCE_REBIND_REQUIRED', 'Identity missing')],
+        [SECONDARY_ID, null],
+      ]),
+    )
+    const view = await test.service.getView()
+    expect(view.profiles[0]).toMatchObject({
+      sourceHealth: { state: 'metadata_unavailable', reason: 'SOURCE_REBIND_REQUIRED' },
+      calibrationHealth: 'needs_validation',
+    })
+    expect(view.profiles[1]).toMatchObject({ sourceHealth: { state: 'available' } })
   })
 })

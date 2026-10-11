@@ -2,8 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { AuthApp } from './auth/AuthApp'
-import './styles/global.css'
-import './styles/auth.css'
+import './styles/tokens.css'
+import './styles/base.css'
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('Auth renderer root element is missing')

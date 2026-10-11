@@ -1,0 +1,217 @@
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+@container app (max-width: 999px) {
+  .screen {
+    grid-template-columns: minmax(0, 1fr) 270px;
+  }
+}
+@container app (max-width: 719px) {
+  .screen {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3);
+    gap: var(--space-3);
+    align-content: start;
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow: auto;
+}
+@container app (max-width: 719px) {
+  .panel {
+    overflow: visible;
+  }
+}
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.body > * {
+  flex: 1;
+}
+.side {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+/* Mini: history sheet rising from the strip */
+.sheet {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: var(--z-sticky);
+  display: grid;
+  gap: var(--space-3);
+  max-height: 70vh;
+  overflow: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-pop);
+  box-shadow: var(--elev-popover);
+}
+
+/* Header of the card */
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.head > :last-child {
+  flex: none;
+}
+.headInfo {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  min-height: var(--control-md);
+}
+.eyebrow {
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+.status[data-tone='ok'] {
+  color: var(--color-accent);
+}
+.status[data-tone='warn'] {
+  color: var(--color-warn);
+}
+.status[data-tone='danger'] {
+  color: var(--color-danger);
+}
+.caption {
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+
+/* Found */
+.found,
+.searching {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.found {
+  flex: 1;
+  gap: var(--space-3);
+}
+.idRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.idMain {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.nameLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+.name {
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-semi);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tagGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.tagLabel {
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.ratingBox {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+  flex: none;
+}
+.decksRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+@container app (max-width: 719px) {
+  .found {
+    gap: var(--space-3);
+  }
+}
+.h2hCol {
+  flex: 1;
+  min-width: 0;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--color-line-subtle);
+}
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+.steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  justify-items: start;
+}
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-2);
+  font-size: var(--fs-sm);
+}
+.stepDone {
+  color: var(--color-accent);
+}
+.stepBlocked {
+  color: var(--color-warn);
+}

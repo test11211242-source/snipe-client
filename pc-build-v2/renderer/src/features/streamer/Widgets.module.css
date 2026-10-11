@@ -1,0 +1,107 @@
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: var(--space-5);
+  align-items: start;
+}
+@container app (max-width: 999px) {
+  .cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+.url {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-1);
+  box-shadow: var(--ring-1);
+  overflow: hidden;
+}
+.previewBar {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.stage {
+  position: relative;
+  height: 260px;
+  margin: 0 var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+.fit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center;
+  border: 0;
+  background: transparent;
+  /* Widgets are transparent pages; matching schemes keep the frame canvas transparent. */
+  color-scheme: light;
+}
+.off {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+.state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-3);
+  background: var(--color-bg);
+}
+.state b {
+  color: var(--color-text);
+}
+.size {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.size b {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+}
+.pick {
+  padding: 0 var(--space-3) var(--space-3);
+}
+.field {
+  display: grid;
+  gap: var(--space-2);
+}

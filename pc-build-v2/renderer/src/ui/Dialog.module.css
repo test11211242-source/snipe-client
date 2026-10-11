@@ -1,0 +1,198 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scrim);
+  background: var(--color-scrim);
+  display: grid;
+  place-items: center;
+  animation: fade var(--dur-base) ease;
+}
+.top {
+  align-items: start;
+  padding-top: 56px;
+}
+.dialog {
+  width: var(--dialog-w);
+  max-width: calc(100% - var(--space-8));
+  max-height: calc(100% - var(--space-8));
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-pop);
+  box-shadow: var(--ring-2), var(--elev-dialog);
+  z-index: var(--z-dialog);
+  animation: rise var(--dur-slow) var(--ease-out);
+  overflow: hidden;
+}
+.dialog:focus {
+  outline: none;
+}
+.body {
+  padding: var(--space-6) var(--space-6) var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+  overflow: auto;
+}
+.title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+}
+.text {
+  color: var(--color-text-2);
+  font-size: var(--fs-md);
+  line-height: var(--lh-loose);
+}
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--color-line-subtle);
+}
+.notes {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--color-text-2);
+  display: grid;
+  gap: var(--space-1);
+}
+.panelShade {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-panel) - 1);
+  background: var(--color-scrim);
+  animation: fade var(--dur-base) ease;
+}
+.panel {
+  position: fixed;
+  top: var(--titlebar-h);
+  right: 0;
+  bottom: 0;
+  width: var(--panel-w);
+  max-width: 100%;
+  z-index: var(--z-panel);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-pop);
+  box-shadow:
+    -1px 0 0 var(--color-line),
+    var(--elev-panel);
+  animation: slide var(--dur-slow) var(--ease-out);
+}
+.panel:focus {
+  outline: none;
+}
+.panelHead {
+  height: var(--bar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-bottom: 1px solid var(--color-line-subtle);
+}
+.panelTitle {
+  flex: 1;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semi);
+}
+.panelBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5);
+}
+.panelFoot {
+  flex: none;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--color-line-subtle);
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+  align-items: center;
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.palette {
+  width: 600px;
+  max-width: calc(100% - var(--space-8));
+  max-height: calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-pop);
+  box-shadow: var(--ring-2), var(--elev-dialog);
+  overflow: hidden;
+  animation: rise var(--dur-slow) var(--ease-out);
+}
+.palette:focus {
+  outline: none;
+}
+.paletteIn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  height: 56px;
+  flex: none;
+  border-bottom: 1px solid var(--color-line-subtle);
+  color: var(--color-text-3);
+}
+.paletteInput {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: var(--fs-lg);
+  color: var(--color-text);
+}
+.paletteInput::placeholder {
+  color: var(--color-text-3);
+}
+.paletteInput:focus-visible {
+  box-shadow: none;
+}
+.paletteBody {
+  overflow: auto;
+  min-height: 0;
+}
+.paletteHint {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+  border-top: 1px solid var(--color-line-subtle);
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slide {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.dialogWide {
+  width: 720px;
+}

@@ -32,6 +32,7 @@ export interface ElectronCaptureSource {
   thumbnail: CaptureThumbnail
   ownerProcessId?: number
   executableLabel?: string
+  metadataAvailable?: boolean
 }
 
 export interface ElectronDisplayInfo {
@@ -103,10 +104,14 @@ export class CaptureSourceRegistry {
 
   async enumerate(): Promise<CaptureSourceSnapshot> {
     const generation = ++this.#enumerationGeneration
-    const [sources, displays] = await Promise.all([
+    const [sources, displayResult] = await Promise.all([
       this.provider.enumerate({ width: 0, height: 0 }),
-      this.provider.displays(),
+      this.provider.displays().then(
+        (displays) => ({ displays, unavailable: false }),
+        () => ({ displays: [], unavailable: true }),
+      ),
     ])
+    const displays = displayResult.displays
     const displayById = new Map(displays.map((display) => [display.id, display]))
     const ownHandles = this.provider.ownWindowHandles()
     const revision = opaqueKey()
@@ -132,8 +137,11 @@ export class CaptureSourceRegistry {
           kind,
           label: source.name.slice(0, 300) || 'Untitled window',
           detail: executableLabel,
-          captureSupported: true,
-          unavailableReason: null,
+          captureSupported: source.metadataAvailable !== false,
+          unavailableReason:
+            source.metadataAvailable === false
+              ? 'Не удалось проверить метаданные этого окна.'
+              : null,
           preview: null,
         }
         entries.set(sourceKey, {
@@ -149,7 +157,30 @@ export class CaptureSourceRegistry {
       }
 
       const display = displayById.get(source.displayId)
-      if (display === undefined) continue
+      if (display === undefined) {
+        if (displayResult.unavailable) {
+          const sourceKey = opaqueKey()
+          entries.set(sourceKey, {
+            rawId: source.id,
+            view: {
+              sourceKey,
+              revision,
+              kind: 'display',
+              label: source.name.slice(0, 300) || 'Экран',
+              detail: null,
+              captureSupported: false,
+              unavailableReason: 'Не удалось проверить метаданные экрана.',
+              preview: null,
+            },
+            displayId: source.displayId,
+            displayDeviceName: null,
+            windowHwnd: null,
+            executableLabel: null,
+            ownerProcessId: null,
+          })
+        }
+        continue
+      }
       const sourceKey = opaqueKey()
       const mapped = display.deviceName !== undefined && display.deviceName.length > 0
       const label = (display.label || source.name || 'Display').slice(0, 300)
@@ -231,6 +262,12 @@ export class CaptureSourceRegistry {
 
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
     const entry = this.getEntry(sourceKey, revision)
+    if (!entry.view.captureSupported && entry.view.kind === 'window') {
+      throw new ApplicationError(
+        'SOURCE_METADATA_UNAVAILABLE',
+        'Window identity metadata is unavailable',
+      )
+    }
     this.assertExpiredWindowHasIdentity(entry)
     const currentSource =
       entry.windowHwnd !== null && this.provider.resolveWindow !== undefined
@@ -244,6 +281,12 @@ export class CaptureSourceRegistry {
 
     let selector: SetupCaptureSelector
     if (entry.view.kind === 'window' && entry.windowHwnd !== null) {
+      if (currentSource.metadataAvailable === false) {
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Window identity metadata is unavailable',
+        )
+      }
       if (
         parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
         currentSource.name.slice(0, 300) !== entry.view.label ||
@@ -302,13 +345,108 @@ export class CaptureSourceRegistry {
   }
 
   async resolvePreference(preference: CapturePreference): Promise<SetupCaptureSelector> {
+    if (preference.kind === 'window' && preference.executableLabel === null)
+      throw new ApplicationError(
+        'SOURCE_REBIND_REQUIRED',
+        'Choose the window again to save its executable identity',
+      )
     const [sources, displays] = await Promise.all([
       this.provider.enumerate({ width: 0, height: 0 }),
       preference.kind === 'display' ? this.provider.displays() : Promise.resolve([]),
     ])
+    return this.matchPreference(
+      preference,
+      sources,
+      displays,
+      this.provider.ownWindowHandles(),
+      true,
+    )
+  }
 
+  async resolvePreferences(
+    preferences: readonly CapturePreference[],
+  ): Promise<readonly (SetupCaptureSelector | ApplicationError)[]> {
+    if (preferences.length === 0) return []
+    const [enumeration, displayList] = await Promise.allSettled([
+      this.provider.enumerate({ width: 0, height: 0 }),
+      preferences.some((preference) => preference.kind === 'display')
+        ? this.provider.displays()
+        : Promise.resolve([]),
+    ])
+    const sources = enumeration.status === 'fulfilled' ? enumeration.value : []
+    const displays = displayList.status === 'fulfilled' ? displayList.value : []
+    const enumerationError =
+      enumeration.status === 'rejected' ? this.metadataError(enumeration.reason) : null
+    const displayError =
+      displayList.status === 'rejected' ? this.metadataError(displayList.reason) : null
+    const ownHandles = this.provider.ownWindowHandles()
+    return Promise.all(
+      preferences.map(async (preference) => {
+        if (preference.kind === 'window' && preference.executableLabel === null)
+          return new ApplicationError(
+            'SOURCE_REBIND_REQUIRED',
+            'Choose the window again to save its executable identity',
+          )
+        if (enumerationError !== null) return enumerationError
+        if (preference.kind === 'display' && displayError !== null) return displayError
+        try {
+          // Profile health uses this one snapshot, without spawning per-window metadata probes.
+          return await this.matchPreference(
+            preference,
+            sources,
+            displays,
+            ownHandles,
+            false,
+          )
+        } catch (error) {
+          return this.metadataError(error)
+        }
+      }),
+    )
+  }
+
+  private metadataError(error: unknown): ApplicationError {
+    return error instanceof ApplicationError
+      ? error
+      : new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Source identity is unavailable',
+        )
+  }
+
+  private async matchPreference(
+    preference: CapturePreference,
+    sources: readonly ElectronCaptureSource[],
+    displays: readonly ElectronDisplayInfo[],
+    ownHandles: ReadonlySet<string>,
+    recheckUnverifiableWindow: boolean,
+  ): Promise<SetupCaptureSelector> {
     if (preference.kind === 'window') {
-      const ownHandles = this.provider.ownWindowHandles()
+      const unverifiable = sources.find(
+        (source) =>
+          source.metadataAvailable === false &&
+          !ownHandles.has(parseElectronWindowHandle(source.id) ?? '') &&
+          source.ownerProcessId !== this.provider.currentProcessId &&
+          (preference.windowHwnd !== undefined
+            ? parseElectronWindowHandle(source.id) === preference.windowHwnd
+            : source.name === preference.titleHint),
+      )
+      if (unverifiable !== undefined) {
+        const hwnd = parseElectronWindowHandle(unverifiable.id)
+        if (
+          recheckUnverifiableWindow &&
+          hwnd !== null &&
+          this.provider.resolveWindow !== undefined
+        ) {
+          const current = await this.provider.resolveWindow(hwnd)
+          if (current === undefined)
+            throw new ApplicationError('SOURCE_NOT_FOUND', 'The configured window closed')
+        }
+        throw new ApplicationError(
+          'SOURCE_METADATA_UNAVAILABLE',
+          'Configured window identity metadata is unavailable',
+        )
+      }
       if (preference.windowHwnd !== undefined) {
         const bound = sources.filter((source) => {
           const hwnd = parseElectronWindowHandle(source.id)
@@ -316,9 +454,9 @@ export class CaptureSourceRegistry {
             hwnd === preference.windowHwnd &&
             !ownHandles.has(hwnd) &&
             source.ownerProcessId !== this.provider.currentProcessId &&
-            source.name === preference.titleHint &&
-            (preference.executableLabel === null ||
-              safeExecutableLabel(source.executableLabel) === preference.executableLabel)
+            source.metadataAvailable !== false &&
+            preference.executableLabel !== null &&
+            safeExecutableLabel(source.executableLabel) === preference.executableLabel
           )
         })
         if (bound.length === 1) {
@@ -331,12 +469,13 @@ export class CaptureSourceRegistry {
           hwnd === null ||
           ownHandles.has(hwnd) ||
           source.ownerProcessId === this.provider.currentProcessId ||
+          source.metadataAvailable === false ||
           source.name !== preference.titleHint
         ) {
           return false
         }
         return (
-          preference.executableLabel === null ||
+          preference.executableLabel !== null &&
           safeExecutableLabel(source.executableLabel) === preference.executableLabel
         )
       })

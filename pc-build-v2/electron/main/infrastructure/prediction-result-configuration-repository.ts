@@ -6,9 +6,13 @@ import {
   PredictionResultConfigurationSchema,
   type PredictionResultConfiguration,
 } from '../../../shared/models/prediction-result'
-import { CaptureProfileIdSchema } from '../../../shared/models/capture'
+import {
+  CaptureProfileIdSchema,
+  type CaptureConfiguration,
+} from '../../../shared/models/capture'
 import { migratedCaptureProfileId } from './capture-configuration-repository'
 import { z } from 'zod'
+import type { StructuredLogger } from './structured-logger'
 
 export interface PredictionResultFileSystem {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
@@ -51,6 +55,8 @@ export class PredictionResultConfigurationRepository {
   constructor(
     private readonly directory: string,
     private readonly fs: PredictionResultFileSystem = nodePredictionResultFileSystem,
+    private readonly legacyDirectory?: string,
+    private readonly logger?: Pick<StructuredLogger, 'warn'>,
   ) {}
 
   load(
@@ -97,6 +103,60 @@ export class PredictionResultConfigurationRepository {
           ? fileName(parsed.userId)
           : profileFileName(parsed.userId, CaptureProfileIdSchema.parse(profileId))
       await this.writeConfiguration(parsed, destination)
+    })
+  }
+
+  async migrateCaptureReference(
+    userId: string,
+    profileId: string,
+    oldRevision: number,
+    oldFingerprint: string,
+    configuration: CaptureConfiguration,
+  ): Promise<void> {
+    const legacyDirectory = this.legacyDirectory
+    if (legacyDirectory === undefined) return
+    await this.serialized(async () => {
+      const existing = await this.readConfiguration(
+        userId,
+        profileFileName(userId, profileId),
+      )
+      if (existing !== null) return
+      const legacy = new PredictionResultConfigurationRepository(legacyDirectory, this.fs)
+      let previous: PredictionResultConfiguration | null
+      try {
+        previous =
+          (await legacy.readConfiguration(userId, profileFileName(userId, profileId))) ??
+          (profileId === migratedCaptureProfileId(userId)
+            ? await legacy.readConfiguration(userId, fileName(userId))
+            : null)
+      } catch (error) {
+        this.logger?.warn('Legacy result geometry was not attached', {
+          errorType:
+            error instanceof z.ZodError
+              ? 'ZodError'
+              : error instanceof SyntaxError
+                ? 'SyntaxError'
+                : 'Error',
+        })
+        return
+      }
+      if (
+        previous?.captureProfileId !== profileId ||
+        previous.captureConfigurationRevision !== oldRevision ||
+        previous.captureConfigurationFingerprint !== oldFingerprint
+      )
+        return
+      const { fingerprint: _fingerprint, ...unsigned } = previous
+      void _fingerprint
+      const migrated = {
+        ...unsigned,
+        captureConfigurationRevision: configuration.revision,
+        captureConfigurationFingerprint: configuration.fingerprint,
+      }
+      await this.writeConfiguration(
+        { ...migrated, fingerprint: predictionResultFingerprint(migrated) },
+        profileFileName(userId, profileId),
+      )
     })
   }
 

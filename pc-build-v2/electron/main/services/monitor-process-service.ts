@@ -10,14 +10,14 @@ import {
   type MonitorStartPayload,
 } from '../../../shared/contracts/monitor-protocol'
 
-const READY_TIMEOUT_MS = 8_000
+// Python owns its 7-second no-frame deadline; allow 8 seconds for cold startup.
+const READY_TIMEOUT_MS = 15_000
 const STOP_TIMEOUT_MS = 3_000
 const FORCE_TIMEOUT_MS = 2_000
 const KILLER_TIMEOUT_MS = 1_000
 const MAX_STDOUT_LINE_BYTES = 14 * 1024 * 1024
 const MAX_STDERR_LINE_BYTES = 2 * 1024
-const MAX_STDERR_BYTES = 16 * 1024
-const MAX_STDERR_LINES = 8
+const STDERR_REPORT_INTERVAL_MS = 5_000
 
 export interface MonitorProcessLogger {
   info: (message: string, context?: unknown) => void
@@ -71,17 +71,19 @@ export interface MonitorTimers {
     milliseconds: number,
   ) => ReturnType<typeof setTimeout>
   clearTimeout: (timer: ReturnType<typeof setTimeout>) => void
+  now?: () => number
 }
 
 export interface MonitorAction {
   timestamp: string
+  triggerId?: string
   width: number
   height: number
   image: Buffer
 }
 
 export interface MonitorProcessListener {
-  onTriggered: (timestamp: string) => void
+  onTriggered: (timestamp: string, triggerId?: string) => void
   onAction: (action: MonitorAction) => void
   onPredictionResult: (action: MonitorAction) => void
   onFatal: (error: ApplicationError) => void
@@ -98,7 +100,8 @@ interface OwnedProcess {
   settled: boolean
   lastSequence: number
   stdoutBuffer: Buffer
-  stderrBuffer: Buffer
+  stderrLineBytes: number
+  stderrReportAt: number
   stderrBytes: number
   stderrLines: number
   readyTimer: ReturnType<typeof setTimeout>
@@ -267,7 +270,8 @@ export class MonitorProcessService {
       settled: false,
       lastSequence: 0,
       stdoutBuffer: Buffer.alloc(0),
-      stderrBuffer: Buffer.alloc(0),
+      stderrLineBytes: 0,
+      stderrReportAt: 0,
       stderrBytes: 0,
       stderrLines: 0,
       stopTimer: null,
@@ -302,7 +306,7 @@ export class MonitorProcessService {
 
     try {
       const command = MonitorStartCommandSchema.parse({
-        protocolVersion: 2,
+        protocolVersion: 3,
         sessionId,
         sequence: 0,
         type: 'start',
@@ -351,7 +355,7 @@ export class MonitorProcessService {
     })
     try {
       const command = MonitorStopCommandSchema.parse({
-        protocolVersion: 2,
+        protocolVersion: 3,
         sessionId: owned.sessionId,
         sequence: owned.lastSequence + 1,
         type: 'stop',
@@ -454,7 +458,7 @@ export class MonitorProcessService {
       return
     }
     if (event.type === 'triggered') {
-      owned.listener.onTriggered(event.payload.timestamp)
+      owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
@@ -476,6 +480,7 @@ export class MonitorProcessService {
       }
       const action = {
         timestamp: event.payload.timestamp,
+        triggerId: event.payload.triggerId,
         width: event.payload.width,
         height: event.payload.height,
         image,
@@ -483,49 +488,51 @@ export class MonitorProcessService {
       if (event.type === 'action') owned.listener.onAction(action)
       else owned.listener.onPredictionResult(action)
     } else if (event.type === 'fatal') {
-      owned.listener.onFatal(
-        new ApplicationError(event.payload.code, event.payload.message),
-      )
+      this.logger.warn('Monitor worker fatal', {
+        code: event.payload.code,
+        stage: event.payload.stage,
+        errorClass: event.payload.errorClass,
+      })
+      const error = new ApplicationError(event.payload.code, event.payload.message)
+      if (!owned.ready && !owned.settled) {
+        owned.settled = true
+        this.timers.clearTimeout(owned.readyTimer)
+        owned.rejectReady(error)
+      }
+      owned.listener.onFatal(error)
       void this.stop()
     }
   }
 
   private handleStderr(owned: OwnedProcess, chunk: Buffer | string): void {
     if (!this.isCurrent(owned)) return
-    const bytes = Buffer.from(chunk)
-    owned.stderrBytes += bytes.byteLength
-    if (owned.stderrBytes > MAX_STDERR_BYTES) {
-      this.protocolFailure(
-        owned,
-        'MONITOR_STDERR_LIMIT',
-        'Monitor diagnostics exceeded their limit',
-      )
-      return
-    }
-    owned.stderrBuffer = Buffer.concat([owned.stderrBuffer, bytes])
-    if (owned.stderrBuffer.byteLength > MAX_STDERR_LINE_BYTES) {
-      this.protocolFailure(
-        owned,
-        'MONITOR_STDERR_LIMIT',
-        'Monitor diagnostics exceeded their limit',
-      )
-      return
-    }
-    let newline = owned.stderrBuffer.indexOf(10)
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    owned.stderrBytes = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      owned.stderrBytes + bytes.length,
+    )
+    let offset = 0
+    let newline = bytes.indexOf(10)
     while (newline >= 0) {
-      const length = newline
-      owned.stderrBuffer = owned.stderrBuffer.subarray(newline + 1)
-      owned.stderrLines += 1
-      if (length > MAX_STDERR_LINE_BYTES || owned.stderrLines > MAX_STDERR_LINES) {
-        this.protocolFailure(
-          owned,
-          'MONITOR_STDERR_LIMIT',
-          'Monitor diagnostics exceeded their limit',
-        )
-        return
-      }
-      this.logger.warn('Monitor worker diagnostic suppressed', { bytes: length })
-      newline = owned.stderrBuffer.indexOf(10)
+      owned.stderrLines = Math.min(Number.MAX_SAFE_INTEGER, owned.stderrLines + 1)
+      owned.stderrLineBytes = 0
+      offset = newline + 1
+      newline = bytes.indexOf(10, offset)
+    }
+    owned.stderrLineBytes = Math.min(
+      MAX_STDERR_LINE_BYTES,
+      owned.stderrLineBytes + bytes.length - offset,
+    )
+    const now = (this.timers.now ?? Date.now)()
+    if (now >= owned.stderrReportAt) {
+      this.logger.warn('Monitor worker diagnostics suppressed', {
+        bytes: owned.stderrBytes,
+        lines: owned.stderrLines,
+        incompleteLineBytes: owned.stderrLineBytes,
+      })
+      owned.stderrBytes = 0
+      owned.stderrLines = 0
+      owned.stderrReportAt = now + STDERR_REPORT_INTERVAL_MS
     }
   }
 
@@ -626,6 +633,15 @@ export class MonitorProcessService {
   }
 
   private cleanup(owned: OwnedProcess): void {
+    if (owned.stderrBytes > 0) {
+      this.logger.warn('Monitor final diagnostics suppressed', {
+        bytes: owned.stderrBytes,
+        lines: owned.stderrLines,
+        incompleteLineBytes: owned.stderrLineBytes,
+      })
+      owned.stderrBytes = 0
+      owned.stderrLines = 0
+    }
     this.timers.clearTimeout(owned.readyTimer)
     if (owned.stopTimer !== null) this.timers.clearTimeout(owned.stopTimer)
     if (owned.forceTimer !== null) this.timers.clearTimeout(owned.forceTimer)
@@ -635,7 +651,6 @@ export class MonitorProcessService {
     owned.child.removeListener('error', owned.handlers.error)
     owned.child.removeListener('close', owned.handlers.close)
     owned.stdoutBuffer = Buffer.alloc(0)
-    owned.stderrBuffer = Buffer.alloc(0)
     if (this.#owned === owned) this.#owned = null
   }
 

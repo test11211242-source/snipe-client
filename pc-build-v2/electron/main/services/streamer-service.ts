@@ -1,6 +1,15 @@
 import { z } from 'zod'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
+import {
+  AccountErrorCodeSchema,
+  type AccountMutationResult,
+  StreamerCommandSchema,
+  StreamerCommandErrorCodeSchema,
+  type StreamerCommandResult,
+  StreamerReadinessSchema,
+  type StreamerReadiness,
+} from '../../../shared/contracts/streamer-ipc'
 import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
@@ -8,6 +17,7 @@ import {
   StreamTitlePreviewSchema,
   StreamerViewSchema,
   StreamTitleSettingsSchema,
+  GameAccountTagSchema,
   type OverlaySettings,
   type OverlayUrlKind,
   type PredictionPreferences,
@@ -140,6 +150,236 @@ export class StreamerService {
     return this.#view
   }
 
+  async getReadiness(): Promise<StreamerReadiness> {
+    const generation = this.auth.getContextGeneration()
+    const user = this.auth.getView().user
+    const [capture, monitor] = await Promise.allSettled([
+      user === null
+        ? Promise.resolve(null)
+        : this.captureConfigurations.getActive(user.id),
+      this.monitor.getView(),
+    ])
+    const active = capture.status === 'fulfilled' ? capture.value : null
+    let resultConfigured: boolean | null = null
+    if (capture.status === 'fulfilled') {
+      if (active === null || user === null) resultConfigured = false
+      else {
+        try {
+          const result = await this.resultConfigurations.load(
+            user.id,
+            active.profile.profileId,
+          )
+          resultConfigured =
+            result !== null &&
+            predictionResultMatchesCapture(result, {
+              profileId: active.profile.profileId,
+              configurationRevision: active.profile.configuration.revision,
+              configurationFingerprint: active.profile.configuration.fingerprint,
+            })
+        } catch {
+          resultConfigured = null
+        }
+      }
+    }
+    if (generation !== this.auth.getContextGeneration())
+      throw new ApplicationError('STREAMER_CANCELLED', 'Readiness was cancelled')
+    return StreamerReadinessSchema.parse({
+      twitchConnected:
+        this.#view.refresh.state === 'idle' ||
+        this.#view.refresh.errors.some((entry) => entry.section === 'twitch')
+          ? null
+          : this.#view.twitch.connected,
+      accountsCount:
+        !this.#view.access.allowed ||
+        this.#view.refresh.state === 'idle' ||
+        this.#view.refresh.errors.some((entry) => entry.section === 'title')
+          ? null
+          : this.#view.title.accounts.filter((account) => account.enabled).length,
+      monitoring:
+        monitor.status === 'fulfilled'
+          ? monitor.value.runIntent && monitor.value.state === 'READY'
+          : null,
+      captureConfigured: capture.status === 'fulfilled' ? active !== null : null,
+      resultZonesConfigured: resultConfigured,
+      activeProfileId: active?.profile.profileId ?? null,
+    })
+  }
+
+  async execute(raw: unknown): Promise<StreamerCommandResult> {
+    const generation = this.auth.getContextGeneration()
+    let titleApplication: 'not_requested' | 'unconfirmed' | 'failed' = 'not_requested'
+    try {
+      const parsed = StreamerCommandSchema.safeParse(raw)
+      if (!parsed.success)
+        return { ok: false, error: { code: 'VALIDATION_FAILED', detail: null } }
+      const command = parsed.data
+      this.assertAccess()
+      let preview: StreamTitlePreview | null = null
+      const warnings: Extract<StreamerCommandResult, { ok: true }>['warnings'] = []
+      switch (command.action) {
+        case 'twitch.connect':
+          await this.connectTwitch()
+          break
+        case 'twitch.disconnect':
+          await this.disconnectTwitch()
+          break
+        case 'predictions.start':
+          await this.startPredictions(command.settings)
+          break
+        case 'predictions.stop':
+          await this.stopPredictions()
+          break
+        case 'title.save':
+          await this.updateTitle(command.settings)
+          break
+        case 'title.preview':
+          preview = await this.previewTitle(command.settings)
+          break
+        case 'title.apply':
+          titleApplication = 'unconfirmed'
+          await this.mutate(async () => {
+            if (!this.#view.twitch.connected || this.#view.title.session === null)
+              throw new ApplicationError(
+                'TITLE_APPLY_UNAVAILABLE',
+                'Connect Twitch and start a stream session before applying a title',
+              )
+            await this.request(
+              'POST',
+              '/api/streamer/title/settings',
+              titleToServer({ ...command.settings, enabled: true, paused: false }),
+            )
+          })
+          warnings.push('TITLE_APPLICATION_UNCONFIRMED')
+          break
+        case 'title.enabled':
+          await this.setTitleEnabled(command.enabled)
+          break
+        case 'title.paused':
+          await this.setTitlePaused(command.paused)
+          break
+        case 'title.reset':
+          await this.titleCommand('reset')
+          break
+        case 'title.undo':
+          await this.titleCommand('undo')
+          break
+        case 'title.restore':
+          await this.titleCommand('restore-title')
+          break
+        case 'chat.toggle':
+          await this.setDeckSharing(command.enabled)
+          break
+        case 'widget.settings':
+          await this.updateOverlay(command.settings)
+          break
+        case 'widget.enabled':
+          await this.mutate(async () => {
+            this.cancelRefresh()
+            await this.refresh()
+            if (generation !== this.auth.getContextGeneration())
+              throw new ApplicationError(
+                'STREAMER_CANCELLED',
+                'Widget operation was cancelled',
+              )
+            if (this.#view.refresh.errors.some((entry) => entry.section === 'overlay'))
+              throw new ApplicationError(
+                'INVALID_RESPONSE',
+                'Current widget settings are unavailable',
+              )
+            await this.request(
+              'PUT',
+              '/api/streamer/opponent-widget/settings',
+              overlayToServer({
+                ...this.#view.overlay.settings,
+                enabled: command.enabled,
+              }),
+            )
+          })
+          break
+        case 'widget.resetToken':
+          await this.rotateOverlayToken()
+          break
+        case 'widget.copy':
+          this.copyOverlayUrl(command.kind)
+          break
+        case 'accounts.remove':
+          await this.removeTitleAccount(command.tag)
+          break
+        case 'accounts.add':
+        case 'accounts.reenable': {
+          const tag = GameAccountTagSchema.safeParse(command.tag)
+          if (!tag.success)
+            return { ok: false, error: { code: 'ACCOUNT_TAG_INVALID', detail: null } }
+          let alias: string
+          if (command.action === 'accounts.add') alias = command.alias
+          else {
+            await this.refresh()
+            if (generation !== this.auth.getContextGeneration())
+              throw new ApplicationError(
+                'STREAMER_CANCELLED',
+                'Account operation was cancelled',
+              )
+            if (this.#view.refresh.errors.some((entry) => entry.section === 'title'))
+              return { ok: false, error: { code: 'INVALID_RESPONSE', detail: null } }
+            const account = this.#view.title.accounts.find(
+              (entry) => GameAccountTagSchema.safeParse(entry.tag).data === tag.data,
+            )
+            if (account === undefined)
+              return { ok: false, error: { code: 'ACCOUNT_NOT_FOUND', detail: null } }
+            alias = account.alias
+          }
+          const result = await this.addTitleAccount(tag.data, alias)
+          if (generation !== this.auth.getContextGeneration())
+            throw new ApplicationError(
+              'STREAMER_CANCELLED',
+              'Account operation was cancelled',
+            )
+          if (!result.ok) return result
+          if (result.warning !== null) warnings.push(result.warning)
+          break
+        }
+      }
+      if (generation !== this.auth.getContextGeneration())
+        throw new ApplicationError(
+          'STREAMER_CANCELLED',
+          'Streamer operation was cancelled',
+        )
+      if (
+        (this.#view.refresh.state === 'partial' ||
+          this.#view.refresh.state === 'failed') &&
+        !warnings.includes('REFRESH_FAILED')
+      )
+        warnings.push('REFRESH_FAILED')
+      return { ok: true, view: this.getView(), preview, warnings, titleApplication }
+    } catch (error) {
+      if (generation !== this.auth.getContextGeneration())
+        return { ok: false, error: { code: 'STREAMER_CANCELLED', detail: null } }
+      if (
+        error instanceof ApplicationError &&
+        error.code === 'TITLE_SAVED_APPLY_FAILED'
+      ) {
+        await this.refresh().catch(() => undefined)
+        if (generation !== this.auth.getContextGeneration())
+          return { ok: false, error: { code: 'STREAMER_CANCELLED', detail: null } }
+        titleApplication = 'failed'
+        return {
+          ok: true,
+          view: this.getView(),
+          preview: null,
+          warnings: ['TITLE_UPDATE_FAILED'],
+          titleApplication,
+        }
+      }
+      const code = StreamerCommandErrorCodeSchema.safeParse(
+        error instanceof ApplicationError ? error.code : 'UNKNOWN',
+      )
+      return {
+        ok: false,
+        error: { code: code.success ? code.data : 'UNKNOWN', detail: null },
+      }
+    }
+  }
+
   ensureAccess(): void {
     this.assertAccess()
   }
@@ -189,11 +429,18 @@ export class StreamerService {
   connectTwitch(): Promise<StreamerView> {
     return this.mutate(async () => {
       this.assertAccess()
+      const generation = this.auth.getContextGeneration()
       const result = await this.api.request({
         method: 'GET',
         path: '/api/streamer/auth/connect',
         schema: AuthConnectSchema,
+        authContextGuard: () => generation === this.auth.getContextGeneration(),
       })
+      if (generation !== this.auth.getContextGeneration())
+        throw new ApplicationError(
+          'STREAMER_CANCELLED',
+          'Twitch connection was cancelled',
+        )
       if (!result.ok) throw new ApplicationError(result.error.code, result.error.message)
       const url = new URL(result.data.auth_url)
       if (
@@ -227,6 +474,11 @@ export class StreamerService {
   startPredictions(settings: PredictionPreferences): Promise<StreamerView> {
     return this.mutate(async () => {
       const user = this.assertAccess()
+      if (this.predictions.state !== 'stopped' || this.#view.predictions.active)
+        throw new ApplicationError(
+          'PREDICTION_ALREADY_ACTIVE',
+          'Stop predictions before changing their settings',
+        )
       const parsed = PredictionPreferencesSchema.parse(settings)
       await this.preferences.save(user.id, parsed)
       await this.predictions.start(parsed)
@@ -247,12 +499,16 @@ export class StreamerService {
   async previewTitle(settings: StreamTitleSettings): Promise<StreamTitlePreview> {
     this.assertAccess()
     const parsed = StreamTitleSettingsSchema.parse(settings)
+    const generation = this.auth.getContextGeneration()
     const result = await this.api.request({
       method: 'POST',
       path: '/api/streamer/title/preview',
       body: titleToServer(parsed),
       schema: TitlePreviewResponseSchema,
+      authContextGuard: () => generation === this.auth.getContextGeneration(),
     })
+    if (generation !== this.auth.getContextGeneration())
+      throw new ApplicationError('STREAMER_CANCELLED', 'Title preview was cancelled')
     if (!result.ok) {
       throw new ApplicationError(result.error.code, result.error.message)
     }
@@ -275,10 +531,66 @@ export class StreamerService {
     )
   }
 
-  addTitleAccount(tag: string, alias: string): Promise<StreamerView> {
-    return this.mutate(() =>
-      this.request('POST', '/api/streamer/accounts', { tag, alias }),
-    )
+  async addTitleAccount(tag: string, alias: string): Promise<AccountMutationResult> {
+    const outcome: {
+      saved: boolean
+      warning: 'TITLE_UPDATE_FAILED' | 'REFRESH_FAILED' | null
+      failure: AccountMutationResult | null
+    } = { saved: false, warning: null, failure: null }
+    try {
+      const view = await this.mutate(async () => {
+        const generation = this.auth.getContextGeneration()
+        const result = await this.api.request({
+          method: 'POST',
+          path: '/api/streamer/accounts',
+          body: { tag, alias },
+          schema: CommandSuccessSchema,
+          timeoutMs: 30_000,
+          authContextGuard: () => generation === this.auth.getContextGeneration(),
+        })
+        if (generation !== this.auth.getContextGeneration())
+          throw new ApplicationError(
+            'STREAMER_CANCELLED',
+            'Account operation was cancelled',
+          )
+        if (!result.ok) {
+          const code = AccountErrorCodeSchema.safeParse(result.error.code)
+          outcome.failure = {
+            ok: false,
+            error: {
+              code: code.success ? code.data : 'UNKNOWN',
+              detail: code.success ? result.error.message : null,
+            },
+          }
+          throw new ApplicationError('STREAMER_COMMAND_FAILED', 'Account was not saved')
+        }
+        outcome.saved = true
+        if (result.data['warning'] === 'TITLE_UPDATE_FAILED')
+          outcome.warning = 'TITLE_UPDATE_FAILED'
+      })
+      if (
+        view.refresh.errors.some((error) => error.section === 'title') &&
+        outcome.warning === null
+      ) {
+        outcome.warning = 'REFRESH_FAILED'
+      }
+      return { ok: true, view, warning: outcome.warning }
+    } catch (error) {
+      if (outcome.saved)
+        return {
+          ok: true,
+          view: this.#view,
+          warning: outcome.warning ?? 'REFRESH_FAILED',
+        }
+      if (outcome.failure !== null) return outcome.failure
+      const code = AccountErrorCodeSchema.safeParse(
+        error instanceof ApplicationError ? error.code : 'UNKNOWN',
+      )
+      return {
+        ok: false,
+        error: { code: code.success ? code.data : 'UNKNOWN', detail: null },
+      }
+    }
   }
 
   removeTitleAccount(tag: string): Promise<StreamerView> {
@@ -535,8 +847,12 @@ export class StreamerService {
 
   private mutate(operation: () => Promise<unknown>): Promise<StreamerView> {
     const lifecycleGeneration = this.#lifecycleGeneration
+    const authGeneration = this.auth.getContextGeneration()
     const result = this.#mutationQueue.then(async () => {
-      if (lifecycleGeneration !== this.#lifecycleGeneration) {
+      if (
+        lifecycleGeneration !== this.#lifecycleGeneration ||
+        authGeneration !== this.auth.getContextGeneration()
+      ) {
         throw new ApplicationError(
           'STREAMER_CANCELLED',
           'Streamer operation was cancelled',
@@ -544,14 +860,19 @@ export class StreamerService {
       }
       this.assertAccess()
       await operation()
-      if (lifecycleGeneration !== this.#lifecycleGeneration) {
+      if (
+        lifecycleGeneration !== this.#lifecycleGeneration ||
+        authGeneration !== this.auth.getContextGeneration()
+      ) {
         throw new ApplicationError(
           'STREAMER_CANCELLED',
           'Streamer operation was cancelled',
         )
       }
       this.cancelRefresh()
-      await this.refresh()
+      await this.refresh().catch(() => {
+        this.patch({ refresh: { ...this.#view.refresh, state: 'failed' } })
+      })
     })
     this.#mutationQueue = result.then(
       () => undefined,
@@ -565,20 +886,47 @@ export class StreamerService {
     path: `/api/${string}`,
     body?: unknown,
   ): Promise<void> {
+    const generation = this.auth.getContextGeneration()
     const result = await this.api.request({
       method,
       path,
       body,
       schema: CommandSuccessSchema,
+      authContextGuard: () => generation === this.auth.getContextGeneration(),
     })
+    if (generation !== this.auth.getContextGeneration())
+      throw new ApplicationError('STREAMER_CANCELLED', 'Streamer operation was cancelled')
     if (!result.ok) {
-      if (typeof result.error.status === 'number' && result.error.status >= 200) {
+      if (
+        (result.error.code === 'TITLE_SAVED_APPLY_FAILED' ||
+          (result.error.status === 502 &&
+            result.error.message ===
+              'Настройки сохранены, но Twitch не обновил название. Повторите попытку.')) &&
+        (path === '/api/streamer/title/settings' ||
+          path === '/api/streamer/title/enabled' ||
+          path === '/api/streamer/title/pause')
+      ) {
+        throw new ApplicationError(
+          'TITLE_SAVED_APPLY_FAILED',
+          'Settings were saved but Twitch did not apply the title',
+        )
+      }
+      if (
+        typeof result.error.status === 'number' &&
+        result.error.status >= 200 &&
+        result.error.status < 300
+      ) {
         throw new ApplicationError(
           'STREAMER_COMMAND_FAILED',
           'The server did not confirm the requested change',
         )
       }
-      throw new ApplicationError(result.error.code, result.error.message)
+      throw new ApplicationError(
+        result.error.code === 'TITLE_SAVED_APPLY_FAILED'
+          ? 'STREAMER_COMMAND_FAILED'
+          : result.error.code,
+        result.error.message,
+      )
     }
   }
 

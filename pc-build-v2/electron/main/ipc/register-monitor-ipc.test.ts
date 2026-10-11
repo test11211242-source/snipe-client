@@ -17,12 +17,13 @@ vi.mock('electron', () => ({
 }))
 
 import { MONITOR_IPC_CHANNELS } from '../../../shared/contracts/monitor-ipc'
-import type { MonitorResult, MonitorView } from '../../../shared/models/monitor'
+import type { MonitorView } from '../../../shared/models/monitor'
 import { registerMonitorIpc } from './register-monitor-ipc'
 
 const view: MonitorView = {
+  seq: 1,
   state: 'READY',
-  preferences: { searchMode: 'fast', deckMode: 'pol' },
+  preferences: { deckMode: 'pol' },
   readiness: {
     authenticated: true,
     captureConfigured: true,
@@ -40,6 +41,11 @@ const view: MonitorView = {
     serviceErrors: 0,
   },
   results: [],
+  runIntent: false,
+  search: null,
+  session: null,
+  summary: null,
+  historyError: null,
 }
 
 beforeEach(() => {
@@ -60,7 +66,7 @@ describe('monitor IPC result events', () => {
       widget,
       monitor: {
         start: vi.fn().mockReturnValue(starting),
-        subscribeResults: vi.fn(() => () => undefined),
+        subscribeViews: vi.fn(() => () => undefined),
       },
     } as never)
     const handler = electron.handlers.get(MONITOR_IPC_CHANNELS.start)
@@ -82,7 +88,7 @@ describe('monitor IPC result events', () => {
       widget: { show: vi.fn().mockRejectedValue(new Error('window failure')) },
       monitor: {
         start: vi.fn().mockResolvedValue(view),
-        subscribeResults: vi.fn(() => () => undefined),
+        subscribeViews: vi.fn(() => () => undefined),
       },
     } as never)
     const handler = electron.handlers.get(MONITOR_IPC_CHANNELS.start)
@@ -93,10 +99,10 @@ describe('monitor IPC result events', () => {
     expect(warn).toHaveBeenCalledOnce()
   })
   it('pushes the current validated view and disposes the subscription', () => {
-    const subscription: { listener?: (result: MonitorResult) => void } = {}
+    const subscription: { listener?: (view: MonitorView) => void } = {}
     const disposeResults = vi.fn()
     const monitor = {
-      subscribeResults: vi.fn((next: (result: MonitorResult) => void) => {
+      subscribeViews: vi.fn((next: (view: MonitorView) => void) => {
         subscription.listener = next
         return disposeResults
       }),
@@ -109,7 +115,7 @@ describe('monitor IPC result events', () => {
       logger: { info: vi.fn() },
     } as never)
 
-    subscription.listener?.({} as MonitorResult)
+    subscription.listener?.(view)
     expect(windows.sendToRenderer).toHaveBeenCalledWith(
       'main',
       MONITOR_IPC_CHANNELS.viewChanged,

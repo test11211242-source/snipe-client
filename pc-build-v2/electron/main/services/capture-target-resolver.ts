@@ -10,7 +10,7 @@ export interface ResolvedMonitorTarget {
   selector: SetupCaptureSelector
 }
 
-export interface ResolvedActiveCaptureProfile extends ResolvedMonitorTarget {
+export interface ResolvedCaptureProfileTarget extends ResolvedMonitorTarget {
   userId: string
   profileId: string
   profileName: string
@@ -26,10 +26,16 @@ export class CaptureTargetResolver {
 
   async resolve(): Promise<ResolvedMonitorTarget> {
     const active = await this.resolveActiveProfile()
+    if (active.configuration.calibration.validationStatus === 'needs_validation') {
+      throw new ApplicationError(
+        'CAPTURE_CALIBRATION_INVALID',
+        'Validate the calibration after rebinding the source',
+      )
+    }
     return { configuration: active.configuration, selector: active.selector }
   }
 
-  async resolveActiveProfile(): Promise<ResolvedActiveCaptureProfile> {
+  async resolveActiveProfile(): Promise<ResolvedCaptureProfileTarget> {
     const user = this.auth.getView().user
     if (user === null)
       throw new ApplicationError('AUTH_REQUIRED', 'Sign in to start monitoring')
@@ -47,7 +53,36 @@ export class CaptureTargetResolver {
       collectionRevision: active.collectionRevision,
       configuration: active.profile.configuration,
       selector: await this.registry.resolvePreference(
-        active.profile.configuration.source,
+        active.profile.configuration.sourceBinding.identity,
+      ),
+    }
+  }
+
+  async resolveProfileTarget(profileId: string): Promise<ResolvedCaptureProfileTarget> {
+    const user = this.auth.getView().user
+    if (user === null)
+      throw new ApplicationError('AUTH_REQUIRED', 'Sign in to configure result zones')
+    const collection = await this.repository.list(user.id)
+    const profile = await this.repository.get(user.id, profileId)
+    const summary = collection?.profiles.find((item) => item.profileId === profileId)
+    if (collection === null || profile === null || summary === undefined)
+      throw new ApplicationError(
+        'CAPTURE_PROFILE_NOT_FOUND',
+        'The selected capture profile no longer exists',
+      )
+    if (summary.configurationFingerprint !== profile.configuration.fingerprint)
+      throw new ApplicationError(
+        'CAPTURE_PROFILE_STALE',
+        'Capture profiles changed while selecting result zones',
+      )
+    return {
+      userId: user.id,
+      profileId,
+      profileName: profile.profileName,
+      collectionRevision: collection.revision,
+      configuration: profile.configuration,
+      selector: await this.registry.resolvePreference(
+        profile.configuration.sourceBinding.identity,
       ),
     }
   }
@@ -65,7 +100,44 @@ export class CaptureTargetResolver {
     }
     return {
       configuration: profile.configuration,
-      selector: await this.registry.resolvePreference(profile.configuration.source),
+      selector: await this.registry.resolvePreference(
+        profile.configuration.sourceBinding.identity,
+      ),
     }
+  }
+
+  async resolveProfiles(
+    profileIds: readonly string[],
+  ): Promise<ReadonlyMap<string, ApplicationError | null>> {
+    const user = this.auth.getView().user
+    if (user === null)
+      throw new ApplicationError('AUTH_REQUIRED', 'Sign in to inspect capture sources')
+    const profiles = await Promise.all(
+      profileIds.map((profileId) => this.repository.get(user.id, profileId)),
+    )
+    const present = profiles.filter((profile) => profile !== null)
+    const outcomes = await this.registry.resolvePreferences(
+      present.map((profile) => profile.configuration.sourceBinding.identity),
+    )
+    const health = new Map<string, ApplicationError | null>()
+    profileIds.forEach((profileId, index) => {
+      if (profiles[index] === null)
+        health.set(
+          profileId,
+          new ApplicationError(
+            'CAPTURE_PROFILE_NOT_FOUND',
+            'Capture profile no longer exists',
+          ),
+        )
+    })
+    outcomes.forEach((outcome, index) => {
+      const profile = present[index]
+      if (profile !== undefined)
+        health.set(
+          profile.profileId,
+          outcome instanceof ApplicationError ? outcome : null,
+        )
+    })
+    return health
   }
 }

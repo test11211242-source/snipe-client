@@ -1,20 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import { MonitorResultSchema } from '../../../shared/models/monitor'
+import type { MonitorJournalRepository } from '../infrastructure/monitor-journal-repository'
 
 import type { MonitorStartPayload } from '../../../shared/contracts/monitor-protocol'
 import type { MonitorProcessListener } from './monitor-process-service'
 import { MonitorSupervisor } from './monitor-supervisor'
+import { ApplicationError } from '../../../shared/errors/application-error'
+import { v4CaptureFixture } from '../../../tests/capture-fixtures'
 
 function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((nextResolve, nextReject) => {
-    resolve = nextResolve
-    reject = nextReject
-  })
-  return { promise, resolve, reject }
+  return Promise.withResolvers<T>()
 }
 
-const configuration = {
+const configuration = v4CaptureFixture({
   schemaVersion: 1 as const,
   userId: '42',
   revision: 1,
@@ -53,21 +52,28 @@ const configuration = {
       cropAreaRatio: 1,
     },
   },
-}
+})
 
 function harness(
   resolveTarget = Promise.resolve({
     configuration,
     selector: { kind: 'window', windowHwnd: '12' },
   }),
-  searchMode: 'fast' | 'precise' = 'fast',
+  now: () => Date = () => new Date('2026-07-12T12:00:00.000Z'),
+  journalRepository?: MonitorJournalRepository,
 ) {
   let currentUserId: string | null = '42'
   let processListener: MonitorProcessListener | null = null
-  const captureConfigurations = { load: vi.fn().mockResolvedValue(configuration) }
+  const captureConfigurations = {
+    load: vi.fn().mockResolvedValue(configuration),
+    getActive: vi.fn().mockResolvedValue({
+      collectionRevision: 1,
+      profile: { profileId: '00000000-0000-4000-8000-000000000001', configuration },
+    }),
+  }
   const preferenceRepository = {
-    load: vi.fn().mockResolvedValue({ searchMode, deckMode: 'pol' }),
-    save: vi.fn().mockResolvedValue({ searchMode, deckMode: 'pol' }),
+    load: vi.fn().mockResolvedValue({ deckMode: 'pol' }),
+    save: vi.fn((_user: string, value: unknown) => Promise.resolve(value)),
   }
   const targetResolver = { resolve: vi.fn(() => resolveTarget) }
   const process = {
@@ -101,7 +107,8 @@ function harness(
     targetResolver as never,
     process as never,
     ocr as never,
-    () => new Date('2026-07-12T12:00:00.000Z'),
+    now,
+    journalRepository,
   )
   return {
     supervisor,
@@ -117,7 +124,44 @@ function harness(
   }
 }
 
+afterEach(() => vi.useRealTimers())
+
 describe('MonitorSupervisor concurrency', () => {
+  it('M6 #5 assigns increasing sequences to every snapshot, including redacted auth views', async () => {
+    const test = harness()
+    const before = test.supervisor.getCurrentView()
+    const read = await test.supervisor.getView()
+    expect(read.seq).toBeGreaterThan(before.seq)
+    test.user(null)
+    const redacted = test.supervisor.getCurrentView()
+    expect(redacted.seq).toBeGreaterThan(read.seq)
+    expect(redacted.results).toEqual([])
+  })
+  it.each([
+    'CAPTURE_SOURCE_CLOSED',
+    'CAPTURE_START_FAILED',
+    'CAPTURE_NO_FRAME',
+    'CAPTURE_FRAME_INVALID',
+    'CAPTURE_GEOMETRY_CHANGED',
+    'MONITOR_INTERNAL_FAILED',
+  ] as const)('projects a sanitized Russian fatal cause: %s', async (code) => {
+    const test = harness()
+    await test.supervisor.start()
+    const events = test.listener()
+    if (events === null) throw new Error('Missing process listener')
+    events.onFatal(new ApplicationError(code, 'private arbitrary diagnostic'))
+    const view = await test.supervisor.getView()
+    expect(view.state).toBe(
+      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME'].includes(code)
+        ? 'WAITING_SOURCE'
+        : 'FAILED',
+    )
+    expect(view.error?.code).toBe(code)
+    expect(view.error?.message).toMatch(/[А-Яа-я]/)
+    expect(view.error?.message).not.toContain('private')
+    expect(test.process.stop).toHaveBeenCalled()
+    await test.supervisor.stop()
+  })
   it('coalesces simultaneous starts and becomes READY only after process readiness', async () => {
     const target = deferred<{
       configuration: typeof configuration
@@ -132,7 +176,7 @@ describe('MonitorSupervisor concurrency', () => {
     await expect(first).resolves.toMatchObject({ state: 'READY' })
     expect(test.process.start).toHaveBeenCalledTimes(1)
     expect(test.process.start).toHaveBeenCalledWith(
-      expect.objectContaining({ captureDelaySeconds: 0 }),
+      expect.objectContaining({ capturePolicy: 'immediate_nickname' }),
       expect.anything(),
     )
   })
@@ -186,10 +230,10 @@ describe('MonitorSupervisor concurrency', () => {
     const test = harness(target.promise)
     const starting = test.supervisor.start()
     const configuring = test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.frameSize,
-      trigger: configuration.regions.trigger,
-      data: configuration.regions.normal,
-      triggerProfile: configuration.triggerProfile,
+      configuredFrameSize: configuration.calibration.referenceFrameSize,
+      trigger: configuration.calibration.triggerRegion,
+      data: configuration.calibration.nicknameRegion,
+      triggerProfile: configuration.calibration.triggerProfile,
     })
     target.resolve({ configuration, selector: { kind: 'window', windowHwnd: '12' } })
 
@@ -197,7 +241,7 @@ describe('MonitorSupervisor concurrency', () => {
     await expect(configuring).resolves.toMatchObject({ state: 'READY' })
     expect(test.process.start).toHaveBeenCalledTimes(1)
     expect(test.process.start.mock.calls[0]?.[0].prediction?.configuredFrameSize).toEqual(
-      configuration.frameSize,
+      configuration.calibration.referenceFrameSize,
     )
   })
 
@@ -215,19 +259,17 @@ describe('MonitorSupervisor concurrency', () => {
     expect(test.process.start).toHaveBeenCalledTimes(1)
   })
 
-  it('uses the precise delayed-capture policy only for precise search', async () => {
-    const test = harness(
-      Promise.resolve({
-        configuration,
-        selector: { kind: 'window', windowHwnd: '12' },
-      }),
-      'precise',
-    )
+  it('keeps immediate nickname policy when deck mode changes while READY', async () => {
+    const test = harness()
     await test.supervisor.start()
+    await expect(test.supervisor.updatePreferences({ deckMode: 'gt' })).resolves.toEqual({
+      deckMode: 'gt',
+    })
     expect(test.process.start).toHaveBeenCalledWith(
-      expect.objectContaining({ searchMode: 'precise', captureDelaySeconds: 2.2 }),
+      expect.objectContaining({ capturePolicy: 'immediate_nickname' }),
       expect.anything(),
     )
+    expect(test.process.start).toHaveBeenCalledTimes(1)
   })
 
   it('uses one active OCR plus one replaceable action and fences results after stop', async () => {
@@ -272,6 +314,13 @@ describe('MonitorSupervisor concurrency', () => {
       searchedNickname: 'Late',
       player: { name: 'Late', tag: null, rating: null, clan: null },
       decks: [],
+      capturePolicy: null,
+      sessionId: null,
+      triggerId: null,
+      attemptId: null,
+      profileId: null,
+      calibrationRevision: null,
+      repeat: null,
     } as never)
     await Promise.resolve()
     expect((await test.supervisor.getView()).results).toHaveLength(1)
@@ -347,10 +396,18 @@ describe('MonitorSupervisor concurrency', () => {
       searchedNickname: 'External',
       player: { name: 'External', tag: null, rating: null, clan: null },
       decks: [],
+      reprocessed: false,
+      capturePolicy: null,
+      sessionId: null,
+      triggerId: null,
+      attemptId: null,
+      profileId: null,
+      calibrationRevision: null,
+      repeat: null,
     }
     test.supervisor.addExternalResult(result)
     expect(test.supervisor.getLatestResult()).toEqual(result)
-    expect((await test.supervisor.getView()).stats.playersFound).toBe(1)
+    expect((await test.supervisor.getView()).stats.playersFound).toBe(0)
     expect(observed).toHaveBeenCalledWith(result)
     expect(() =>
       test.supervisor.addExternalResult({ ...result, raw: 'not allowed' }),
@@ -366,14 +423,14 @@ describe('MonitorSupervisor concurrency', () => {
     test.supervisor.subscribeBattleStarts(battle)
     test.supervisor.subscribePredictionResults(result)
     await test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.frameSize,
-      trigger: configuration.regions.trigger,
-      data: configuration.regions.normal,
-      triggerProfile: configuration.triggerProfile,
+      configuredFrameSize: configuration.calibration.referenceFrameSize,
+      trigger: configuration.calibration.triggerRegion,
+      data: configuration.calibration.nicknameRegion,
+      triggerProfile: configuration.calibration.triggerProfile,
     })
     expect(test.process.start).toHaveBeenCalledTimes(2)
     expect(test.process.start.mock.calls[1]?.[0]).toMatchObject({
-      prediction: { configuredFrameSize: configuration.frameSize },
+      prediction: { configuredFrameSize: configuration.calibration.referenceFrameSize },
     })
     const action = {
       timestamp: '2026-07-12T12:00:00.000Z',
@@ -405,10 +462,10 @@ describe('MonitorSupervisor concurrency', () => {
     const test = harness()
     await test.supervisor.start()
     await test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.frameSize,
-      trigger: configuration.regions.trigger,
-      data: configuration.regions.normal,
-      triggerProfile: configuration.triggerProfile,
+      configuredFrameSize: configuration.calibration.referenceFrameSize,
+      trigger: configuration.calibration.triggerRegion,
+      data: configuration.calibration.nicknameRegion,
+      triggerProfile: configuration.calibration.triggerProfile,
     })
     const result = {
       id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
@@ -421,7 +478,7 @@ describe('MonitorSupervisor concurrency', () => {
     }
     test.supervisor.addExternalResult(result)
     await test.supervisor.stop()
-    expect(test.supervisor.getLatestResult()).toEqual(result)
+    expect(test.supervisor.getLatestResult()).toMatchObject(result)
 
     test.user(null)
     expect(test.supervisor.getLatestResult()).toBeNull()
@@ -459,32 +516,552 @@ describe('MonitorSupervisor concurrency', () => {
 
   it('rejects stale deferred preference reads and writes without patching B', async () => {
     const reading = harness()
-    const loaded = deferred<{ searchMode: 'precise'; deckMode: 'gt' }>()
+    const loaded = deferred<{ deckMode: 'gt' }>()
     reading.preferences.load.mockReturnValueOnce(loaded.promise)
     const getPreferences = reading.supervisor.getPreferences()
     reading.user('84')
     reading.supervisor.setUserContext('84')
-    loaded.resolve({ searchMode: 'precise', deckMode: 'gt' })
+    loaded.resolve({ deckMode: 'gt' })
     await expect(getPreferences).rejects.toMatchObject({ code: 'MONITOR_CONTEXT_STALE' })
-    expect((await reading.supervisor.getView()).preferences).toEqual({
-      searchMode: 'fast',
-      deckMode: 'pol',
-    })
+    expect((await reading.supervisor.getView()).preferences).toEqual({ deckMode: 'pol' })
 
     const writing = harness()
-    const saved = deferred<{ searchMode: 'precise'; deckMode: 'gt' }>()
+    const saved = deferred<{ deckMode: 'gt' }>()
     writing.preferences.save.mockReturnValueOnce(saved.promise)
-    const update = writing.supervisor.updatePreferences({
-      searchMode: 'precise',
-      deckMode: 'gt',
-    })
+    const update = writing.supervisor.updatePreferences({ deckMode: 'gt' })
     writing.user(null)
     writing.supervisor.setUserContext(null)
-    saved.resolve({ searchMode: 'precise', deckMode: 'gt' })
+    saved.resolve({ deckMode: 'gt' })
     await expect(update).rejects.toMatchObject({ code: 'MONITOR_CONTEXT_STALE' })
-    expect((await writing.supervisor.getView()).preferences).toEqual({
+    expect((await writing.supervisor.getView()).preferences).toEqual({ deckMode: 'pol' })
+  })
+})
+
+function foundResult(at: Date, tag: string | null = '#TAG') {
+  return MonitorResultSchema.parse({
+    id: randomUUID(),
+    kind: 'player_found',
+    timestamp: at.toISOString(),
+    searchMode: 'fast',
+    deckMode: 'pol',
+    searchedNickname: 'Opponent',
+    player: { name: 'Opponent', tag, rating: null, clan: null },
+    decks: [],
+  })
+}
+
+describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
+  it('resumes the same binding and session and includes source waiting in duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-12T12:00:00.000Z'))
+    const test = harness(undefined, () => new Date())
+    await test.supervisor.start()
+    const sessionId = test.supervisor.getCurrentView().session?.sessionId
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      runIntent: true,
+      session: { sessionId },
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(test.process.start).toHaveBeenCalledTimes(2)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      session: { sessionId, durationMs: 1_000 },
+    })
+    await test.supervisor.stop()
+    const summary = test.supervisor.getCurrentView().summary
+    await vi.advanceTimersByTimeAsync(3_000)
+    await test.supervisor.stop()
+    expect(test.supervisor.getCurrentView().summary).toEqual(summary)
+    expect(summary).toMatchObject({ sessionId, durationMs: 1_000, stopReason: 'user' })
+  })
+
+  it('backs off resolution and cancels all recovery when explicitly stopped', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.targetResolver.resolve.mockRejectedValue(
+      new ApplicationError('SOURCE_NOT_FOUND', 'missing'),
+    )
+    await test.supervisor.start()
+    await vi.advanceTimersByTimeAsync(999)
+    expect(test.targetResolver.resolve).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(test.targetResolver.resolve).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.targetResolver.resolve).toHaveBeenCalledTimes(3)
+    await test.supervisor.stop()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(test.targetResolver.resolve).toHaveBeenCalledTimes(3)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'STOPPED',
+      runIntent: false,
+    })
+  })
+
+  it('does not resume a changed calibration or binding during recovery', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    test.captureConfigurations.getActive.mockResolvedValue({
+      collectionRevision: 2,
+      profile: {
+        profileId: '00000000-0000-4000-8000-000000000001',
+        configuration: { ...configuration, fingerprint: 'b'.repeat(64) },
+      },
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'FAILED',
+      runIntent: false,
+      error: { code: 'CAPTURE_CALIBRATION_INVALID' },
+    })
+    await test.supervisor.stop()
+  })
+
+  it('waits closed on ambiguity and drops recovery on auth change', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.targetResolver.resolve.mockRejectedValue(
+      new ApplicationError('SOURCE_AMBIGUOUS', 'ambiguous'),
+    )
+    await test.supervisor.start()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(test.process.start).not.toHaveBeenCalled()
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      error: { code: 'SOURCE_AMBIGUOUS' },
+    })
+    await test.supervisor.stop('auth_change')
+    test.user(null)
+    test.supervisor.setUserContext(null)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(test.targetResolver.resolve).toHaveBeenCalledTimes(3)
+    expect(test.supervisor.getCurrentView().session).toBeNull()
+  })
+
+  it('correlates progress and coalesces manual retry using the original RAM crop and deck mode', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    const triggerId = randomUUID()
+    const image = Buffer.from('private-crop')
+    const action = {
+      triggerId,
+      timestamp: '2026-07-12T12:00:00.000Z',
+      width: 10,
+      height: 10,
+      image,
+    }
+    const firstResult = MonitorResultSchema.parse({
+      id: randomUUID(),
+      kind: 'service_error',
+      timestamp: action.timestamp,
       searchMode: 'fast',
       deckMode: 'pol',
+      searchedNickname: null,
+      message: 'service unavailable',
+      retryable: true,
+      authBlocked: false,
+    })
+    test.ocr.process.mockResolvedValueOnce(firstResult)
+    test.listener()?.onTriggered(action.timestamp, triggerId)
+    const capturing = test.supervisor.getCurrentView().search
+    test.listener()?.onAction(action)
+    await Promise.resolve()
+    const failed = test.supervisor.getCurrentView().search
+    expect(failed).toMatchObject({
+      phase: 'failed',
+      triggerId,
+      attemptId: capturing?.attemptId,
+    })
+    if (failed === null) throw new Error('Missing failed attempt')
+    const retryResponse = deferred<ReturnType<typeof foundResult>>()
+    test.ocr.process.mockReturnValueOnce(retryResponse.promise)
+    await test.supervisor.updatePreferences({ deckMode: 'gt' })
+    const retry = test.supervisor.retrySearch(failed.attemptId)
+    expect(test.supervisor.retrySearch(failed.attemptId)).toBe(retry)
+    expect(test.ocr.process).toHaveBeenLastCalledWith(
+      expect.objectContaining({ image, deckMode: 'pol' }),
+    )
+    expect(test.supervisor.getCurrentView().search?.attemptId).not.toBe(failed.attemptId)
+    retryResponse.resolve(foundResult(new Date(action.timestamp)))
+    await retry
+    const view = test.supervisor.getCurrentView()
+    expect(view.stats.requests).toBe(2)
+    expect(view.results).toHaveLength(1)
+    expect(view.results[0]).toMatchObject({
+      id: firstResult.id,
+      triggerId,
+      capturePolicy: 'immediate_nickname',
+      sessionId: view.session?.sessionId,
+      attemptId: view.search?.attemptId,
+    })
+    await test.supervisor.stop()
+  })
+
+  it('releases retry crops on expiry and rejects recognition errors without a second search', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    test.ocr.process.mockResolvedValue({
+      id: randomUUID(),
+      kind: 'service_error',
+      timestamp: '2026-07-12T12:00:00.000Z',
+      searchMode: 'fast',
+      deckMode: 'pol',
+      searchedNickname: null,
+      message: 'service unavailable',
+      retryable: true,
+      authBlocked: false,
+    })
+    test.listener()?.onAction({
+      triggerId: randomUUID(),
+      timestamp: '2026-07-12T12:00:00.000Z',
+      width: 10,
+      height: 10,
+      image: Buffer.from('private'),
+    })
+    await Promise.resolve()
+    const attemptId = test.supervisor.getCurrentView().search?.attemptId
+    if (attemptId === undefined) throw new Error('Missing attempt')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(test.supervisor.getCurrentView().search?.retryExpiresAt).toBeNull()
+    await expect(test.supervisor.retrySearch(attemptId)).rejects.toMatchObject({
+      code: 'SEARCH_RETRY_STALE',
+    })
+    test.ocr.process.mockResolvedValue({
+      id: randomUUID(),
+      kind: 'recognition_failed',
+      timestamp: '2026-07-12T12:01:00.000Z',
+      searchMode: 'fast',
+      deckMode: 'pol',
+      searchedNickname: null,
+      message: 'unreadable',
+    })
+    test.listener()?.onAction({
+      triggerId: randomUUID(),
+      timestamp: '2026-07-12T12:01:00.000Z',
+      width: 10,
+      height: 10,
+      image: Buffer.from('private'),
+    })
+    await Promise.resolve()
+    expect(test.ocr.process).toHaveBeenCalledTimes(2)
+    expect(test.supervisor.getCurrentView().search?.retryExpiresAt).toBeNull()
+    await test.supervisor.stop()
+  })
+
+  it('counts session repeats beyond the UI cap without duplicating redelivered encounters', async () => {
+    let time = new Date('2026-07-12T12:00:00.000Z')
+    const test = harness(undefined, () => time)
+    await test.supervisor.start()
+    let latest = foundResult(time)
+    for (let index = 0; index < 25; index++) {
+      time = new Date(time.getTime() + 1_000)
+      latest = foundResult(time, index % 2 === 0 ? 'tag' : '#TAG')
+      test.supervisor.addExternalResult(latest)
+    }
+    if (latest.kind !== 'player_found') throw new Error('Expected found result')
+    test.supervisor.addExternalResult({
+      ...latest,
+      player: { ...latest.player, name: 'Corrected' },
+    })
+    expect(await test.supervisor.getHistory(0, 50)).toHaveLength(25)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      stats: { playersFound: 25 },
+      session: { repeatEncounters: 24, distinctRepeatedOpponents: 1 },
+    })
+    expect(test.supervisor.getCurrentView().results).toHaveLength(20)
+    await test.supervisor.stop()
+  })
+
+  it('marks earlier-today encounters across sessions but never yesterday after local midnight', async () => {
+    let time = new Date(2026, 6, 12, 23, 58, 0)
+    const test = harness(undefined, () => time)
+    await test.supervisor.start()
+    const first = foundResult(time)
+    test.supervisor.addExternalResult(first)
+    await test.supervisor.stop()
+    time = new Date(2026, 6, 12, 23, 59, 0)
+    await test.supervisor.start()
+    test.supervisor.addExternalResult(foundResult(time))
+    expect(test.supervisor.getLatestResult()?.repeat).toMatchObject({
+      previousResultId: first.id,
+    })
+    expect(test.supervisor.getCurrentView().session?.repeatEncounters).toBe(0)
+    time = new Date(2026, 6, 13, 0, 1, 0)
+    test.supervisor.addExternalResult(foundResult(time))
+    expect(test.supervisor.getLatestResult()?.repeat).toBeNull()
+    expect(test.supervisor.getCurrentView().session?.repeatEncounters).toBe(1)
+    await test.supervisor.stop()
+  })
+
+  it('reports journal failure without disabling capture', async () => {
+    const repository = {
+      load: vi.fn().mockRejectedValue(new Error('disk denied')),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      historyError: { code: 'HISTORY_STORAGE_FAILED' },
+    })
+    await test.supervisor.stop()
+  })
+})
+
+describe('monitor shutdown journal durability', () => {
+  it('review regression #15: waits for the finalize-once journal snapshot before returning from Stop or Exit', async () => {
+    const gate = Promise.withResolvers<undefined>()
+    const repository = {
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [],
+        encounters: [],
+        sessions: [],
+      }),
+      save: vi.fn(() => gate.promise),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    let returned = false
+    const stopped = test.supervisor.stop('exit').then(() => {
+      returned = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(returned).toBe(false)
+    expect(repository.save).toHaveBeenCalledOnce()
+    expect(repository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessions: [expect.objectContaining({ stopReason: 'exit' })],
+      }),
+    )
+    gate.resolve(undefined)
+    await stopped
+    await test.supervisor.stop('exit')
+    expect(repository.save).toHaveBeenCalledOnce()
+  })
+})
+
+describe('monitor journal loading without auto-start', () => {
+  it('loads persisted history when history is the first renderer request', async () => {
+    const result = foundResult(new Date('2026-07-12T12:00:00.000Z'))
+    const repository = {
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [result],
+        encounters: [],
+        sessions: [],
+      }),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    expect(await test.supervisor.getHistory()).toEqual([result])
+    expect(test.process.start).not.toHaveBeenCalled()
+  })
+})
+
+describe('legacy reprocessed results without server correlation', () => {
+  it('keeps standalone entries visible but excludes them from session counters and the repeat index', async () => {
+    let time = new Date('2026-07-12T12:00:00.000Z')
+    const test = harness(undefined, () => time)
+    await test.supervisor.start()
+    const original = foundResult(time)
+    test.supervisor.addExternalResult(original)
+    test.supervisor.addExternalResult({ ...foundResult(time), reprocessed: true })
+    test.supervisor.addExternalResult({ ...foundResult(time), reprocessed: true })
+    expect(await test.supervisor.getHistory()).toHaveLength(3)
+    expect(test.supervisor.getLatestResult()).toMatchObject({
+      reprocessed: true,
+      repeat: null,
+    })
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      stats: { playersFound: 1 },
+      session: { repeatEncounters: 0, distinctRepeatedOpponents: 0 },
+    })
+    time = new Date(time.getTime() + 60_000)
+    test.supervisor.addExternalResult(foundResult(time))
+    expect(test.supervisor.getLatestResult()?.repeat).toMatchObject({
+      previousResultId: original.id,
+    })
+    await test.supervisor.stop()
+    expect(test.supervisor.getCurrentView().summary).toMatchObject({
+      stats: { playersFound: 2 },
+      repeatEncounters: 1,
+      distinctRepeatedOpponents: 1,
+    })
+  })
+})
+
+describe('review regression monitor ownership and persistence', () => {
+  it('#1 keeps a failed journal read memory-only and merges it after a successful retry', async () => {
+    const persisted = foundResult(new Date('2026-07-12T11:00:00.000Z'))
+    const memory = foundResult(new Date('2026-07-12T12:00:00.000Z'))
+    const repository = {
+      load: vi.fn().mockRejectedValue(new Error('EBUSY')),
+      save: vi.fn<MonitorJournalRepository['save']>().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    test.supervisor.addExternalResult(memory)
+    await test.supervisor.stop()
+    expect(repository.save).not.toHaveBeenCalled()
+    repository.load.mockResolvedValue({
+      schemaVersion: 1,
+      userId: '42',
+      results: [persisted],
+      encounters: [],
+      sessions: [],
+    })
+    expect(await test.supervisor.getHistory()).toEqual(
+      expect.arrayContaining([persisted, expect.objectContaining({ id: memory.id })]),
+    )
+    expect(test.supervisor.getCurrentView().historyError).toBeNull()
+    await test.supervisor.start()
+    await test.supervisor.stop()
+    expect(repository.save.mock.calls.at(-1)?.[0]?.results).toEqual(
+      expect.arrayContaining([persisted, expect.objectContaining({ id: memory.id })]),
+    )
+  })
+
+  it('#4 polling an auth transition finalizes with auth_change, not user', async () => {
+    const repository = {
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [],
+        encounters: [],
+        sessions: [],
+      }),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    test.user('43')
+    await test.supervisor.getView()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(repository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessions: [expect.objectContaining({ stopReason: 'auth_change' })],
+      }),
+    )
+  })
+
+  it('#5 does not re-arm a superseded retry crop while newer work is pending', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    const old = deferred<ReturnType<typeof MonitorResultSchema.parse>>()
+    const next = deferred<ReturnType<typeof foundResult>>()
+    test.ocr.process.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
+    const action = {
+      triggerId: randomUUID(),
+      timestamp: '2026-07-12T12:00:00.000Z',
+      width: 10,
+      height: 10,
+      image: Buffer.from('crop'),
+    }
+    test.listener()?.onTriggered(action.timestamp, action.triggerId)
+    test.listener()?.onAction(action)
+    const attemptId = test.supervisor.getCurrentView().search?.attemptId
+    if (attemptId === undefined) throw new Error('Missing attempt')
+    const newer = { ...action, triggerId: randomUUID() }
+    test.listener()?.onTriggered(newer.timestamp, newer.triggerId)
+    test.listener()?.onAction(newer)
+    old.resolve(
+      MonitorResultSchema.parse({
+        id: randomUUID(),
+        timestamp: action.timestamp,
+        kind: 'service_error',
+        searchMode: 'fast',
+        deckMode: 'pol',
+        searchedNickname: null,
+        message: 'busy',
+        retryable: true,
+        authBlocked: false,
+      }),
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    try {
+      await expect(test.supervisor.retrySearch(attemptId)).rejects.toMatchObject({
+        code: 'SEARCH_RETRY_STALE',
+      })
+    } finally {
+      next.resolve(foundResult(new Date(action.timestamp)))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await test.supervisor.stop()
+    }
+  })
+
+  it('#16 publishes results and reports synchronous journal-save errors without throwing', async () => {
+    const repository = {
+      load: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        userId: '42',
+        results: [],
+        encounters: [],
+        sessions: [],
+      }),
+      save: vi.fn(() => {
+        throw new Error('Invalid journal')
+      }),
+    }
+    const test = harness(
+      undefined,
+      undefined,
+      repository as unknown as MonitorJournalRepository,
+    )
+    await test.supervisor.start()
+    expect(() =>
+      test.supervisor.addExternalResult(
+        foundResult(new Date('2026-07-12T12:00:00.000Z')),
+      ),
+    ).not.toThrow()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      results: [expect.anything()],
+      historyError: { code: 'HISTORY_STORAGE_FAILED' },
+    })
+    await test.supervisor.stop()
+  })
+})
+
+describe('approved review projection followup', () => {
+  it('publishes a specific rebind instruction instead of a generic retry', async () => {
+    const test = harness()
+    test.targetResolver.resolve.mockRejectedValueOnce(
+      new ApplicationError('SOURCE_REBIND_REQUIRED', 'private diagnostic'),
+    )
+    expect(await test.supervisor.start()).toMatchObject({
+      state: 'FAILED',
+      error: {
+        code: 'SOURCE_REBIND_REQUIRED',
+        message: 'Выберите окно игры заново в профиле',
+      },
     })
   })
 })

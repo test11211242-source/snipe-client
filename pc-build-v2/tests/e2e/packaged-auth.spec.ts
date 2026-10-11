@@ -223,14 +223,13 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
         page.evaluate(() => window.crToolsAuth.getView().then((next) => next.state)),
       )
       .toBe('UNAUTHENTICATED')
-    await expect(page.getByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
-    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'С возвращением' })).toBeVisible()
+    await expect(page.getByLabel('Ключ приглашения')).toHaveCount(0)
     await page.getByRole('button', { name: 'Регистрация', exact: true }).click()
-    await expect(page.getByLabel('Ключ доступа')).toBeVisible()
-    await expect(page.getByLabel('Ключ доступа')).toHaveAttribute('required', '')
-    await expect(page.getByText(/Ключ покупается у администратора/)).toBeVisible()
+    await expect(page.getByLabel('Ключ приглашения')).toBeVisible()
+    await expect(page.getByText(/Ключ выдаёт администратор/)).toBeVisible()
     await page.getByRole('button', { name: 'Вход', exact: true }).click()
-    await expect(page.getByLabel('Ключ доступа')).toHaveCount(0)
+    await expect(page.getByLabel('Ключ приглашения')).toHaveCount(0)
     // The exposed preload rejects invalid registration keys before any API request.
     await expect(
       page.evaluate(async () => {

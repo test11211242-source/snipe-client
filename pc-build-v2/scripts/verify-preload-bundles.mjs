@@ -5,7 +5,6 @@ const outputDirectory = join(import.meta.dirname, '..', 'out', 'preload')
 const entries = new Map([
   ['auth.cjs', 'crToolsAuth'],
   ['main.cjs', 'crTools'],
-  ['setup.cjs', 'crToolsSetup'],
   ['widget.cjs', 'crToolsWidget'],
 ])
 const allowedRequires = new Set([

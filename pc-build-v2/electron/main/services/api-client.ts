@@ -43,7 +43,28 @@ function readServerMessage(value: unknown): string | undefined {
   return undefined
 }
 
-function statusError(status: number, body: unknown): ApiError {
+function statusError(status: number, body: unknown, path: `/api/${string}`): ApiError {
+  if (body !== null && typeof body === 'object') {
+    const code = (body as Record<string, unknown>)['code']
+    if (
+      code === 'ACCOUNT_TAG_INVALID' ||
+      code === 'ACCOUNT_NOT_FOUND' ||
+      code === 'ACCOUNT_LIMIT_REACHED' ||
+      code === 'CLASH_API_UNAVAILABLE' ||
+      code === 'ACCOUNT_SAVE_UNAVAILABLE' ||
+      (code === 'TITLE_SAVED_APPLY_FAILED' &&
+        (path === '/api/streamer/title/settings' ||
+          path === '/api/streamer/title/enabled' ||
+          path === '/api/streamer/title/pause'))
+    ) {
+      return createApiError(
+        code,
+        readServerMessage(body) ?? 'Account operation failed',
+        code === 'CLASH_API_UNAVAILABLE' || code === 'ACCOUNT_SAVE_UNAVAILABLE',
+        status,
+      )
+    }
+  }
   const serverMessage = readServerMessage(body)
   if (status === 401) {
     return createApiError(
@@ -198,6 +219,26 @@ export class ApiClient {
         if (value !== undefined) url.searchParams.set(key, String(value))
       }
       const response = await this.fetchImplementation(url.href, init)
+      let retryAfterSeconds: number | undefined
+      if (response.status === 429) {
+        const raw = response.headers.get('retry-after')
+        const seconds = raw === null ? 1 : Number(raw)
+        retryAfterSeconds = Math.max(
+          1,
+          Number.isFinite(seconds)
+            ? seconds
+            : (Date.parse(raw ?? '') - Date.now()) / 1000 || 1,
+        )
+      }
+      if (
+        request.path === '/api/user/me/h2h' &&
+        (response.status === 404 || response.status === 429)
+      ) {
+        await response.body?.cancel().catch(() => undefined)
+        const error = statusError(response.status, null, request.path)
+        if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds
+        return { ok: false, error }
+      }
 
       const declaredLength = Number(response.headers.get('content-length'))
       if (Number.isFinite(declaredLength) && declaredLength > this.maxJsonBytes) {
@@ -240,7 +281,11 @@ export class ApiClient {
         }
       }
 
-      if (!response.ok) return { ok: false, error: statusError(response.status, json) }
+      if (!response.ok) {
+        const error = statusError(response.status, json, request.path)
+        if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds
+        return { ok: false, error }
+      }
 
       const parsed = request.schema.safeParse(json)
       if (!parsed.success) {

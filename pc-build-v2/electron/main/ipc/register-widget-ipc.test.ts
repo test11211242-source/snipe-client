@@ -49,17 +49,22 @@ function harness() {
     })),
     hide: vi.fn(() => status),
   }
+  const images = {
+    getCardAsset: vi
+      .fn()
+      .mockResolvedValue({ kind: 'available', dataUrl: 'data:image/png;base64,AA==' }),
+  }
   registerWidgetIpc({
     windows,
     widget,
-    images: { getCardAsset: vi.fn() },
+    images,
     logger: { info: vi.fn() },
   } as never)
   const event = {
     senderFrame: { url: 'file:///app/widget.html' },
     sender: { id: 7, getURL: () => 'file:///app/widget.html' },
   }
-  return { event, widget, windows }
+  return { event, widget, windows, images }
 }
 
 beforeEach(() => {
@@ -67,6 +72,37 @@ beforeEach(() => {
 })
 
 describe('widget IPC boundary', () => {
+  it('bounds dynamic content height on both narrow settings capabilities', async () => {
+    const test = harness()
+    test.widget.updateSettings.mockResolvedValue(DEFAULT_WIDGET_SETTINGS)
+    for (const [channel, kind] of [
+      [MAIN_WIDGET_IPC_CHANNELS.updateSettings, 'main'],
+      [WIDGET_IPC_CHANNELS.updateSettings, 'widget'],
+    ] as const) {
+      const handler = electron.handlers.get(channel)
+      if (handler === undefined) throw new Error('Missing height handler')
+      await expect(handler(test.event, { contentHeight: 120 })).resolves.toEqual(
+        DEFAULT_WIDGET_SETTINGS,
+      )
+      expect(test.windows.assertSender).toHaveBeenLastCalledWith(
+        test.event.sender,
+        test.event.senderFrame.url,
+        kind,
+      )
+      await expect(handler(test.event, { contentHeight: 721 })).rejects.toThrow()
+      await expect(handler(test.event, { contentHeight: 79 })).rejects.toThrow()
+      await expect(
+        handler(test.event, { contentHeight: 120, bounds: {} }),
+      ).rejects.toThrow()
+    }
+    expect(test.widget.updateSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not register an overlay clipboard capability', () => {
+    harness()
+    expect(electron.handlers.has('widget:copy-player-tag')).toBe(false)
+  })
+
   it('accepts only strict user-setting patches and never renderer bounds', async () => {
     const test = harness()
     const handler = electron.handlers.get(MAIN_WIDGET_IPC_CHANNELS.updateSettings)
@@ -113,5 +149,80 @@ describe('widget IPC boundary', () => {
     expect(test.windows.markWidgetRendererReady).toHaveBeenCalledOnce()
     expect(() => handler(test.event, { ready: true })).toThrow()
     expect(test.windows.markWidgetRendererReady).toHaveBeenCalledOnce()
+  })
+
+  it('serves card art to the registered main window only, by strict result reference', async () => {
+    const test = harness()
+    const handler = electron.handlers.get(MAIN_WIDGET_IPC_CHANNELS.getCardAsset)
+    if (handler === undefined) throw new Error('Main card asset handler missing')
+    const request = {
+      resultId: '39d970c1-fc4f-4bea-a767-8f108d3b8739',
+      deckIndex: 1,
+      cardIndex: 7,
+    }
+    const mainEvent = {
+      sender: { id: 1 },
+      senderFrame: { url: 'file:///app/index.html' },
+    }
+    const registry: Record<number, { kind: string; url: string }> = {
+      1: { kind: 'main', url: 'file:///app/index.html' },
+      2: { kind: 'auth', url: 'file:///app/auth.html' },
+      7: { kind: 'widget', url: 'file:///app/widget.html' },
+    }
+    test.windows.assertSender.mockImplementation(
+      (sender: { id: number }, url: string, kind: string) => {
+        const registered = registry[sender.id]
+        if (registered?.kind !== kind || registered.url !== url)
+          throw new Error('IPC_SENDER_REJECTED')
+      },
+    )
+
+    await expect(handler(mainEvent, request)).resolves.toEqual({
+      kind: 'available',
+      dataUrl: 'data:image/png;base64,AA==',
+    })
+    expect(test.images.getCardAsset).toHaveBeenCalledWith(request)
+    expect(test.windows.assertSender).toHaveBeenLastCalledWith(
+      mainEvent.sender,
+      'file:///app/index.html',
+      'main',
+    )
+
+    for (const rejected of [
+      { sender: { id: 2 }, senderFrame: { url: 'file:///app/auth.html' } },
+      test.event,
+      { sender: { id: 1 }, senderFrame: { url: 'https://example.com/index.html' } },
+      { sender: { id: 99 }, senderFrame: { url: 'file:///app/index.html' } },
+    ]) {
+      await expect(handler(rejected, request)).rejects.toThrow('IPC_SENDER_REJECTED')
+    }
+    expect(test.images.getCardAsset).toHaveBeenCalledOnce()
+  })
+
+  it('rejects card asset requests that carry URLs, extra keys or out-of-range indexes', async () => {
+    const test = harness()
+    const handler = electron.handlers.get(MAIN_WIDGET_IPC_CHANNELS.getCardAsset)
+    if (handler === undefined) throw new Error('Main card asset handler missing')
+    const mainEvent = {
+      sender: { id: 1 },
+      senderFrame: { url: 'file:///app/index.html' },
+    }
+    const base = {
+      resultId: '39d970c1-fc4f-4bea-a767-8f108d3b8739',
+      deckIndex: 0,
+      cardIndex: 0,
+    }
+    for (const payload of [
+      {},
+      { ...base, url: 'https://api-assets.clashroyale.com/card.png' },
+      { ...base, resultId: 'not-a-uuid' },
+      { ...base, deckIndex: 5 },
+      { ...base, cardIndex: 8 },
+      { ...base, cardIndex: -1 },
+      { ...base, cardIndex: 1.5 },
+    ]) {
+      await expect(handler(mainEvent, payload)).rejects.toThrow()
+    }
+    expect(test.images.getCardAsset).not.toHaveBeenCalled()
   })
 })

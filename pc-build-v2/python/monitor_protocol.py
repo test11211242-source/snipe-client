@@ -7,7 +7,7 @@ import math
 import uuid
 from typing import Any, BinaryIO
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MAX_COMMAND_BYTES = 256 * 1024
 
 
@@ -50,8 +50,7 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
             "configuredFrameSize",
             "regions",
             "triggerProfile",
-            "searchMode",
-            "captureDelaySeconds",
+            "capturePolicy",
             "limits",
             "prediction",
         },
@@ -79,17 +78,11 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
     frame_size = _exact(payload["configuredFrameSize"], {"width", "height"}, "frame size")
     _positive_int(frame_size["width"], 16384, "frame width")
     _positive_int(frame_size["height"], 16384, "frame height")
-    regions = _exact(payload["regions"], {"trigger", "normal", "precise"}, "regions")
-    for name in ("trigger", "normal", "precise"):
+    regions = _exact(payload["regions"], {"trigger", "nicknameRegion", "topLeftEvidenceRegion"}, "regions")
+    for name in ("trigger", "nicknameRegion", "topLeftEvidenceRegion"):
         regions[name] = validate_ratio(regions[name], f"regions.{name}")
-    if payload["searchMode"] not in ("fast", "precise"):
-        raise MonitorProtocolError("search mode is invalid")
-    delay = payload["captureDelaySeconds"]
-    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay):
-        raise MonitorProtocolError("capture delay is invalid")
-    if not 0 <= delay <= 5:
-        raise MonitorProtocolError("capture delay is invalid")
-    payload["captureDelaySeconds"] = float(delay)
+    if payload["capturePolicy"] != "immediate_nickname":
+        raise MonitorProtocolError("capture policy is invalid")
     limits = _exact(
         payload["limits"],
         {

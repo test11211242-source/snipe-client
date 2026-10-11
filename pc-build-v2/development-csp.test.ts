@@ -27,7 +27,7 @@ describe('renderer development CSP', () => {
     await server.close()
   })
 
-  it.each(['index', 'auth', 'setup', 'widget'])(
+  it.each(['index', 'auth', 'widget'])(
     'allows Vite styles, React refresh and its websocket in %s',
     async (page) => {
       const html = await readFile(resolve(root, `${page}.html`), 'utf8')

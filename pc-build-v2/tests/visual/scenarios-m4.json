@@ -1,0 +1,698 @@
+[
+  {
+    "name": "profiles-panel-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": ["(async () => { const h = window.__h; await h.openPanel(); })()"]
+  },
+  {
+    "name": "profiles-panel-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": ["(async () => { const h = window.__h; await h.openPanel(); })()"]
+  },
+  {
+    "name": "profiles-row-menu-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); })()"
+    ]
+  },
+  {
+    "name": "profiles-row-menu-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); })()"
+    ]
+  },
+  {
+    "name": "profiles-rename-err-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); await h.sleep(150); h.click('Переименовать'); await h.sleep(150); h.type('Название профиля', 'основной'); await h.sleep(100); h.click('Сохранить'); })()"
+    ]
+  },
+  {
+    "name": "profiles-rename-err-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); await h.sleep(150); h.click('Переименовать'); await h.sleep(150); h.type('Название профиля', 'основной'); await h.sleep(100); h.click('Сохранить'); })()"
+    ]
+  },
+  {
+    "name": "profiles-delete-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); await h.sleep(150); h.click('Удалить'); })()"
+    ]
+  },
+  {
+    "name": "profiles-delete-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Для друзей'); await h.sleep(150); h.click('Удалить'); })()"
+    ]
+  },
+  {
+    "name": "profiles-duplicate-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Дублировать'); })()"
+    ]
+  },
+  {
+    "name": "profiles-duplicate-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Дублировать'); })()"
+    ]
+  },
+  {
+    "name": "profiles-zone-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Зоны результата'); })()"
+    ]
+  },
+  {
+    "name": "profiles-zone-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Зоны результата'); })()"
+    ]
+  },
+  {
+    "name": "profiles-player-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health",
+      "player": true
+    },
+    "steps": ["(async () => { const h = window.__h; await h.openPanel(); })()"]
+  },
+  {
+    "name": "profiles-player-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health",
+      "player": true
+    },
+    "steps": ["(async () => { const h = window.__h; await h.openPanel(); })()"]
+  },
+  {
+    "name": "setup-name-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-name-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-name-err-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.type('Название профиля', 'основной'); })()"
+    ]
+  },
+  {
+    "name": "setup-name-err-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.type('Название профиля', 'основной'); })()"
+    ]
+  },
+  {
+    "name": "setup-source-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-source-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-source-error-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "prepareError": "CAPTURE_PREPARATION_TIMEOUT"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-source-error-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "prepareError": "CAPTURE_PREPARATION_TIMEOUT"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-source-display-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('Экраны'); await h.sleep(200); h.click('Экран 2'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-source-display-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {},
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('Экраны'); await h.sleep(200); h.click('Экран 2'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-empty-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "selecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-empty-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "selecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-drawing-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "selecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.draw(0.43, 0.4, 0.57, 0.58); await h.sleep(150); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-drawing-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "selecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.draw(0.43, 0.4, 0.57, 0.58); await h.sleep(150); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "regions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Ник соперника'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-regions-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "regions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Ник соперника'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-check-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-check-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-check-medium-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "grade": "medium"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-check-medium-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "grade": "medium"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-save-error-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "commitError": "CAPTURE_PROFILE_STALE"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-save-error-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "commitError": "CAPTURE_PROFILE_STALE"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-ok-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-ok-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-sync-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "projection": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-sync-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "projection": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-runtime-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "runtime": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-runtime-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "runtime": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-local-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "local": "failed",
+        "projection": "not_attempted",
+        "runtime": "not_requested"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-outcome-local-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "local": "failed",
+        "projection": "not_attempted",
+        "runtime": "not_requested"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить профиль'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-fail-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-fail-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-fail-lost-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed",
+        "failCode": "CAPTURE_GEOMETRY_CHANGED"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-fail-lost-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed",
+        "failCode": "CAPTURE_GEOMETRY_CHANGED"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "result"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "result"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-check-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "resultRegions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-check-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "resultRegions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-ok-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "resultRegions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить зоны'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-zones-ok-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "resultRegions"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить зоны'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-redo-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Перенастроить'); await h.sleep(900); })()"
+    ]
+  },
+  {
+    "name": "setup-redo-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Перенастроить'); await h.sleep(900); })()"
+    ]
+  },
+  {
+    "name": "setup-rebind-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Сменить источник'); await h.sleep(900); h.click('LDPlayer'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "setup-rebind-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "profilesMode": "health"
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Сменить источник'); await h.sleep(900); h.click('LDPlayer'); await h.sleep(300); })()"
+    ]
+  }
+]

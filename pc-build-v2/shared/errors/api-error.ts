@@ -8,6 +8,12 @@ export const ApiErrorCodeSchema = z.enum([
   'UNAUTHORIZED',
   'FORBIDDEN',
   'VALIDATION_FAILED',
+  'ACCOUNT_TAG_INVALID',
+  'ACCOUNT_NOT_FOUND',
+  'ACCOUNT_LIMIT_REACHED',
+  'CLASH_API_UNAVAILABLE',
+  'ACCOUNT_SAVE_UNAVAILABLE',
+  'TITLE_SAVED_APPLY_FAILED',
   'SERVER_ERROR',
   'SECRET_UNAVAILABLE',
   'SECRET_INVALID',
@@ -23,6 +29,7 @@ export const ApiErrorSchema = z
     message: z.string().min(1).max(300),
     retryable: z.boolean(),
     status: z.number().int().min(100).max(599).nullable(),
+    retryAfterSeconds: z.number().nonnegative().optional(),
   })
   .strict()
 

@@ -1,3 +1,5 @@
+import type { WindowAction, WindowView } from '../../../shared/contracts/window'
+
 import { join, normalize } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -9,15 +11,19 @@ import {
   WIDGET_MAX_WIDTH,
   WIDGET_MIN_HEIGHT,
   WIDGET_MIN_WIDTH,
+  WIDGET_COMPACT_MIN_WIDTH,
   WidgetBoundsSchema,
   type WidgetBounds,
   type WidgetSettings,
 } from '../../../shared/models/widget'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
+import type {
+  MainWindowState,
+  MainWindowStateRepository,
+} from '../infrastructure/main-window-state-repository'
 
-export type WindowKind = 'main' | 'auth' | 'setup' | 'widget'
-export type WindowCloseReason =
-  'user' | 'auth-transition' | 'setup-transition' | 'shutdown'
+export type WindowKind = 'main' | 'auth' | 'widget'
+export type WindowCloseReason = 'user' | 'auth-transition' | 'shutdown'
 
 interface RegisteredWindow {
   window: BrowserWindow
@@ -197,27 +203,130 @@ export class WindowCoordinator {
   >()
   readonly #widgetBoundsListeners = new Set<(bounds: WidgetBounds) => void>()
   #widgetLoadPromise: Promise<void> | null = null
+  #userClosePolicy: ((kind: WindowKind) => boolean) | null = null
+  #mainStateTimer: ReturnType<typeof setTimeout> | null = null
+  #mainState: MainWindowState | null = null
+  #mainLoadPromise: Promise<BrowserWindow> | null = null
+  #mainCreationGeneration = 0
+  #sessionEndHandler: (() => void) | null = null
+  #sessionQueryHandler: (() => void | Promise<void>) | null = null
+  #sessionFlushPromise: Promise<void> | null = null
 
-  constructor(private readonly logger: StructuredLogger) {}
+  constructor(
+    private readonly logger: StructuredLogger,
+    private readonly mainStateRepository?: MainWindowStateRepository,
+  ) {}
 
-  async ensureMainWindow(): Promise<BrowserWindow> {
+  setUserClosePolicy(policy: (kind: WindowKind) => boolean): void {
+    this.#userClosePolicy = policy
+  }
+
+  setSessionEndHandler(handler: () => void): void {
+    this.#sessionEndHandler = handler
+  }
+
+  setSessionQueryHandler(handler: () => void | Promise<void>): void {
+    this.#sessionQueryHandler = handler
+  }
+
+  mainWindowCommand(action: WindowAction): WindowView {
+    const window = this.#registry.get('main')?.window
+    if (window === undefined || window.isDestroyed()) {
+      throw new ApplicationError('MAIN_WINDOW_UNAVAILABLE', 'Main window is unavailable')
+    }
+    if (action === 'minimize') window.minimize()
+    else if (action === 'maximize') window.maximize()
+    else if (action === 'restore') window.unmaximize()
+    const view = { maximized: window.isMaximized() }
+    // Native close emits the same cancellable user-close event as the titlebar.
+    if (action === 'close') window.close()
+    return view
+  }
+
+  async flushMainState(): Promise<void> {
+    clearTimeout(this.#mainStateTimer ?? undefined)
+    this.#mainStateTimer = null
+    if (this.#mainState !== null) {
+      await this.mainStateRepository?.save(this.#mainState).catch((error: unknown) => {
+        this.logger.warn('Main window bounds save failed', { error })
+      })
+    }
+  }
+
+  flushSessionState(): Promise<void> {
+    if (this.#sessionFlushPromise !== null) return this.#sessionFlushPromise
+    this.#sessionFlushPromise = Promise.resolve()
+      .then(() => Promise.all([this.flushMainState(), this.#sessionQueryHandler?.()]))
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        this.logger.warn('Session state flush failed', { error })
+      })
+      .finally(() => {
+        this.#sessionFlushPromise = null
+      })
+    return this.#sessionFlushPromise
+  }
+
+  ensureMainWindow(show = true): Promise<BrowserWindow> {
+    if (this.#mainLoadPromise !== null) {
+      return this.#mainLoadPromise.then((window) => {
+        if (show && !window.isDestroyed()) {
+          if (window.isMinimized()) window.restore()
+          window.show()
+          window.focus()
+        }
+        return window
+      })
+    }
     const existing = this.#registry.get('main')?.window
     if (existing !== undefined && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
-      return existing
+      if (show) {
+        if (existing.isMinimized()) existing.restore()
+        existing.show()
+        existing.focus()
+      }
+      return Promise.resolve(existing)
     }
-
-    const renderer = this.getRenderer('index.html')
-    const bounds = fitWindowBounds(
-      screen.getPrimaryDisplay().workArea,
-      { width: 1180, height: 760 },
-      { width: 720, height: 560 },
+    const operation = this.createMainWindow(show, this.#mainCreationGeneration).finally(
+      () => {
+        if (this.#mainLoadPromise === operation) this.#mainLoadPromise = null
+      },
     )
+    this.#mainLoadPromise = operation
+    return operation
+  }
+
+  private async createMainWindow(
+    show: boolean,
+    generation: number,
+  ): Promise<BrowserWindow> {
+    const renderer = this.getRenderer('index.html')
+    let saved: MainWindowState | null = null
+    try {
+      saved = (await this.mainStateRepository?.load()) ?? null
+    } catch (error) {
+      this.logger.warn('Main window bounds load failed', { error })
+    }
+    if (generation !== this.#mainCreationGeneration) {
+      throw new ApplicationError(
+        'MAIN_WINDOW_CANCELLED',
+        'Main window creation was cancelled',
+      )
+    }
+    const area = screen.getPrimaryDisplay().workArea
+    const desired = saved ?? { x: null, y: null, width: 1100, height: 700 }
+    const workAreas = screen.getAllDisplays().map((display) => display.workArea)
+    workAreas.unshift(area)
+    const clamped = clampWidgetBoundsToWorkAreas(desired, workAreas)
+    const bounds = {
+      ...clamped,
+      minWidth: Math.min(420, area.width),
+      minHeight: Math.min(360, area.height),
+    }
     const window = new BrowserWindow({
       ...bounds,
       show: false,
+      frame: false,
       backgroundColor: '#080913',
       title: 'CR Tools V2',
       autoHideMenuBar: true,
@@ -232,31 +341,49 @@ export class WindowCoordinator {
     })
 
     this.register('main', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
+    if (saved?.maximized && !show) window.once('show', () => window.maximize())
+    window.once('ready-to-show', () => {
+      if (show) {
+        if (saved?.maximized) window.maximize()
+        window.show()
+      }
+    })
 
-    if (renderer.development) {
-      await window.loadURL(renderer.url)
-    } else {
-      await window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    try {
+      if (renderer.development) {
+        await window.loadURL(renderer.url)
+      } else {
+        await window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+      }
+    } catch (error) {
+      const registered = this.#registry.get('main')
+      if (registered?.window === window) {
+        registered.closeReason = 'auth-transition'
+        this.#registry.delete('main')
+      }
+      if (!window.isDestroyed()) window.destroy()
+      throw error
     }
 
     return window
   }
 
-  async ensureAuthWindow(): Promise<BrowserWindow> {
+  async ensureAuthWindow(show = true): Promise<BrowserWindow> {
     const existing = this.#registry.get('auth')?.window
     if (existing !== undefined && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
+      if (show) {
+        if (existing.isMinimized()) existing.restore()
+        existing.show()
+        existing.focus()
+      }
       return existing
     }
 
     const renderer = this.getRenderer('auth.html')
     const bounds = fitWindowBounds(
       screen.getPrimaryDisplay().workArea,
-      { width: 920, height: 680 },
-      { width: 680, height: 560 },
+      { width: 480, height: 640 },
+      { width: 420, height: 360 },
     )
     const window = new BrowserWindow({
       ...bounds,
@@ -275,48 +402,14 @@ export class WindowCoordinator {
     })
 
     this.register('auth', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
+    window.once('ready-to-show', () => {
+      if (show) window.show()
+    })
     if (renderer.development) {
       await window.loadURL(renderer.url)
     } else {
       await window.loadFile(join(import.meta.dirname, '../renderer/auth.html'))
     }
-    return window
-  }
-
-  async ensureSetupWindow(): Promise<BrowserWindow> {
-    const existing = this.#registry.get('setup')?.window
-    if (existing !== undefined && !existing.isDestroyed()) {
-      existing.show()
-      existing.focus()
-      return existing
-    }
-
-    const renderer = this.getRenderer('setup.html')
-    const bounds = fitWindowBounds(
-      screen.getPrimaryDisplay().workArea,
-      { width: 1280, height: 860 },
-      { width: 860, height: 640 },
-    )
-    const window = new BrowserWindow({
-      ...bounds,
-      show: false,
-      backgroundColor: '#080913',
-      title: 'Capture setup | CR Tools V2',
-      autoHideMenuBar: true,
-      webPreferences: {
-        preload: join(import.meta.dirname, '../preload/setup.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        webSecurity: true,
-        devTools: !import.meta.env.PROD,
-      },
-    })
-    this.register('setup', window, renderer.url)
-    window.once('ready-to-show', () => window.show())
-    if (renderer.development) await window.loadURL(renderer.url)
-    else await window.loadFile(join(import.meta.dirname, '../renderer/setup.html'))
     return window
   }
 
@@ -334,7 +427,10 @@ export class WindowCoordinator {
     const bounds = clampWidgetBoundsToWorkAreas(settings.bounds, workAreas)
     const window = new BrowserWindow({
       ...bounds,
-      minWidth: Math.min(WIDGET_MIN_WIDTH, bounds.width),
+      minWidth: Math.min(
+        settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
+        bounds.width,
+      ),
       minHeight: Math.min(WIDGET_MIN_HEIGHT, bounds.height),
       maxWidth: WIDGET_MAX_WIDTH,
       maxHeight: WIDGET_MAX_HEIGHT,
@@ -447,7 +543,6 @@ export class WindowCoordinator {
     if (settings.alwaysOnTop) window.moveTop()
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
-    window.setMinimumSize(WIDGET_MIN_WIDTH, WIDGET_MIN_HEIGHT)
     window.setAspectRatio(0)
     window.setOpacity(settings.opacity)
     registered.suppressBoundsEvents = true
@@ -455,6 +550,13 @@ export class WindowCoordinator {
       const bounds = clampWidgetBoundsToWorkAreas(
         settings.bounds,
         screen.getAllDisplays().map((display) => display.workArea),
+      )
+      window.setMinimumSize(
+        Math.min(
+          settings.compactMode ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH,
+          bounds.width,
+        ),
+        Math.min(WIDGET_MIN_HEIGHT, bounds.height),
       )
       window.setBounds(bounds)
     } finally {
@@ -503,9 +605,7 @@ export class WindowCoordinator {
 
   focusActiveWindow(): void {
     const active =
-      this.#registry.get('setup')?.window ??
-      this.#registry.get('main')?.window ??
-      this.#registry.get('auth')?.window
+      this.#registry.get('main')?.window ?? this.#registry.get('auth')?.window
     if (active === undefined || active.isDestroyed()) return
     if (active.isMinimized()) active.restore()
     active.show()
@@ -520,6 +620,7 @@ export class WindowCoordinator {
   }
 
   close(kind: WindowKind, reason: Exclude<WindowCloseReason, 'user'>): void {
+    if (kind === 'main') ++this.#mainCreationGeneration
     const registered = this.#registry.get(kind)
     if (registered === undefined || registered.window.isDestroyed()) return
     registered.closeReason = reason
@@ -561,6 +662,7 @@ export class WindowCoordinator {
   }
 
   closeAll(reason: Exclude<WindowCloseReason, 'user'> = 'shutdown'): void {
+    ++this.#mainCreationGeneration
     for (const registered of this.#registry.values()) {
       registered.closeReason = reason
       this.rejectWidgetReadiness(
@@ -595,6 +697,31 @@ export class WindowCoordinator {
     }
     this.#registry.set(kind, registered)
 
+    window.on('close', (event) => {
+      if (registered.closeReason === 'user' && this.#userClosePolicy?.(kind)) {
+        event.preventDefault()
+        window.hide()
+      }
+    })
+    window.on('query-session-end', () => {
+      void this.flushSessionState()
+    })
+    window.on('session-end', () => this.#sessionEndHandler?.())
+    if (kind === 'main') {
+      const saveBounds = (): void => {
+        if (window.isDestroyed()) return
+        const bounds = window.getNormalBounds()
+        this.#mainState = { schemaVersion: 1, ...bounds, maximized: window.isMaximized() }
+        clearTimeout(this.#mainStateTimer ?? undefined)
+        this.#mainStateTimer = setTimeout(() => {
+          void this.flushMainState()
+        }, 300)
+      }
+      window.on('move', saveBounds)
+      window.on('resize', saveBounds)
+      window.on('maximize', saveBounds)
+      window.on('unmaximize', saveBounds)
+    }
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event, navigationUrl) => {
       if (!isAllowedRendererUrl(navigationUrl, rendererUrl)) {

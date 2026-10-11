@@ -5,15 +5,15 @@ export const MonitorStateSchema = z.enum([
   'PREFLIGHT',
   'STARTING',
   'READY',
+  'WAITING_SOURCE',
   'STOPPING',
   'FAILED',
 ])
-export const SearchModeSchema = z.enum(['fast', 'precise'])
+const LegacyResultSearchModeSchema = z.enum(['fast', 'precise'])
 export const DeckModeSchema = z.enum(['pol', 'gt'])
 
 export const MonitorPreferencesSchema = z
   .object({
-    searchMode: SearchModeSchema,
     deckMode: DeckModeSchema,
   })
   .strict()
@@ -40,9 +40,25 @@ export const MonitorDeckSchema = z
 const ResultBaseSchema = z.object({
   id: z.uuid(),
   timestamp: z.iso.datetime(),
-  searchMode: SearchModeSchema,
+  searchMode: LegacyResultSearchModeSchema,
   deckMode: DeckModeSchema,
   searchedNickname: OptionalSafeTextSchema,
+  reprocessed: z.boolean().default(false),
+  capturePolicy: z.literal('immediate_nickname').nullable().default(null),
+  sessionId: z.uuid().nullable().default(null),
+  triggerId: z.uuid().nullable().default(null),
+  attemptId: z.uuid().nullable().default(null),
+  profileId: z.uuid().nullable().default(null),
+  calibrationRevision: z.number().int().positive().nullable().default(null),
+  repeat: z
+    .object({
+      previousAt: z.iso.datetime(),
+      previousResultId: z.uuid(),
+      localDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .strict()
+    .nullable()
+    .default(null),
 })
 
 export const MonitorResultSchema = z.discriminatedUnion('kind', [
@@ -104,8 +120,39 @@ export const MonitorPublicErrorSchema = z
   })
   .strict()
 
+export const MonitorSearchSchema = z
+  .object({
+    triggerId: z.uuid(),
+    attemptId: z.uuid(),
+    profileId: z.uuid(),
+    calibrationRevision: z.number().int().positive(),
+    phase: z.enum(['capturing', 'requesting', 'completed', 'failed']),
+    startedAt: z.iso.datetime(),
+    searchedNickname: OptionalSafeTextSchema,
+    retryExpiresAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+
+export const MonitorSessionSchema = z
+  .object({
+    sessionId: z.uuid(),
+    userId: z.string().min(1).max(128),
+    initialProfileId: z.uuid().nullable().default(null),
+    startedAt: z.iso.datetime(),
+    endedAt: z.iso.datetime().nullable(),
+    stopReason: z
+      .enum(['user', 'auth_change', 'profile_deleted', 'exit', 'failed'])
+      .nullable(),
+    durationMs: z.number().int().nonnegative(),
+    stats: MonitorSessionStatsSchema,
+    repeatEncounters: z.number().int().nonnegative(),
+    distinctRepeatedOpponents: z.number().int().nonnegative(),
+  })
+  .strict()
+
 export const MonitorViewSchema = z
   .object({
+    seq: z.number().int().nonnegative().default(0),
     state: MonitorStateSchema,
     preferences: MonitorPreferencesSchema,
     readiness: MonitorReadinessSchema,
@@ -113,13 +160,19 @@ export const MonitorViewSchema = z
     startedAt: z.iso.datetime().nullable(),
     stats: MonitorSessionStatsSchema,
     results: z.array(MonitorResultSchema).max(20),
+    runIntent: z.boolean().default(false),
+    search: MonitorSearchSchema.nullable().default(null),
+    session: MonitorSessionSchema.nullable().default(null),
+    summary: MonitorSessionSchema.nullable().default(null),
+    historyError: MonitorPublicErrorSchema.nullable().default(null),
   })
   .strict()
 
 export type MonitorState = z.infer<typeof MonitorStateSchema>
-export type SearchMode = z.infer<typeof SearchModeSchema>
 export type DeckMode = z.infer<typeof DeckModeSchema>
 export type MonitorPreferences = z.infer<typeof MonitorPreferencesSchema>
 export type MonitorResult = z.infer<typeof MonitorResultSchema>
 export type MonitorSessionStats = z.infer<typeof MonitorSessionStatsSchema>
 export type MonitorView = z.infer<typeof MonitorViewSchema>
+export type MonitorSession = z.infer<typeof MonitorSessionSchema>
+export type MonitorSearch = z.infer<typeof MonitorSearchSchema>

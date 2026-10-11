@@ -25,12 +25,14 @@ import {
   type LegacyOcrRegions,
   type SetupFrame,
   type SetupSessionView,
+  type SetupRuntimeOutcome,
 } from '../../../shared/models/setup'
 import type { SetupCaptureSelector } from '../domain/capture-source'
 import {
   captureConfigurationFingerprint,
   type CaptureConfigurationRepository,
 } from '../infrastructure/capture-configuration-repository'
+import { createLayoutCalibration } from '../infrastructure/capture-profile-migration'
 import type { ApiClient } from './api-client'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
@@ -60,6 +62,11 @@ interface InternalSession {
   legacyTriggerProfile: LegacyTriggerAnalysis | null
   profileTarget: SetupCaptureProfileTarget | null
   authGeneration: number
+  pendingSync?: {
+    requests: { path: `/api/${string}`; body: unknown }[]
+    captureFingerprint: string
+    resultFingerprint?: string
+  }
 }
 
 export interface SetupCaptureProfileTarget {
@@ -87,8 +94,8 @@ export function buildLegacyProjection(
 ): LegacyOcrRegions {
   const regions = NormalizedRegionsSchema.parse(regionsInput)
   const trigger = normalizedToPixelRect(regions.trigger, frame.size)
-  const normal = normalizedToPixelRect(regions.normal, frame.size)
-  const precise = normalizedToPixelRect(regions.precise, frame.size)
+  const nickname = normalizedToPixelRect(regions.nickname, frame.size)
+  const topLeftEvidence = normalizedToPixelRect(regions.topLeftEvidence, frame.size)
   return LegacyOcrRegionsSchema.parse({
     schema_version: 2,
     capture_reference: {
@@ -108,8 +115,8 @@ export function buildLegacyProjection(
       ratio: regions.trigger,
       trigger_profile: buildLegacyTriggerProfile(regions.trigger, profile, legacyProfile),
     },
-    normal_data_area: { ...normal, ratio: regions.normal },
-    precise_data_area: { ...precise, ratio: regions.precise },
+    normal_data_area: { ...nickname, ratio: regions.nickname },
+    precise_data_area: { ...topLeftEvidence, ratio: regions.topLeftEvidence },
     screen_resolution: frame.size,
     updated_at: timestamp,
   })
@@ -142,7 +149,8 @@ export class SetupSessionService {
   #session: InternalSession | null = null
   #startOperation: Promise<void> = Promise.resolve()
   #assertCaptureCommitAllowed: () => void = () => undefined
-  #captureCommitted: (activeChanged: boolean) => Promise<void> = () => Promise.resolve()
+  #captureCommitted: (activeChanged: boolean) => Promise<SetupRuntimeOutcome> = () =>
+    Promise.resolve('not_requested')
   #runCaptureCommit: (
     operation: () => Promise<SetupSessionView>,
   ) => Promise<SetupSessionView> = (operation) => operation()
@@ -160,7 +168,7 @@ export class SetupSessionService {
 
   configureCaptureProfileLifecycle(
     assertCommitAllowed: () => void,
-    captureCommitted: (activeChanged: boolean) => Promise<void>,
+    captureCommitted: (activeChanged: boolean) => Promise<SetupRuntimeOutcome>,
     runCaptureCommit: (
       operation: () => Promise<SetupSessionView>,
     ) => Promise<SetupSessionView>,
@@ -233,8 +241,8 @@ export class SetupSessionService {
         frameSize: null,
         regions: {
           trigger: null,
-          normal: null,
-          precise: null,
+          nickname: null,
+          topLeftEvidence: null,
           resultTrigger: null,
           resultData: null,
         },
@@ -267,16 +275,35 @@ export class SetupSessionService {
     return session.view
   }
 
-  async startPredictionResult(): Promise<SetupSessionView> {
+  async startPredictionResult(
+    profileId?: string,
+    expectedRevision?: number,
+  ): Promise<SetupSessionView> {
+    const authGeneration = this.auth.getContextGeneration()
     if (this.targetResolver === undefined) {
       throw new ApplicationError(
         'RESULT_SETUP_UNAVAILABLE',
         'Result setup is unavailable',
       )
     }
-    const resolved = await this.targetResolver.resolveActiveProfile()
+    const resolved =
+      profileId === undefined
+        ? await this.targetResolver.resolveActiveProfile()
+        : await this.targetResolver.resolveProfileTarget(profileId)
+    if (
+      expectedRevision !== undefined &&
+      expectedRevision !== resolved.collectionRevision
+    ) {
+      throw new ApplicationError(
+        'CAPTURE_PROFILE_STALE',
+        'Capture profiles changed; reload before configuring result zones',
+      )
+    }
     const user = this.auth.getView().user
-    if (user?.id !== resolved.userId) {
+    if (
+      user?.id !== resolved.userId ||
+      authGeneration !== this.auth.getContextGeneration()
+    ) {
       throw new ApplicationError(
         'AUTH_CONTEXT_CHANGED',
         'The signed-in user changed while result setup was starting',
@@ -284,7 +311,7 @@ export class SetupSessionService {
     }
     return this.start(
       resolved.selector,
-      resolved.configuration.source,
+      resolved.configuration.sourceBinding.identity,
       'predictionResult',
       undefined,
       {
@@ -298,6 +325,12 @@ export class SetupSessionService {
   getSession(): SetupSessionView {
     if (this.#session === null)
       throw new ApplicationError('SETUP_NOT_ACTIVE', 'No setup is active')
+    if (!this.hasCurrentAuthContext(this.#session)) {
+      throw new ApplicationError(
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in session changed while setup was open',
+      )
+    }
     return this.#session.view
   }
 
@@ -327,7 +360,7 @@ export class SetupSessionService {
     }
     const allowed =
       session.view.kind === 'capture'
-        ? ['trigger', 'normal', 'precise']
+        ? ['trigger', 'nickname', 'topLeftEvidence']
         : ['resultTrigger', 'resultData']
     if (!allowed.includes(region)) {
       throw new ApplicationError(
@@ -358,7 +391,7 @@ export class SetupSessionService {
     rect: NormalizedRect,
   ): Promise<SetupSessionView> {
     const session = this.assertCommand(sessionId, generation)
-    const finalRegion = session.view.kind === 'capture' ? 'precise' : 'resultData'
+    const finalRegion = session.view.kind === 'capture' ? 'topLeftEvidence' : 'resultData'
     if (region !== finalRegion) {
       throw new ApplicationError(
         'SETUP_REGION_INVALID',
@@ -439,8 +472,8 @@ export class SetupSessionService {
     if (session.view.kind === 'capture')
       NormalizedRegionsSchema.parse({
         trigger: session.view.regions.trigger,
-        normal: session.view.regions.normal,
-        precise: session.view.regions.precise,
+        nickname: session.view.regions.nickname,
+        topLeftEvidence: session.view.regions.topLeftEvidence,
       })
     else if (
       session.view.regions.resultTrigger === null ||
@@ -494,8 +527,8 @@ export class SetupSessionService {
     }
     const regions = NormalizedRegionsSchema.parse({
       trigger: session.view.regions.trigger,
-      normal: session.view.regions.normal,
-      precise: session.view.regions.precise,
+      nickname: session.view.regions.nickname,
+      topLeftEvidence: session.view.regions.topLeftEvidence,
     })
     const user = this.auth.getView().user
     const profileTarget = session.profileTarget
@@ -590,41 +623,6 @@ export class SetupSessionService {
       session.view.source,
       timestamp,
     )
-    const remote = activateProfile
-      ? await this.api.request({
-          method: 'POST',
-          path: '/api/user/me/ocr-regions',
-          body: projection,
-          accessToken: token,
-          schema: SaveResponseSchema,
-          signal: session.controller.signal,
-        })
-      : ({ ok: true, status: 200, data: { success: true } } as const)
-    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (!this.hasCurrentAuthContext(session)) {
-      session.commitLocked = false
-      session.view = SetupSessionViewSchema.parse({
-        ...session.view,
-        state: 'REVIEW',
-        generation: generation + 1,
-        error: {
-          code: 'AUTH_CONTEXT_CHANGED',
-          message: 'The signed-in user changed while capture setup was saving',
-        },
-      })
-      return session.view
-    }
-    if (!remote.ok) {
-      session.commitLocked = false
-      session.view = SetupSessionViewSchema.parse({
-        ...session.view,
-        state: 'REVIEW',
-        generation: generation + 1,
-        error: { code: remote.error.code, message: remote.error.message },
-      })
-      return session.view
-    }
-
     try {
       const previous = await this.repository.get(user.id, profileTarget.profileId)
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
@@ -632,14 +630,23 @@ export class SetupSessionService {
         return this.captureCommitAuthFailure(session, generation)
       }
       const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         userId: user.id,
         revision: (previous?.configuration.revision ?? 0) + 1,
         committedAt: timestamp,
-        source: session.view.source,
-        frameSize: frame.size,
-        regions,
-        triggerProfile,
+        sourceBinding: {
+          identity: session.view.source,
+          lastVerifiedAt: timestamp,
+        },
+        calibration: createLayoutCalibration(
+          previous?.configuration.calibration.calibrationId ?? randomUUID(),
+          (previous?.configuration.calibration.revision ?? 0) + 1,
+          frame.size,
+          regions,
+          triggerProfile,
+          timestamp,
+          'manual',
+        ),
       }
       const config = CaptureConfigurationSchema.parse({
         ...unsigned,
@@ -651,17 +658,24 @@ export class SetupSessionService {
         expectedRevision: profileTarget.expectedRevision,
         activate: activateProfile,
       })
-      if (
-        !this.isCurrentOperation(session, generation, 'SAVING') ||
-        !this.hasCurrentAuthContext(session)
-      ) {
-        return session.view
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        saveOutcome: {
+          local: 'saved',
+          projection: 'not_attempted',
+          runtime: 'not_requested',
+          warning: null,
+        },
+      })
+      session.pendingSync = {
+        captureFingerprint: config.fingerprint,
+        requests: activateProfile
+          ? [{ path: '/api/user/me/ocr-regions', body: projection }]
+          : [],
       }
-      await this.#captureCommitted(activateProfile).catch(() => undefined)
-      if (
-        !this.isCurrentOperation(session, generation, 'SAVING') ||
-        !this.hasCurrentAuthContext(session)
-      ) {
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        this.cancelForAuthTransition()
         return session.view
       }
     } catch (error) {
@@ -673,18 +687,16 @@ export class SetupSessionService {
         state: 'FAILED',
         generation: generation + 1,
         error: publicFailure(error),
+        saveOutcome: {
+          local: 'failed',
+          projection: 'not_attempted',
+          runtime: 'not_requested',
+          warning: null,
+        },
       })
       return session.view
     }
-    session.frame = null
-    session.legacyTriggerProfile = null
-    session.view = SetupSessionViewSchema.parse({
-      ...session.view,
-      state: 'COMMITTED',
-      generation: generation + 1,
-      error: null,
-    })
-    return session.view
+    return this.completeSaved(session, generation, activateProfile)
   }
 
   private async commitPredictionResult(
@@ -786,59 +798,11 @@ export class SetupSessionService {
       capture_reference: captureReference,
       trigger_profile: buildLegacyTriggerProfile(trigger, profile, legacyProfile),
     }
-    const triggerRemote = await this.api.request({
-      method: 'POST',
-      path: '/api/streamer/result-trigger-area',
-      body: triggerPayload,
-      accessToken: token,
-      schema: SaveResponseSchema,
-      signal: session.controller.signal,
-    })
-    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (!this.hasCurrentAuthContext(session)) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'AUTH_CONTEXT_CHANGED',
-        'The signed-in user changed while result setup was saving',
-      )
-    }
-    if (!triggerRemote.ok)
-      return this.resultCommitFailure(
-        session,
-        generation,
-        triggerRemote.error.code,
-        triggerRemote.error.message,
-      )
-    const dataRemote = await this.api.request({
-      method: 'POST',
-      path: '/api/streamer/result-data-area',
-      body: {
-        ...dataPixels,
-        ratio: data,
-        screen_resolution: frame.size,
-        capture_reference: captureReference,
-      },
-      accessToken: token,
-      schema: SaveResponseSchema,
-      signal: session.controller.signal,
-    })
-    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (!this.hasCurrentAuthContext(session)) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'AUTH_CONTEXT_CHANGED',
-        'The signed-in user changed while result setup was saving',
-      )
-    }
-    if (!dataRemote.ok) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'RESULT_SETUP_PARTIAL_REMOTE',
-        'Trigger area was saved remotely, but data area failed. Local configuration remains inactive; retry save.',
-      )
+    const dataPayload = {
+      ...dataPixels,
+      ratio: data,
+      screen_resolution: frame.size,
+      capture_reference: captureReference,
     }
     try {
       const resultProfileId = profileTarget.profileId
@@ -866,17 +830,33 @@ export class SetupSessionService {
         data,
         triggerProfile: profile,
       }
-      await this.resultRepository.save(
-        PredictionResultConfigurationSchema.parse({
-          ...unsigned,
-          fingerprint: predictionResultFingerprint(unsigned),
-        }),
-        resultProfileId,
-      )
-      if (
-        !this.isCurrentOperation(session, generation, 'SAVING') ||
-        !this.hasCurrentAuthContext(session)
-      ) {
+      const saved = PredictionResultConfigurationSchema.parse({
+        ...unsigned,
+        fingerprint: predictionResultFingerprint(unsigned),
+      })
+      await this.resultRepository.save(saved, resultProfileId)
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        saveOutcome: {
+          local: 'saved',
+          projection: 'not_attempted',
+          runtime: 'not_requested',
+          warning: null,
+        },
+      })
+      session.pendingSync = {
+        captureFingerprint: captureProfile.configurationFingerprint,
+        resultFingerprint: saved.fingerprint,
+        requests: captureProfile.isActive
+          ? [
+              { path: '/api/streamer/result-trigger-area', body: triggerPayload },
+              { path: '/api/streamer/result-data-area', body: dataPayload },
+            ]
+          : [],
+      }
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        this.cancelForAuthTransition()
         return session.view
       }
     } catch {
@@ -890,20 +870,174 @@ export class SetupSessionService {
         error: {
           code: 'RESULT_SETUP_LOCAL_COMMIT_FAILED',
           message:
-            'Both result areas were saved remotely, but the local atomic commit failed. Local configuration remains inactive.',
+            'Result zones could not be saved locally. The server projection was not changed.',
+        },
+        saveOutcome: {
+          local: 'failed',
+          projection: 'not_attempted',
+          runtime: 'not_requested',
+          warning: null,
         },
       })
       return session.view
     }
+    return this.completeSaved(session, generation, false)
+  }
+
+  private async completeSaved(
+    session: InternalSession,
+    generation: number,
+    restartCapture: boolean,
+    recheck = false,
+  ): Promise<SetupSessionView> {
     session.frame = null
     session.legacyTriggerProfile = null
+    let projection: 'synced' | 'failed' | 'not_required'
+    try {
+      projection = await this.syncSaved(session, recheck)
+    } catch (error) {
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        this.cancelForAuthTransition()
+        return session.view
+      }
+      if (error instanceof ApplicationError && error.code === 'CAPTURE_PROFILE_STALE') {
+        session.commitLocked = false
+        session.view = SetupSessionViewSchema.parse({
+          ...session.view,
+          state: 'COMMITTED',
+          generation: generation + 1,
+          error: error.toPublicError(),
+          saveOutcome: {
+            local: 'saved',
+            projection: 'failed',
+            runtime: 'not_requested',
+            warning: 'SETUP_SYNC_FAILED',
+          },
+        })
+        return session.view
+      }
+      projection = 'failed'
+    }
+    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (!this.hasCurrentAuthContext(session)) {
+      this.cancelForAuthTransition()
+      return session.view
+    }
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      saveOutcome: {
+        local: 'saved',
+        projection,
+        runtime: session.view.saveOutcome?.runtime ?? 'not_requested',
+        warning: projection === 'failed' ? 'SETUP_SYNC_FAILED' : null,
+      },
+    })
+    let runtime = session.view.saveOutcome?.runtime ?? 'not_requested'
+    if (restartCapture) {
+      try {
+        runtime = await this.#captureCommitted(true)
+      } catch {
+        runtime = 'failed'
+      }
+    }
+    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+    if (!this.hasCurrentAuthContext(session)) {
+      this.cancelForAuthTransition()
+      return session.view
+    }
+    session.commitLocked = false
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       state: 'COMMITTED',
       generation: generation + 1,
       error: null,
+      saveOutcome: {
+        local: 'saved',
+        projection,
+        runtime,
+        warning:
+          projection === 'failed'
+            ? 'SETUP_SYNC_FAILED'
+            : runtime === 'failed'
+              ? 'SETUP_RUNTIME_FAILED'
+              : null,
+      },
     })
+    if (projection !== 'failed') delete session.pendingSync
     return session.view
+  }
+
+  private async syncSaved(
+    session: InternalSession,
+    recheck: boolean,
+  ): Promise<'synced' | 'failed' | 'not_required'> {
+    const pending = session.pendingSync
+    const target = session.profileTarget
+    if (pending === undefined || pending.requests.length === 0) return 'not_required'
+    if (target === null || !this.hasCurrentAuthContext(session)) return 'failed'
+    if (recheck) {
+      const current = await this.repository.get(target.userId, target.profileId)
+      const collection = await this.repository.list(target.userId)
+      const result =
+        pending.resultFingerprint === undefined
+          ? null
+          : await this.resultRepository?.load(target.userId, target.profileId)
+      if (
+        current?.configuration.fingerprint !== pending.captureFingerprint ||
+        collection?.activeProfileId !== target.profileId ||
+        (pending.resultFingerprint !== undefined &&
+          result?.fingerprint !== pending.resultFingerprint)
+      ) {
+        throw new ApplicationError(
+          'CAPTURE_PROFILE_STALE',
+          'Reload the saved profile before syncing changed calibration',
+        )
+      }
+    }
+    const token = await this.auth.getAccessToken()
+    if (token === null || !this.hasCurrentAuthContext(session)) return 'failed'
+    for (const request of pending.requests) {
+      const result = await this.api.request({
+        method: 'POST',
+        ...request,
+        accessToken: token,
+        schema: SaveResponseSchema,
+        signal: session.controller.signal,
+      })
+      if (
+        !result.ok ||
+        !this.hasCurrentAuthContext(session) ||
+        session.controller.signal.aborted
+      )
+        return 'failed'
+    }
+    return 'synced'
+  }
+
+  retrySync(sessionId: string, generation: number): Promise<SetupSessionView> {
+    return this.#runCaptureCommit(async () => {
+      const session = this.#session
+      if (session?.view.sessionId !== sessionId || session.view.generation !== generation)
+        throw new ApplicationError('SETUP_SESSION_STALE', 'Setup session changed')
+      if (!this.hasCurrentAuthContext(session))
+        throw new ApplicationError(
+          'AUTH_CONTEXT_CHANGED',
+          'The signed-in session changed',
+        )
+      if (
+        session.view.state !== 'COMMITTED' ||
+        session.view.saveOutcome?.local !== 'saved' ||
+        !['failed', 'not_attempted'].includes(session.view.saveOutcome.projection)
+      )
+        throw new ApplicationError(
+          'SETUP_STATE_INVALID',
+          'There is no failed saved projection to retry',
+        )
+      session.commitLocked = true
+      session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'SAVING' })
+      return this.completeSaved(session, generation, false, true)
+    })
   }
 
   private resultCommitFailure(
@@ -961,6 +1095,24 @@ export class SetupSessionService {
 
   cancelForAuthTransition(): void {
     const session = this.#session
+    if (session !== null) {
+      if (
+        session.pendingSync !== undefined &&
+        session.view.saveOutcome?.projection === 'not_attempted'
+      ) {
+        const projection =
+          session.pendingSync.requests.length === 0 ? 'not_required' : 'failed'
+        session.view = SetupSessionViewSchema.parse({
+          ...session.view,
+          saveOutcome: {
+            ...session.view.saveOutcome,
+            projection,
+            warning: projection === 'failed' ? 'SETUP_SYNC_FAILED' : null,
+          },
+        })
+      }
+      delete session.pendingSync
+    }
     if (
       session === null ||
       ['COMMITTED', 'CANCELLED', 'FAILED'].includes(session.view.state)
@@ -984,6 +1136,12 @@ export class SetupSessionService {
     if (session?.view.sessionId !== sessionId || session.view.generation !== generation) {
       throw new ApplicationError('SETUP_SESSION_STALE', 'Setup session is stale')
     }
+    if (!this.hasCurrentAuthContext(session)) {
+      throw new ApplicationError(
+        'AUTH_CONTEXT_CHANGED',
+        'The signed-in session changed while setup was open',
+      )
+    }
     return ['COMMITTED', 'CANCELLED', 'FAILED'].includes(session.view.state)
       ? session.view
       : this.cancel(sessionId, generation)
@@ -1001,7 +1159,7 @@ export class SetupSessionService {
     return CaptureStatusSchema.parse({
       configured: config !== null,
       revision: config?.revision ?? null,
-      sourceLabel: config?.source.label ?? null,
+      sourceLabel: config?.sourceBinding.identity.label ?? null,
     })
   }
 

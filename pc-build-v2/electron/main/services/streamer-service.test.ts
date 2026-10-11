@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_TITLE_SETTINGS } from './streamer-adapters'
 import { StreamerService } from './streamer-service'
+import { createApiError } from '../../../shared/errors/api-error'
+import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-ipc'
+import { ApiClient } from './api-client'
+import { z } from 'zod'
 
 const userView = {
   state: 'AUTHENTICATED' as const,
@@ -15,7 +19,12 @@ const userView = {
   error: null,
 }
 
-function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x') {
+function harness(
+  connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x',
+  activeProfile: object | null = null,
+  resultConfig: object = {},
+) {
+  let authGeneration = 1
   let activeMutations = 0
   let maxMutations = 0
   const request = vi.fn(
@@ -79,7 +88,7 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
   const shell = { openExternal: vi.fn().mockResolvedValue(undefined) }
   const clipboard = { writeText: vi.fn() }
   const service = new StreamerService(
-    { getView: () => userView } as never,
+    { getView: () => userView, getContextGeneration: () => authGeneration } as never,
     { request } as never,
     {
       load: vi.fn().mockResolvedValue({
@@ -91,9 +100,10 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
       }),
       save: vi.fn(),
     } as never,
-    { load: vi.fn().mockResolvedValue({}) } as never,
+    { load: vi.fn().mockResolvedValue(resultConfig) } as never,
     {
       load: vi.fn().mockResolvedValue({}),
+      getActive: vi.fn().mockResolvedValue(activeProfile),
       list: vi.fn().mockResolvedValue({
         activeProfileId: '00000000-0000-4000-8000-000000000001',
         profiles: [
@@ -105,7 +115,7 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
         ],
       }),
     } as never,
-    { getView: vi.fn().mockResolvedValue({ state: 'READY' }) } as never,
+    { getView: vi.fn().mockResolvedValue({ state: 'READY', runIntent: true }) } as never,
     {
       state: 'stopped',
       observationGeneration: 0,
@@ -119,10 +129,69 @@ function harness(connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x
     clipboard,
     () => new Date('2026-07-12T12:00:00.000Z'),
   )
-  return { service, request, shell, clipboard, maxMutations: () => maxMutations }
+  return {
+    service,
+    request,
+    shell,
+    clipboard,
+    maxMutations: () => maxMutations,
+    changeAuth: () => ++authGeneration,
+  }
 }
 
 describe('StreamerService', () => {
+  it.each([
+    'ACCOUNT_TAG_INVALID',
+    'ACCOUNT_NOT_FOUND',
+    'ACCOUNT_LIMIT_REACHED',
+    'CLASH_API_UNAVAILABLE',
+    'ACCOUNT_SAVE_UNAVAILABLE',
+    'UNAUTHORIZED',
+    'VALIDATION_FAILED',
+  ] as const)('returns an IPC-safe account error: %s', async (code) => {
+    const test = harness()
+    test.request.mockResolvedValueOnce({
+      ok: false,
+      error: createApiError(code, 'bounded detail', false, 400),
+    } as never)
+    const result = AccountMutationResultSchema.parse(
+      await test.service.addTitleAccount('#P0Y', 'Alias'),
+    )
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: code === 'VALIDATION_FAILED' ? 'UNKNOWN' : code,
+        detail: code === 'VALIDATION_FAILED' ? null : 'bounded detail',
+      },
+    })
+    expect(test.request).toHaveBeenCalledOnce()
+  })
+  it.each(['TITLE_UPDATE_FAILED', 'REFRESH_FAILED'] as const)(
+    'distinguishes saved account warning: %s',
+    async (warning) => {
+      const test = harness()
+      const original = test.request.getMockImplementation()
+      if (original === undefined) throw new Error('Missing request fixture')
+      test.request.mockImplementation(async (input) => {
+        if (input.method === 'POST')
+          return {
+            ok: true,
+            status: 200,
+            data: {
+              success: true,
+              ...(warning === 'TITLE_UPDATE_FAILED' ? { warning } : {}),
+            },
+          } as never
+        if (warning === 'REFRESH_FAILED' && input.path.endsWith('/title/status'))
+          throw new Error('refresh failed')
+        return original(input)
+      })
+      const result = AccountMutationResultSchema.parse(
+        await test.service.addTitleAccount('#P0Y', 'Alias'),
+      )
+      expect(result).toMatchObject({ ok: true, warning })
+    },
+  )
   it('retains valid sections when a title response reports success false', async () => {
     const test = harness()
     await test.service.refresh()
@@ -295,6 +364,318 @@ describe('StreamerService', () => {
     })
     await expect(command(test.service)).rejects.toMatchObject({
       code: 'STREAMER_COMMAND_FAILED',
+    })
+  })
+
+  it('projects authoritative readiness and unknown sections separately', async () => {
+    const test = harness()
+    await test.service.refresh()
+    expect(await test.service.getReadiness()).toEqual({
+      twitchConnected: true,
+      accountsCount: 0,
+      monitoring: true,
+      captureConfigured: false,
+      resultZonesConfigured: false,
+      activeProfileId: null,
+    })
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing authenticated request mock')
+    test.request.mockImplementation((input) =>
+      input.path.endsWith('/auth/status')
+        ? Promise.reject(new Error('twitch unavailable'))
+        : original(input),
+    )
+    await test.service.refresh()
+    expect(await test.service.getReadiness()).toMatchObject({
+      twitchConnected: null,
+      monitoring: true,
+    })
+  })
+
+  it.each([true, false])(
+    'derives result-zone readiness from the active profile fingerprint: %s',
+    async (matches) => {
+      const profileId = '00000000-0000-4000-8000-000000000001'
+      const active = {
+        profile: {
+          profileId,
+          configuration: { revision: 1, fingerprint: 'a'.repeat(64) },
+        },
+      }
+      const result = {
+        captureProfileId: profileId,
+        captureConfigurationRevision: 1,
+        captureConfigurationFingerprint: (matches ? 'a' : 'b').repeat(64),
+      }
+      const test = harness(undefined, active, result)
+      await test.service.refresh()
+      expect(await test.service.getReadiness()).toMatchObject({
+        captureConfigured: true,
+        resultZonesConfigured: matches,
+        activeProfileId: profileId,
+      })
+    },
+  )
+
+  it('returns typed preview/domain failures, retaining warnings after committed mutations', async () => {
+    const test = harness()
+    vi.spyOn(test.service, 'previewTitle').mockResolvedValue({
+      previewTitle: 'Real server title',
+      characterCount: 17,
+      warnings: ['Server warning'],
+    })
+    expect(
+      await test.service.execute({
+        action: 'title.preview',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({
+      ok: true,
+      preview: { previewTitle: 'Real server title', warnings: ['Server warning'] },
+    })
+    expect(
+      await test.service.execute({ action: 'chat.toggle', enabled: 'invalid' }),
+    ).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } })
+    expect(
+      await test.service.execute({ action: 'accounts.add', tag: '#BAD', alias: 'Alias' }),
+    ).toMatchObject({ ok: false, error: { code: 'ACCOUNT_TAG_INVALID' } })
+    test.request.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: false,
+        error: createApiError('ACCOUNT_NOT_FOUND', 'Account not found', false, 404),
+      } as never),
+    )
+    expect(
+      await test.service.execute({ action: 'accounts.remove', tag: '#P0Y' }),
+    ).toMatchObject({ ok: false, error: { code: 'ACCOUNT_NOT_FOUND' } })
+    vi.spyOn(test.service, 'refresh').mockRejectedValueOnce(new Error('refresh failed'))
+    expect(
+      await test.service.execute({ action: 'chat.toggle', enabled: true }),
+    ).toMatchObject({ ok: true, warnings: ['REFRESH_FAILED'] })
+  })
+
+  it('re-enables using the authoritative existing alias via the deliberate upsert', async () => {
+    const test = harness()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing authenticated request mock')
+    test.request.mockImplementation(async (input) =>
+      input.path.endsWith('/title/status')
+        ? ({
+            ok: true,
+            status: 200,
+            data: {
+              success: true,
+              settings: {},
+              accounts: [
+                { tag: 'P0Y', alias: 'Existing', name: 'Player', enabled: false },
+              ],
+            },
+          } as never)
+        : original(input),
+    )
+    expect(
+      await test.service.execute({ action: 'accounts.reenable', tag: '#p0y' }),
+    ).toMatchObject({ ok: true })
+    expect(test.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/streamer/accounts',
+        body: { tag: '#P0Y', alias: 'Existing' },
+      }),
+    )
+    expect(
+      await test.service.execute({ action: 'accounts.reenable', tag: '#JCU' }),
+    ).toMatchObject({ ok: false, error: { code: 'ACCOUNT_NOT_FOUND' } })
+  })
+
+  it('applies immediately through existing title fields, never asserts an unverified Twitch success', async () => {
+    const test = harness()
+    expect(
+      await test.service.execute({
+        action: 'title.apply',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'TITLE_APPLY_UNAVAILABLE' } })
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing authenticated request mock')
+    test.request.mockImplementation(async (input) =>
+      input.path.endsWith('/title/status')
+        ? ({
+            ok: true,
+            status: 200,
+            data: {
+              success: true,
+              settings: {},
+              accounts: [],
+              session: { total_wins: 1 },
+            },
+          } as never)
+        : original(input),
+    )
+    await test.service.refresh()
+    expect(
+      await test.service.execute({
+        action: 'title.apply',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({
+      ok: true,
+      titleApplication: 'unconfirmed',
+      warnings: ['TITLE_APPLICATION_UNCONFIRMED'],
+    })
+    expect(test.request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'POST', path: '/api/streamer/title/settings' }),
+    )
+    expect(
+      test.request.mock.calls.find(
+        ([input]) =>
+          input.method === 'POST' && input.path === '/api/streamer/title/settings',
+      )?.[0].body,
+    ).toMatchObject({ enabled: true, paused: false })
+    test.request.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: false,
+        error: createApiError(
+          'SERVER_ERROR',
+          'Настройки сохранены, но Twitch не обновил название. Повторите попытку.',
+          true,
+          502,
+        ),
+      } as never),
+    )
+    expect(
+      await test.service.execute({
+        action: 'title.save',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({
+      ok: true,
+      titleApplication: 'failed',
+      warnings: ['TITLE_UPDATE_FAILED'],
+    })
+    test.request.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: false,
+        error: createApiError('SERVER_ERROR', 'Bad gateway', true, 502),
+      } as never),
+    )
+    expect(
+      await test.service.execute({
+        action: 'title.save',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'SERVER_ERROR' } })
+  })
+
+  it('fences both in-flight and queued mutations on auth change', async () => {
+    const test = harness()
+    const gate = Promise.withResolvers<unknown>()
+    test.request.mockImplementationOnce(() => gate.promise as never)
+    const first = test.service.execute({ action: 'chat.toggle', enabled: true })
+    const second = test.service.execute({
+      action: 'title.save',
+      settings: DEFAULT_TITLE_SETTINGS,
+    })
+    await vi.waitFor(() => expect(test.request).toHaveBeenCalledOnce())
+    test.changeAuth()
+    gate.resolve({ ok: true, status: 200, data: { success: true } })
+    expect(await first).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(await second).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(test.request).toHaveBeenCalledOnce()
+  })
+})
+
+describe('narrow widget toggle ownership', () => {
+  it('refreshes current settings before changing only enabled', async () => {
+    const test = harness()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing authenticated request mock')
+    test.request.mockImplementation(async (input) => {
+      const result = await original(input)
+      if (input.path.endsWith('/opponent-widget/status')) {
+        return {
+          ...result,
+          data: {
+            ...result.data,
+            settings: {
+              opponent_enabled: false,
+              streamer_stats_enabled: false,
+              preview_mode: true,
+            },
+          },
+        } as never
+      }
+      return result
+    })
+    expect(
+      await test.service.execute({ action: 'widget.enabled', enabled: true }),
+    ).toMatchObject({ ok: true })
+    const mutation = test.request.mock.calls.find(
+      ([input]) =>
+        input.method === 'PUT' && input.path === '/api/streamer/opponent-widget/settings',
+    )
+    expect(mutation?.[0].body).toMatchObject({
+      enabled: true,
+      opponent_enabled: false,
+      streamer_stats_enabled: false,
+      preview_mode: true,
+    })
+  })
+
+  it('does not write another auth generation after an awaited preflight', async () => {
+    const test = harness()
+    const gate = Promise.withResolvers<unknown>()
+    test.request.mockImplementationOnce(() => gate.promise as never)
+    const pending = test.service.execute({ action: 'widget.enabled', enabled: true })
+    await vi.waitFor(() => expect(test.request).toHaveBeenCalled())
+    test.changeAuth()
+    gate.resolve({ ok: true, status: 200, data: { success: true } })
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(
+      test.request.mock.calls.filter(([input]) => input.method !== 'GET'),
+    ).toHaveLength(0)
+  })
+})
+
+describe('review regression stable title failure receipts', () => {
+  it('#14 accepts the stable server code without relying on localized wording', async () => {
+    const test = harness()
+    const client = new ApiClient(
+      { apiUrl: 'https://example.test' } as never,
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 'TITLE_SAVED_APPLY_FAILED',
+            detail: 'Wording changed',
+          }),
+          { status: 502 },
+        ),
+      ),
+      { debug: vi.fn(), warn: vi.fn() },
+    )
+    const response = await client.request({
+      method: 'POST',
+      path: '/api/streamer/title/settings',
+      schema: z.object({ success: z.literal(true) }).loose(),
+    })
+    test.request.mockImplementationOnce(() => Promise.resolve(response as never))
+    expect(
+      await test.service.execute({
+        action: 'title.save',
+        settings: DEFAULT_TITLE_SETTINGS,
+      }),
+    ).toMatchObject({
+      ok: true,
+      titleApplication: 'failed',
+      warnings: ['TITLE_UPDATE_FAILED'],
     })
   })
 })

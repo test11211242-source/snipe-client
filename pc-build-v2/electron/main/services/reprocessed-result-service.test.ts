@@ -28,7 +28,7 @@ function harness() {
   const monitor = {
     getPreferences: vi
       .fn<() => Promise<MonitorPreferences>>()
-      .mockResolvedValue({ searchMode: 'fast', deckMode: 'pol' }),
+      .mockResolvedValue({ deckMode: 'pol' }),
     addExternalResult: vi.fn<(result: unknown) => void>(),
   }
   const service = new ReprocessedResultService(
@@ -86,6 +86,14 @@ describe('ReprocessedResultService', () => {
       searchedNickname: 'Opponent',
       player: { name: 'Opponent', tag: '#ABC', rating: null, clan: null },
       decks: [],
+      reprocessed: true,
+      capturePolicy: null,
+      sessionId: null,
+      triggerId: null,
+      attemptId: null,
+      profileId: null,
+      calibrationRevision: null,
+      repeat: null,
     })
     expect(safeResult.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(safeResult).not.toHaveProperty('raw')
@@ -97,7 +105,7 @@ describe('ReprocessedResultService', () => {
 
   it('fences an event whose preference load completes after auth loss', async () => {
     const test = harness()
-    const preferences = deferred<{ searchMode: 'fast'; deckMode: 'pol' }>()
+    const preferences = deferred<MonitorPreferences>()
     test.monitor.getPreferences.mockReturnValueOnce(preferences.promise)
     test.service.start('42')
     const processing = test.emit({
@@ -107,7 +115,7 @@ describe('ReprocessedResultService', () => {
     })
     test.loseAuth()
     test.service.stop()
-    preferences.resolve({ searchMode: 'fast', deckMode: 'pol' })
+    preferences.resolve({ deckMode: 'pol' })
     await processing
     expect(test.monitor.addExternalResult).not.toHaveBeenCalled()
   })

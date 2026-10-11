@@ -11,6 +11,7 @@ export const MAIN_WIDGET_IPC_CHANNELS = Object.freeze({
   getStatus: 'main-widget:get-status',
   show: 'main-widget:show',
   toggle: 'main-widget:toggle',
+  getCardAsset: 'main-widget:get-card-asset',
   updateSettings: 'main-widget:update-settings',
 })
 

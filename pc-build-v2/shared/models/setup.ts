@@ -24,6 +24,16 @@ export const SetupStateSchema = z.enum([
   'FAILED',
 ])
 
+export const SetupSaveOutcomeSchema = z
+  .object({
+    local: z.enum(['saved', 'failed']),
+    projection: z.enum(['synced', 'failed', 'not_required', 'not_attempted']),
+    runtime: z.enum(['ready', 'waiting_source', 'failed', 'not_requested']),
+    warning: z.enum(['SETUP_SYNC_FAILED', 'SETUP_RUNTIME_FAILED']).nullable(),
+  })
+  .strict()
+export type SetupRuntimeOutcome = z.infer<typeof SetupSaveOutcomeSchema>['runtime']
+
 export const SetupSessionViewSchema = z
   .object({
     kind: z.enum(['capture', 'predictionResult']).default('capture'),
@@ -37,14 +47,15 @@ export const SetupSessionViewSchema = z
     regions: z
       .object({
         trigger: NormalizedRectSchema.nullable(),
-        normal: NormalizedRectSchema.nullable(),
-        precise: NormalizedRectSchema.nullable(),
+        nickname: NormalizedRectSchema.nullable(),
+        topLeftEvidence: NormalizedRectSchema.nullable(),
         resultTrigger: NormalizedRectSchema.nullable().default(null),
         resultData: NormalizedRectSchema.nullable().default(null),
       })
       .strict(),
     triggerProfile: TriggerProfileSchema.nullable(),
     error: PublicErrorSchema.nullable(),
+    saveOutcome: SetupSaveOutcomeSchema.nullable().default(null),
   })
   .strict()
 

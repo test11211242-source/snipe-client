@@ -1,0 +1,85 @@
+/* CR Tools V2 — base/reset. Only token values, no component styles. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: var(--fw-regular) var(--fs-sm) / var(--lh-base) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+}
+
+:where(h1, h2, h3, h4, p) {
+  margin: 0;
+}
+
+:where(button) {
+  cursor: pointer;
+}
+
+:where(button:disabled) {
+  cursor: not-allowed;
+}
+
+/* One visible focus style for every interactive element. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Reduced motion: tokens are zeroed by tokens.css; this covers keyframe animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+}
+
+:root[data-reduced-motion='true'] *,
+:root[data-reduced-motion='true'] *::before,
+:root[data-reduced-motion='true'] *::after {
+  animation-duration: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0ms !important;
+}

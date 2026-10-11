@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import type { StructuredLogger } from './structured-logger'
 
-export const SETTINGS_VERSION = 1 as const
+export const SETTINGS_VERSION = 2 as const
 
 export const SettingsSchema = z
   .object({
@@ -21,6 +21,9 @@ export const SettingsSchema = z
       .object({
         launchAtStartup: z.boolean(),
         diagnosticsEnabled: z.boolean(),
+        autoStartMonitoring: z.boolean().default(true),
+        closeToTray: z.boolean().default(true),
+        notifyOpponentFound: z.boolean().default(true),
       })
       .strict(),
   })
@@ -46,6 +49,9 @@ export function createDefaultSettings(): Settings {
     application: {
       launchAtStartup: false,
       diagnosticsEnabled: false,
+      autoStartMonitoring: true,
+      closeToTray: true,
+      notifyOpponentFound: true,
     },
   }
 }
@@ -68,6 +74,29 @@ export function parseAndMigrateSettings(input: unknown): Settings {
     })
   }
 
+  if (version === 1) {
+    const previous = z
+      .object({
+        version: z.literal(1),
+        appearance: SettingsSchema.shape.appearance,
+        application: z
+          .object({
+            launchAtStartup: z.boolean(),
+            diagnosticsEnabled: z.boolean(),
+          })
+          .strict(),
+      })
+      .strict()
+      .parse(input)
+    return SettingsSchema.parse({
+      ...previous,
+      version: SETTINGS_VERSION,
+      application: {
+        ...createDefaultSettings().application,
+        ...previous.application,
+      },
+    })
+  }
   return SettingsSchema.parse(input)
 }
 
@@ -101,11 +130,21 @@ export class SettingsRepository {
     private readonly filePath: string,
     private readonly logger: StructuredLogger,
     private readonly fs: SettingsFileSystem = nodeSettingsFileSystem,
+    private readonly legacyFilePath?: string,
   ) {}
 
   async load(): Promise<Settings> {
     try {
-      const content = await this.fs.readFile(this.filePath, 'utf8')
+      let content: string
+      try {
+        content = await this.fs.readFile(this.filePath, 'utf8')
+      } catch (error) {
+        if (!isFileNotFound(error) || this.legacyFilePath === undefined) throw error
+        content = await this.fs.readFile(this.legacyFilePath, 'utf8')
+        const migrated = parseAndMigrateSettings(JSON.parse(content))
+        await this.save(migrated)
+        return migrated
+      }
       return parseAndMigrateSettings(JSON.parse(content) as unknown)
     } catch (error) {
       if (!isFileNotFound(error)) {

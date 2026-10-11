@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { AppSnapshotResultSchema, HelloPayloadSchema, HelloResultSchema } from './app'
+import {
+  AppSettingsUpdateSchema,
+  AppSnapshotResultSchema,
+  HelloPayloadSchema,
+  HelloResultSchema,
+} from './app'
 
 describe('application IPC contracts', () => {
   it('parses exact hello request and response envelopes', () => {
@@ -30,5 +35,17 @@ describe('application IPC contracts', () => {
         settingsVersion: 1,
       }),
     ).toThrow()
+  })
+})
+
+describe('review regression application setting patches', () => {
+  it('#18 rejects explicit undefined instead of resetting a saved setting to its default', () => {
+    expect(AppSettingsUpdateSchema.safeParse({ closeToTray: undefined }).success).toBe(
+      false,
+    )
+    expect(AppSettingsUpdateSchema.parse({ closeToTray: false })).toEqual({
+      closeToTray: false,
+    })
+    expect(AppSettingsUpdateSchema.parse({})).toEqual({})
   })
 })

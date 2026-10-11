@@ -31,6 +31,7 @@ import {
   ElectronCaptureSourceProvider,
   type WindowsPhysicalDisplay,
 } from './electron-capture-source-provider'
+import { CaptureSourceRegistry } from './capture-source-registry'
 
 beforeEach(() => {
   electron.displays = [
@@ -106,14 +107,124 @@ describe('ElectronCaptureSourceProvider display mapping', () => {
     const provider = new ElectronCaptureSourceProvider(() =>
       Promise.reject(new Error('unavailable')),
     )
-    const displays = await provider.displays()
-    expect(displays).toHaveLength(2)
-    expect(displays[0]).not.toHaveProperty('deviceName')
-    expect(displays[1]).not.toHaveProperty('deviceName')
+    await expect(provider.displays()).rejects.toMatchObject({
+      code: 'SOURCE_METADATA_UNAVAILABLE',
+    })
   })
 })
 
 describe('ElectronCaptureSourceProvider window metadata', () => {
+  it.each(['closes', 'process-exits'] as const)(
+    'keeps healthy windows usable when an unrelated window %s during lookup',
+    async (mode) => {
+      electron.sources = ['42', '43'].map((handle) => ({
+        id: `window:${handle}:0`,
+        name: handle === '42' ? 'Transient' : 'Game',
+        display_id: '',
+        thumbnail: { isEmpty: () => false },
+      }))
+      const metadata = vi.fn(() => {
+        if (mode === 'closes')
+          electron.sources = electron.sources.filter(
+            (source) => source.id !== 'window:42:0',
+          )
+        return Promise.resolve([
+          { windowHwnd: '43', ownerProcessId: 123, executableLabel: 'Game.exe' },
+        ])
+      })
+      const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+      await expect(provider.enumerate({ width: 0, height: 0 })).resolves.toEqual([
+        expect.objectContaining({ id: 'window:42:0', metadataAvailable: false }),
+        expect.objectContaining({ id: 'window:43:0', metadataAvailable: true }),
+      ])
+      const registry = new CaptureSourceRegistry(provider)
+      const listed = await registry.enumerate()
+      expect(
+        listed.sources.find((source) => source.label === 'Game')?.captureSupported,
+      ).toBe(true)
+      if (mode === 'process-exits') {
+        const disabled = listed.sources.find((source) => source.label === 'Transient')
+        if (disabled === undefined) throw new Error('Missing disabled source')
+        expect(disabled.captureSupported).toBe(false)
+        await expect(
+          registry.resolve(disabled.sourceKey, disabled.revision),
+        ).rejects.toMatchObject({ code: 'SOURCE_METADATA_UNAVAILABLE' })
+      }
+      await expect(
+        registry.resolvePreference({
+          kind: 'window',
+          label: 'Game',
+          titleHint: 'Game',
+          executableLabel: 'Game.exe',
+          windowHwnd: '43',
+        }),
+      ).resolves.toEqual({ kind: 'window', windowHwnd: '43' })
+      await expect(
+        registry.resolvePreference({
+          kind: 'window',
+          label: 'Transient',
+          titleHint: 'Transient',
+          executableLabel: 'Transient.exe',
+          windowHwnd: '42',
+        }),
+      ).rejects.toMatchObject({
+        code: mode === 'closes' ? 'SOURCE_NOT_FOUND' : 'SOURCE_METADATA_UNAVAILABLE',
+      })
+    },
+  )
+
+  it('re-checks a bound window that closes during metadata lookup', async () => {
+    electron.sources = [
+      {
+        id: 'window:42:0',
+        name: 'Game',
+        display_id: '',
+        thumbnail: { isEmpty: () => false },
+      },
+    ]
+    const metadata = vi.fn(() => {
+      electron.sources = []
+      return Promise.resolve([])
+    })
+    const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+    await expect(provider.resolveWindow('42')).resolves.toBeUndefined()
+  })
+  it.each(['reject', 'missing', 'executable'])(
+    'fails closed with typed unavailable metadata: %s',
+    async (mode) => {
+      electron.sources = [
+        {
+          id: 'window:42:0',
+          name: 'Private title',
+          display_id: '',
+          thumbnail: { isEmpty: () => false },
+        },
+      ]
+      const metadata = vi.fn()
+      if (mode === 'reject')
+        metadata.mockRejectedValue(new Error('helper timeout with private output'))
+      else
+        metadata.mockResolvedValue(
+          mode === 'missing'
+            ? []
+            : [{ windowHwnd: '42', ownerProcessId: 123, executableLabel: null }],
+        )
+      const provider = new ElectronCaptureSourceProvider(resolver([]), metadata)
+      if (mode === 'reject') {
+        await expect(provider.enumerate({ width: 0, height: 0 })).rejects.toMatchObject({
+          code: 'SOURCE_METADATA_UNAVAILABLE',
+        })
+      } else {
+        await expect(provider.enumerate({ width: 0, height: 0 })).resolves.toEqual([
+          expect.objectContaining({ id: 'window:42:0', metadataAvailable: false }),
+        ])
+      }
+      await expect(provider.resolveWindow('42')).rejects.toMatchObject({
+        code: 'SOURCE_METADATA_UNAVAILABLE',
+      })
+      await expect(provider.resolveWindow('99')).resolves.toBeUndefined()
+    },
+  )
   it('resolves only the selected window metadata and loads previews without PowerShell', async () => {
     electron.sources = ['42', '43', '44'].map((handle) => ({
       id: `window:${handle}:0`,

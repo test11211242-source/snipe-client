@@ -46,7 +46,7 @@ export class ReprocessedResultService {
     if (!this.isCurrent(generation, userId)) return
     const result = normalizeOcrResponse(data, { timestamp, ...preferences })
     if (!this.isCurrent(generation, userId)) return
-    this.monitor.addExternalResult(result)
+    this.monitor.addExternalResult({ ...result, reprocessed: true, repeat: null })
   }
 
   private isCurrent(generation: number, userId: string): boolean {

@@ -1,36 +1,50 @@
-import { GripVertical, LayoutGrid, Lock, Pin, Unlock, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
-import type { WidgetSettingsPatch, WidgetView } from '../../../shared/models/widget'
-import ratingIcon from './assets/rating.png'
+import {
+  WIDGET_MAX_HEIGHT,
+  WIDGET_MIN_HEIGHT,
+  type WidgetSettingsPatch,
+  type WidgetView,
+} from '../../../shared/models/widget'
+import { REPROCESSED_LABEL } from '../features/opponent/labels'
+import { OverlayCard } from './OverlayCard'
+import { selectOverlayModel } from './overlayModel'
 
 const OPACITY_STEP = 5
 const MIN_OPACITY_PERCENT = 55
 const MAX_OPACITY_PERCENT = 100
-const SAVE_FEEDBACK_DURATION_MS = 2_500
-const CARD_ASSET_RETRY_DELAYS_MS = [250, 750, 1_500] as const
-const CARD_ASSET_MAX_ATTEMPTS = CARD_ASSET_RETRY_DELAYS_MS.length + 1
-
-function isCancelled(signal: AbortSignal): boolean {
-  return signal.aborted
-}
+/** Content-height reports wait for layout (cards, scale) to settle. */
+const HEIGHT_REPORT_DELAY_MS = 120
 
 function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
   const leftBounds = left.settings.bounds
   const rightBounds = right.settings.bounds
   return (
-    left.result?.id === right.result?.id &&
+    left.result === right.result &&
     left.visible === right.visible &&
+    left.scale === right.scale &&
     left.settings.autoOpen === right.settings.autoOpen &&
     left.settings.alwaysOnTop === right.settings.alwaysOnTop &&
     left.settings.locked === right.settings.locked &&
     left.settings.opacity === right.settings.opacity &&
     left.settings.displayMode === right.settings.displayMode &&
+    left.settings.compactMode === right.settings.compactMode &&
+    left.monitorState === right.monitorState &&
+    left.monitorError?.code === right.monitorError?.code &&
+    left.runIntent === right.runIntent &&
+    left.search?.attemptId === right.search?.attemptId &&
+    left.search?.phase === right.search?.phase &&
+    left.search?.searchedNickname === right.search?.searchedNickname &&
     leftBounds.x === rightBounds.x &&
     leftBounds.y === rightBounds.y &&
     leftBounds.width === rightBounds.width &&
     leftBounds.height === rightBounds.height
   )
+}
+
+interface MutationOptions {
+  /** Size reports are not user settings: no pending state, no error notice. */
+  silent?: boolean
 }
 
 export function WidgetApp(): React.JSX.Element {
@@ -39,17 +53,18 @@ export function WidgetApp(): React.JSX.Element {
   const [failed, setFailed] = useState(false)
   const [pendingMutations, setPendingMutations] = useState(0)
   const [mutationError, setMutationError] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
   const [opacityDraft, setOpacityDraft] = useState(96)
   const [opacityDirty, setOpacityDirty] = useState(false)
-  const deckTabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const shellRef = useRef<HTMLElement | null>(null)
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const pendingMutationsRef = useRef(0)
   const opacityDraftRef = useRef(96)
   const opacityDirtyRef = useRef(false)
   const mountedRef = useRef(true)
+  const reportedHeightRef = useRef<number | null>(null)
 
   const saving = pendingMutations > 0
+  const loaded = view !== null
 
   useEffect(() => {
     mountedRef.current = true
@@ -72,12 +87,6 @@ export function WidgetApp(): React.JSX.Element {
       setFailed(false)
     })
   }, [])
-
-  useEffect(() => {
-    if (!saved) return
-    const timer = window.setTimeout(() => setSaved(false), SAVE_FEEDBACK_DURATION_MS)
-    return () => window.clearTimeout(timer)
-  }, [saved])
 
   useEffect(() => {
     let active = true
@@ -137,11 +146,15 @@ export function WidgetApp(): React.JSX.Element {
     }
   }, [])
 
-  const enqueueSettings = (patch: WidgetSettingsPatch): Promise<boolean> => {
-    pendingMutationsRef.current += 1
-    setPendingMutations((current) => current + 1)
-    setMutationError(null)
-    setSaved(false)
+  const enqueueSettings = (
+    patch: WidgetSettingsPatch,
+    { silent = false }: MutationOptions = {},
+  ): Promise<boolean> => {
+    if (!silent) {
+      pendingMutationsRef.current += 1
+      setPendingMutations((current) => current + 1)
+      setMutationError(null)
+    }
 
     const mutation = mutationQueueRef.current.then(async () => {
       const settings = await window.crToolsWidget.updateSettings(patch)
@@ -152,21 +165,56 @@ export function WidgetApp(): React.JSX.Element {
     const result = mutation.then(
       () => true,
       () => {
-        if (mountedRef.current) setMutationError('Не удалось сохранить настройку.')
+        if (mountedRef.current && !silent)
+          setMutationError('Не удалось сохранить настройку.')
         return false
       },
     )
     mutationQueueRef.current = result.then(() => undefined)
-    void result.then((updated) => {
+    void result.then(() => {
+      if (silent) return
       pendingMutationsRef.current -= 1
-      if (!mountedRef.current) return
-      setPendingMutations((current) => Math.max(0, current - 1))
-      if (updated && pendingMutationsRef.current === 0) setSaved(true)
+      if (mountedRef.current) setPendingMutations((current) => Math.max(0, current - 1))
     })
     return result
   }
 
   const enqueueSettingsEvent = useEffectEvent(enqueueSettings)
+
+  // Window height follows the content. The shell has no fixed height, so its measured
+  // height does not depend on the window height: a report never triggers another one.
+  useEffect(() => {
+    const shell = shellRef.current
+    if (!loaded || shell === null || typeof ResizeObserver === 'undefined') return
+    reportedHeightRef.current = null
+    let timer: number | undefined
+    const report = (): void => {
+      const height = Math.min(
+        WIDGET_MAX_HEIGHT,
+        Math.max(WIDGET_MIN_HEIGHT, Math.ceil(shell.getBoundingClientRect().height)),
+      )
+      if (reportedHeightRef.current === height) return
+      reportedHeightRef.current = height
+      void enqueueSettingsEvent({ contentHeight: height }, { silent: true }).then(
+        (ok) => {
+          if (!ok && reportedHeightRef.current === height) {
+            reportedHeightRef.current = null
+            if (mountedRef.current) timer = window.setTimeout(report, 1_000)
+          }
+        },
+      )
+    }
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(report, HEIGHT_REPORT_DELAY_MS)
+    })
+    observer.observe(shell)
+    timer = window.setTimeout(report, HEIGHT_REPORT_DELAY_MS)
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+    }
+  }, [loaded, view?.settings.compactMode, view?.scale])
 
   useEffect(() => {
     if (view === null || opacityDirtyRef.current) return
@@ -193,28 +241,12 @@ export function WidgetApp(): React.JSX.Element {
   }, [opacityDirty, opacityDraft])
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    const settings = view?.settings
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopImmediatePropagation()
       void window.crToolsWidget.hide()
       return
     }
-    if (settings === undefined || !event.ctrlKey || pendingMutationsRef.current > 0) {
-      return
-    }
-
-    const key = event.key.toLowerCase()
-    let patch: WidgetSettingsPatch | null = null
-    if (key === 'p') patch = { alwaysOnTop: !settings.alwaysOnTop }
-    if (key === 'l') patch = { locked: !settings.locked }
-    if (key === 'm') {
-      patch = { displayMode: settings.displayMode === 'deck' ? 'detailed' : 'deck' }
-    }
-    if (patch === null) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    void enqueueSettingsEvent(patch)
   })
 
   const handleWheel = useEffectEvent((event: WheelEvent) => {
@@ -235,7 +267,6 @@ export function WidgetApp(): React.JSX.Element {
     opacityDraftRef.current = next
     setOpacityDraft(next)
     setOpacityDirty(true)
-    setSaved(false)
   })
 
   useEffect(() => {
@@ -249,461 +280,43 @@ export function WidgetApp(): React.JSX.Element {
     }
   }, [])
 
-  const result = view?.result ?? null
-  const found = result?.kind === 'player_found' ? result : null
-  const resultId = result?.id ?? null
-  const requestedDeck = deckSelection.resultId === resultId ? deckSelection.index : 0
-  const selectedDeck = Math.min(
-    requestedDeck,
-    Math.max(0, (found?.decks.length ?? 1) - 1),
-  )
-  const deck = found?.decks[selectedDeck] ?? null
-  const compactMode = view?.settings.displayMode === 'deck'
-  const playerName =
-    found?.player.name ?? result?.searchedNickname ?? 'Ожидание соперника'
-  const feedback = saving
-    ? 'Сохраняем настройку...'
-    : (mutationError ?? (saved ? 'Настройка сохранена' : ''))
-
-  return (
-    <main
-      className="widget-shell"
-      data-locked={view?.settings.locked ?? false}
-      data-mode={compactMode ? 'compact' : 'full'}
-      data-pinned={view?.settings.alwaysOnTop ?? false}
-    >
-      <header className="widget-header">
-        <span
-          className="widget-drag-handle"
-          title={
-            view?.settings.locked === true ? 'Позиция заблокирована' : 'Перетащить виджет'
-          }
-        >
-          <GripVertical aria-hidden="true" size={16} />
-        </span>
-        <div className="player-info">
-          <h1 title={playerName}>{playerName}</h1>
-          {found?.player.rating !== null && found?.player.rating !== undefined && (
-            <span className="player-rating" aria-label={`Рейтинг ${found.player.rating}`}>
-              <img src={ratingIcon} className="rating-icon" aria-hidden="true" alt="" />
-              {found.player.rating.toLocaleString('ru-RU')}
-            </span>
-          )}
-        </div>
-
-        <div className="widget-controls" aria-label="Управление виджетом">
-          <ControlButton
-            active={view?.settings.alwaysOnTop ?? false}
-            label={
-              view?.settings.alwaysOnTop === true
-                ? 'Открепить от переднего плана'
-                : 'Закрепить поверх окон'
-            }
-            disabled={view === null || saving}
-            onClick={() => {
-              if (view !== null) {
-                void enqueueSettings({ alwaysOnTop: !view.settings.alwaysOnTop })
-              }
-            }}
-          >
-            <Pin aria-hidden="true" size={15} />
-          </ControlButton>
-          <ControlButton
-            active={view?.settings.locked ?? false}
-            label={
-              view?.settings.locked === true
-                ? 'Разблокировать позицию'
-                : 'Заблокировать позицию'
-            }
-            disabled={view === null || saving}
-            onClick={() => {
-              if (view !== null) void enqueueSettings({ locked: !view.settings.locked })
-            }}
-          >
-            {view?.settings.locked === true ? (
-              <Lock aria-hidden="true" size={15} />
-            ) : (
-              <Unlock aria-hidden="true" size={15} />
-            )}
-          </ControlButton>
-          <ControlButton
-            active={compactMode}
-            label={compactMode ? 'Полный вид' : 'Компактный вид'}
-            disabled={view === null || saving}
-            onClick={() => {
-              if (view !== null) {
-                void enqueueSettings({
-                  displayMode: view.settings.displayMode === 'deck' ? 'detailed' : 'deck',
-                })
-              }
-            }}
-          >
-            <LayoutGrid aria-hidden="true" size={15} />
-          </ControlButton>
-          <button
-            className="widget-control close-button"
-            type="button"
-            aria-label="Скрыть виджет"
-            title="Скрыть виджет"
-            onClick={() => void window.crToolsWidget.hide()}
-          >
-            <X aria-hidden="true" size={16} />
-          </button>
-        </div>
-      </header>
-
-      <div className="widget-content">
-        {failed && view === null ? (
-          <EmptyState
-            tone="danger"
-            title="Виджет временно недоступен"
-            detail="Повторная проверка выполняется."
-          />
-        ) : view === null ? (
-          <EmptyState
-            loading
-            title="Загрузка результата"
-            detail="Подключение к локальному монитору."
-          />
-        ) : found === null ? (
-          <EmptyResult result={result} />
-        ) : found.decks.length === 0 ? (
-          <EmptyState
-            title="Колоды не найдены"
-            detail="Профиль игрока получен без колод."
-          />
-        ) : (
-          <section
-            className="deck-stage"
-            aria-label={`Колоды игрока ${found.player.name}`}
-          >
-            <div
-              className="card-grid"
-              id={`deck-panel-${selectedDeck}`}
-              role={found.decks.length > 1 ? 'tabpanel' : 'group'}
-              aria-label={found.decks.length === 1 ? 'Карты колоды' : undefined}
-              aria-labelledby={
-                found.decks.length > 1 ? `deck-tab-${selectedDeck}` : undefined
-              }
-            >
-              {deck !== null && (
-                <DeckCards
-                  key={`${found.id}-${selectedDeck}`}
-                  resultId={found.id}
-                  deckIndex={selectedDeck}
-                  cards={deck.cards}
-                />
-              )}
-            </div>
-            {found.decks.length > 1 && (
-              <div className="deck-switcher" role="tablist" aria-label="Выбор колоды">
-                {found.decks.map((item, index) => {
-                  const label = item.label ?? `Колода ${index + 1}`
-                  return (
-                    <button
-                      key={`${item.label ?? 'deck'}-${index}`}
-                      type="button"
-                      role="tab"
-                      id={`deck-tab-${index}`}
-                      aria-controls={`deck-panel-${index}`}
-                      aria-label={`Колода ${index + 1}: ${label}`}
-                      aria-selected={selectedDeck === index}
-                      tabIndex={selectedDeck === index ? 0 : -1}
-                      onClick={() => setDeckSelection({ resultId: found.id, index })}
-                      onKeyDown={(event) => {
-                        let nextIndex: number | null = null
-                        if (event.key === 'ArrowRight') {
-                          nextIndex = (index + 1) % found.decks.length
-                        }
-                        if (event.key === 'ArrowLeft') {
-                          nextIndex =
-                            (index - 1 + found.decks.length) % found.decks.length
-                        }
-                        if (event.key === 'Home') nextIndex = 0
-                        if (event.key === 'End') nextIndex = found.decks.length - 1
-                        if (nextIndex === null) return
-                        event.preventDefault()
-                        setDeckSelection({ resultId: found.id, index: nextIndex })
-                        deckTabRefs.current[nextIndex]?.focus()
-                      }}
-                      ref={(node) => {
-                        deckTabRefs.current[index] = node
-                      }}
-                    />
-                  )
-                })}
-              </div>
-            )}
-          </section>
-        )}
-      </div>
-
-      {!compactMode && found !== null && deck !== null && (
-        <footer className="deck-info">
-          <div>
-            <span>Колода</span>
-            <strong title={deck.label ?? undefined}>
-              {deck.label ?? `Колода ${selectedDeck + 1}`}
-            </strong>
-          </div>
-          <div>
-            <strong>{deck.cards.length} / 8</strong>
-            <span>карт</span>
-          </div>
-        </footer>
-      )}
-
-      {failed && view !== null && (
-        <div className="widget-stale-notice" role="status">
-          Показан последний результат
-        </div>
-      )}
-      <div className="widget-feedback" data-visible={feedback !== ''} aria-live="polite">
-        {feedback}
-      </div>
-    </main>
-  )
-}
-
-function ControlButton({
-  active,
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean
-  label: string
-  disabled: boolean
-  onClick: () => void
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <button
-      className="widget-control"
-      data-active={active}
-      disabled={disabled}
-      type="button"
-      aria-label={label}
-      aria-pressed={active}
-      title={label}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  )
-}
-
-function EmptyResult({ result }: { result: WidgetView['result'] }): React.JSX.Element {
-  if (result === null) {
+  if (view === null) {
     return (
-      <EmptyState
-        title="Ожидание соперника"
-        detail="Виджет обновится после найденного игрока."
-        deckPlaceholder
-      />
+      <main aria-busy={!failed} aria-live="polite" ref={shellRef}>
+        <p className="sr-only">
+          {failed
+            ? 'Оверлей временно недоступен. Повторная проверка выполняется.'
+            : 'Загрузка…'}
+        </p>
+      </main>
     )
   }
-  if (result.kind === 'player_found') {
-    return (
-      <EmptyState title="Ожидание соперника" detail="Новый результат пока не получен." />
-    )
-  }
-  const title =
-    result.kind === 'player_not_found'
-      ? 'Игрок не найден'
-      : result.kind === 'recognition_failed'
-        ? 'Данные не распознаны'
-        : 'Ошибка сервиса'
-  const tone =
-    result.kind === 'recognition_failed'
-      ? 'warning'
-      : result.kind === 'service_error'
-        ? 'danger'
-        : 'neutral'
-  return <EmptyState tone={tone} title={title} detail={result.message} />
-}
 
-function EmptyState({
-  title,
-  detail,
-  tone = 'neutral',
-  loading = false,
-  deckPlaceholder = false,
-}: {
-  title: string
-  detail: string
-  tone?: 'neutral' | 'warning' | 'danger'
-  loading?: boolean
-  deckPlaceholder?: boolean
-}): React.JSX.Element {
-  return (
-    <section
-      className="widget-empty"
-      data-tone={tone}
-      data-loading={loading}
-      aria-live="polite"
-      aria-busy={loading}
-    >
-      <span aria-hidden="true">CR</span>
-      <strong>{title}</strong>
-      <p>{detail}</p>
-      {deckPlaceholder && (
-        <div className="widget-deck-placeholder" aria-hidden="true">
-          {Array.from({ length: 8 }, (_, index) => (
-            <i key={index} />
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-interface CardView {
-  name: string
-  level: number | null
-  evolutionLevel: number | null
-  hasImage: boolean
-}
-
-function DeckCards({
-  resultId,
-  deckIndex,
-  cards,
-}: {
-  resultId: string
-  deckIndex: number
-  cards: CardView[]
-}): React.JSX.Element {
-  const [images, setImages] = useState<(string | null)[]>(() => cards.map(() => null))
-
-  useEffect(() => {
-    const cancellation = new AbortController()
-    const timers = new Set<number>()
-    const loadedImages = cards.map(() => null as string | null)
-    let settled = 0
-    let firstPainted = false
-
-    const wait = (delay: number): Promise<void> =>
-      new Promise((resolve) => {
-        const timer = window.setTimeout(() => {
-          timers.delete(timer)
-          resolve()
-        }, delay)
-        timers.add(timer)
-      })
-
-    const request = async (cardIndex: number): Promise<string | null> => {
-      try {
-        const asset = await window.crToolsWidget.getCardAsset({
-          resultId,
-          deckIndex,
-          cardIndex,
-        })
-        return asset.kind === 'available' ? asset.dataUrl : null
-      } catch {
-        return null
-      }
-    }
-
-    const paint = (): void => {
-      if (isCancelled(cancellation.signal)) return
-      firstPainted = true
-      setImages([...loadedImages])
-    }
-
-    const firstPaintTimer = window.setTimeout(paint, 100)
-    timers.add(firstPaintTimer)
-
-    const retry = async (cardIndex: number): Promise<void> => {
-      for (let attempt = 1; attempt < CARD_ASSET_MAX_ATTEMPTS; attempt += 1) {
-        const delay = CARD_ASSET_RETRY_DELAYS_MS[attempt - 1]
-        if (delay === undefined) return
-        await wait(delay)
-        if (isCancelled(cancellation.signal)) return
-        const retried = await request(cardIndex)
-        if (isCancelled(cancellation.signal)) return
-        if (retried !== null) {
-          loadedImages[cardIndex] = retried
-          setImages((current) => {
-            const next = [...current]
-            next[cardIndex] = retried
-            return next
-          })
-          return
-        }
-      }
-    }
-
-    cards.forEach((card, cardIndex) => {
-      void (card.hasImage ? request(cardIndex) : Promise.resolve(null)).then((image) => {
-        if (isCancelled(cancellation.signal)) return
-        loadedImages[cardIndex] = image
-        settled += 1
-        if (settled === cards.length && !firstPainted) {
-          window.clearTimeout(firstPaintTimer)
-          timers.delete(firstPaintTimer)
-          paint()
-        } else if (firstPainted && image !== null) {
-          setImages((current) => {
-            const next = [...current]
-            next[cardIndex] = image
-            return next
-          })
-        }
-        if (image === null && card.hasImage) void retry(cardIndex)
-      })
-    })
-
-    return () => {
-      cancellation.abort()
-      for (const timer of timers) window.clearTimeout(timer)
-      timers.clear()
-    }
-  }, [cards, deckIndex, resultId])
+  const model = selectOverlayModel(view)
+  const resultId = view.result?.id ?? null
+  const decks = model.body.kind === 'found' ? model.body.result.decks.length : 0
+  const requested = deckSelection.resultId === resultId ? deckSelection.index : 0
+  const deckIndex = Math.min(requested, Math.max(0, decks - 1))
+  const notice =
+    mutationError ?? (view.result?.reprocessed === true ? REPROCESSED_LABEL : null)
 
   return (
-    <>
-      {cards.map((card, cardIndex) => (
-        <Card
-          key={`${cardIndex}-${card.name}-${card.hasImage}`}
-          card={card}
-          image={images[cardIndex] ?? null}
-        />
-      ))}
-    </>
-  )
-}
-
-function Card({
-  card,
-  image,
-}: {
-  card: CardView
-  image: string | null
-}): React.JSX.Element {
-  const [decodeFailed, setDecodeFailed] = useState(false)
-
-  const initials = card.name
-    .split(/\s+/u)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-
-  return (
-    <article className="deck-card" aria-label={card.name} title={card.name}>
-      {!card.hasImage || image === null || decodeFailed ? (
-        <span className="card-placeholder">{initials}</span>
-      ) : (
-        <img
-          src={image}
-          alt=""
-          draggable={false}
-          loading="eager"
-          onError={() => setDecodeFailed(true)}
-        />
-      )}
-    </article>
+    <OverlayCard
+      compact={view.settings.compactMode}
+      controls={{
+        disabled: saving,
+        onCompact: () =>
+          void enqueueSettings({ compactMode: !view.settings.compactMode }),
+        onHide: () => void window.crToolsWidget.hide(),
+        onLock: () => void enqueueSettings({ locked: !view.settings.locked }),
+        onPin: () => void enqueueSettings({ alwaysOnTop: !view.settings.alwaysOnTop }),
+      }}
+      deckIndex={deckIndex}
+      model={model}
+      notice={notice}
+      onDeck={(index) => setDeckSelection({ resultId: resultId ?? '', index })}
+      shellRef={shellRef}
+      view={view}
+    />
   )
 }

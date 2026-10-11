@@ -101,6 +101,9 @@ describe('WidgetSettingsRepository', () => {
       opacity: 0.7,
       displayMode: 'deck',
       bounds: { x: 120, y: 80, width: 360, height: 300 },
+      normalWidth: 360,
+      compactWidth: 520,
+      compactMode: false,
     })
     expect([...files.keys()]).toEqual([path])
     expect(JSON.parse(files.get(path) ?? '{}')).not.toHaveProperty('compactMode')
@@ -142,8 +145,11 @@ describe('WidgetSettingsRepository', () => {
       bounds: { x: 120, y: 80, width: 500, height: 620 },
     })
     expect(JSON.parse(files.get(path) ?? '{}')).toMatchObject({
-      displayMode: 'deck',
-      bounds: { x: 120, y: 80, width: 500, height: 620 },
+      schemaVersion: 3,
+      settings: {
+        displayMode: 'deck',
+        bounds: { x: 120, y: 80, width: 500, height: 620 },
+      },
     })
   })
 
@@ -168,4 +174,23 @@ describe('WidgetSettingsRepository', () => {
     )
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('.tmp'), { force: true })
   })
+})
+
+describe('review regression legacy widget fallback', () => {
+  it.each(['{invalid', JSON.stringify({ opacity: 0.01 })])(
+    '#11 leaves invalid v2 input unchanged and uses defaults: %s',
+    async (bytes) => {
+      const { fs, files } = memoryFileSystem()
+      const original = new WidgetSettingsRepository('/v2', fs)
+      await original.save('one', DEFAULT_WIDGET_SETTINGS)
+      const currentPath = [...files.keys()][0]
+      if (currentPath === undefined) throw new Error('Missing fixture path')
+      const legacyPath = currentPath
+      files.delete(currentPath)
+      files.set(legacyPath, bytes)
+      const target = new WidgetSettingsRepository('/v3', fs, '/v2')
+      await expect(target.load('one')).resolves.toEqual(DEFAULT_WIDGET_SETTINGS)
+      expect(files.get(legacyPath)).toBe(bytes)
+    },
+  )
 })

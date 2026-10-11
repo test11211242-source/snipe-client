@@ -1,322 +1,345 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
+import type { AuthView } from '../../../shared/models/auth'
+import type { UpdateView } from '../../../shared/models/update'
 import { AuthApp } from './AuthApp'
 
-function credentialsForm(input: HTMLElement): HTMLFormElement {
-  const form = input.closest('form')
-  if (form === null) throw new Error('Expected a credentials form')
-  return form
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
+
+const unauthenticated: AuthView = { state: 'UNAUTHENTICATED', user: null, error: null }
+const idle: UpdateView = {
+  state: 'IDLE',
+  currentVersion: '1.0.0',
+  availableVersion: null,
+  critical: false,
+  releaseNotes: [],
+  progress: null,
+  error: null,
+}
+const available: UpdateView = {
+  ...idle,
+  state: 'AVAILABLE',
+  availableVersion: '1.1.0',
+  releaseNotes: ['Исправлен вход'],
 }
 
-function installAuthBridge(view: unknown, overrides: Record<string, unknown> = {}): void {
-  Object.defineProperty(window, 'crToolsAuth', {
-    configurable: true,
-    value: {
-      getView: vi.fn().mockResolvedValue(view),
-      getUpdateView: vi.fn().mockResolvedValue({
-        state: 'IDLE',
-        currentVersion: '1.0.0',
-        availableVersion: null,
-        critical: false,
-        releaseNotes: [],
-        progress: null,
-        error: null,
-      }),
-      ...overrides,
-    },
-  })
+function authError(
+  code: NonNullable<AuthView['error']>['code'],
+  message: string,
+  retryable = false,
+): AuthView {
+  return {
+    state: 'UNAUTHENTICATED',
+    user: null,
+    error: { code, message, retryable, status: null },
+  }
 }
 
-describe('AuthApp', () => {
+interface AuthBridge {
+  getView: Mock
+  retryBootstrap: Mock
+  resetLogin: Mock
+  login: Mock
+  register: Mock
+  getUpdateView: Mock
+  checkForUpdate: Mock
+  downloadUpdate: Mock
+  cancelUpdate: Mock
+  installUpdate: Mock
+}
+
+function installAuth(
+  view: AuthView | Error,
+  update: UpdateView = idle,
+  overrides: Partial<AuthBridge> = {},
+): AuthBridge {
+  const bridge: AuthBridge = {
+    getView: vi.fn(() =>
+      view instanceof Error ? Promise.reject(view) : Promise.resolve(view),
+    ),
+    retryBootstrap: vi.fn(() => Promise.resolve(unauthenticated)),
+    resetLogin: vi.fn(() => Promise.resolve(unauthenticated)),
+    login: vi.fn(() => Promise.resolve(unauthenticated)),
+    register: vi.fn(() => Promise.resolve(unauthenticated)),
+    getUpdateView: vi.fn(() => Promise.resolve(update)),
+    checkForUpdate: vi.fn(() => Promise.resolve(update)),
+    downloadUpdate: vi.fn(() => Promise.resolve(update)),
+    cancelUpdate: vi.fn(() => Promise.resolve(update)),
+    installUpdate: vi.fn(() => Promise.resolve(update)),
+    ...overrides,
+  }
+  Object.defineProperty(window, 'crToolsAuth', { configurable: true, value: bridge })
+  return bridge
+}
+
+const field = (name: string): HTMLElement => screen.getByLabelText(name)
+function type(name: string, value: string): void {
+  fireEvent.change(field(name), { target: { value } })
+}
+
+describe('auth window: bootstrap', () => {
   it('shows a retryable error instead of spinning forever when auth IPC fails', async () => {
-    Object.defineProperty(window, 'crToolsAuth', {
-      configurable: true,
-      value: Object.freeze({
-        getView: vi.fn().mockRejectedValue(new Error('IPC rejected')),
-        retryBootstrap: vi.fn(),
-
-        resetLogin: vi.fn(),
-        login: vi.fn(),
-        register: vi.fn(),
-        getUpdateView: vi.fn().mockResolvedValue({
-          state: 'IDLE',
-          currentVersion: '1.0.0',
-          availableVersion: null,
-          critical: false,
-          releaseNotes: [],
-          progress: null,
-          error: null,
-        }),
-        checkForUpdate: vi.fn(),
-        downloadUpdate: vi.fn(),
-        cancelUpdate: vi.fn(),
-        installUpdate: vi.fn(),
-      }),
-    })
-
+    installAuth(new Error('IPC rejected'))
     render(<AuthApp />)
     expect(
-      await screen.findByRole('heading', { name: 'Не удалось продолжить' }),
+      await screen.findByRole('heading', { name: 'Не удалось проверить вход' }),
     ).toBeVisible()
     expect(
       screen.getByText('Не удалось получить состояние авторизации от приложения.'),
     ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Повторить' })).toBeVisible()
   })
 
-  it('refreshes the bootstrap view until the initial auth check completes', async () => {
+  it('shows the checking state until the initial auth check completes', async () => {
     const getView = vi
       .fn()
-      .mockResolvedValueOnce({
-        state: 'BOOTSTRAPPING',
-        user: null,
-        error: null,
-      })
-      .mockResolvedValue({
-        state: 'UNAUTHENTICATED',
-        user: null,
-        error: null,
-      })
-    Object.defineProperty(window, 'crToolsAuth', {
-      configurable: true,
-      value: Object.freeze({
-        getView,
-        retryBootstrap: vi.fn(),
-
-        resetLogin: vi.fn(),
-        login: vi.fn(),
-        register: vi.fn(),
-        getUpdateView: vi.fn().mockResolvedValue({
-          state: 'IDLE',
-          currentVersion: '1.0.0',
-          availableVersion: null,
-          critical: false,
-          releaseNotes: [],
-          progress: null,
-          error: null,
-        }),
-        checkForUpdate: vi.fn(),
-        downloadUpdate: vi.fn(),
-        cancelUpdate: vi.fn(),
-        installUpdate: vi.fn(),
-      }),
-    })
-
+      .mockResolvedValueOnce({ state: 'BOOTSTRAPPING', user: null, error: null })
+      .mockResolvedValueOnce({ state: 'BOOTSTRAPPING', user: null, error: null })
+      .mockResolvedValue(unauthenticated)
+    installAuth(unauthenticated, idle, { getView })
     render(<AuthApp />)
-    expect(await screen.findByText('Проверяем защищённый сеанс')).toBeVisible()
-    expect(await screen.findByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
-    expect(getView).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('Проверяем вход')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'С возвращением' })).toBeVisible()
+    expect(getView.mock.calls.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('opens login first, sends credentials without a key and requires a key only for registration', async () => {
-    const view = { state: 'UNAUTHENTICATED', user: null, error: null }
-    const register = vi.fn().mockResolvedValue({
-      ...view,
-      error: { message: 'Этот ключ уже привязан к другому аккаунту' },
+  it('offers retry and a fresh login after a failed check', async () => {
+    const bridge = installAuth({
+      state: 'ERROR',
+      user: null,
+      error: {
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'Нет связи с сервером.',
+        retryable: true,
+        status: null,
+      },
     })
-    const login = vi.fn().mockResolvedValue(view)
-    installAuthBridge(view, { register, login })
     render(<AuthApp />)
-    await screen.findByRole('heading', { name: 'Вход в CR Tools' })
-    expect(screen.queryByLabelText('Ключ доступа')).not.toBeInTheDocument()
-    expect(screen.getByText(/Уже зарегистрированы на телефоне или сайте/)).toBeVisible()
-    fireEvent.change(screen.getByLabelText('Email'), {
-      target: { value: 'operator@example.com' },
+    expect(await screen.findByText('Нет связи с сервером.')).toBeVisible()
+    expect(screen.getByText('Нет связи')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    await waitFor(() => expect(bridge.retryBootstrap).toHaveBeenCalledTimes(1))
+    expect(await screen.findByRole('heading', { name: 'С возвращением' })).toBeVisible()
+  })
+
+  it('offers only a fresh login when the failure is not retryable', async () => {
+    const bridge = installAuth({
+      state: 'ERROR',
+      user: null,
+      error: {
+        code: 'SECRET_INVALID',
+        message: 'Сохранённый вход повреждён.',
+        retryable: false,
+        status: null,
+      },
     })
-    fireEvent.change(screen.getByLabelText('Пароль'), {
-      target: { value: 'password123' },
-    })
-    fireEvent.submit(credentialsForm(screen.getByLabelText('Email')))
-    await vi.waitFor(() =>
-      expect(login).toHaveBeenCalledWith({
-        email: 'operator@example.com',
-        password: 'password123',
-      }),
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Регистрация' }))
-    const key = screen.getByLabelText('Ключ доступа')
-    expect(key).toBeRequired()
-    expect(key).toHaveAccessibleDescription(/Ключ покупается у администратора/)
-    fireEvent.change(screen.getByLabelText('Email'), {
-      target: { value: 'operator@example.com' },
-    })
-    fireEvent.change(screen.getByLabelText('Имя пользователя'), {
-      target: { value: 'operator' },
-    })
-    fireEvent.change(screen.getByLabelText('Пароль'), {
-      target: { value: 'password123' },
-    })
-    fireEvent.change(key, { target: { value: 'test_key-123' } })
-    fireEvent.submit(credentialsForm(key))
-    expect(
-      await screen.findByText('Этот ключ уже привязан к другому аккаунту'),
-    ).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Создание аккаунта' })).toBeVisible()
-    expect(register).toHaveBeenCalledWith({
-      email: 'operator@example.com',
-      username: 'operator',
-      password: 'password123',
-      inviteKey: 'test_key-123',
-    })
+    render(<AuthApp />)
+    await screen.findByText('Сохранённый вход повреждён.')
+    expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Войти заново' }))
+    await waitFor(() => expect(bridge.resetLogin).toHaveBeenCalledTimes(1))
   })
 
   it('returns from a blocked account to a clean login form', async () => {
     const message = 'Подписка не активна. Продлите ключ доступа.'
-    const resetLogin = vi
-      .fn()
-      .mockResolvedValue({ state: 'UNAUTHENTICATED', user: null, error: null })
-    installAuthBridge(
-      { state: 'BLOCKED', user: null, error: { message } },
-      { resetLogin },
-    )
-    render(<AuthApp />)
-    expect(await screen.findByText(message)).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Войти в другой аккаунт' }))
-    expect(await screen.findByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
-    expect(screen.queryByText(message)).not.toBeInTheDocument()
-    expect(resetLogin).toHaveBeenCalledOnce()
-  })
-
-  it('shows a prominent replaced-session notice above the login fields', async () => {
-    const message = 'Выполнен вход на другом устройстве'
-    installAuthBridge({
-      state: 'UNAUTHENTICATED',
+    const bridge = installAuth({
+      state: 'BLOCKED',
       user: null,
-      error: { code: 'UNAUTHORIZED', message },
+      error: { code: 'FORBIDDEN', message, retryable: false, status: 403 },
     })
     render(<AuthApp />)
-    const heading = await screen.findByRole('heading', { name: 'Вы вышли из аккаунта' })
-    expect(heading.closest('[role="alert"]')).toHaveTextContent(message)
-    expect(screen.getByRole('heading', { name: 'Вход в CR Tools' })).toBeVisible()
-    expect(screen.getAllByText(message)).toHaveLength(1)
-  })
-
-  it('shows a wrong-password detail as a form error', async () => {
-    installAuthBridge({
-      state: 'UNAUTHENTICATED',
-      user: null,
-      error: { code: 'UNAUTHORIZED', message: 'Неверный email или пароль' },
-    })
-    render(<AuthApp />)
-    expect(await screen.findByText('Неверный email или пароль')).toBeVisible()
     expect(
-      screen.queryByRole('heading', { name: 'Вы вышли из аккаунта' }),
-    ).not.toBeInTheDocument()
+      await screen.findByRole('heading', { name: 'Доступ заблокирован' }),
+    ).toBeVisible()
+    expect(screen.getByText(message)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Войти в другой аккаунт' }))
+    expect(await screen.findByRole('heading', { name: 'С возвращением' })).toBeVisible()
+    expect(screen.queryByText(message)).toBeNull()
+    expect(bridge.resetLogin).toHaveBeenCalledOnce()
+  })
+})
+
+describe('auth window: login and registration', () => {
+  it('signs in with email and password only, after checking the fields', async () => {
+    const bridge = installAuth(unauthenticated)
+    render(<AuthApp />)
+    await screen.findByRole('heading', { name: 'С возвращением' })
+    expect(screen.queryByLabelText('Ключ приглашения')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+    expect(await screen.findByText('Нужна запись вида name@mail.ru')).toBeVisible()
+    expect(screen.getByText('Введите пароль')).toBeVisible()
+    expect(bridge.login).not.toHaveBeenCalled()
+
+    type('Почта', 'operator@example.com')
+    type('Пароль', 'password123')
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+    await waitFor(() =>
+      expect(bridge.login).toHaveBeenCalledWith({
+        email: 'operator@example.com',
+        password: 'password123',
+      }),
+    )
   })
 
-  it('downloads and installs an update without an authenticated session', async () => {
-    const available = {
-      state: 'AVAILABLE' as const,
-      currentVersion: '1.0.0',
-      availableVersion: '1.1.0',
-      critical: true,
-      releaseNotes: ['Login compatibility fix'],
-      progress: null,
-      error: null,
-    }
-    const ready = { ...available, state: 'READY' as const }
-    const failedInstall = {
+  it('registers with the invite key and validates it first', async () => {
+    const bridge = installAuth(unauthenticated)
+    render(<AuthApp />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Регистрация' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Создание аккаунта' }),
+    ).toBeVisible()
+    type('Почта', 'operator@example.com')
+    type('Имя пользователя', 'o')
+    type('Ключ приглашения', 'abc!')
+    type('Пароль', 'short')
+    fireEvent.click(screen.getByRole('button', { name: 'Создать аккаунт' }))
+    expect(await screen.findByText('Имя — от 2 до 50 символов')).toBeVisible()
+    expect(screen.getByText(/Ключ — от 8 до 50 символов/)).toBeVisible()
+    expect(
+      screen.getByText('Пароль не короче 8 символов', { selector: 'span' }),
+    ).toBeVisible()
+    expect(bridge.register).not.toHaveBeenCalled()
+
+    type('Имя пользователя', 'operator')
+    type('Ключ приглашения', ' test_key-123 ')
+    type('Пароль', 'password123')
+    fireEvent.click(screen.getByRole('button', { name: 'Создать аккаунт' }))
+    await waitFor(() =>
+      expect(bridge.register).toHaveBeenCalledWith({
+        email: 'operator@example.com',
+        username: 'operator',
+        password: 'password123',
+        inviteKey: ' test_key-123 ',
+      }),
+    )
+  })
+
+  it('keeps everything typed after a failed attempt and shows what to do', async () => {
+    const bridge = installAuth(unauthenticated, idle, {
+      login: vi.fn(() =>
+        Promise.resolve(authError('UNAUTHORIZED', 'Неверный email или пароль')),
+      ),
+    })
+    render(<AuthApp />)
+    await screen.findByRole('heading', { name: 'С возвращением' })
+    type('Почта', 'operator@example.com')
+    type('Пароль', 'wrong-password')
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+    expect(await screen.findByText('Неверный email или пароль')).toBeVisible()
+    expect(screen.getByText(/Проверьте раскладку и Caps Lock/)).toBeVisible()
+    expect(field('Почта')).toHaveValue('operator@example.com')
+    expect(field('Пароль')).toHaveValue('wrong-password')
+    expect(bridge.login).toHaveBeenCalledTimes(1)
+  })
+
+  it('network error offers a retry that sends the same credentials again', async () => {
+    const login = vi
+      .fn()
+      .mockResolvedValueOnce(
+        authError('NETWORK_UNAVAILABLE', 'Нет связи с сервером', true),
+      )
+      .mockResolvedValue(unauthenticated)
+    installAuth(unauthenticated, idle, { login })
+    render(<AuthApp />)
+    await screen.findByRole('heading', { name: 'С возвращением' })
+    type('Почта', 'operator@example.com')
+    type('Пароль', 'password123')
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+    expect(await screen.findByText('Нет связи с сервером')).toBeVisible()
+    expect(screen.getByText(/Введённые данные сохранены/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    await waitFor(() => expect(login).toHaveBeenCalledTimes(2))
+    expect(login).toHaveBeenLastCalledWith({
+      email: 'operator@example.com',
+      password: 'password123',
+    })
+  })
+
+  it('shows a replaced session as its own notice', async () => {
+    const message = 'Выполнен вход на другом устройстве'
+    installAuth(authError('UNAUTHORIZED', message))
+    render(<AuthApp />)
+    expect(await screen.findByText('Вы вышли из аккаунта')).toBeVisible()
+    expect(screen.getAllByText(message)).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'С возвращением' })).toBeVisible()
+  })
+
+  it('reveals the password only on request', async () => {
+    installAuth(unauthenticated)
+    render(<AuthApp />)
+    await screen.findByRole('heading', { name: 'С возвращением' })
+    expect(field('Пароль')).toHaveAttribute('type', 'password')
+    fireEvent.click(screen.getByRole('button', { name: 'Показать пароль' }))
+    expect(field('Пароль')).toHaveAttribute('type', 'text')
+  })
+})
+
+describe('auth window: updates', () => {
+  it('requires a critical update: download, then install, with the error shown', async () => {
+    const critical: UpdateView = { ...available, critical: true }
+    const ready: UpdateView = { ...critical, state: 'READY' }
+    const failedInstall: UpdateView = {
       ...ready,
       error: {
         code: 'INSTALLER_HELPER_EXITED',
-        message: 'English fallback',
+        message: 'Установщик не запустился.',
         retryable: true,
       },
     }
-    const downloadUpdate = vi.fn().mockResolvedValue(ready)
-    const installUpdate = vi.fn().mockResolvedValue(failedInstall)
-    Object.defineProperty(window, 'crToolsAuth', {
-      configurable: true,
-      value: Object.freeze({
-        getView: vi.fn().mockResolvedValue({
-          state: 'UNAUTHENTICATED',
-          user: null,
-          error: null,
-        }),
-        retryBootstrap: vi.fn(),
-
-        resetLogin: vi.fn(),
-        login: vi.fn(),
-        register: vi.fn(),
-        getUpdateView: vi.fn().mockResolvedValue(available),
-        checkForUpdate: vi.fn(),
-        downloadUpdate,
-        cancelUpdate: vi.fn(),
-        installUpdate,
-      }),
+    const bridge = installAuth(unauthenticated, critical, {
+      downloadUpdate: vi.fn(() => Promise.resolve(ready)),
+      installUpdate: vi.fn(() => Promise.resolve(failedInstall)),
     })
-
     render(<AuthApp />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Скачать обновление' }))
-    expect(await screen.findByText('Версия 1.1.0 готова к установке')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Установить обновление' }))
-    await vi.waitFor(() => expect(installUpdate).toHaveBeenCalledOnce())
     expect(
-      await screen.findByText(
-        'Системный компонент завершился до запуска установщика. (INSTALLER_HELPER_EXITED)',
-      ),
+      await screen.findByRole('heading', { name: 'Нужно обновить CR Tools' }),
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Установить обновление' })).toBeVisible()
-    expect(downloadUpdate).toHaveBeenCalledOnce()
+    expect(screen.getByText('Исправлен вход')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Войти' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Скачать и обновить' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Перезапустить для установки' }),
+    )
+    await waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledOnce())
+    expect(await screen.findByText(/Установщик не запустился/)).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Перезапустить для установки' }),
+    ).toBeVisible()
   })
 
-  it('shows download progress and permits cancellation from the auth screen', async () => {
-    const available = {
-      state: 'AVAILABLE' as const,
-      currentVersion: '1.0.0',
-      availableVersion: '1.1.0',
-      critical: false,
-      releaseNotes: [],
-      progress: null,
-      error: null,
-    }
-    const downloading = {
+  it('shows progress for a required update and lets the user cancel', async () => {
+    const downloading: UpdateView = {
       ...available,
-      state: 'DOWNLOADING' as const,
-      progress: { downloadedBytes: 25, totalBytes: 100, percent: 25 },
+      critical: true,
+      state: 'DOWNLOADING',
+      progress: { downloadedBytes: 56 * 1048576, totalBytes: 148 * 1048576, percent: 38 },
     }
-    let completeDownload: ((view: typeof available) => void) | undefined
-    const downloadUpdate = vi.fn(
-      () =>
-        new Promise<typeof available>((resolve) => {
-          completeDownload = resolve
-        }),
-    )
-    const cancelUpdate = vi.fn(() => {
-      completeDownload?.(available)
-      return Promise.resolve(available)
-    })
-    Object.defineProperty(window, 'crToolsAuth', {
-      configurable: true,
-      value: Object.freeze({
-        getView: vi.fn().mockResolvedValue({
-          state: 'UNAUTHENTICATED',
-          user: null,
-          error: null,
-        }),
-        retryBootstrap: vi.fn(),
-
-        resetLogin: vi.fn(),
-        login: vi.fn(),
-        register: vi.fn(),
-        getUpdateView: vi
-          .fn()
-          .mockResolvedValueOnce(available)
-          .mockResolvedValue(downloading),
-        checkForUpdate: vi.fn(),
-        downloadUpdate,
-        cancelUpdate,
-        installUpdate: vi.fn(),
-      }),
-    })
-
+    const bridge = installAuth(unauthenticated, downloading)
     render(<AuthApp />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Скачать обновление' }))
-    expect(await screen.findByText('Загрузка 25%')).toBeVisible()
+    expect(await screen.findByText('Скачано 56 МБ из 148 МБ')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Скачиваем…' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Отменить загрузку' }))
-    await vi.waitFor(() => expect(cancelUpdate).toHaveBeenCalledOnce())
-    expect(downloadUpdate).toHaveBeenCalledOnce()
+    await waitFor(() => expect(bridge.cancelUpdate).toHaveBeenCalledOnce())
+  })
+
+  it('an optional update is only a strip above the form', async () => {
+    const bridge = installAuth(unauthenticated, available)
+    render(<AuthApp />)
+    expect(await screen.findByText('Доступна версия 1.1.0')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'С возвращением' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Скачать' }))
+    await waitFor(() => expect(bridge.downloadUpdate).toHaveBeenCalledOnce())
+  })
+
+  it('shows the installed version in the footer', async () => {
+    installAuth(unauthenticated)
+    render(<AuthApp />)
+    expect(await screen.findByText('Версия 1.0.0')).toBeVisible()
   })
 })
