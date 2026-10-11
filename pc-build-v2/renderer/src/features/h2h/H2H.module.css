@@ -183,6 +183,9 @@
   background: var(--color-surface-2);
   box-shadow: var(--ring-1);
 }
+.miniBlock > button {
+  justify-content: flex-start;
+}
 .blockHead {
   white-space: nowrap;
   display: flex;

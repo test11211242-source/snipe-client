@@ -55,7 +55,7 @@ test('built Windows auth opens login first and asks for a key only during regist
     await page.getByRole('button', { name: 'Регистрация', exact: true }).click()
     await expect(page.getByLabel('Почта')).toBeVisible()
     await expect(page.getByLabel('Имя пользователя')).toBeVisible()
-    await expect(page.getByLabel('Пароль')).toBeVisible()
+    await expect(page.getByLabel('Пароль', { exact: true })).toBeVisible()
     await expect(page.getByLabel('Ключ приглашения')).toBeVisible()
     await expect(page.getByText(/Ключ выдаёт администратор/)).toBeVisible()
     await page.getByLabel('Ключ приглашения').fill('short')

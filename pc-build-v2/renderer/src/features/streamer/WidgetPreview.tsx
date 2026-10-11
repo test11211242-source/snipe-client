@@ -85,7 +85,7 @@ function Frame({
         className={cx(styles['fit'], dimmed && styles['off'])}
         data-status={status}
         height={height}
-        onLoad={() => setStatus((current) => (current === 'error' ? current : 'ready'))}
+        onLoad={() => setStatus('ready')}
         referrerPolicy="no-referrer"
         sandbox="allow-scripts"
         src={url}

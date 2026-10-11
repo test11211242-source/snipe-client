@@ -181,7 +181,8 @@ export function Menu({
                     event.preventDefault()
                     list[list.length - 1]?.focus()
                   } else if (event.key === 'Tab') {
-                    setOpen(false)
+                    event.preventDefault()
+                    close()
                   }
                 }}
                 ref={attachMenu}

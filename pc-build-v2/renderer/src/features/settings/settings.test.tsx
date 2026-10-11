@@ -22,6 +22,26 @@ const commandsOf = (world: StreamWorld, action: string): StreamerCommand[] =>
     .filter((c) => c.action === action)
 
 describe('settings: application', () => {
+  it('#18 reports malformed stored tags instead of throwing in account actions', async () => {
+    const world = mountStream(settings('accounts'), {
+      view: (view) => {
+        const account = view.title.accounts[2]
+        if (account !== undefined) account.tag = 'BAD'
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Включить' }))
+    expect(
+      await screen.findByText(describeCommandError('ACCOUNT_TAG_INVALID')),
+    ).toBeVisible()
+    expect(world.fake.command).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить аккаунт Запасной' }))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить аккаунт' }))
+    expect(
+      within(dialog).getByText(describeCommandError('ACCOUNT_TAG_INVALID')),
+    ).toBeVisible()
+    expect(world.fake.command).not.toHaveBeenCalled()
+  })
   it('saves every switch the moment it changes, without a save button', async () => {
     const world = mountStream(settings('app'))
     const toggle = await screen.findByRole('switch', {
@@ -321,7 +341,7 @@ describe('settings: updates', () => {
 
   it('checks for updates when nothing is new', async () => {
     const world = mountStream(settings('updates'))
-    expect(await screen.findByText('Установлена актуальная версия')).toBeVisible()
+    expect(await screen.findByText('Обновления ещё не проверялись')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Проверить обновления' }))
     await waitFor(() =>
       expect(world.bridge.crTools.checkForUpdate).toHaveBeenCalledTimes(1),

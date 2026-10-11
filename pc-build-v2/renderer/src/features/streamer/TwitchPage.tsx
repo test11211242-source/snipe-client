@@ -44,7 +44,7 @@ function Twitch(): React.JSX.Element {
   if (view === null) return <></>
 
   const { connected, polling, username } = view.twitch
-  const connecting = pendingKeys.size > 0 && !connected
+  const connecting = pendingKeys.has('twitch.connect')
   const waiting = polling && !connected
   const usages: Usage[] = [
     {
@@ -104,7 +104,9 @@ function Twitch(): React.JSX.Element {
           </div>
           <Button
             loading={connecting}
-            onClick={() => void run({ action: 'twitch.connect' })}
+            onClick={() =>
+              void run({ action: 'twitch.connect' }, { key: 'twitch.connect' })
+            }
           >
             Открыть браузер снова
           </Button>
@@ -123,7 +125,9 @@ function Twitch(): React.JSX.Element {
           </div>
           <Button
             loading={connecting}
-            onClick={() => void run({ action: 'twitch.connect' })}
+            onClick={() =>
+              void run({ action: 'twitch.connect' }, { key: 'twitch.connect' })
+            }
             size="lg"
             variant="primary"
           >

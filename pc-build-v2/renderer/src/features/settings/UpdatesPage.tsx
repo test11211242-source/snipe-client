@@ -26,6 +26,13 @@ interface Presentation {
 function present(view: UpdateView): Presentation {
   const installed = `Сейчас установлена ${view.currentVersion}`
   switch (view.state) {
+    case 'IDLE':
+      return {
+        icon: 'refresh',
+        warn: false,
+        title: 'Обновления ещё не проверялись',
+        sub: installed,
+      }
     case 'AVAILABLE':
       return {
         icon: 'arrowUp',
@@ -45,7 +52,7 @@ function present(view: UpdateView): Presentation {
         icon: 'checkCircle',
         warn: false,
         title: `Версия ${view.availableVersion ?? ''} скачана`,
-        sub: 'Перезапустим приложение, мониторинг запустится сам.',
+        sub: 'Перезапустим приложение, ваши настройки сохранятся.',
       }
     case 'FAILED':
       return {

@@ -114,6 +114,11 @@ export function H2HBlock({
         <span className={styles['caption']}>
           Ваших боёв с этим игроком в записях пока нет.
         </span>
+        {state.data.stale || !state.data.coverage.complete ? (
+          <span className={styles['caption']}>
+            Данные могут быть неполными или не самыми свежими.
+          </span>
+        ) : null}
         <span className={styles['caption']}>{H2H_DISCLAIMER}</span>
       </div>
     )
@@ -133,9 +138,7 @@ export function H2HBlock({
       </div>
     )
 
-  const { title, text } = unavailableText(
-    state.kind === 'data' ? { kind: 'unavailable', reason: 'failed' } : state,
-  )
+  const { title, text } = unavailableText(state)
   return (
     <div className={frame}>
       <Heading />

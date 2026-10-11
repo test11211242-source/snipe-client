@@ -127,8 +127,13 @@ function Accounts(): React.JSX.Element {
 
   const reenable = (account: Account): void => {
     setRowError(null)
+    const parsed = GameAccountTagSchema.safeParse(account.tag)
+    if (!parsed.success) {
+      setRowError(describeCommandError('ACCOUNT_TAG_INVALID'))
+      return
+    }
     void command(
-      { action: 'accounts.reenable', tag: GameAccountTagSchema.parse(account.tag) },
+      { action: 'accounts.reenable', tag: parsed.data },
       { key: `account.${account.tag}` },
     ).then((outcome) => {
       if (outcome.status === 'failed') setRowError(describeCommandError(outcome.code))
@@ -141,11 +146,16 @@ function Accounts(): React.JSX.Element {
 
   const confirmRemove = (): void => {
     if (removing === null) return
+    const parsed = GameAccountTagSchema.safeParse(removing.tag)
+    if (!parsed.success) {
+      setRemoveError(describeCommandError('ACCOUNT_TAG_INVALID'))
+      return
+    }
     setRemovePending(true)
     setRemoveError(null)
     void command({
       action: 'accounts.remove',
-      tag: GameAccountTagSchema.parse(removing.tag),
+      tag: parsed.data,
     }).then((outcome) => {
       setRemovePending(false)
       if (outcome.status === 'ok') {

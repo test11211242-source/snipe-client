@@ -39,16 +39,11 @@ export function OpponentScreen(): React.JSX.Element {
   const view = monitor.value
   const hasProfiles = (profiles.value?.profiles.length ?? 0) > 0
   const history = useMonitorHistory(view?.results ?? NO_RESULTS)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<MonitorResult | null>(null)
   const [dismissedSession, setDismissedSession] = useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [retrying, setRetrying] = useState(false)
   const now = useNowUntil(view?.search?.retryExpiresAt ?? null)
 
-  const selected =
-    selectedId === null
-      ? null
-      : (history.items.find((item) => item.id === selectedId) ?? null)
   const latest = view?.results[0] ?? null
   const presentation = selectOpponentPresentation({
     view,
@@ -94,18 +89,17 @@ export function OpponentScreen(): React.JSX.Element {
   const retry =
     presentation.kind === 'result' && presentation.retry !== null
       ? {
-          pending: retrying,
+          pending: monitor.retrying,
           onRetry: () => {
             const attemptId = presentation.retry?.attemptId
-            if (attemptId === undefined) return
-            setRetrying(true)
-            void monitor.retrySearch(attemptId).finally(() => setRetrying(false))
+            if (attemptId !== undefined) void monitor.retrySearch(attemptId)
           },
         }
       : null
 
   const select = (id: string): void => {
-    setSelectedId(id)
+    const item = history.items.find((item) => item.id === id)
+    if (item !== undefined) setSelected(item)
     setSheetOpen(false)
   }
   const stats = view?.stats ?? null
@@ -114,7 +108,9 @@ export function OpponentScreen(): React.JSX.Element {
       history={history}
       historyError={view?.historyError ?? null}
       onSelect={select}
-      selectedId={selected?.id ?? null}
+      selectedId={
+        selected?.id ?? (presentation.kind === 'result' ? presentation.result.id : null)
+      }
     />
   )
 
@@ -126,7 +122,7 @@ export function OpponentScreen(): React.JSX.Element {
         offlineAttempt={
           offline ? Math.max(1, realtime.value?.reconnectAttempt ?? 1) : null
         }
-        onBackToCurrent={() => setSelectedId(null)}
+        onBackToCurrent={() => setSelected(null)}
         onCloseSummary={() => setDismissedSession(view?.summary?.sessionId ?? null)}
         presentation={presentation}
         retry={retry}

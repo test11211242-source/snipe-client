@@ -28,6 +28,10 @@
   letter-spacing: var(--ls-caps);
   text-transform: uppercase;
 }
+.statsHead span {
+  text-transform: none;
+  letter-spacing: normal;
+}
 .statsHead h3 {
   font-size: var(--fs-2xs);
   font-weight: var(--fw-medium);
@@ -60,6 +64,9 @@
   font-size: var(--fs-xs);
   line-height: var(--lh-tight);
 }
+.stat:nth-child(2) dt {
+  white-space: nowrap;
+}
 .valueWarn {
   color: var(--color-warn);
 }
@@ -75,6 +82,10 @@
   list-style: none;
   overflow-y: auto;
   min-height: 0;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar {
+  display: none;
 }
 .empty,
 .note {

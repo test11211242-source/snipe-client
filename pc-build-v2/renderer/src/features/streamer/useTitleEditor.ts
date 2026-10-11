@@ -97,9 +97,10 @@ export function useTitleEditor(onNotice: (notice: TitleNotice) => void): TitleEd
   useEffect(() => {
     if (saved === undefined || dirty) return
     let active = true
+    const mine = compileRun.current
     void window.crTools.streamer.decompileTitle(saved).then(
       (next) => {
-        if (active) showBuilder(next)
+        if (active && mine === compileRun.current) showBuilder(next)
       },
       () => undefined,
     )

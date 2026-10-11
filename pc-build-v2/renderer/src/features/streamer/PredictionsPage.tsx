@@ -50,12 +50,16 @@ function Predictions(): React.JSX.Element {
 
   const { predictions } = view
   const active = predictions.active
-  const locked = active || predictions.runtimeState === 'starting'
+  const busy = pendingKeys.has('predictions.toggle')
+  const locked =
+    active ||
+    predictions.runtimeState === 'starting' ||
+    predictions.runtimeState === 'unknown' ||
+    busy
   const settings = draft ?? predictions.settings
   const change = (patch: Partial<PredictionPreferences>): void =>
     setDraft({ ...settings, ...patch })
   const runtime = RUNTIME[predictions.runtimeState]
-  const busy = pendingKeys.has('predictions.toggle')
 
   const toggle = (): void => {
     clearError()

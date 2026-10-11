@@ -179,6 +179,11 @@ export function H2HCard({
     body = (
       <State headingLevel={3} icon="users" title="Нет записанных встреч">
         Ваших боёв с этим игроком в записях пока нет. Новая встреча появится здесь сама.
+        {state.data.stale || !state.data.coverage.complete ? (
+          <span className={styles['note']}>
+            Данные могут быть неполными или не самыми свежими.
+          </span>
+        ) : null}
       </State>
     )
   } else if (state.kind === 'data' && state.data.status === 'no_accounts') {
@@ -197,9 +202,7 @@ export function H2HCard({
       </State>
     )
   } else {
-    const { title, text } = unavailableText(
-      state.kind === 'data' ? { kind: 'unavailable', reason: 'failed' } : state,
-    )
+    const { title, text } = unavailableText(state)
     body = (
       <State
         actions={

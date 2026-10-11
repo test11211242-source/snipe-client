@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 import type { StreamerCommand } from '../../../../shared/contracts/streamer-ipc'
 import { useToast } from '../../ui'
@@ -51,10 +51,14 @@ export function useConfirmedAction(
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const busy = useRef(false)
   const confirm = (): void => {
+    if (busy.current) return
+    busy.current = true
     setPending(true)
     setError(null)
     void send(command).then((outcome) => {
+      busy.current = false
       setPending(false)
       if (outcome.status === 'ok') {
         setOpen(false)
@@ -72,7 +76,9 @@ export function useConfirmedAction(
       setError(null)
       setOpen(true)
     },
-    cancel: () => setOpen(false),
+    cancel: () => {
+      if (!busy.current) setOpen(false)
+    },
     confirm,
   }
 }

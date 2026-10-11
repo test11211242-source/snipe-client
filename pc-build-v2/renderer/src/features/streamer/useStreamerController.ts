@@ -62,6 +62,7 @@ export function useStreamerController(enabled: boolean): StreamerController {
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set())
 
   const generation = useRef(0)
+  const reloadRun = useRef(0)
   const mounted = useRef(true)
   const queue = useRef<QueueItem[]>([])
   const running = useRef(false)
@@ -97,6 +98,7 @@ export function useStreamerController(enabled: boolean): StreamerController {
 
   const reload = useCallback(async (): Promise<void> => {
     const mine = ++generation.current
+    const request = ++reloadRun.current
     setLoading(true)
     setLoadFailed(false)
     try {
@@ -116,6 +118,8 @@ export function useStreamerController(enabled: boolean): StreamerController {
         setLoading(false)
         setLoadFailed(true)
       }
+    } finally {
+      if (mounted.current && request === reloadRun.current) setLoading(false)
     }
   }, [isStale, loadReadiness])
 
@@ -123,11 +127,9 @@ export function useStreamerController(enabled: boolean): StreamerController {
     mounted.current = true
     if (!enabled) return
     void Promise.resolve().then(reload)
-    const waiting = queue.current
     return () => {
       mounted.current = false
       generation.current += 1
-      for (const item of waiting.splice(0)) item.resolve({ status: 'superseded' })
       void window.crTools.setStreamerSectionActive(false).catch(() => undefined)
     }
   }, [enabled, reload])
@@ -152,7 +154,7 @@ export function useStreamerController(enabled: boolean): StreamerController {
           }
         generation.current += 1
         if (mounted.current) setView(result.view)
-        void loadReadiness()
+        if (mounted.current) void loadReadiness()
         return { status: 'ok', result }
       } catch {
         return { status: 'failed', code: 'IPC_FAILED', detail: null }
@@ -189,14 +191,13 @@ export function useStreamerController(enabled: boolean): StreamerController {
         const key = options?.key ?? `${next.action}#${++counter.current}`
         // Collapse a waiting (not yet running) command with the same key.
         const startIndex = running.current ? 1 : 0
-        for (let index = queue.current.length - 1; index >= startIndex; index -= 1) {
-          const waiting = queue.current[index]
-          if (waiting?.key === key) {
-            waiting.resolve({ status: 'superseded' })
-            queue.current.splice(index, 1)
-          }
-        }
-        queue.current.push({ command: next, key, resolve })
+        const index = queue.current.findIndex(
+          (item, index) => index >= startIndex && item.key === key,
+        )
+        if (index >= 0) {
+          queue.current[index]?.resolve({ status: 'superseded' })
+          queue.current[index] = { command: next, key, resolve }
+        } else queue.current.push({ command: next, key, resolve })
         syncPending()
         void drain()
       }),

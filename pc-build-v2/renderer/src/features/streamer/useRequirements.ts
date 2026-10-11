@@ -117,7 +117,7 @@ export function useFoundations(): Record<FoundationId, FoundationItem> {
     const running = readiness?.monitoring
     const monitoring: FoundationItem =
       running === undefined || running === null
-        ? unknown('monitoring', 'Мониторинг', () => undefined)
+        ? unknown('monitoring', 'Мониторинг', () => navigate({ name: 'main' }))
         : {
             id: 'monitoring',
             name: 'Мониторинг',

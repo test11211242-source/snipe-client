@@ -19,6 +19,11 @@ export function unavailableText(state: H2HState): { title: string; text: string 
       title: 'Личные встречи сейчас недоступны',
       text: 'Сервер пока не поддерживает этот раздел.',
     }
+  if (state.kind === 'data' && state.data.status === 'unavailable')
+    return {
+      title: 'Личные встречи сейчас недоступны',
+      text: 'Сервис личных встреч временно недоступен. Попробуйте позже.',
+    }
   return {
     title: 'Личные встречи сейчас недоступны',
     text: 'Сервер не ответил. Попробуйте позже, остальное работает.',

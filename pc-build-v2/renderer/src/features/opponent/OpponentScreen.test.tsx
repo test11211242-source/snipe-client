@@ -533,6 +533,28 @@ describe('session summary', () => {
 })
 
 describe('history', () => {
+  it('#14 retains the selected result when it leaves the live page and history failed', async () => {
+    await renderMain({ monitor: running({ results: [found(1), found(2)] }) })
+    bridge.crTools.getMonitorHistory.mockRejectedValue(new Error('IPC'))
+    const history = await screen.findByRole('region', { name: 'История' })
+    fireEvent.click(within(history).getByRole('button', { name: /Игрок2/ }))
+    expect(screen.getByRole('heading', { name: 'Игрок2' })).toBeVisible()
+    pushView(running({ results: [found(3)] }))
+    expect(screen.getByRole('heading', { name: 'Игрок2' })).toBeVisible()
+    expect(screen.getByRole('button', { name: /к текущему/ })).toBeVisible()
+  })
+
+  it('#20 highlights the latest shown result without requiring a history click', async () => {
+    await renderMain({ monitor: running({ results: [found(1), found(2)] }) })
+    const history = await screen.findByRole('region', { name: 'История' })
+    expect(within(history).getByRole('button', { name: /Игрок1/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(within(history).getByRole('button', { name: /Игрок2/ })).not.toHaveAttribute(
+      'aria-current',
+    )
+  })
   it('is clickable, shows a back banner and is not replaced by a push', async () => {
     await renderMain({
       monitor: running({

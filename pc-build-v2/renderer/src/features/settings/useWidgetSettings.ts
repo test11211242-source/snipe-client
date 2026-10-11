@@ -30,27 +30,52 @@ export function useWidgetSettings(): WidgetSettingsController {
   const generation = useRef(0)
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   const inFlight = useRef(0)
-
-  const load = useCallback((quiet: boolean): Promise<void> => {
-    const mine = ++generation.current
-    return window.crTools.getWidgetStatus().then(
-      (next) => {
-        if (mine !== generation.current) return
-        setStatus(next)
-        setLoading(false)
-        setLoadFailed(false)
-      },
-      () => {
-        if (mine !== generation.current || quiet) return
-        setLoading(false)
-        setLoadFailed(true)
-      },
-    )
+  const authoritative = useRef<WidgetStatus | null>(null)
+  const drafts = useRef<WidgetSettingsPatch[]>([])
+  const alive = useRef(true)
+  const publish = useCallback(() => {
+    const saved = authoritative.current
+    if (!alive.current || saved === null) return
+    const settings = { ...saved.settings }
+    for (const patch of drafts.current) {
+      Object.assign(
+        settings,
+        Object.fromEntries(
+          Object.entries(patch).filter(
+            ([key, value]) => key in settings && value !== undefined,
+          ),
+        ),
+      )
+    }
+    setStatus({ ...saved, settings })
   }, [])
 
+  const load = useCallback(
+    (quiet: boolean): Promise<void> => {
+      const mine = ++generation.current
+      return window.crTools.getWidgetStatus().then(
+        (next) => {
+          if (mine !== generation.current) return
+          authoritative.current = next
+          publish()
+          setLoading(false)
+          setLoadFailed(false)
+        },
+        () => {
+          if (mine !== generation.current || quiet) return
+          setLoading(false)
+          setLoadFailed(true)
+        },
+      )
+    },
+    [publish],
+  )
+
   useEffect(() => {
+    alive.current = true
     void Promise.resolve().then(() => load(false))
     return () => {
+      alive.current = false
       generation.current += 1
     }
   }, [load])
@@ -63,18 +88,19 @@ export function useWidgetSettings(): WidgetSettingsController {
   )
 
   const enqueue = useCallback(<T>(job: () => Promise<T>): Promise<T | null> => {
+    inFlight.current += 1
+    generation.current += 1
+    setPending(true)
+    setError(null)
     const run = async (): Promise<T | null> => {
-      inFlight.current += 1
-      setPending(true)
-      setError(null)
       try {
         return await job()
       } catch {
-        setError('Не удалось сохранить. Прежнее значение осталось.')
+        if (alive.current) setError('Не удалось сохранить. Прежнее значение осталось.')
         return null
       } finally {
         inFlight.current -= 1
-        if (inFlight.current === 0) setPending(false)
+        if (alive.current && inFlight.current === 0) setPending(false)
       }
     }
     const result = queue.current.then(run, run)
@@ -84,23 +110,26 @@ export function useWidgetSettings(): WidgetSettingsController {
 
   const update = useCallback(
     async (patch: WidgetSettingsPatch): Promise<boolean> => {
+      drafts.current.push(patch)
+      publish()
       const next = await enqueue(() => window.crTools.updateWidgetSettings(patch))
-      if (next === null) return false
+      drafts.current.splice(drafts.current.indexOf(patch), 1)
+      if (next !== null && authoritative.current !== null)
+        authoritative.current = { ...authoritative.current, settings: next }
       generation.current += 1
-      setStatus((current) =>
-        current === null ? current : { ...current, settings: next },
-      )
-      return true
+      publish()
+      return next !== null
     },
-    [enqueue],
+    [enqueue, publish],
   )
 
   const toggleWindow = useCallback(async (): Promise<void> => {
     const next = await enqueue(() => window.crTools.toggleWidget())
     if (next === null) return
     generation.current += 1
-    setStatus(next)
-  }, [enqueue])
+    authoritative.current = next
+    publish()
+  }, [enqueue, publish])
 
   return {
     status,
