@@ -27,6 +27,9 @@ checks the installer and packaged version and saves the installer under
 `pc-build-v2/published/<version>/local-<uuid>/`. It does not run the NSIS fixture
 installation on the owner's PC, which would alter their existing app registration.
 Manually verify an upgrade using the app or a disposable Windows user/VM.
+Packaged smoke teardown allows bounded Windows file-deletion retries for
+Chromium profile handles released after application shutdown; native-window,
+clean-exit and IPC assertions remain mandatory.
 
 The in-app install handoff uses `resources/installer-helper.exe`, compiled locally
 with the Windows .NET Framework compiler during `build:app` and shipped as an

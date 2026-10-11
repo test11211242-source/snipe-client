@@ -171,7 +171,13 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
     try {
       if (child?.exitCode === null) child.kill()
     } finally {
-      await rm(userDataDirectory, { force: true, recursive: true })
+      // Chromium's Windows file handles can outlive the main process exit.
+      await rm(userDataDirectory, {
+        force: true,
+        recursive: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      })
     }
   }
 })
@@ -263,6 +269,11 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
     )
   } finally {
     await electronApp?.close().catch(() => undefined)
-    await rm(userDataDirectory, { force: true, recursive: true })
+    await rm(userDataDirectory, {
+      force: true,
+      recursive: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    })
   }
 })
