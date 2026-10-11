@@ -117,6 +117,8 @@ export function useSetupSession(): SetupSession {
   const accept = useCallback(
     async (next: SetupSessionView): Promise<void> => {
       const previous = viewRef.current
+      if (previous?.sessionId === next.sessionId && previous.generation > next.generation)
+        return
       if (previous !== null && previous.sessionId !== next.sessionId) dropFrame()
       viewRef.current = next
       setView(next)

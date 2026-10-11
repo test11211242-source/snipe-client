@@ -3,7 +3,7 @@ import { z } from 'zod'
 import {
   CapturePreferenceSchema,
   CaptureProfileCollectionSchema,
-  NormalizedRegionsSchema,
+  NormalizedRectSchema,
   PixelSizeSchema,
   TriggerProfileSchema,
   type LayoutCalibration,
@@ -21,7 +21,13 @@ export const LegacyCaptureConfigurationSchema = z
     committedAt: z.iso.datetime(),
     source: CapturePreferenceSchema,
     frameSize: PixelSizeSchema,
-    regions: NormalizedRegionsSchema,
+    regions: z
+      .object({
+        trigger: NormalizedRectSchema,
+        normal: NormalizedRectSchema,
+        precise: NormalizedRectSchema,
+      })
+      .strict(),
     triggerProfile: TriggerProfileSchema,
   })
   .strict()
@@ -76,8 +82,8 @@ export function createLayoutCalibration(
     gameViewport: null,
     expectedLayout: null,
     triggerRegion: regions.trigger,
-    nicknameRegion: regions.normal,
-    topLeftEvidenceRegion: regions.precise,
+    nicknameRegion: regions.nickname,
+    topLeftEvidenceRegion: regions.topLeftEvidence,
     triggerProfile,
     provenance: {
       trigger: { ...provenance, analyzerVersion: triggerProfile.analyzer.version },

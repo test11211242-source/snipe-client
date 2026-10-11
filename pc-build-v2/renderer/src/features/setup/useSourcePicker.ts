@@ -50,11 +50,13 @@ export function useSourcePicker(): SourcePicker {
   const listGeneration = useRef(0)
   const selectionGeneration = useRef(0)
   const selected = useRef<CaptureSourceView | null>(null)
+  const preparedRef = useRef<CapturePreparationResult | null>(null)
 
   const release = useCallback((): void => {
     selectionGeneration.current += 1
     const source = selected.current
     selected.current = null
+    preparedRef.current = null
     setSelectedKey(null)
     setPreparation(null)
     setPreparingKey(null)
@@ -133,7 +135,7 @@ export function useSourcePicker(): SourcePicker {
       if (!source.captureSupported) return
       if (
         selected.current?.sourceKey === source.sourceKey &&
-        (preparation?.sourceKey === source.sourceKey || preparingKey === source.sourceKey)
+        selected.current.revision === source.revision
       )
         return
       const previous = selected.current
@@ -148,6 +150,7 @@ export function useSourcePicker(): SourcePicker {
       selected.current = source
       setSelectedKey(source.sourceKey)
       setPreparation(null)
+      preparedRef.current = null
       setPreparingKey(source.sourceKey)
       setError(null)
       const stillPicked = (): boolean => selected.current?.sourceKey === source.sourceKey
@@ -172,6 +175,7 @@ export function useSourcePicker(): SourcePicker {
           }
           return
         }
+        preparedRef.current = response.preparation
         setPreparation(response.preparation)
       } catch {
         if (generation !== selectionGeneration.current) return
@@ -182,7 +186,7 @@ export function useSourcePicker(): SourcePicker {
         if (generation === selectionGeneration.current) setPreparingKey(null)
       }
     },
-    [preparation, preparingKey, refresh],
+    [refresh],
   )
 
   const setTab = useCallback(
@@ -195,15 +199,16 @@ export function useSourcePicker(): SourcePicker {
   )
 
   const take = useCallback((): CapturePreparationResult | null => {
-    const prepared = preparation
+    const prepared = preparedRef.current
     if (prepared === null) return null
     // Freezing consumes the preparation; do not release it afterwards.
     selected.current = null
+    preparedRef.current = null
     selectionGeneration.current += 1
     setSelectedKey(null)
     setPreparation(null)
     return prepared
-  }, [preparation])
+  }, [])
 
   const all = snapshot?.sources ?? []
   const counts: Record<SourceTab, number> = {

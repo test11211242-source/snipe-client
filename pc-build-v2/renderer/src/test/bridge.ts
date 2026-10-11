@@ -84,7 +84,7 @@ export interface BridgeOptions {
 export interface Bridge {
   crTools: Record<string, unknown> & {
     onMonitorViewChanged: ReturnType<typeof vi.fn>
-    startMonitor: ReturnType<typeof vi.fn>
+    startMonitor: AsyncMock
     stopMonitor: ReturnType<typeof vi.fn>
     getCaptureProfiles: ReturnType<typeof vi.fn>
     getMonitorView: ReturnType<typeof vi.fn>
@@ -102,6 +102,7 @@ export interface Bridge {
     getCardAsset: AsyncMock
     copyPlayerTag: AsyncMock
     showWidget: AsyncMock
+    setStreamerSectionActive: AsyncMock
     getRealtimeStatus: AsyncMock
     updateAppSettings: AsyncMock
     checkForUpdate: AsyncMock

@@ -94,8 +94,8 @@ export function buildLegacyProjection(
 ): LegacyOcrRegions {
   const regions = NormalizedRegionsSchema.parse(regionsInput)
   const trigger = normalizedToPixelRect(regions.trigger, frame.size)
-  const normal = normalizedToPixelRect(regions.normal, frame.size)
-  const precise = normalizedToPixelRect(regions.precise, frame.size)
+  const nickname = normalizedToPixelRect(regions.nickname, frame.size)
+  const topLeftEvidence = normalizedToPixelRect(regions.topLeftEvidence, frame.size)
   return LegacyOcrRegionsSchema.parse({
     schema_version: 2,
     capture_reference: {
@@ -115,8 +115,8 @@ export function buildLegacyProjection(
       ratio: regions.trigger,
       trigger_profile: buildLegacyTriggerProfile(regions.trigger, profile, legacyProfile),
     },
-    normal_data_area: { ...normal, ratio: regions.normal },
-    precise_data_area: { ...precise, ratio: regions.precise },
+    normal_data_area: { ...nickname, ratio: regions.nickname },
+    precise_data_area: { ...topLeftEvidence, ratio: regions.topLeftEvidence },
     screen_resolution: frame.size,
     updated_at: timestamp,
   })
@@ -241,8 +241,8 @@ export class SetupSessionService {
         frameSize: null,
         regions: {
           trigger: null,
-          normal: null,
-          precise: null,
+          nickname: null,
+          topLeftEvidence: null,
           resultTrigger: null,
           resultData: null,
         },
@@ -360,7 +360,7 @@ export class SetupSessionService {
     }
     const allowed =
       session.view.kind === 'capture'
-        ? ['trigger', 'normal', 'precise']
+        ? ['trigger', 'nickname', 'topLeftEvidence']
         : ['resultTrigger', 'resultData']
     if (!allowed.includes(region)) {
       throw new ApplicationError(
@@ -391,7 +391,7 @@ export class SetupSessionService {
     rect: NormalizedRect,
   ): Promise<SetupSessionView> {
     const session = this.assertCommand(sessionId, generation)
-    const finalRegion = session.view.kind === 'capture' ? 'precise' : 'resultData'
+    const finalRegion = session.view.kind === 'capture' ? 'topLeftEvidence' : 'resultData'
     if (region !== finalRegion) {
       throw new ApplicationError(
         'SETUP_REGION_INVALID',
@@ -472,8 +472,8 @@ export class SetupSessionService {
     if (session.view.kind === 'capture')
       NormalizedRegionsSchema.parse({
         trigger: session.view.regions.trigger,
-        normal: session.view.regions.normal,
-        precise: session.view.regions.precise,
+        nickname: session.view.regions.nickname,
+        topLeftEvidence: session.view.regions.topLeftEvidence,
       })
     else if (
       session.view.regions.resultTrigger === null ||
@@ -527,8 +527,8 @@ export class SetupSessionService {
     }
     const regions = NormalizedRegionsSchema.parse({
       trigger: session.view.regions.trigger,
-      normal: session.view.regions.normal,
-      precise: session.view.regions.precise,
+      nickname: session.view.regions.nickname,
+      topLeftEvidence: session.view.regions.topLeftEvidence,
     })
     const user = this.auth.getView().user
     const profileTarget = session.profileTarget
@@ -667,16 +667,16 @@ export class SetupSessionService {
           warning: null,
         },
       })
-      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-      if (!this.hasCurrentAuthContext(session)) {
-        this.cancelForAuthTransition()
-        return session.view
-      }
       session.pendingSync = {
         captureFingerprint: config.fingerprint,
         requests: activateProfile
           ? [{ path: '/api/user/me/ocr-regions', body: projection }]
           : [],
+      }
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        this.cancelForAuthTransition()
+        return session.view
       }
     } catch (error) {
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
@@ -844,11 +844,6 @@ export class SetupSessionService {
           warning: null,
         },
       })
-      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-      if (!this.hasCurrentAuthContext(session)) {
-        this.cancelForAuthTransition()
-        return session.view
-      }
       session.pendingSync = {
         captureFingerprint: captureProfile.configurationFingerprint,
         resultFingerprint: saved.fingerprint,
@@ -858,6 +853,11 @@ export class SetupSessionService {
               { path: '/api/streamer/result-data-area', body: dataPayload },
             ]
           : [],
+      }
+      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
+      if (!this.hasCurrentAuthContext(session)) {
+        this.cancelForAuthTransition()
+        return session.view
       }
     } catch {
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
@@ -908,6 +908,12 @@ export class SetupSessionService {
           state: 'COMMITTED',
           generation: generation + 1,
           error: error.toPublicError(),
+          saveOutcome: {
+            local: 'saved',
+            projection: 'failed',
+            runtime: 'not_requested',
+            warning: 'SETUP_SYNC_FAILED',
+          },
         })
         return session.view
       }
@@ -1022,7 +1028,7 @@ export class SetupSessionService {
       if (
         session.view.state !== 'COMMITTED' ||
         session.view.saveOutcome?.local !== 'saved' ||
-        session.view.saveOutcome.projection !== 'failed'
+        !['failed', 'not_attempted'].includes(session.view.saveOutcome.projection)
       )
         throw new ApplicationError(
           'SETUP_STATE_INVALID',

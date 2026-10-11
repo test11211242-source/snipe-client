@@ -15,6 +15,19 @@ const committed = (
 ) => sessionView({ state: 'COMMITTED', saveOutcome, ...extra })
 
 describe('describeOutcome', () => {
+  it('warns and offers a retry for an unattempted committed projection', () => {
+    const outcome = describeOutcome(
+      committed({
+        local: 'saved',
+        projection: 'not_attempted',
+        runtime: 'not_requested',
+        warning: null,
+      }),
+    )
+    expect(outcome.tone).toBe('warn')
+    expect(outcome.canRetrySync).toBe(true)
+    expect(outcome.notes[0]?.title).toBe('Сервер не получил настройку')
+  })
   it('is clean only when synchronization and runtime are fine', () => {
     const outcome = describeOutcome(
       committed({

@@ -1,18 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
-import type {
-  CaptureProfilesView,
-  CaptureStatus,
-} from '../../../../shared/models/capture'
+import type { CaptureProfileCommandResult } from '../../../../shared/contracts/capture-ipc'
+import type { CaptureProfilesView } from '../../../../shared/models/capture'
 import type { MonitorView } from '../../../../shared/models/monitor'
 import { useResource, type Resource } from '../../app/useResource'
 import { profileErrorMessage } from './errors'
 
-interface ProfileMutation {
-  profiles: CaptureProfilesView
-  monitor: MonitorView
-  capture: CaptureStatus
-}
+const acceptsProfiles = (next: CaptureProfilesView, current: CaptureProfilesView) =>
+  current.revision === null ||
+  (next.revision !== null && next.revision >= current.revision)
 
 /** Outcome of a profile command: the new collection, or the Russian reason it failed. */
 export type ProfileOutcome =
@@ -48,18 +44,19 @@ export function useProfilesController(
     'profiles',
     () => window.crTools.getCaptureProfiles(),
     'Не удалось получить список профилей.',
+    acceptsProfiles,
   )
-  const { apply, reload: reloadResource, value } = resource
+  const { apply, reload: reloadResource, latest } = resource
   const [pending, setPending] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const busy = useRef(false)
 
   const mutate = useCallback(
     async (
-      call: (revision: number) => Promise<ProfileMutation>,
+      call: (revision: number) => Promise<CaptureProfileCommandResult>,
       fallback: string,
     ): Promise<ProfileOutcome> => {
-      const revision = value?.revision ?? null
+      const revision = latest()?.revision ?? null
       if (revision === null)
         return { ok: false, message: 'Список профилей ещё не загружен.' }
       if (busy.current)
@@ -68,18 +65,22 @@ export function useProfilesController(
       setPending(true)
       try {
         const result = await call(revision)
+        if (!result.ok) {
+          void reloadResource({ quiet: true })
+          return { ok: false, message: profileErrorMessage(result.error.code, fallback) }
+        }
         apply(result.profiles)
         onMonitor(result.monitor)
         return { ok: true, profiles: result.profiles }
-      } catch (cause) {
+      } catch {
         void reloadResource({ quiet: true })
-        return { ok: false, message: profileErrorMessage(cause, fallback) }
+        return { ok: false, message: fallback }
       } finally {
         busy.current = false
         setPending(false)
       }
     },
-    [apply, onMonitor, reloadResource, value],
+    [apply, onMonitor, reloadResource, latest],
   )
 
   const activate = useCallback(

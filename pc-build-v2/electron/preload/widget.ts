@@ -1,9 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import {
-  CLIPBOARD_CHANNELS,
-  CopyPlayerTagPayloadSchema,
-  CopyPlayerTagResultSchema,
-} from '../../shared/contracts/clipboard'
 
 import type { CrToolsWidgetApi } from '../../shared/contracts/preload'
 import type { WidgetView } from '../../shared/models/widget'
@@ -20,13 +15,6 @@ import {
 } from '../../shared/contracts/widget-ipc'
 
 const api: CrToolsWidgetApi = Object.freeze({
-  copyPlayerTag: async (tag: string) =>
-    CopyPlayerTagResultSchema.parse(
-      await ipcRenderer.invoke(
-        CLIPBOARD_CHANNELS.widgetCopyTag,
-        CopyPlayerTagPayloadSchema.parse({ tag }),
-      ),
-    ),
   rendererReady: async () => {
     WidgetRendererReadyResultSchema.parse(
       await ipcRenderer.invoke(

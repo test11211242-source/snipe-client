@@ -78,6 +78,44 @@ function push(view: WidgetView): void {
 }
 
 describe('WidgetApp', () => {
+  it('#15 retries a failed height report without another resize', async () => {
+    vi.useFakeTimers()
+    vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(new Error('IPC'))
+    render(<WidgetApp />)
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2)
+    expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+      contentHeight: 240,
+    })
+  })
+
+  it('#15 re-reports unchanged height after main resets the compact mode bounds', async () => {
+    vi.useFakeTimers()
+    render(<WidgetApp />)
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(1)
+    push({ ...widgetView, settings: { ...widgetView.settings, compactMode: true } })
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('#16 accepts changed result content even when id and reprocessed are unchanged', async () => {
+    vi.useFakeTimers()
+    render(<WidgetApp />)
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    if (widgetView.result?.kind !== 'player_found') throw new Error('missing fixture')
+    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+      ...widgetView,
+      result: {
+        ...widgetView.result,
+        player: { ...widgetView.result.player, name: 'Изменённый соперник' },
+      },
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(10_000))
+    expect(screen.getByRole('heading', { name: 'Изменённый соперник' })).toBeVisible()
+  })
   beforeEach(() => {
     pushedView = null
     resizeCallback = null
@@ -223,7 +261,7 @@ describe('WidgetApp', () => {
     expect(shell?.style.getPropertyValue('--ow-k')).toBe('1.4')
   })
 
-  it('reports the content height once per change and never loops', async () => {
+  it('reports once per height change', async () => {
     vi.useFakeTimers()
     render(<WidgetApp />)
     await act(async () => vi.advanceTimersByTimeAsync(0))
@@ -295,11 +333,15 @@ describe('WidgetApp', () => {
     expect(screen.getByRole('list', { name: 'Карты колоды 1' })).toBeVisible()
   })
 
-  it('supports the keyboard shortcuts and hides on Escape', async () => {
+  it('pins and locks through visible controls, ignores removed shortcuts, and hides on Escape', async () => {
     render(<WidgetApp />)
     await screen.findByRole('list', { name: 'Карты колоды 1' })
 
     fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
+    fireEvent.keyDown(document, { key: 'l', ctrlKey: true })
+    fireEvent.keyDown(document, { key: 'm', ctrlKey: true })
+    expect(window.crToolsWidget.updateSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Открепить от переднего плана' }))
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
         alwaysOnTop: false,
@@ -307,7 +349,7 @@ describe('WidgetApp', () => {
     )
     await screen.findByRole('button', { name: 'Закрепить поверх окон' })
 
-    fireEvent.keyDown(document, { key: 'l', ctrlKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать позицию' }))
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
         locked: true,

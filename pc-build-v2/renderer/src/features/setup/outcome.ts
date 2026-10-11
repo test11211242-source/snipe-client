@@ -52,9 +52,14 @@ export function describeOutcome(view: SetupSessionView): OutcomeDescription {
     runtimeLine(outcome.runtime),
   ]
   const notes: { title: string; text: string }[] = []
+  const syncIncomplete =
+    outcome.projection === 'failed' || outcome.projection === 'not_attempted'
   const canRetrySync =
-    outcome.local === 'saved' && outcome.projection === 'failed' && !staleSync
-  if (outcome.projection === 'failed')
+    outcome.local === 'saved' &&
+    syncIncomplete &&
+    !staleSync &&
+    view.state === 'COMMITTED'
+  if (syncIncomplete)
     notes.push(
       staleSync
         ? {
@@ -87,7 +92,7 @@ export function describeOutcome(view: SetupSessionView): OutcomeDescription {
       notes,
     }
   const clean =
-    outcome.projection !== 'failed' &&
+    !syncIncomplete &&
     outcome.runtime !== 'failed' &&
     outcome.runtime !== 'waiting_source'
   return {

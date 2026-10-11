@@ -21,6 +21,7 @@ import type { MonitorView } from '../../../shared/models/monitor'
 import { registerMonitorIpc } from './register-monitor-ipc'
 
 const view: MonitorView = {
+  seq: 1,
   state: 'READY',
   preferences: { deckMode: 'pol' },
   readiness: {

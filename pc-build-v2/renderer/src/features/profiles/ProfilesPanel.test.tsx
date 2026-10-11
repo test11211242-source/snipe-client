@@ -32,6 +32,7 @@ const uuid = (n: number): string =>
 
 function mutation(view: CaptureProfilesView) {
   return {
+    ok: true,
     profiles: view,
     monitor: monitorViewFixture({ state: 'READY', runIntent: true }),
     capture: { configured: true, revision: view.revision, sourceLabel: 'BlueStacks' },
@@ -164,9 +165,10 @@ describe('profiles panel: activate', () => {
 
   it('refreshes the list and explains a stale activation', async () => {
     const world = mountSetup({ name: 'main' }, { profiles: profiles(2) })
-    world.bridge.crTools.activateCaptureProfile.mockRejectedValue(
-      new Error('Capture profiles changed; refresh and repeat the action'),
-    )
+    world.bridge.crTools.activateCaptureProfile.mockResolvedValue({
+      ok: false,
+      error: { code: 'CAPTURE_PROFILE_STALE' },
+    })
     const panel = await openPanel(world)
     const loads = world.bridge.crTools.getCaptureProfiles.mock.calls.length
     fireEvent.click(
@@ -239,9 +241,10 @@ describe('profiles panel: rename', () => {
 
   it('keeps the editor open with the reason when main refuses the name', async () => {
     const world = mountSetup({ name: 'main' }, { profiles: profiles(2) })
-    world.bridge.crTools.renameCaptureProfile.mockRejectedValue(
-      new Error('A capture profile with this name already exists'),
-    )
+    world.bridge.crTools.renameCaptureProfile.mockResolvedValue({
+      ok: false,
+      error: { code: 'CAPTURE_PROFILE_NAME_CONFLICT' },
+    })
     const panel = await openPanel(world)
     openMenu(rowOf(panel, 'Профиль 2'), 'Профиль 2')
     fireEvent.click(await screen.findByRole('menuitem', { name: /Переименовать/ }))
@@ -308,9 +311,10 @@ describe('profiles panel: duplicate', () => {
       ),
     ).toBeVisible()
     expect(world.bridge.crTools.duplicateCaptureProfile).not.toHaveBeenCalled()
-    world.bridge.crTools.duplicateCaptureProfile.mockRejectedValue(
-      new Error('The capture profile limit has been reached'),
-    )
+    world.bridge.crTools.duplicateCaptureProfile.mockResolvedValue({
+      ok: false,
+      error: { code: 'CAPTURE_PROFILE_LIMIT' },
+    })
     fireEvent.change(input, { target: { value: 'Свободное' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Создать копию' }))
     expect(
@@ -366,9 +370,10 @@ describe('profiles panel: delete', () => {
 
   it('keeps the dialog open with the reason when the collection changed', async () => {
     const world = mountSetup({ name: 'main' }, { profiles: profiles(2) })
-    world.bridge.crTools.deleteCaptureProfile.mockRejectedValue(
-      new Error('Capture profiles changed; refresh and repeat the action'),
-    )
+    world.bridge.crTools.deleteCaptureProfile.mockResolvedValue({
+      ok: false,
+      error: { code: 'CAPTURE_PROFILE_STALE' },
+    })
     const panel = await openPanel(world)
     openMenu(rowOf(panel, 'Профиль 2'), 'Профиль 2')
     fireEvent.click(await screen.findByRole('menuitem', { name: /Удалить/ }))

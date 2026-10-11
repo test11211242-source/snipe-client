@@ -1,7 +1,6 @@
 import type { CopyPlayerTagResult } from './clipboard'
 import type { BootstrapFailure } from './app'
 import type {
-  AccountMutationResult,
   StreamerCommand,
   StreamerCommandResult,
   StreamerReadiness,
@@ -18,6 +17,7 @@ import type {
   CapturePreparationResponse,
   CaptureProfileCommand,
   CaptureProfileNamePayload,
+  CaptureProfileCommandResult,
   PreviewPayload,
   RebindCaptureProfilePayload,
   SetRegionPayload,
@@ -38,14 +38,7 @@ import type {
   WidgetView,
 } from '../models/widget'
 import type { CardAssetRequest, CardAssetResult } from './widget-ipc'
-import type {
-  OverlaySettings,
-  OverlayUrlKind,
-  PredictionPreferences,
-  StreamerView,
-  StreamTitleSettings,
-  StreamTitlePreview,
-} from '../models/streamer'
+import type { StreamerView, StreamTitleSettings } from '../models/streamer'
 import type { UpdateView } from '../models/update'
 
 export interface CrToolsApi {
@@ -81,31 +74,21 @@ export interface CrToolsApi {
   startCaptureSetup: (payload: StartSetupPayload) => Promise<SetupSessionView>
   getCaptureStatus: () => Promise<CaptureStatus>
   getCaptureProfiles: () => Promise<CaptureProfilesView>
-  activateCaptureProfile: (payload: CaptureProfileCommand) => Promise<{
-    profiles: CaptureProfilesView
-    monitor: MonitorView
-    capture: CaptureStatus
-  }>
-  renameCaptureProfile: (payload: CaptureProfileNamePayload) => Promise<{
-    profiles: CaptureProfilesView
-    monitor: MonitorView
-    capture: CaptureStatus
-  }>
-  duplicateCaptureProfile: (payload: CaptureProfileNamePayload) => Promise<{
-    profiles: CaptureProfilesView
-    monitor: MonitorView
-    capture: CaptureStatus
-  }>
-  deleteCaptureProfile: (payload: CaptureProfileCommand) => Promise<{
-    profiles: CaptureProfilesView
-    monitor: MonitorView
-    capture: CaptureStatus
-  }>
-  rebindCaptureProfile: (payload: RebindCaptureProfilePayload) => Promise<{
-    profiles: CaptureProfilesView
-    monitor: MonitorView
-    capture: CaptureStatus
-  }>
+  activateCaptureProfile: (
+    payload: CaptureProfileCommand,
+  ) => Promise<CaptureProfileCommandResult>
+  renameCaptureProfile: (
+    payload: CaptureProfileNamePayload,
+  ) => Promise<CaptureProfileCommandResult>
+  duplicateCaptureProfile: (
+    payload: CaptureProfileNamePayload,
+  ) => Promise<CaptureProfileCommandResult>
+  deleteCaptureProfile: (
+    payload: CaptureProfileCommand,
+  ) => Promise<CaptureProfileCommandResult>
+  rebindCaptureProfile: (
+    payload: RebindCaptureProfilePayload,
+  ) => Promise<CaptureProfileCommandResult>
   getMonitorView: () => Promise<MonitorView>
   onMonitorViewChanged: (listener: (view: MonitorView) => void) => () => void
   startMonitor: () => Promise<MonitorView>
@@ -127,27 +110,6 @@ export interface CrToolsApi {
   getStreamerView: () => Promise<StreamerView>
   refreshStreamer: () => Promise<StreamerView>
   setStreamerSectionActive: (active: boolean) => Promise<StreamerView>
-  connectTwitch: () => Promise<StreamerView>
-  disconnectTwitch: (confirmation: { confirmed: true }) => Promise<StreamerView>
-  startPredictions: (settings: PredictionPreferences) => Promise<StreamerView>
-  stopPredictions: () => Promise<StreamerView>
-  startStreamerResultSetup: () => Promise<StreamerView>
-  updateStreamTitle: (settings: StreamTitleSettings) => Promise<StreamerView>
-  previewStreamTitle: (settings: StreamTitleSettings) => Promise<StreamTitlePreview>
-  setStreamTitleEnabled: (enabled: boolean) => Promise<StreamerView>
-  setStreamTitlePaused: (paused: boolean) => Promise<StreamerView>
-  addStreamTitleAccount: (payload: {
-    tag: string
-    alias: string
-  }) => Promise<AccountMutationResult>
-  removeStreamTitleAccount: (tag: string) => Promise<StreamerView>
-  resetStreamTitle: (confirmation: { confirmed: true }) => Promise<StreamerView>
-  undoStreamTitle: (confirmation: { confirmed: true }) => Promise<StreamerView>
-  restoreStreamTitle: (confirmation: { confirmed: true }) => Promise<StreamerView>
-  setDeckSharing: (enabled: boolean) => Promise<StreamerView>
-  updateOverlay: (settings: OverlaySettings) => Promise<StreamerView>
-  rotateOverlayToken: (confirmation: { confirmed: true }) => Promise<StreamerView>
-  copyOverlayUrl: (kind: OverlayUrlKind) => Promise<StreamerView>
   getUpdateView: () => Promise<UpdateView>
   checkForUpdate: () => Promise<UpdateView>
   downloadUpdate: () => Promise<UpdateView>
@@ -183,7 +145,6 @@ export interface CrToolsAuthApi {
 }
 
 export interface CrToolsWidgetApi {
-  copyPlayerTag: (tag: string) => Promise<CopyPlayerTagResult>
   rendererReady: () => Promise<void>
   getView: () => Promise<WidgetView>
   onViewChanged: (listener: (view: WidgetView) => void) => () => void

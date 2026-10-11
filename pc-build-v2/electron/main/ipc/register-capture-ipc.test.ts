@@ -101,6 +101,63 @@ describe('capture preparation IPC boundary', () => {
     })
   })
 })
+describe('M6 profile command envelope', () => {
+  it.each([
+    ['activateProfile', 'activate'],
+    ['renameProfile', 'rename'],
+    ['duplicateProfile', 'duplicate'],
+    ['deleteProfile', 'delete'],
+    ['rebindProfile', 'rebind'],
+  ] as const)(
+    '#4 preserves an allowlisted code without exposing a message for %s',
+    async (channel, method) => {
+      const invoke = vi
+        .fn()
+        .mockRejectedValue(
+          new ApplicationError(
+            'CAPTURE_PROFILE_STALE',
+            'a completely reworded private message',
+          ),
+        )
+      const event = { sender: { id: 1 }, senderFrame: { url: 'file:///app/index.html' } }
+      registerCaptureIpc({
+        windows: { assertSender: vi.fn() },
+        profiles: { [method]: invoke },
+        preparations: {
+          freeze: vi
+            .fn()
+            .mockResolvedValue({ source: { preference: {} }, frame: { size: {} } }),
+        },
+        logger: { info: vi.fn(), warn: vi.fn() },
+      } as never)
+      const payload = {
+        profileId: '00000000-0000-4000-8000-000000000001',
+        expectedRevision: 1,
+        ...(channel === 'renameProfile' || channel === 'duplicateProfile'
+          ? { profileName: 'New' }
+          : {}),
+        ...(channel === 'rebindProfile'
+          ? { preparationId: preparation.preparationId }
+          : {}),
+      }
+      await expect(
+        registeredHandler(MAIN_CAPTURE_IPC_CHANNELS[channel])(event, payload),
+      ).resolves.toEqual({
+        ok: false,
+        error: { code: 'CAPTURE_PROFILE_STALE' },
+      })
+      invoke.mockRejectedValueOnce(
+        new ApplicationError('PRIVATE_UNALLOWLISTED', 'private'),
+      )
+      await expect(
+        registeredHandler(MAIN_CAPTURE_IPC_CHANNELS[channel])(event, payload),
+      ).resolves.toEqual({
+        ok: false,
+        error: { code: 'UNKNOWN' },
+      })
+    },
+  )
+})
 
 describe('main-window setup capability', () => {
   const sessionId = '00000000-0000-4000-8000-000000000001'
@@ -117,7 +174,7 @@ describe('main-window setup capability', () => {
     state: 'SELECTING',
     source,
     frameSize: { width: 100, height: 100 },
-    regions: { trigger: null, normal: null, precise: null },
+    regions: { trigger: null, nickname: null, topLeftEvidence: null },
     triggerProfile: null,
     error: null,
   })
@@ -171,7 +228,7 @@ describe('main-window setup capability', () => {
             : name === 'setRegion' || name === 'finish'
               ? {
                   ...command,
-                  region: 'normal',
+                  region: 'nickname',
                   rect: { x: 0, y: 0, width: 0.5, height: 0.5 },
                 }
               : command

@@ -18,7 +18,6 @@ import {
   decompileTitle,
 } from '../../../shared/contracts/title-builder'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
-import type { SetupSessionService } from '../services/setup-session-service'
 import type { StreamerService } from '../services/streamer-service'
 import type { WindowCoordinator } from '../windows/window-coordinator'
 import { verifyIpcSender } from './verify-ipc-sender'
@@ -27,7 +26,6 @@ interface Dependencies {
   windows: WindowCoordinator
   logger: StructuredLogger
   streamer: StreamerService
-  setup: SetupSessionService
 }
 export function registerStreamerIpc(dependencies: Dependencies): () => void {
   ipcMain.handle(STREAMER_IPC_CHANNELS.command, async (event, raw) => {
@@ -87,14 +85,6 @@ export function registerStreamerIpc(dependencies: Dependencies): () => void {
     verifyIpcSender(event, dependencies.windows, 'main')
     const { active } = StreamerActivePayloadSchema.parse(raw)
     return StreamerViewResultSchema.parse(dependencies.streamer.setSectionActive(active))
-  })
-  // Legacy presentation adapter until the renderer cutover; session lives in main.
-  ipcMain.handle(STREAMER_IPC_CHANNELS.startResultSetup, async (event, raw) => {
-    verifyIpcSender(event, dependencies.windows, 'main')
-    EmptyStreamerPayloadSchema.parse(raw)
-    dependencies.streamer.ensureAccess()
-    await dependencies.setup.startPredictionResult()
-    return StreamerViewResultSchema.parse(dependencies.streamer.getView())
   })
   const channels = [
     ...Object.values(STREAMER_IPC_CHANNELS),

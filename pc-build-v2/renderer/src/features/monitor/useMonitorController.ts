@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { DeckMode, MonitorView } from '../../../../shared/models/monitor'
 import { usePolling, useResource, type Resource } from '../../app/useResource'
 
+const acceptsMonitor = (next: MonitorView, current: MonitorView) =>
+  next.seq >= current.seq
 export interface MonitorController extends Resource<MonitorView> {
   /** Start requested and not yet answered. */
   starting: boolean
   stopping: boolean
+  retrying: boolean
   /** Last failed Start/Stop/retry in Russian, or null. */
   actionError: string | null
   clearActionError: () => void
@@ -30,10 +33,13 @@ export function useMonitorController(): MonitorController {
     'monitor',
     () => window.crTools.getMonitorView(),
     'Не удалось получить состояние мониторинга.',
+    acceptsMonitor,
   )
   const { apply, reload: reloadResource } = resource
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const retryBusy = useRef(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   // Subscribe once; main pushes every state/progress change.
@@ -85,12 +91,19 @@ export function useMonitorController(): MonitorController {
     [run],
   )
   const retrySearch = useCallback(
-    (attemptId: string) =>
-      run(
-        () => window.crTools.retryMonitorSearch({ attemptId }),
-        () => undefined,
-        'Не удалось повторить поиск. Дождитесь следующего боя.',
-      ),
+    async (attemptId: string) => {
+      if (retryBusy.current) return
+      retryBusy.current = true
+      try {
+        await run(
+          () => window.crTools.retryMonitorSearch({ attemptId }),
+          setRetrying,
+          'Не удалось повторить поиск. Дождитесь следующего боя.',
+        )
+      } finally {
+        retryBusy.current = false
+      }
+    },
     [run],
   )
   const setDeckMode = useCallback(
@@ -115,6 +128,7 @@ export function useMonitorController(): MonitorController {
       reload,
       starting,
       stopping,
+      retrying,
       actionError,
       clearActionError,
       start,
@@ -127,6 +141,7 @@ export function useMonitorController(): MonitorController {
       reload,
       starting,
       stopping,
+      retrying,
       actionError,
       clearActionError,
       start,

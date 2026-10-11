@@ -156,7 +156,7 @@ export function OverlayCard({
             onClick={controls.onCompact}
             size="sm"
           >
-            <Icon name="grid" size={14} />
+            <Icon name="compact" size={14} />
           </IconButton>
           <IconButton label="Скрыть оверлей" onClick={controls.onHide} size="sm">
             <Icon name="close" size={14} />

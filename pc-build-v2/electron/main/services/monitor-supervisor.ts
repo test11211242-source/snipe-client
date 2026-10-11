@@ -98,6 +98,7 @@ export class MonitorSupervisor {
     results: [],
   })
   #generation = 0
+  #viewSeq = 0
   #runController = new AbortController()
   #ocrController: AbortController | null = null
   #ocrActive = false
@@ -184,6 +185,7 @@ export class MonitorSupervisor {
     return this.auth.getView().user?.id === this.#userContextId
       ? MonitorViewSchema.parse({
           ...this.#view,
+          seq: ++this.#viewSeq,
           session: this.sessionSnapshot(),
         })
       : this.redactedView(this.auth.getView().user !== null)
@@ -1219,6 +1221,7 @@ export class MonitorSupervisor {
   private redactedView(authenticated: boolean): MonitorView {
     return MonitorViewSchema.parse({
       ...this.#view,
+      seq: ++this.#viewSeq,
       preferences: DEFAULT_MONITOR_PREFERENCES,
       readiness: {
         authenticated,

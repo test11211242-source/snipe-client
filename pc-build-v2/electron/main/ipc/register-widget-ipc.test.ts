@@ -2,11 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, payload: unknown) => unknown>(),
-  copyTag: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
-  clipboard: { writeText: electron.copyTag },
   ipcMain: {
     handle: vi.fn(
       (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
@@ -16,7 +14,6 @@ vi.mock('electron', () => ({
     removeHandler: vi.fn(),
   },
 }))
-import { CLIPBOARD_CHANNELS } from '../../../shared/contracts/clipboard'
 
 import {
   MAIN_WIDGET_IPC_CHANNELS,
@@ -72,7 +69,6 @@ function harness() {
 
 beforeEach(() => {
   electron.handlers.clear()
-  electron.copyTag.mockClear()
 })
 
 describe('widget IPC boundary', () => {
@@ -102,24 +98,9 @@ describe('widget IPC boundary', () => {
     expect(test.widget.updateSettings).toHaveBeenCalledTimes(2)
   })
 
-  it('copies a canonical widget player tag only after its sender and payload pass', () => {
-    const test = harness()
-    const handler = electron.handlers.get(CLIPBOARD_CHANNELS.widgetCopyTag)
-    if (handler === undefined) throw new Error('Missing widget tag copy handler')
-    expect(handler(test.event, { tag: 'jcu' })).toEqual({ copied: true })
-    expect(electron.copyTag).toHaveBeenCalledWith('#JCU')
-    expect(test.windows.assertSender).toHaveBeenCalledWith(
-      test.event.sender,
-      test.event.senderFrame.url,
-      'widget',
-    )
-    expect(() => handler(test.event, { tag: 'BAD' })).toThrow()
-    expect(() => handler(test.event, { tag: 'JCU', text: 'anything' })).toThrow()
-    test.windows.assertSender.mockImplementation(() => {
-      throw new Error('IPC_SENDER_REJECTED')
-    })
-    expect(() => handler(test.event, { tag: 'JCU' })).toThrow('IPC_SENDER_REJECTED')
-    expect(electron.copyTag).toHaveBeenCalledOnce()
+  it('does not register an overlay clipboard capability', () => {
+    harness()
+    expect(electron.handlers.has('widget:copy-player-tag')).toBe(false)
   })
 
   it('accepts only strict user-setting patches and never renderer bounds', async () => {

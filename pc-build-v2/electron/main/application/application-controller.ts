@@ -139,7 +139,6 @@ export class ApplicationController {
       windows: this.windows,
       logger: this.logger,
       streamer: this.streamer,
-      setup: this.setup,
     })
     const disposeUpdateIpc = registerUpdateIpc({
       windows: this.windows,

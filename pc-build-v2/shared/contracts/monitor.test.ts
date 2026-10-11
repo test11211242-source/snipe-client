@@ -19,6 +19,7 @@ describe('monitor renderer contracts', () => {
 
   it('rejects private process and server fields from MonitorView', () => {
     const base = {
+      seq: 1,
       state: 'STOPPED',
       preferences: { deckMode: 'pol' },
       readiness: { authenticated: true, captureConfigured: true, sourceAvailable: null },

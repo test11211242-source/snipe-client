@@ -152,6 +152,7 @@ export const MonitorSessionSchema = z
 
 export const MonitorViewSchema = z
   .object({
+    seq: z.number().int().nonnegative().default(0),
     state: MonitorStateSchema,
     preferences: MonitorPreferencesSchema,
     readiness: MonitorReadinessSchema,

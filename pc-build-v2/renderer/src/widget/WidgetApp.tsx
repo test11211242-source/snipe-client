@@ -20,8 +20,7 @@ function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
   const leftBounds = left.settings.bounds
   const rightBounds = right.settings.bounds
   return (
-    left.result?.id === right.result?.id &&
-    left.result?.reprocessed === right.result?.reprocessed &&
+    left.result === right.result &&
     left.visible === right.visible &&
     left.scale === right.scale &&
     left.settings.autoOpen === right.settings.autoOpen &&
@@ -187,6 +186,7 @@ export function WidgetApp(): React.JSX.Element {
   useEffect(() => {
     const shell = shellRef.current
     if (!loaded || shell === null || typeof ResizeObserver === 'undefined') return
+    reportedHeightRef.current = null
     let timer: number | undefined
     const report = (): void => {
       const height = Math.min(
@@ -195,7 +195,14 @@ export function WidgetApp(): React.JSX.Element {
       )
       if (reportedHeightRef.current === height) return
       reportedHeightRef.current = height
-      void enqueueSettingsEvent({ contentHeight: height }, { silent: true })
+      void enqueueSettingsEvent({ contentHeight: height }, { silent: true }).then(
+        (ok) => {
+          if (!ok && reportedHeightRef.current === height) {
+            reportedHeightRef.current = null
+            if (mountedRef.current) timer = window.setTimeout(report, 1_000)
+          }
+        },
+      )
     }
     const observer = new ResizeObserver(() => {
       window.clearTimeout(timer)
@@ -207,7 +214,7 @@ export function WidgetApp(): React.JSX.Element {
       observer.disconnect()
       window.clearTimeout(timer)
     }
-  }, [loaded])
+  }, [loaded, view?.settings.compactMode, view?.scale])
 
   useEffect(() => {
     if (view === null || opacityDirtyRef.current) return
@@ -234,26 +241,12 @@ export function WidgetApp(): React.JSX.Element {
   }, [opacityDirty, opacityDraft])
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    const settings = view?.settings
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopImmediatePropagation()
       void window.crToolsWidget.hide()
       return
     }
-    if (settings === undefined || !event.ctrlKey || pendingMutationsRef.current > 0) {
-      return
-    }
-
-    const key = event.key.toLowerCase()
-    let patch: WidgetSettingsPatch | null = null
-    if (key === 'p') patch = { alwaysOnTop: !settings.alwaysOnTop }
-    if (key === 'l') patch = { locked: !settings.locked }
-    if (key === 'm') patch = { compactMode: !settings.compactMode }
-    if (patch === null) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    void enqueueSettingsEvent(patch)
   })
 
   const handleWheel = useEffectEvent((event: WheelEvent) => {

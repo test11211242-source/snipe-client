@@ -76,16 +76,16 @@ export const CaptureSourcePreviewSchema = z
 
 export const RegionKindSchema = z.enum([
   'trigger',
-  'normal',
-  'precise',
+  'nickname',
+  'topLeftEvidence',
   'resultTrigger',
   'resultData',
 ])
 export const NormalizedRegionsSchema = z
   .object({
     trigger: NormalizedRectSchema,
-    normal: NormalizedRectSchema,
-    precise: NormalizedRectSchema,
+    nickname: NormalizedRectSchema,
+    topLeftEvidence: NormalizedRectSchema,
   })
   .strict()
 

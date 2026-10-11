@@ -47,8 +47,8 @@ export const SetupSessionViewSchema = z
     regions: z
       .object({
         trigger: NormalizedRectSchema.nullable(),
-        normal: NormalizedRectSchema.nullable(),
-        precise: NormalizedRectSchema.nullable(),
+        nickname: NormalizedRectSchema.nullable(),
+        topLeftEvidence: NormalizedRectSchema.nullable(),
         resultTrigger: NormalizedRectSchema.nullable().default(null),
         resultData: NormalizedRectSchema.nullable().default(null),
       })

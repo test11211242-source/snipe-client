@@ -6,7 +6,8 @@ import {
   CapturePreparationResponseSchema,
   CapturePreparationResultSchema,
   CaptureProfileCommandSchema,
-  CaptureProfileMutationResultSchema,
+  CaptureProfileCommandResultSchema,
+  CaptureProfileErrorCodeSchema,
   CaptureProfileNamePayloadSchema,
   CaptureProfilesResultSchema,
   CaptureStatusResultSchema,
@@ -46,6 +47,20 @@ function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator, kind: Win
   verifyIpcSender(event, windows, kind)
 }
 
+async function profileResult(call: () => Promise<unknown>) {
+  try {
+    const result = await call()
+    return CaptureProfileCommandResultSchema.parse({ ok: true, ...(result as object) })
+  } catch (error) {
+    const code = CaptureProfileErrorCodeSchema.safeParse(
+      error instanceof ApplicationError ? error.code : 'UNKNOWN',
+    )
+    return CaptureProfileCommandResultSchema.parse({
+      ok: false,
+      error: { code: code.success ? code.data : 'UNKNOWN' },
+    })
+  }
+}
 export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => void {
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.listSources, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
@@ -125,15 +140,15 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.activateProfile, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = CaptureProfileCommandSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
-      await dependencies.profiles.activate(payload.profileId, payload.expectedRevision),
+    return profileResult(() =>
+      dependencies.profiles.activate(payload.profileId, payload.expectedRevision),
     )
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.renameProfile, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
-      await dependencies.profiles.rename(
+    return profileResult(() =>
+      dependencies.profiles.rename(
         payload.profileId,
         payload.profileName,
         payload.expectedRevision,
@@ -145,8 +160,8 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     async (event, rawPayload) => {
       verify(event, dependencies.windows, 'main')
       const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
-      return CaptureProfileMutationResultSchema.parse(
-        await dependencies.profiles.duplicate(
+      return profileResult(() =>
+        dependencies.profiles.duplicate(
           payload.profileId,
           payload.profileName,
           payload.expectedRevision,
@@ -157,22 +172,22 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.deleteProfile, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = CaptureProfileCommandSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
-      await dependencies.profiles.delete(payload.profileId, payload.expectedRevision),
+    return profileResult(() =>
+      dependencies.profiles.delete(payload.profileId, payload.expectedRevision),
     )
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.rebindProfile, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = RebindCaptureProfilePayloadSchema.parse(rawPayload)
-    const prepared = await dependencies.preparations.freeze(payload.preparationId)
-    return CaptureProfileMutationResultSchema.parse(
-      await dependencies.profiles.rebind(
+    return profileResult(async () => {
+      const prepared = await dependencies.preparations.freeze(payload.preparationId)
+      return dependencies.profiles.rebind(
         payload.profileId,
         prepared.source.preference,
         prepared.frame.size,
         payload.expectedRevision,
-      ),
-    )
+      )
+    })
   })
 
   ipcMain.handle(SETUP_IPC_CHANNELS.startResult, async (event, rawPayload) => {

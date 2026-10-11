@@ -27,6 +27,7 @@ export interface ResourceController<T> extends Resource<T> {
   reload: (options?: { quiet?: boolean }) => Promise<void>
   /** Applies a value from a push event or a command result and supersedes in-flight loads. */
   apply: (value: T) => void
+  latest: () => T | null
 }
 
 const DEFAULT_MESSAGE = 'Не удалось получить данные.'
@@ -53,6 +54,7 @@ export function useResource<T>(
   name: ResourceName,
   load: () => Promise<T>,
   message?: string,
+  accepts?: (next: T, current: T) => boolean,
 ): ResourceController<T> {
   const [state, setState] = useState<Resource<T>>({
     value: null,
@@ -60,6 +62,7 @@ export function useResource<T>(
     loading: true,
   })
   const generation = useRef(0)
+  const current = useRef<T | null>(null)
   const mounted = useRef(true)
   const loadRef = useRef(load)
   useEffect(() => {
@@ -72,8 +75,16 @@ export function useResource<T>(
       const mine = ++generation.current
       return loadRef.current().then(
         (value) => {
-          if (mounted.current && mine === generation.current)
-            setState({ value, error: null, loading: false })
+          if (mounted.current && mine === generation.current) {
+            if (
+              current.current === null ||
+              accepts === undefined ||
+              accepts(value, current.current)
+            ) {
+              current.current = value
+              setState({ value, error: null, loading: false })
+            } else setState((s) => ({ ...s, loading: false }))
+          }
         },
         (reason: unknown) => {
           if (!mounted.current || mine !== generation.current) return
@@ -90,7 +101,7 @@ export function useResource<T>(
         },
       )
     },
-    [message, name],
+    [accepts, message, name],
   )
 
   const reload = useCallback(
@@ -102,10 +113,21 @@ export function useResource<T>(
     [fetchInto],
   )
 
-  const apply = useCallback((value: T): void => {
-    generation.current += 1
-    setState({ value, error: null, loading: false })
-  }, [])
+  const apply = useCallback(
+    (value: T): void => {
+      if (
+        current.current !== null &&
+        accepts !== undefined &&
+        !accepts(value, current.current)
+      )
+        return
+      current.current = value
+      generation.current += 1
+      setState({ value, error: null, loading: false })
+    },
+    [accepts],
+  )
+  const latest = useCallback(() => current.current, [])
 
   useEffect(() => {
     mounted.current = true
@@ -117,7 +139,10 @@ export function useResource<T>(
     }
   }, [fetchInto])
 
-  return useMemo(() => ({ ...state, reload, apply }), [state, reload, apply])
+  return useMemo(
+    () => ({ ...state, reload, apply, latest }),
+    [state, reload, apply, latest],
+  )
 }
 
 /** Runs `tick` every `delay()` ms while mounted; pauses nothing, just reschedules. */

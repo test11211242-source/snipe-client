@@ -47,7 +47,7 @@ import {
 import {
   CapturePreparationResponseSchema,
   CaptureProfileCommandSchema,
-  CaptureProfileMutationResultSchema,
+  CaptureProfileCommandResultSchema,
   CaptureProfileNamePayloadSchema,
   CaptureProfilesResultSchema,
   CaptureStatusResultSchema,
@@ -81,20 +81,13 @@ import {
   WidgetStatusResultSchema,
 } from '../../shared/contracts/widget-ipc'
 import {
-  AccountMutationResultSchema,
   StreamerCommandSchema,
   StreamerCommandResultSchema,
   StreamerReadinessSchema,
   EmptyStreamerPayloadSchema,
-  OverlayCopyPayloadSchema,
-  OverlaySettingsPayloadSchema,
-  PredictionPreferencesPayloadSchema,
   STREAMER_IPC_CHANNELS,
-  StreamerAccountPayloadSchema,
   StreamerActivePayloadSchema,
-  StreamerConfirmationPayloadSchema,
   StreamerViewResultSchema,
-  StreamTitlePreviewResultSchema,
   StreamTitleSettingsPayloadSchema,
 } from '../../shared/contracts/streamer-ipc'
 import {
@@ -126,18 +119,6 @@ async function bootstrapResult<T>(
   const result = schema.safeParse(value)
   if (!result.success) throw new Error('INVALID_RESPONSE')
   return result.data
-}
-
-// The old renderer consumes views; writes use the same typed command boundary.
-const streamerCommand = async (raw: unknown) => {
-  const result = StreamerCommandResultSchema.parse(
-    await ipcRenderer.invoke(
-      STREAMER_IPC_CHANNELS.command,
-      StreamerCommandSchema.parse(raw),
-    ),
-  )
-  if (!result.ok) throw new Error(result.error.code)
-  return result
 }
 
 const api: CrToolsApi = Object.freeze<CrToolsApi>({
@@ -304,31 +285,31 @@ const api: CrToolsApi = Object.freeze<CrToolsApi>({
     ),
   activateCaptureProfile: async (rawPayload: unknown) => {
     const payload = CaptureProfileCommandSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
+    return CaptureProfileCommandResultSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.activateProfile, payload),
     )
   },
   renameCaptureProfile: async (rawPayload: unknown) => {
     const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
+    return CaptureProfileCommandResultSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.renameProfile, payload),
     )
   },
   duplicateCaptureProfile: async (rawPayload: unknown) => {
     const payload = CaptureProfileNamePayloadSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
+    return CaptureProfileCommandResultSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.duplicateProfile, payload),
     )
   },
   deleteCaptureProfile: async (rawPayload: unknown) => {
     const payload = CaptureProfileCommandSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
+    return CaptureProfileCommandResultSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.deleteProfile, payload),
     )
   },
   rebindCaptureProfile: async (rawPayload: unknown) => {
     const payload = RebindCaptureProfilePayloadSchema.parse(rawPayload)
-    return CaptureProfileMutationResultSchema.parse(
+    return CaptureProfileCommandResultSchema.parse(
       await ipcRenderer.invoke(MAIN_CAPTURE_IPC_CHANNELS.rebindProfile, payload),
     )
   },
@@ -430,113 +411,6 @@ const api: CrToolsApi = Object.freeze<CrToolsApi>({
         StreamerActivePayloadSchema.parse({ active }),
       ),
     ),
-  connectTwitch: async () => (await streamerCommand({ action: 'twitch.connect' })).view,
-  disconnectTwitch: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'twitch.disconnect',
-        ...StreamerConfirmationPayloadSchema.parse(raw),
-      })
-    ).view,
-  startPredictions: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'predictions.start',
-        settings: PredictionPreferencesPayloadSchema.parse(raw),
-      })
-    ).view,
-  stopPredictions: async () =>
-    (await streamerCommand({ action: 'predictions.stop' })).view,
-  startStreamerResultSetup: () => streamerEmpty(STREAMER_IPC_CHANNELS.startResultSetup),
-  updateStreamTitle: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'title.save',
-        settings: StreamTitleSettingsPayloadSchema.parse(raw),
-      })
-    ).view,
-  previewStreamTitle: async (raw) =>
-    StreamTitlePreviewResultSchema.parse(
-      (
-        await streamerCommand({
-          action: 'title.preview',
-          settings: StreamTitleSettingsPayloadSchema.parse(raw),
-        })
-      ).preview,
-    ),
-  setStreamTitleEnabled: async (enabled) =>
-    (await streamerCommand({ action: 'title.enabled', enabled })).view,
-  setStreamTitlePaused: async (paused) =>
-    (await streamerCommand({ action: 'title.paused', paused })).view,
-  addStreamTitleAccount: async (raw) => {
-    const result = StreamerCommandResultSchema.parse(
-      await ipcRenderer.invoke(
-        STREAMER_IPC_CHANNELS.command,
-        StreamerCommandSchema.parse({
-          action: 'accounts.add',
-          ...StreamerAccountPayloadSchema.parse(raw),
-        }),
-      ),
-    )
-    return AccountMutationResultSchema.parse(
-      result.ok
-        ? {
-            ok: true,
-            view: result.view,
-            warning:
-              result.warnings.find(
-                (warning) => warning !== 'TITLE_APPLICATION_UNCONFIRMED',
-              ) ?? null,
-          }
-        : { ok: false, error: result.error },
-    )
-  },
-  removeStreamTitleAccount: async (tag) =>
-    (await streamerCommand({ action: 'accounts.remove', tag })).view,
-  resetStreamTitle: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'title.reset',
-        ...StreamerConfirmationPayloadSchema.parse(raw),
-      })
-    ).view,
-  undoStreamTitle: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'title.undo',
-        ...StreamerConfirmationPayloadSchema.parse(raw),
-      })
-    ).view,
-  restoreStreamTitle: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'title.restore',
-        ...StreamerConfirmationPayloadSchema.parse(raw),
-      })
-    ).view,
-  setDeckSharing: async (enabled) =>
-    (await streamerCommand({ action: 'chat.toggle', enabled })).view,
-  updateOverlay: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'widget.settings',
-        settings: OverlaySettingsPayloadSchema.parse(raw),
-      })
-    ).view,
-  rotateOverlayToken: async (raw) =>
-    (
-      await streamerCommand({
-        action: 'widget.resetToken',
-        ...StreamerConfirmationPayloadSchema.parse(raw),
-      })
-    ).view,
-  copyOverlayUrl: async (kind) =>
-    (
-      await streamerCommand({
-        action: 'widget.copy',
-        ...OverlayCopyPayloadSchema.parse({ kind }),
-      })
-    ).view,
   getUpdateView: () =>
     bootstrapResult(
       UpdateViewResultSchema,

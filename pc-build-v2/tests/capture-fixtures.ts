@@ -20,7 +20,11 @@ export function v4CaptureFixture(input: unknown): CaptureConfiguration {
       '00000000-0000-4000-8000-000000000001',
       legacy.revision,
       legacy.frameSize,
-      legacy.regions,
+      {
+        trigger: legacy.regions.trigger,
+        nickname: legacy.regions.normal,
+        topLeftEvidence: legacy.regions.precise,
+      },
       legacy.triggerProfile,
       legacy.committedAt,
       'manual',

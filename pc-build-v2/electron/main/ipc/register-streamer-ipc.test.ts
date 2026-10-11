@@ -88,7 +88,6 @@ function harness() {
   const dispose = registerStreamerIpc({
     windows,
     streamer,
-    setup: {},
     logger: { info: vi.fn() },
   } as never)
   return { windows, streamer, response, dispose }

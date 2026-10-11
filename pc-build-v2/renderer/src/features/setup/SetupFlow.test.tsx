@@ -56,7 +56,8 @@ function setRegionCalls(
 
 async function findEditor(): Promise<void> {
   await screen.findByRole('heading', { name: 'Отметьте области вручную' })
-  await screen.findByRole('group', { name: STAGE })
+  const editor = await screen.findByRole('group', { name: STAGE })
+  await within(editor).findByRole('img')
 }
 
 beforeEach(() => {
@@ -122,7 +123,7 @@ describe('setup flow: new profile', () => {
     draw(NICK)
     fireEvent.click(tab(/^Левая верхняя область/))
     await waitFor(() => expect(setRegionCalls(world)).toHaveLength(2))
-    expect(setRegionCalls(world)[1]?.region).toBe('normal')
+    expect(setRegionCalls(world)[1]?.region).toBe('nickname')
     draw(EVIDENCE)
     expect(
       screen.getByRole('button', { name: /Дальше: проверка триггера/ }),
@@ -133,8 +134,8 @@ describe('setup flow: new profile', () => {
     expect(await screen.findByRole('heading', { name: 'Триггер проверен' })).toBeVisible()
     expect(setRegionCalls(world).map((call) => call.region)).toEqual([
       'trigger',
-      'normal',
-      'precise',
+      'nickname',
+      'topLeftEvidence',
     ])
     expect(crTools.setup.analyzeTrigger).toHaveBeenCalledTimes(1)
     expect(screen.getByText('96%')).toBeVisible()
@@ -364,6 +365,7 @@ describe('setup flow: stale session and generation', () => {
     )
     draw(TRIGGER)
     fireEvent.click(tab(/^Ник соперника/))
+    await waitFor(() => expect(world.bridge.crTools.setup.setRegion).toHaveBeenCalled())
     expect(
       await screen.findByText('Состояние настройки изменилось. Мы его обновили.'),
     ).toBeVisible()
@@ -387,6 +389,7 @@ describe('setup flow: stale session and generation', () => {
     )
     draw(TRIGGER)
     fireEvent.click(tab(/^Ник соперника/))
+    await waitFor(() => expect(world.bridge.crTools.setup.setRegion).toHaveBeenCalled())
     expect(
       await screen.findByText(
         'Состояние настройки изменилось. Мы его обновили — повторите шаг.',
@@ -408,6 +411,7 @@ describe('setup flow: stale session and generation', () => {
     )
     draw(TRIGGER)
     fireEvent.click(tab(/^Ник соперника/))
+    await waitFor(() => expect(world.bridge.crTools.setup.setRegion).toHaveBeenCalled())
     expect(
       await screen.findByText(
         'Состояние настройки изменилось. Мы его обновили — повторите шаг.',
@@ -458,8 +462,8 @@ describe('setup flow: stale session and generation', () => {
           initial: sessionView({
             regions: {
               trigger: TRIGGER,
-              normal: NICK,
-              precise: EVIDENCE,
+              nickname: NICK,
+              topLeftEvidence: EVIDENCE,
               resultTrigger: null,
               resultData: null,
             },
@@ -474,8 +478,8 @@ describe('setup flow: stale session and generation', () => {
           generation: 2,
           regions: {
             trigger: TRIGGER,
-            normal: NICK,
-            precise: EVIDENCE,
+            nickname: NICK,
+            topLeftEvidence: EVIDENCE,
             resultTrigger: null,
             resultData: null,
           },
@@ -497,8 +501,8 @@ describe('setup flow: stale session and generation', () => {
 describe('setup flow: check and save', () => {
   const complete = {
     trigger: TRIGGER,
-    normal: NICK,
-    precise: EVIDENCE,
+    nickname: NICK,
+    topLeftEvidence: EVIDENCE,
     resultTrigger: null,
     resultData: null,
   }
@@ -600,8 +604,8 @@ describe('setup flow: check and save', () => {
 describe('setup flow: save outcome', () => {
   const complete = {
     trigger: TRIGGER,
-    normal: NICK,
-    precise: EVIDENCE,
+    nickname: NICK,
+    topLeftEvidence: EVIDENCE,
     resultTrigger: null,
     resultData: null,
   }
@@ -724,8 +728,8 @@ describe('setup flow: save outcome', () => {
             regions: {
               ...complete,
               trigger: null,
-              normal: null,
-              precise: null,
+              nickname: null,
+              topLeftEvidence: null,
               resultTrigger: TRIGGER,
               resultData: NICK,
             },
@@ -1029,6 +1033,7 @@ describe('setup flow: existing profile intents', () => {
     const world = mountSetup({ name: 'setup', intent: { kind: 'rebind', ...intent } })
     world.bridge.crTools.rebindCaptureProfile.mockImplementation(() =>
       Promise.resolve({
+        ok: true,
         profiles: profilesFixture(['Основной']),
         monitor: monitorViewFixture({ state: 'READY', runIntent: true }),
         capture: { configured: true, revision: 2, sourceLabel: 'BlueStacks' },
@@ -1056,9 +1061,10 @@ describe('setup flow: existing profile intents', () => {
 
   it('keeps the step open with the reason when the rebind is refused', async () => {
     const world = mountSetup({ name: 'setup', intent: { kind: 'rebind', ...intent } })
-    world.bridge.crTools.rebindCaptureProfile.mockRejectedValue(
-      new Error('Capture profiles changed; refresh and repeat the action'),
-    )
+    world.bridge.crTools.rebindCaptureProfile.mockResolvedValue({
+      ok: false,
+      error: { code: 'CAPTURE_PROFILE_STALE' },
+    })
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Привязать источник/ })).toBeEnabled(),

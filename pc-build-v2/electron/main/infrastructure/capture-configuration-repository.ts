@@ -665,7 +665,11 @@ export class CaptureConfigurationRepository {
           profile.profileId,
           legacy.revision,
           legacy.frameSize,
-          legacy.regions,
+          {
+            trigger: legacy.regions.trigger,
+            nickname: legacy.regions.normal,
+            topLeftEvidence: legacy.regions.precise,
+          },
           legacy.triggerProfile,
           legacy.committedAt,
           'imported',

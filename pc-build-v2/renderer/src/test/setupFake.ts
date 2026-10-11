@@ -54,8 +54,8 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
     frameSize: FRAME,
     regions: {
       trigger: null,
-      normal: null,
-      precise: null,
+      nickname: null,
+      topLeftEvidence: null,
       resultTrigger: null,
       resultData: null,
     },

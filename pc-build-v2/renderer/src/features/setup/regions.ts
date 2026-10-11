@@ -20,13 +20,13 @@ export const CAPTURE_REGIONS: readonly RegionDef[] = [
     labelBelow: true,
   },
   {
-    id: 'normal',
+    id: 'nickname',
     label: 'Ник соперника',
     help: 'Область должна целиком охватывать плашку с именем соперника.',
     labelBelow: false,
   },
   {
-    id: 'precise',
+    id: 'topLeftEvidence',
     label: 'Левая верхняя область',
     help: 'Выделите область в левом верхнем углу экрана боя. Она сохраняется вместе с триггером и областью ника.',
     labelBelow: false,

@@ -137,7 +137,7 @@ async function readyForCommit(
   },
 ) {
   let view = await service.start(selector, preference, 'capture', undefined, target)
-  for (const region of ['trigger', 'normal', 'precise'] as const) {
+  for (const region of ['trigger', 'nickname', 'topLeftEvidence'] as const) {
     view = service.setRegion(view.sessionId, view.generation, region, {
       x: 0.1,
       y: 0.1,
@@ -150,6 +150,20 @@ async function readyForCommit(
 }
 
 describe('SetupSessionService', () => {
+  it('M6 #11 marks the saved projection unsent when auth changes immediately after local persistence', async () => {
+    const test = harness()
+    const ready = await readyForCommit(test.service)
+    test.repository.save.mockImplementationOnce(() => {
+      test.changeAuthContext()
+      return Promise.resolve()
+    })
+    const saved = await test.service.commit(ready.sessionId, ready.generation)
+    expect(saved).toMatchObject({
+      state: 'CANCELLED',
+      saveOutcome: { local: 'saved', projection: 'failed', warning: 'SETUP_SYNC_FAILED' },
+    })
+    expect(test.apiRequests).toHaveLength(0)
+  })
   it('does not expose or close a previous auth generation through setup getters', async () => {
     const test = harness()
     const view = await test.service.start(selector, preference)
@@ -486,19 +500,24 @@ describe('SetupSessionService', () => {
       width: 0.2,
       height: 0.2,
     })
-    view = service.setRegion(view.sessionId, view.generation, 'normal', {
+    view = service.setRegion(view.sessionId, view.generation, 'nickname', {
       x: 0.2,
       y: 0.2,
       width: 0.3,
       height: 0.3,
     })
 
-    const finished = await service.finish(view.sessionId, view.generation, 'precise', {
-      x: 0.15,
-      y: 0.15,
-      width: 0.6,
-      height: 0.6,
-    })
+    const finished = await service.finish(
+      view.sessionId,
+      view.generation,
+      'topLeftEvidence',
+      {
+        x: 0.15,
+        y: 0.15,
+        width: 0.6,
+        height: 0.6,
+      },
+    )
 
     expect(finished.state).toBe('COMMITTED')
     expect(capture.analyze).toHaveBeenCalledTimes(1)
@@ -644,8 +663,8 @@ describe('SetupSessionService', () => {
       frame,
       {
         trigger: { x: 0.2, y: 0.1, width: 0.5, height: 0.4 },
-        normal: { x: 0, y: 0, width: 1, height: 1 },
-        precise: { x: 0, y: 0, width: 1, height: 1 },
+        nickname: { x: 0, y: 0, width: 1, height: 1 },
+        topLeftEvidence: { x: 0, y: 0, width: 1, height: 1 },
       },
       profile,
       legacyProfile,
@@ -681,7 +700,7 @@ describe('SetupSessionService', () => {
       width: 0.2005,
       height: 0.201,
     })
-    for (const region of ['normal', 'precise'] as const) {
+    for (const region of ['nickname', 'topLeftEvidence'] as const) {
       view = service.setRegion(view.sessionId, view.generation, region, {
         x: 0.1,
         y: 0.1,

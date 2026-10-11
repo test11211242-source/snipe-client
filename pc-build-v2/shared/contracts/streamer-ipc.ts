@@ -4,7 +4,6 @@ import {
   OverlaySettingsSchema,
   OverlayUrlKindSchema,
   PredictionPreferencesSchema,
-  StreamerConfirmationSchema,
   StreamerViewSchema,
   StreamTitlePreviewSchema,
   StreamTitleSettingsSchema,
@@ -17,26 +16,12 @@ export const STREAMER_IPC_CHANNELS = Object.freeze({
   getView: 'streamer:get-view',
   refresh: 'streamer:refresh',
   setActive: 'streamer:set-section-active',
-  startResultSetup: 'streamer:start-result-setup',
 })
 
 export const EmptyStreamerPayloadSchema = z.object({}).strict()
 export const StreamerViewResultSchema = StreamerViewSchema
 export const StreamerActivePayloadSchema = z.object({ active: z.boolean() }).strict()
-export const PredictionPreferencesPayloadSchema = PredictionPreferencesSchema
 export const StreamTitleSettingsPayloadSchema = StreamTitleSettingsSchema
-export const StreamTitlePreviewResultSchema = StreamTitlePreviewSchema
-export const StreamerBooleanPayloadSchema = z.object({ enabled: z.boolean() }).strict()
-export const StreamerPausedPayloadSchema = z.object({ paused: z.boolean() }).strict()
-export const StreamerAccountPayloadSchema = z
-  .object({ tag: z.string().trim().min(2).max(20), alias: z.string().trim().max(100) })
-  .strict()
-export const StreamerTagPayloadSchema = z
-  .object({ tag: z.string().trim().min(2).max(20) })
-  .strict()
-export const OverlaySettingsPayloadSchema = OverlaySettingsSchema
-export const OverlayCopyPayloadSchema = z.object({ kind: OverlayUrlKindSchema }).strict()
-export const StreamerConfirmationPayloadSchema = StreamerConfirmationSchema
 
 export const AccountErrorCodeSchema = z.enum([
   'ACCOUNT_TAG_INVALID',

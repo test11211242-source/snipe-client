@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 import type { NormalizedRect, PixelSize } from '../../../../shared/models/capture'
 import { cx } from '../../ui'
@@ -94,7 +94,7 @@ export function FrameStage({
   const drag = useRef<Drag | null>(null)
   const [transform, setTransform] = useState<ContainTransform | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const stage = stageRef.current
     if (stage === null) return undefined
     const update = (): void =>

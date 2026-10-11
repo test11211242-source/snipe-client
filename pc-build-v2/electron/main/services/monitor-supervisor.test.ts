@@ -127,6 +127,16 @@ function harness(
 afterEach(() => vi.useRealTimers())
 
 describe('MonitorSupervisor concurrency', () => {
+  it('M6 #5 assigns increasing sequences to every snapshot, including redacted auth views', async () => {
+    const test = harness()
+    const before = test.supervisor.getCurrentView()
+    const read = await test.supervisor.getView()
+    expect(read.seq).toBeGreaterThan(before.seq)
+    test.user(null)
+    const redacted = test.supervisor.getCurrentView()
+    expect(redacted.seq).toBeGreaterThan(read.seq)
+    expect(redacted.results).toEqual([])
+  })
   it.each([
     'CAPTURE_SOURCE_CLOSED',
     'CAPTURE_START_FAILED',

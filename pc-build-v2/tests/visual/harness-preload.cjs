@@ -268,7 +268,6 @@ const widgetApi = {
   getCardAsset: cardAsset,
   updateSettings: () => Promise.resolve(widgetView(fixture.widget ?? {}).settings),
   hide: ok({}),
-  copyPlayerTag: ok({ copied: true }),
 }
 if (fixture.widget) contextBridge.exposeInMainWorld('crToolsWidget', widgetApi)
 
@@ -500,8 +499,8 @@ const gameX = (f) => (437 + f * 405) / 1280
 const gameW = (f) => (f * 405) / 1280
 const REGIONS = {
   trigger: { x: gameX(0.28), y: 0.4, width: gameW(0.44), height: 0.18 },
-  normal: { x: gameX(0.12), y: 0.15, width: gameW(0.76), height: 0.1 },
-  precise: { x: gameX(0.04), y: 0.02, width: gameW(0.5), height: 0.1 },
+  nickname: { x: gameX(0.12), y: 0.15, width: gameW(0.76), height: 0.1 },
+  topLeftEvidence: { x: gameX(0.04), y: 0.02, width: gameW(0.5), height: 0.1 },
   resultTrigger: { x: gameX(0.12), y: 0.1, width: gameW(0.76), height: 0.16 },
   resultData: { x: gameX(0.1), y: 0.3, width: gameW(0.8), height: 0.2 },
 }
@@ -528,8 +527,8 @@ const triggerProfileFx = (grade) => ({
 })
 const emptyRegions = {
   trigger: null,
-  normal: null,
-  precise: null,
+  nickname: null,
+  topLeftEvidence: null,
   resultTrigger: null,
   resultData: null,
 }
@@ -556,8 +555,8 @@ const initialSession = () => {
   const mode = setupFx.session
   const capture = {
     trigger: REGIONS.trigger,
-    normal: REGIONS.normal,
-    precise: REGIONS.precise,
+    nickname: REGIONS.nickname,
+    topLeftEvidence: REGIONS.topLeftEvidence,
   }
   const grade = setupFx.grade ?? 'high'
   if (mode === 'selecting') return makeSession('capture', 'Ноутбук')
@@ -677,6 +676,7 @@ const setupApi = {
   },
 }
 const profileMutation = () => ({
+  ok: true,
   profiles,
   monitor,
   capture: {
