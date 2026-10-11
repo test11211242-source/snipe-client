@@ -10,6 +10,7 @@ import { cx } from './cx'
 import { Skeleton } from './Feedback'
 import { Icon } from './Icon'
 import styles from './Game.module.css'
+import ratingIcon from './assets/rating.png'
 
 /** Rating: always the medal icon + number. */
 export function Rating({
@@ -20,8 +21,11 @@ export function Rating({
   large?: boolean
 }): React.JSX.Element {
   return (
-    <span className={cx(styles['rating'], large && styles['ratingLg'])}>
-      <Icon name="medal" size={large ? 22 : 14} />
+    <span
+      aria-label={`Рейтинг ${value}`}
+      className={cx(styles['rating'], large && styles['ratingLg'])}
+    >
+      <img alt="" aria-hidden="true" src={ratingIcon} />
       <b>{value.toLocaleString('ru-RU')}</b>
     </span>
   )

@@ -136,7 +136,7 @@ describe('settings: overlay', () => {
         },
       ),
     )
-    await waitFor(() => expect(api.mock.calls.at(-1)?.[0]).toEqual({ compactWidth: 540 }))
+    await waitFor(() => expect(api.mock.calls.at(-1)?.[0]).toEqual({ compactWidth: 320 }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Показать окно' }))
     expect(await screen.findByRole('button', { name: 'Скрыть окно' })).toBeVisible()

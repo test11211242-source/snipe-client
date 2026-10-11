@@ -2,20 +2,22 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--color-text-2);
+  color: var(--color-rating);
   font-variant-numeric: tabular-nums;
 }
-.rating svg {
-  color: var(--color-text-3);
+.rating img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex: none;
 }
 .ratingLg {
   font-size: var(--fs-2xl);
   font-weight: var(--fw-semi);
   letter-spacing: var(--ls-tight);
-  color: var(--color-text);
   gap: var(--space-2);
 }
-.ratingLg svg {
+.ratingLg img {
   width: 22px;
   height: 22px;
 }

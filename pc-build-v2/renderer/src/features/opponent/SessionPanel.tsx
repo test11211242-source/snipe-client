@@ -4,7 +4,7 @@ import type {
   MonitorSessionStats,
   MonitorView,
 } from '../../../../shared/models/monitor'
-import { Button, Icon, Pill, State } from '../../ui'
+import { Button, Icon, Pill, Rating, State } from '../../ui'
 import { cx } from '../../ui/cx'
 import { clockTime } from '../h2h/format'
 import { describeResult } from '../monitor/history'
@@ -83,8 +83,7 @@ function HistoryRow({
         <span className={styles['sub']}>
           {model.rating === null ? null : (
             <>
-              <Icon name="medal" size={12} />
-              <span>{model.rating.toLocaleString('ru-RU')}</span>
+              <Rating value={model.rating} />
               <span aria-hidden="true">•</span>
             </>
           )}

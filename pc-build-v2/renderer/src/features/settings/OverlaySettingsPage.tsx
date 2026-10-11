@@ -13,6 +13,12 @@ import {
 } from '../../ui'
 import styles from './Settings.module.css'
 import { useWidgetSettings } from './useWidgetSettings'
+import {
+  WIDGET_COMPACT_MIN_WIDTH,
+  WIDGET_COMPACT_MAX_WIDTH,
+  WIDGET_MIN_WIDTH,
+  WIDGET_MAX_WIDTH,
+} from '../../../../shared/models/widget'
 
 /**
  * «Оверлей соперника»: the same fields as the tray menu and the overlay window itself.
@@ -120,14 +126,14 @@ export function OverlaySettingsPage(): React.JSX.Element {
             />
           </Setting>
           <Setting
-            hint={`От ${compact ? 440 : 300} до 720 точек. Запоминается отдельно для обычного и компактного вида.`}
+            hint={`От ${compact ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH} до ${compact ? WIDGET_COMPACT_MAX_WIDTH : WIDGET_MAX_WIDTH} точек. Запоминается отдельно для обычного и компактного вида.`}
             title="Ширина окна"
           >
             <Stepper
               format={(value) => `${value} px`}
               label="Ширина окна"
-              max={720}
-              min={compact ? 440 : 300}
+              max={compact ? WIDGET_COMPACT_MAX_WIDTH : WIDGET_MAX_WIDTH}
+              min={compact ? WIDGET_COMPACT_MIN_WIDTH : WIDGET_MIN_WIDTH}
               onChange={(next) =>
                 void widget.update(
                   compact ? { compactWidth: next } : { normalWidth: next },

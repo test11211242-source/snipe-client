@@ -8,6 +8,7 @@ import {
   Dot,
   Icon,
   IconButton,
+  Rating,
   Spinner,
   type DeckCardData,
 } from '../ui'
@@ -28,11 +29,9 @@ const fetchWidgetAsset = (request: CardAssetRequest): Promise<CardAssetResult> =
 function OverlayDeck({
   result,
   deckIndex,
-  compact,
 }: {
   result: Found
   deckIndex: number
-  compact: boolean
 }): React.JSX.Element {
   const cards = result.decks[deckIndex]?.cards ?? []
   const images = useCardImages(
@@ -51,7 +50,7 @@ function OverlayDeck({
     }
   })
   const style: CSSProperties & { '--cols': number; '--tile-w': string } = {
-    '--cols': compact ? 8 : 4,
+    '--cols': 4,
     '--tile-w': '100%',
   }
   return (
@@ -115,14 +114,16 @@ export function OverlayCard({
       style={style}
     >
       <header className={styles['top']}>
-        <span className={styles['status']} data-tone={model.tone}>
-          {model.busy ? (
-            <Spinner />
-          ) : (
-            <Dot live={model.tone === 'ok'} tone={model.tone} />
-          )}
-          {model.status}
-        </span>
+        {compact ? null : (
+          <span className={styles['status']} data-tone={model.tone}>
+            {model.busy ? (
+              <Spinner />
+            ) : (
+              <Dot live={model.tone === 'ok'} tone={model.tone} />
+            )}
+            {model.status}
+          </span>
+        )}
         <div aria-label="Управление оверлеем" className={styles['controls']} role="group">
           <IconButton
             active={settings.alwaysOnTop}
@@ -171,33 +172,46 @@ export function OverlayCard({
               {body.result.player.name}
             </h1>
             {body.result.player.rating === null ? null : (
-              <span
-                aria-label={`Рейтинг ${body.result.player.rating}`}
-                className={styles['rating']}
-              >
-                <Icon name="medal" size={14} />
-                {body.result.player.rating.toLocaleString('ru-RU')}
+              <span className={styles['rating']}>
+                <Rating value={body.result.player.rating} />
               </span>
             )}
+            {compact && body.result.decks.length > 1 ? (
+              <div aria-label="Колоды" className={styles['switcher']} role="tablist">
+                {body.result.decks.map((_, index) => (
+                  <button
+                    aria-label={`Колода ${index + 1}`}
+                    aria-selected={index === deckIndex}
+                    key={index}
+                    onClick={() => onDeck(index)}
+                    role="tab"
+                    type="button"
+                  >
+                    {index + 1}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <ClanLine clan={body.result.player.clan} />
-          {body.result.decks.length === 0 ? (
+          {compact ? null : <ClanLine clan={body.result.player.clan} />}
+          {body.result.decks.length === 0 && !compact ? (
             <p className={styles['text']}>Профиль игрока получен без колод.</p>
           ) : (
             <>
               <OverlayDeck
-                compact={compact}
                 deckIndex={deckIndex}
                 key={`${body.result.id}:${deckIndex}`}
                 result={body.result}
               />
-              <div className={styles['foot']}>
-                <DeckTabs
-                  count={body.result.decks.length}
-                  onSelect={onDeck}
-                  selected={deckIndex}
-                />
-              </div>
+              {!compact && body.result.decks.length > 1 ? (
+                <div className={styles['foot']}>
+                  <DeckTabs
+                    count={body.result.decks.length}
+                    onSelect={onDeck}
+                    selected={deckIndex}
+                  />
+                </div>
+              ) : null}
             </>
           )}
         </>
@@ -217,7 +231,7 @@ export function OverlayCard({
         </div>
       )}
 
-      {notice === null ? null : (
+      {notice === null || compact ? null : (
         <p className={styles['notice']} role="status">
           {notice}
         </p>
