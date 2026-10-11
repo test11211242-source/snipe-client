@@ -1,0 +1,182 @@
+[
+  {
+    "name": "normal-300",
+    "width": 300,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 300,
+        "pinned": false,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "normal-360",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "pinned": false,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "normal-480",
+    "width": 480,
+    "height": 700,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 480,
+        "pinned": false,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "compact-min-220",
+    "width": 220,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 220,
+        "compact": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "compact-default-300",
+    "width": 300,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 300,
+        "compact": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "compact-max-480",
+    "width": 480,
+    "height": 700,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 480,
+        "compact": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "normal-pinned",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "pinned": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "normal-multiple-decks",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 3
+        }
+      }
+    }
+  },
+  {
+    "name": "compact-multiple-decks",
+    "width": 220,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 220,
+        "compact": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 3
+        }
+      }
+    }
+  },
+  {
+    "name": "main-found-medals",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        { "name": "Voron_17", "rating": 2487, "clan": "Северный ветер", "decks": 1 }
+      ]
+    }
+  }
+]

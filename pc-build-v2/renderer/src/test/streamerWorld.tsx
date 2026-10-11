@@ -314,7 +314,7 @@ export function installStream(options: StreamOptions = {}): StreamWorld {
       displayMode: 'detailed',
       bounds: { x: null, y: null, width: 360, height: 300 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     },
   }

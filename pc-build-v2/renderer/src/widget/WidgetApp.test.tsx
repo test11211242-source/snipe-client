@@ -78,6 +78,20 @@ function push(view: WidgetView): void {
 }
 
 describe('WidgetApp', () => {
+  it.each([
+    { alwaysOnTop: true, locked: false, compactMode: false },
+    { alwaysOnTop: true, locked: true, compactMode: false },
+    { alwaysOnTop: true, locked: true, compactMode: true },
+  ])('close dispatches hide for pinned/locked/compact: %j', async (settings) => {
+    vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+      ...widgetView,
+      settings: { ...widgetView.settings, ...settings },
+    })
+    render(<WidgetApp />)
+    const close = await screen.findByRole('button', { name: 'Скрыть оверлей' })
+    fireEvent.click(close)
+    expect(window.crToolsWidget.hide).toHaveBeenCalledOnce()
+  })
   it('#15 retries a failed height report without another resize', async () => {
     vi.useFakeTimers()
     vi.mocked(window.crToolsWidget.updateSettings).mockRejectedValueOnce(new Error('IPC'))
@@ -90,7 +104,7 @@ describe('WidgetApp', () => {
     })
   })
 
-  it('#15 re-reports unchanged height after main resets the compact mode bounds', async () => {
+  it('dedupes unchanged height across mode and scale updates', async () => {
     vi.useFakeTimers()
     render(<WidgetApp />)
     await act(async () => vi.advanceTimersByTimeAsync(0))
@@ -98,7 +112,11 @@ describe('WidgetApp', () => {
     expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(1)
     push({ ...widgetView, settings: { ...widgetView.settings, compactMode: true } })
     await act(async () => vi.advanceTimersByTimeAsync(200))
-    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(2)
+    act(() => resizeCallback?.())
+    push({ ...widgetView, scale: 1.2 })
+    act(() => resizeCallback?.())
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(window.crToolsWidget.updateSettings).toHaveBeenCalledTimes(1)
   })
 
   it('#16 accepts changed result content even when id and reprocessed are unchanged', async () => {
@@ -228,7 +246,7 @@ describe('WidgetApp', () => {
     )
   })
 
-  it('shows four columns normally and eight in one row in compact mode', async () => {
+  it('renders compact as 2x4 with only nickname, medals and inline deck numbers', async () => {
     const { container } = render(<WidgetApp />)
     const normal = await screen.findByRole('list', { name: 'Карты колоды 1' })
     expect(normal.style.getPropertyValue('--cols')).toBe('4')
@@ -244,7 +262,22 @@ describe('WidgetApp', () => {
       expect(container.querySelector('main')).toHaveAttribute('data-compact', 'true'),
     )
     const compact = screen.getByRole('list', { name: 'Карты колоды 1' })
-    expect(compact.style.getPropertyValue('--cols')).toBe('8')
+    expect(compact.style.getPropertyValue('--cols')).toBe('4')
+    expect(compact.querySelectorAll('li')).toHaveLength(8)
+    expect(screen.queryByText('Clan')).not.toBeInTheDocument()
+    expect(screen.queryByText('#TAG')).not.toBeInTheDocument()
+    expect(screen.queryByText('Соперник найден')).not.toBeInTheDocument()
+    const rating = screen.getByLabelText('Рейтинг 2000')
+    expect(rating.querySelector('img')).toHaveAttribute(
+      'src',
+      expect.stringContaining('rating.png'),
+    )
+    const switcher = screen.getByRole('tablist', { name: 'Колоды' })
+    expect(switcher.parentElement).toBe(
+      screen.getByRole('heading', { name: 'Opponent' }).parentElement,
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Колода 2' }))
+    expect(screen.getByRole('list', { name: 'Карты колоды 2' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Полный вид' })).toHaveAttribute(
       'aria-pressed',
       'true',

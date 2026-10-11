@@ -98,6 +98,47 @@ function harness(autoOpen = true) {
 afterEach(() => vi.useRealTimers())
 
 describe('WidgetController', () => {
+  it.each([
+    { alwaysOnTop: true, locked: false, compactMode: false },
+    { alwaysOnTop: true, locked: true, compactMode: false },
+    { alwaysOnTop: true, locked: true, compactMode: true },
+    { alwaysOnTop: false, locked: false, compactMode: true },
+  ])('hides without changing pin/lock/compact settings: %j', async (patch) => {
+    const test = harness()
+    await test.controller.start('user')
+    await test.controller.updateSettings(patch)
+    test.windows.isWidgetVisible.mockReturnValue(true)
+    test.windows.hideWidget.mockImplementation(() => {
+      test.windows.isWidgetVisible.mockReturnValue(false)
+    })
+    const before = test.controller.getView().settings
+    const result = test.controller.hide()
+    expect(result.visible).toBe(false)
+    expect(result.settings).toEqual(before)
+    expect(test.windows.hideWidget).toHaveBeenCalledOnce()
+    expect(test.windows.showWidget).not.toHaveBeenCalled()
+    expect(test.windows.showWidgetInactive).not.toHaveBeenCalled()
+  })
+
+  it('pushes width-derived scale immediately and dedupes content height feedback', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.controller.start('user')
+    await test.controller.updateSettings({ compactMode: true })
+    test.windows.sendToRenderer.mockClear()
+    test.bounds({ x: 10, y: 20, width: 240, height: 160 })
+    expect(test.windows.sendToRenderer).toHaveBeenLastCalledWith(
+      'widget',
+      'widget:view-changed',
+      expect.objectContaining({ scale: 0.86 }),
+    )
+    await test.controller.updateSettings({ contentHeight: 210 })
+    const count = test.repository.save.mock.calls.length
+    await test.controller.updateSettings({ contentHeight: 210 })
+    expect(test.repository.save).toHaveBeenCalledTimes(count)
+    expect(test.controller.getView().settings.compactWidth).toBe(240)
+    await test.controller.stop()
+  })
   it('auto-opens once for each new player result and ignores other results', async () => {
     const test = harness()
     await test.controller.start('user')
@@ -212,7 +253,7 @@ describe('WidgetController', () => {
     expect(deck).toMatchObject({
       displayMode: 'deck',
       compactMode: true,
-      bounds: { x: 80, y: 90, width: 520, height: 160 },
+      bounds: { x: 80, y: 90, width: 300, height: 700 },
     })
     expect(test.windows.applyWidgetSettings).toHaveBeenLastCalledWith(deck)
 
@@ -223,7 +264,7 @@ describe('WidgetController', () => {
     expect(detailed).toMatchObject({
       displayMode: 'detailed',
       compactMode: false,
-      bounds: { x: 80, y: 90, width: 600, height: 360 },
+      bounds: { x: 80, y: 90, width: 600, height: 700 },
     })
   })
 
@@ -264,6 +305,28 @@ describe('WidgetController', () => {
         bounds: { x: 44, y: 55, width: 510, height: 610 },
       }),
     )
+  })
+
+  it('does not bounce a width drag back when an earlier content-height save resolves', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.controller.start('user')
+    const gate = Promise.withResolvers<WidgetSettings>()
+    test.repository.save.mockReturnValueOnce(gate.promise)
+    const update = test.controller.updateSettings({ contentHeight: 300 })
+    await vi.waitFor(() => expect(test.repository.save).toHaveBeenCalledOnce())
+    test.bounds({ x: 10, y: 20, width: 480, height: 360 })
+    gate.resolve({
+      ...DEFAULT_WIDGET_SETTINGS,
+      bounds: { ...DEFAULT_WIDGET_SETTINGS.bounds, height: 300 },
+    })
+    await expect(update).resolves.toMatchObject({
+      normalWidth: 480,
+      bounds: { x: 10, y: 20, width: 480, height: 300 },
+    })
+    await test.controller.updateSettings({ contentHeight: 300 })
+    expect(test.repository.save).toHaveBeenCalledOnce()
+    await test.controller.stop()
   })
 
   it('rejects renderer-supplied bounds even when other patch fields are valid', async () => {

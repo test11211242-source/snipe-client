@@ -15,13 +15,15 @@ export const WIDGET_DECK_WIDTH = 360
 export const WIDGET_DECK_HEIGHT = 300
 export const WIDGET_DETAILED_WIDTH = 420
 export const WIDGET_DETAILED_HEIGHT = 360
-export const WIDGET_COMPACT_MIN_WIDTH = 440
+export const WIDGET_COMPACT_MIN_WIDTH = 220
+export const WIDGET_COMPACT_MAX_WIDTH = 480
+export const WIDGET_COMPACT_DEFAULT_WIDTH = 300
 
 export const WidgetBoundsSchema = z
   .object({
     x: z.number().int().min(-32_768).max(32_767).nullable(),
     y: z.number().int().min(-32_768).max(32_767).nullable(),
-    width: z.number().int().min(WIDGET_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
+    width: z.number().int().min(WIDGET_COMPACT_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
     height: z.number().int().min(WIDGET_MIN_HEIGHT).max(WIDGET_MAX_HEIGHT),
   })
   .strict()
@@ -35,7 +37,11 @@ export const WidgetSettingsSchema = z
     displayMode: z.enum(['deck', 'detailed']),
     bounds: WidgetBoundsSchema,
     normalWidth: z.number().int().min(WIDGET_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
-    compactWidth: z.number().int().min(WIDGET_COMPACT_MIN_WIDTH).max(WIDGET_MAX_WIDTH),
+    compactWidth: z
+      .number()
+      .int()
+      .min(WIDGET_COMPACT_MIN_WIDTH)
+      .max(WIDGET_COMPACT_MAX_WIDTH),
     compactMode: z.boolean(),
   })
   .strict()

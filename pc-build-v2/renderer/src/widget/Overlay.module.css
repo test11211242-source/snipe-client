@@ -12,8 +12,7 @@
   display: flex;
   flex-direction: column;
   gap: calc(var(--space-2) * var(--k));
-  padding: calc(var(--space-3) * var(--k)) calc(var(--space-4) * var(--k))
-    calc(var(--space-4) * var(--k));
+  padding: calc(var(--space-2) * var(--k));
   border-radius: calc(var(--radius-xl) * var(--k));
   background: rgb(var(--color-ow-rgb) / 0.94);
   box-shadow: var(--ring-1);
@@ -92,12 +91,13 @@
   align-items: center;
   gap: calc(var(--space-1) * var(--k));
   flex: none;
-  color: var(--color-text-2);
+  color: var(--color-rating);
   font-size: calc(var(--fs-md) * var(--k));
   font-variant-numeric: tabular-nums;
 }
-.rating svg {
-  color: var(--color-text-3);
+.rating img {
+  width: calc(var(--fs-md) * var(--k));
+  height: calc(var(--fs-md) * var(--k));
 }
 
 /* Normal: four fluid columns; cards never grow past their 166 px source. */
@@ -111,10 +111,68 @@
   padding: 0;
   list-style: none;
 }
-/* Compact: eight cards in one row, as wide as the window allows. */
-.shell[data-compact='true'] .deck {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+/* Compact keeps the same 2x4 deck but spends no extra row on status or controls. */
+.shell[data-compact='true'] {
   gap: calc(var(--space-1) * var(--k));
+  padding: calc(var(--space-1) * var(--k));
+}
+.shell[data-compact='true'] .top {
+  min-height: 0;
+  height: 0;
+}
+.shell[data-compact='true'] .status {
+  display: none;
+}
+.shell[data-compact='true'] .controls {
+  position: absolute;
+  z-index: 1;
+  top: var(--space-1);
+  right: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-pop);
+  opacity: 0;
+  pointer-events: none;
+}
+.shell[data-compact='true']:hover .controls,
+.shell[data-compact='true']:focus-within .controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.shell[data-compact='true'] .who {
+  align-items: center;
+  gap: var(--space-1);
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+.shell[data-locked='true'] .who {
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+.shell[data-compact='true'] .name {
+  flex: 1;
+  font-size: calc(var(--fs-md) * var(--k));
+}
+.shell[data-compact='true'] .deck {
+  gap: calc(var(--space-1) * var(--k));
+  margin-top: 0;
+}
+.switcher {
+  display: flex;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+.switcher button {
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-2);
+  background: transparent;
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+}
+.switcher button[aria-selected='true'] {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 .deck li {
   min-width: 0;

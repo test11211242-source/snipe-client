@@ -54,6 +54,7 @@ vi.mock('electron', () => {
     setAlwaysOnTop = vi.fn()
     setAspectRatio = vi.fn()
     setMinimumSize = vi.fn()
+    setMaximumSize = vi.fn()
     setMovable = vi.fn()
     setResizable = vi.fn()
     setOpacity = vi.fn()
@@ -223,7 +224,7 @@ describe('WindowCoordinator auth shell', () => {
     ).toEqual({ x: 80, y: 0, width: 720, height: 600 })
     expect(
       persistableWidgetBounds({ x: -50_000, y: 50_000, width: 200, height: 120 }),
-    ).toEqual({ x: -32_768, y: 32_767, width: 300, height: 120 })
+    ).toEqual({ x: -32_768, y: 32_767, width: 220, height: 120 })
   })
 
   it('coalesces widget loading, destroys failed loads, and allows retry', async () => {
@@ -243,7 +244,7 @@ describe('WindowCoordinator auth shell', () => {
       displayMode: 'detailed' as const,
       bounds: { x: null, y: null, width: 420, height: 360 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     }
     const first = coordinator.ensureWidgetWindow(settings)
@@ -289,7 +290,7 @@ describe('WindowCoordinator auth shell', () => {
     const move = loadedWindow.on.mock.calls.find(([event]) => event === 'move')?.[1] as
       (() => void) | undefined
     expect(() => move?.()).not.toThrow()
-    expect(observed).toHaveBeenCalledWith({ x: 0, y: 0, width: 300, height: 120 })
+    expect(observed).toHaveBeenCalledWith({ x: 0, y: 0, width: 220, height: 120 })
     const warning = warn.mock.calls[0] as unknown as
       [string, { error: unknown }] | undefined
     expect(warning?.[0]).toBe('Widget bounds listener failed')
@@ -312,7 +313,7 @@ describe('WindowCoordinator auth shell', () => {
     expect(electronMocks.browserWindowConstructed).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps the frameless overlay freely resizable and topmost on blur', async () => {
+  it('locks height to content and never raises a pinned widget on blur/hide', async () => {
     const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
     const settings = {
       autoOpen: true,
@@ -322,7 +323,7 @@ describe('WindowCoordinator auth shell', () => {
       displayMode: 'deck' as const,
       bounds: { x: null, y: null, width: 360, height: 300 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     }
 
@@ -338,7 +339,8 @@ describe('WindowCoordinator auth shell', () => {
       frame: false,
       transparent: true,
       minWidth: 300,
-      minHeight: 80,
+      minHeight: 300,
+      maxHeight: 300,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
@@ -349,19 +351,41 @@ describe('WindowCoordinator auth shell', () => {
       setAlwaysOnTop: ReturnType<typeof vi.fn>
       setAspectRatio: ReturnType<typeof vi.fn>
       setMinimumSize: ReturnType<typeof vi.fn>
+      setMaximumSize: ReturnType<typeof vi.fn>
+      setBounds: ReturnType<typeof vi.fn>
+      hide: ReturnType<typeof vi.fn>
       showInactive: ReturnType<typeof vi.fn>
     }
-    expect(window.setMinimumSize).toHaveBeenCalledWith(300, 80)
+    expect(window.setMinimumSize).toHaveBeenLastCalledWith(300, 300)
+    expect(window.setMaximumSize).toHaveBeenLastCalledWith(720, 300)
     expect(window.setAspectRatio).toHaveBeenLastCalledWith(0)
     expect(window.setAlwaysOnTop).toHaveBeenCalledWith(true, 'normal')
     expect(window.showInactive).toHaveBeenCalledOnce()
     expect(window.moveTop).toHaveBeenCalled()
 
-    const blur = window.on.mock.calls.find(([event]) => event === 'blur')?.[1] as
-      (() => void) | undefined
+    // Windows emits blur while hiding. No blur listener may reassert HWND_TOPMOST:
+    // moveTop during that transition counteracts the user's hide.
+    expect(window.on.mock.calls.some(([event]) => event === 'blur')).toBe(false)
     const moveCount = window.moveTop.mock.calls.length
-    blur?.()
-    expect(window.moveTop).toHaveBeenCalledTimes(moveCount + 1)
+    coordinator.hideWidget()
+    expect(window.hide).toHaveBeenCalledOnce()
+    const observed = vi.fn()
+    coordinator.onWidgetBoundsChanged(observed)
+    const resize = window.on.mock.calls.find(
+      ([event]) => event === 'resize',
+    )?.[1] as () => void
+    window.setBounds.mockImplementation(() => resize())
+    coordinator.applyWidgetSettings({
+      ...settings,
+      bounds: { ...settings.bounds, height: 260 },
+    })
+    expect(window.moveTop).toHaveBeenCalledTimes(moveCount)
+    expect(window.setMinimumSize).toHaveBeenLastCalledWith(300, 260)
+    expect(window.setMaximumSize).toHaveBeenLastCalledWith(720, 260)
+    expect(window.setBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ height: 260 }),
+    )
+    expect(observed).not.toHaveBeenCalled()
   })
 
   it('destroys a non-interactive widget when renderer readiness times out', async () => {
@@ -375,7 +399,7 @@ describe('WindowCoordinator auth shell', () => {
       displayMode: 'detailed' as const,
       bounds: { x: null, y: null, width: 420, height: 360 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     }
 
@@ -409,7 +433,7 @@ describe('WindowCoordinator auth shell', () => {
       displayMode: 'detailed' as const,
       bounds: { x: null, y: null, width: 420, height: 360 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     }
     const opening = coordinator.ensureWidgetWindow(settings)
@@ -450,7 +474,7 @@ describe('WindowCoordinator auth shell', () => {
       displayMode: 'detailed' as const,
       bounds: { x: null, y: null, width: 420, height: 360 },
       normalWidth: 360,
-      compactWidth: 520,
+      compactWidth: 300,
       compactMode: false,
     }
     const opening = coordinator.ensureWidgetWindow(settings)
@@ -497,7 +521,7 @@ describe('WindowCoordinator auth shell', () => {
         displayMode: 'detailed' as const,
         bounds: { x: null, y: null, width: 420, height: 360 },
         normalWidth: 360,
-        compactWidth: 520,
+        compactWidth: 300,
         compactMode: false,
       }
       const opening = coordinator.ensureWidgetWindow(settings)

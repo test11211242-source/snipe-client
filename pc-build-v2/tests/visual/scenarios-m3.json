@@ -3261,12 +3261,12 @@
     "fit": true
   },
   {
-    "name": "overlay-compact-520",
-    "width": 520,
+    "name": "overlay-compact-300",
+    "width": 300,
     "height": 600,
     "fixture": {
       "widget": {
-        "width": 520,
+        "width": 300,
         "result": {
           "n": 1,
           "name": "Voron_17",
@@ -3280,12 +3280,12 @@
     "fit": true
   },
   {
-    "name": "overlay-compact-440",
-    "width": 440,
+    "name": "overlay-compact-220",
+    "width": 220,
     "height": 600,
     "fixture": {
       "widget": {
-        "width": 440,
+        "width": 220,
         "result": {
           "n": 1,
           "name": "Voron_17",
@@ -3317,12 +3317,12 @@
     "fit": true
   },
   {
-    "name": "overlay-compact-720",
-    "width": 720,
+    "name": "overlay-compact-480",
+    "width": 480,
     "height": 600,
     "fixture": {
       "widget": {
-        "width": 720,
+        "width": 480,
         "result": {
           "n": 1,
           "name": "Voron_17",

@@ -214,7 +214,7 @@ export function WidgetApp(): React.JSX.Element {
       observer.disconnect()
       window.clearTimeout(timer)
     }
-  }, [loaded, view?.settings.compactMode, view?.scale])
+  }, [loaded])
 
   useEffect(() => {
     if (view === null || opacityDirtyRef.current) return
