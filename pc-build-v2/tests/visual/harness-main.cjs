@@ -88,6 +88,16 @@ app.whenReady().then(async () => {
       win.setContentSize(scenario.width, height)
       await sleep(450)
     }
+    // A fixture can replace the initial primary Start with neutral Stop. Wait for
+    // the actual CSS transition, rather than photographing its initial green frame.
+    await win.webContents.executeJavaScript(`(async () => {
+      await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      await Promise.all(document.getAnimations().filter(animation =>
+        Number.isFinite(animation.effect?.getComputedTiming().iterations)
+      ).map(animation => animation.finished.catch(() => undefined)));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    })()`)
     const image = await win.webContents.capturePage()
     fs.writeFileSync(path.join(outDir, `${scenario.name}.png`), image.toPNG())
     win.destroy()
