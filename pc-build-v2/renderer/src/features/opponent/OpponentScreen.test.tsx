@@ -792,9 +792,11 @@ describe('head-to-head block', () => {
     await renderMain({ monitor: running({ results: [found(1)] }) })
     fireEvent.click(await screen.findByRole('button', { name: /Все встречи/ }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText('По аккаунтам')).toBeVisible()
-    expect(within(dialog).getByText('Последние встречи')).toBeVisible()
-    expect(within(dialog).getByText('4 встречи · победы : поражения')).toBeVisible()
+    expect(within(dialog).getByText('Мои аккаунты')).toBeVisible()
+    expect(within(dialog).getByText('Последние бои')).toBeVisible()
+    expect(
+      within(dialog).getByText('4 встречи · победы : поражения : ничьи'),
+    ).toBeVisible()
   })
 })
 

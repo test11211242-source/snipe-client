@@ -62,6 +62,11 @@ export function H2HBlock({
             <span>· {percent(totals.winRate)}</span>
             <RecentDots recent={recent} />
             <span className={styles['lineNote']}>{H2H_DISCLAIMER}</span>
+            {state.data.stale || !state.data.coverage.complete ? (
+              <span className={styles['note']}>
+                Данные могут быть неполными или не самыми свежими.
+              </span>
+            ) : null}
             <Icon name="chevronRight" size={14} />
           </span>
         </button>
@@ -85,7 +90,15 @@ export function H2HBlock({
         <ul className={styles['accountLines']}>
           {perAccount.slice(0, 2).map((account) => (
             <li key={account.accountTag}>
-              <span>{account.alias}</span>
+              <span
+                title={
+                  account.alias
+                    ? `${account.alias} · ${account.accountTag}`
+                    : account.accountTag
+                }
+              >
+                {account.alias || account.accountTag}
+              </span>
               <b>
                 {count(account.wins)}:{count(account.losses)}
               </b>
@@ -102,6 +115,11 @@ export function H2HBlock({
           <Icon name="chevronRight" size={14} />
         </Button>
         <span className={styles['caption']}>{H2H_DISCLAIMER}</span>
+        {state.data.stale || !state.data.coverage.complete ? (
+          <span className={styles['note']}>
+            Данные могут быть неполными или не самыми свежими.
+          </span>
+        ) : null}
       </div>
     )
   }
