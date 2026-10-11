@@ -11,11 +11,44 @@ export const H2HRequestSchema = z
   .strict()
 export const H2HCancelSchema = z.object({ requestId: z.uuid() }).strict()
 const Count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable()
+const DetailCount = Count.unwrap()
 const Result = z.enum(['win', 'loss', 'draw'])
 const Rate = z.number().min(0).max(100).nullable()
 const Time = z.iso.datetime({ offset: true })
 const Meeting = z
-  .object({ at: Time, result: Result, accountTag: GameAccountTagSchema })
+  .object({
+    at: Time,
+    result: Result,
+    accountTag: GameAccountTagSchema,
+    ownerTag: GameAccountTagSchema.optional(),
+    opponentTag: GameAccountTagSchema.optional(),
+  })
+  .strict()
+const OpponentAccount = z
+  .object({
+    tag: GameAccountTagSchema,
+    name: z.string().max(128).nullable(),
+    wins: DetailCount,
+    losses: DetailCount,
+    draws: DetailCount,
+    total: DetailCount,
+    decisiveMeetings: DetailCount,
+    winRate: Rate,
+    lastAt: Time.nullable(),
+  })
+  .strict()
+const AccountPair = z
+  .object({
+    ownerTag: GameAccountTagSchema,
+    ownerName: z.string().max(128).nullable(),
+    opponentTag: GameAccountTagSchema,
+    opponentName: z.string().max(128).nullable(),
+    wins: DetailCount,
+    losses: DetailCount,
+    draws: DetailCount,
+    total: DetailCount,
+    lastAt: Time,
+  })
   .strict()
 export const H2HResponseSchema = z
   .object({
@@ -47,24 +80,24 @@ export const H2HResponseSchema = z
       .strict(),
     last: Meeting.nullable(),
     recent: z.array(Meeting).max(10),
-    perAccount: z
-      .array(
-        z
-          .object({
-            accountTag: GameAccountTagSchema,
-            alias: z.string().max(128),
-            meetings: Count,
-            wins: Count,
-            losses: Count,
-            draws: Count,
-            decisiveMeetings: Count,
-            winRate: Rate,
-            lastAt: Time.nullable(),
-            lastResult: Result.nullable(),
-          })
-          .strict(),
-      )
-      .max(20),
+    perAccount: z.array(
+      z
+        .object({
+          accountTag: GameAccountTagSchema,
+          alias: z.string().max(128),
+          meetings: Count,
+          wins: Count,
+          losses: Count,
+          draws: Count,
+          decisiveMeetings: Count,
+          winRate: Rate,
+          lastAt: Time.nullable(),
+          lastResult: Result.nullable(),
+        })
+        .strict(),
+    ),
+    perOpponentAccount: z.array(OpponentAccount).max(20).optional(),
+    pairs: z.array(AccountPair).max(50).optional(),
     reasonCode: z
       .enum([
         'H2H_SERVICE_UNAVAILABLE',
@@ -85,7 +118,9 @@ export const H2HHttpResponseSchema = H2HResponseSchema.extend({
   totals: H2HResponseSchema.shape.totals.strip(),
   last: HttpMeeting.nullable(),
   recent: z.array(HttpMeeting).max(10),
-  perAccount: z.array(H2HResponseSchema.shape.perAccount.element.strip()).max(20),
+  perAccount: z.array(H2HResponseSchema.shape.perAccount.element.strip()),
+  perOpponentAccount: z.array(OpponentAccount.strip()).max(20).optional(),
+  pairs: z.array(AccountPair.strip()).max(50).optional(),
 })
   .strip()
   .transform((response) => {

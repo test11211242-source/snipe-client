@@ -443,8 +443,18 @@ and prevents another request until it expires. Lookups coalesce by canonical tag
 generation, support per-request cancellation, and are cancelled on auth change or main destruction.
 Coverage is only recorded Path of Legends history, not proof that a player exists or has no history.
 No-account and not-found states are never inferred from transport errors.
-The HTTP parser strips additive fields, including nested objects, then projects into strict
-IPC. Real `stale` and `coverage.complete` booleans are preserved. Non-H2H 429 responses
+The HTTP parser strips unknown additive fields, including nested objects, then projects into strict
+IPC. Optional `perOpponentAccount`, `pairs`, and meeting `ownerTag`/`opponentTag` support the
+profile-to-profile breakdown while older servers remain usable. Owner rows include expanded
+profile accounts (not just the maximum 20 linked seeds); opponent details are capped at 20
+accounts and pairs at 50, so capped detail sums may be lower than the unchanged full totals.
+The main-card block stays compact; «Все встречи» and Ctrl+K show W:L:D, decisive-only
+win rate, owner/opponent account rows with mini bars and dates, meeting pairs when either
+side has multiple accounts, and recent battles identifying both accounts. Empty/missing
+sections are hidden; names truncate with full tooltips. «Нет записанных встреч» is never
+a claim that players have never met; stale or incomplete records qualify both zero and
+nonzero results. The disclaimer remains «по записанным боям Пути легенд».
+Real `stale` and `coverage.complete` booleans are preserved. Non-H2H 429 responses
 retain bounded error bodies/messages and attach Retry-After metadata.
 Unknown future HTTP `status` or `reasonCode` strings normalize to `unavailable` with the
 allowlisted `H2H_SERVICE_UNAVAILABLE` capability error; they never leak into strict IPC.

@@ -242,6 +242,127 @@ describe('H2H long Retry-After handling', () => {
   })
 })
 
+describe('profile-to-profile H2H details', () => {
+  const at = '2026-10-10T00:00:00Z'
+  const owner = {
+    accountTag: '#JCU',
+    alias: '',
+    meetings: 1,
+    wins: 1,
+    losses: 0,
+    draws: 0,
+    decisiveMeetings: 1,
+    winRate: 100,
+    lastAt: at,
+    lastResult: 'win',
+  }
+  const opponent = {
+    tag: '#PQL',
+    name: null,
+    wins: 1,
+    losses: 0,
+    draws: 0,
+    total: 1,
+    decisiveMeetings: 1,
+    winRate: 100,
+    lastAt: at,
+  }
+  const pair = {
+    ownerTag: '#JCU',
+    ownerName: null,
+    opponentTag: '#PQL',
+    opponentName: null,
+    wins: 1,
+    losses: 0,
+    draws: 0,
+    total: 1,
+    lastAt: at,
+  }
+  const meeting = {
+    at,
+    result: 'win',
+    accountTag: '#JCU',
+    ownerTag: '#JCU',
+    opponentTag: '#PQL',
+  }
+
+  it('maps all additive detail fields through lenient HTTP into strict IPC', async () => {
+    const data = {
+      ...response('ok'),
+      perAccount: [owner],
+      perOpponentAccount: [{ ...opponent, futureHint: true }],
+      pairs: [{ ...pair, futureHint: true }],
+      recent: [{ ...meeting, futureHint: true }],
+      last: { ...meeting, futureHint: true },
+    }
+    const test = harness()
+    test.request.mockResolvedValue({ ok: true, status: 200, data })
+    const result = H2HLookupResultSchema.parse(await test.service.lookup(payload))
+    expect(result).toMatchObject({
+      capability: 'supported',
+      data: {
+        perOpponentAccount: [opponent],
+        pairs: [pair],
+        recent: [meeting],
+        last: meeting,
+      },
+    })
+    if (result.capability !== 'supported') throw new Error('Missing supported H2H data')
+    expect(result.data.pairs?.[0]).not.toHaveProperty('futureHint')
+    expect(result.data.perOpponentAccount?.[0]).not.toHaveProperty('futureHint')
+    expect(result.data.last).not.toHaveProperty('futureHint')
+    expect(result.data.recent[0]).not.toHaveProperty('futureHint')
+    for (const patch of [
+      { pairs: [{ ...pair, futureHint: true }] },
+      { perOpponentAccount: [{ ...opponent, futureHint: true }] },
+      { recent: [{ ...meeting, futureHint: true }] },
+    ]) {
+      expect(H2HResponseSchema.safeParse({ ...result.data, ...patch }).success).toBe(
+        false,
+      )
+    }
+  })
+
+  it('keeps old-server responses supported without manufacturing missing fields', async () => {
+    const test = harness()
+    test.request.mockResolvedValue({ ok: true, status: 200, data: response('ok') })
+    const result = H2HLookupResultSchema.parse(await test.service.lookup(payload))
+    expect(result.capability).toBe('supported')
+    if (result.capability !== 'supported') throw new Error('Missing supported H2H data')
+    expect(result.data).not.toHaveProperty('pairs')
+    expect(result.data).not.toHaveProperty('perOpponentAccount')
+  })
+
+  it('accepts more than twenty expanded owner accounts while enforcing final detail caps', () => {
+    const data = {
+      ...response('ok'),
+      perAccount: Array.from({ length: 21 }, () => owner),
+      perOpponentAccount: Array.from({ length: 20 }, () => opponent),
+      pairs: Array.from({ length: 50 }, () => pair),
+    }
+    expect(
+      H2HLookupResultSchema.safeParse({
+        capability: 'supported',
+        requestId,
+        data: H2HHttpResponseSchema.parse(data),
+      }).success,
+    ).toBe(true)
+    expect(
+      H2HHttpResponseSchema.safeParse({ ...data, pairs: [...data.pairs, pair] }).success,
+    ).toBe(false)
+    expect(
+      H2HHttpResponseSchema.safeParse({
+        ...data,
+        perOpponentAccount: [...data.perOpponentAccount, opponent],
+      }).success,
+    ).toBe(false)
+    expect(
+      H2HResponseSchema.safeParse({ ...data, pairs: [{ ...pair, lastAt: null }] })
+        .success,
+    ).toBe(false)
+  })
+})
+
 describe('review regression additive H2H evolution', () => {
   it('#7 strips additive HTTP fields while preserving real stale and complete values in strict IPC', async () => {
     const data = {

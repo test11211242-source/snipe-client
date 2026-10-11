@@ -365,6 +365,85 @@ const h2hLookup = ({ requestId }) => {
           ],
         }
       : { ...base, totals: none, last: null, recent: [], perAccount: [] }
+  if (mode === 'ok' && fixture.h2hDetail) {
+    const one = fixture.h2hDetail === 'one'
+    const at = new Date(now - day).toISOString()
+    const owners = [
+      { tag: '#88299RC9Y', name: 'Основной · Путь легенд', wins: 3, losses: 1, draws: 1 },
+      {
+        tag: '#22LUPYCYC',
+        name: 'Второй аккаунт с очень длинным названием',
+        wins: 2,
+        losses: 1,
+        draws: 0,
+      },
+      { tag: '#YQP', name: '', wins: 0, losses: 0, draws: 0 },
+    ].slice(0, one ? 1 : 3)
+    const opponents = [
+      { tag: '#2Q8YLP0', name: 'Voron_17 · основной', wins: 3, losses: 1, draws: 1 },
+      {
+        tag: '#PQL',
+        name: 'Voron_17 · второй аккаунт с длинным именем',
+        wins: 2,
+        losses: 1,
+        draws: 0,
+      },
+      { tag: '#LQP', name: null, wins: 0, losses: 0, draws: 0 },
+    ].slice(0, one ? 1 : 3)
+    const aggregates = (account) => ({
+      wins: account.wins,
+      losses: account.losses,
+      draws: account.draws,
+      total: account.wins + account.losses + account.draws,
+      decisiveMeetings: account.wins + account.losses,
+      winRate:
+        account.wins + account.losses
+          ? (account.wins * 100) / (account.wins + account.losses)
+          : null,
+      lastAt: account.wins + account.losses + account.draws ? at : null,
+    })
+    data.perAccount = owners.map((account) => ({
+      accountTag: account.tag,
+      alias: account.name,
+      ...aggregates(account),
+      meetings: aggregates(account).total,
+      lastResult: account.wins ? 'win' : null,
+    }))
+    data.perOpponentAccount = opponents.map((account) => ({
+      tag: account.tag,
+      name: account.name,
+      ...aggregates(account),
+    }))
+    data.pairs = owners
+      .filter((account) => account.wins > 0)
+      .map((account, index) => ({
+        ownerTag: account.tag,
+        ownerName: account.name,
+        opponentTag: opponents[index].tag,
+        opponentName: opponents[index].name,
+        wins: account.wins,
+        losses: account.losses,
+        draws: account.draws,
+        total: aggregates(account).total,
+        lastAt: at,
+      }))
+    data.totals = {
+      meetings: one ? 5 : 8,
+      wins: one ? 3 : 5,
+      losses: one ? 1 : 2,
+      draws: 1,
+      decisiveMeetings: one ? 4 : 7,
+      winRate: one ? 75 : 71.4,
+    }
+    data.recent = ['win', 'loss', 'draw', 'win'].map((result, index) => ({
+      at: new Date(now - (index + 1) * day).toISOString(),
+      result,
+      accountTag: owners[one ? 0 : index % 2].tag,
+      ownerTag: owners[one ? 0 : index % 2].tag,
+      opponentTag: opponents[one ? 0 : index % 2].tag,
+    }))
+    data.last = data.recent[0]
+  }
   return Promise.resolve({ capability: 'supported', requestId, data })
 }
 

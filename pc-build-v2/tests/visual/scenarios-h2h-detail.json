@@ -1,0 +1,57 @@
+[
+  {
+    "name": "dialog-many-accounts",
+    "width": 1100,
+    "height": 1100,
+    "fixture": {
+      "results": [
+        { "n": 1, "name": "Voron_17", "rating": 2487, "clan": "Северный ветер" }
+      ],
+      "h2h": "ok",
+      "h2hDetail": "many"
+    },
+    "steps": [
+      "window.__h.click('Все встречи')",
+      "(()=>{const name=[...document.querySelector('[role=dialog]').querySelectorAll('[title]')].find(el=>el.title.startsWith('Второй аккаунт')).querySelector('b');if(name.scrollWidth<=name.clientWidth||getComputedStyle(name).textOverflow!=='ellipsis')throw new Error('Detailed account name must truncate')})()"
+    ]
+  },
+  {
+    "name": "dialog-one-account",
+    "width": 1100,
+    "height": 900,
+    "fixture": {
+      "results": [
+        { "n": 1, "name": "Voron_17", "rating": 2487, "clan": "Северный ветер" }
+      ],
+      "h2h": "ok",
+      "h2hDetail": "one"
+    },
+    "steps": ["window.__h.click('Все встречи')"]
+  },
+  {
+    "name": "compact-block",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        { "n": 1, "name": "Voron_17", "rating": 2487, "clan": "Северный ветер" }
+      ],
+      "h2h": "ok",
+      "h2hDetail": "many"
+    },
+    "steps": [
+      "(()=>{const name=[...document.querySelectorAll('[title]')].find(el=>el.title.startsWith('Второй аккаунт'));if(name.scrollWidth<=name.clientWidth||getComputedStyle(name).textOverflow!=='ellipsis')throw new Error('Compact account name must truncate')})()"
+    ]
+  },
+  {
+    "name": "palette-card",
+    "width": 1100,
+    "height": 1200,
+    "fixture": { "h2h": "ok", "h2hDetail": "many" },
+    "steps": [
+      "document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true}))",
+      "(()=>{const i=document.querySelector('input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(i,'#2Q8YLP0');i.dispatchEvent(new Event('input',{bubbles:true}))})()",
+      "document.querySelector('input[placeholder=\"#2Q8YLP0\"]').form.requestSubmit()"
+    ]
+  }
+]

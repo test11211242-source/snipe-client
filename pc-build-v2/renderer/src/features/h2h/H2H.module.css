@@ -51,6 +51,8 @@
 }
 .summaryMeta {
   display: grid;
+  flex: 1;
+  min-width: 0;
   justify-items: start;
   gap: var(--space-2);
   color: var(--color-text-3);
@@ -92,10 +94,10 @@
 
 .columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5);
 }
-@container app (max-width: 719px) {
+@media (max-width: 719px) {
   .columns {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -114,35 +116,79 @@
   letter-spacing: var(--ls-caps);
   text-transform: uppercase;
 }
-.table {
-  width: 100%;
-  border-collapse: collapse;
+.accounts,
+.pairs {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
-.table th,
-.table td {
-  padding: var(--space-2) var(--space-2);
-  text-align: right;
-  font-weight: var(--fw-regular);
+.accounts li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
   border-bottom: 1px solid var(--color-line-subtle);
 }
-.table thead th {
-  color: var(--color-text-3);
-  font-size: var(--fs-2xs);
+.accountName {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
 }
-.table th:first-child,
-.table td:first-child {
-  text-align: left;
+.accountName b,
+.accountName small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.table tbody th b,
-.table tbody th span {
-  display: block;
+.accountName b {
+  font-weight: var(--fw-medium);
 }
-.table tbody th span {
+.accountName small {
   color: var(--color-text-3);
   font-size: var(--fs-2xs);
   font-family: var(--font-mono);
+}
+.accountScore {
+  white-space: nowrap;
+  font-weight: var(--fw-semi);
+  font-variant-numeric: tabular-nums;
+}
+.accountRate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+}
+.accountRate > :first-child:not(span) {
+  flex: 1;
+}
+.accountDate {
+  color: var(--color-text-3);
+  font-size: var(--fs-xs);
+  text-align: right;
+}
+.pairs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-line-subtle);
+}
+.pairSeparator,
+.sectionHint {
+  color: var(--color-text-3);
+}
+.sectionHint {
+  margin-left: var(--space-3);
+  font-weight: var(--fw-regular);
+  letter-spacing: normal;
+  text-transform: none;
 }
 .recent {
   display: grid;
@@ -152,29 +198,33 @@
 }
 .recent li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-2);
+  padding: var(--space-3);
   border-bottom: 1px solid var(--color-line-subtle);
   font-size: var(--fs-sm);
 }
-.recent li span {
+.recent time {
   color: var(--color-text-3);
   font-size: var(--fs-xs);
   white-space: nowrap;
 }
-.recent li b {
+.recentAccounts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
-  font-weight: var(--fw-medium);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.recentAccounts .accountName {
+  flex: 1;
 }
 
 /* Block next to the opponent's decks */
 .miniBlock {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--space-1);
   min-width: 0;
@@ -218,8 +268,8 @@
   font-size: var(--fs-sm);
 }
 .accountLines li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-3);
 }
 .accountLines li span {
@@ -227,6 +277,9 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accountLines li b {
   white-space: nowrap;
 }
 .miniBlock .score {
