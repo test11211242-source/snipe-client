@@ -1,6 +1,6 @@
 # CR Tools V2
 
-Isolated M7 release-capable client for the Windows-only CR Tools V2 application. This package does
+Windows-only CR Tools V2 client with the v1 renderer scope and isolated release tooling. This package does
 not reuse V1 implementation code and has a separate development and packaging
 identity:
 
@@ -56,6 +56,15 @@ steps are Windows release gates and are not simulated on Linux.
 - `shared/models` and `shared/errors`: boundary-safe models and errors.
 - `renderer`: separate sandboxed auth, main, and widget React entries with restrictive
   CSPs; the full-window setup editor is hosted by main.
+
+The runtime has exactly three native windows: main, auth, and the local overlay.
+`renderer/src/app/` composes the typed router, persistent controllers, and adaptive shell;
+`features/` owns opponent/history/H2H, capture profiles/manual setup, streamer, settings,
+and updates. `ui/` is the shared CSS-module kit, with tokens and base styles in `styles/`.
+Auth and overlay have their own entries. Setup is a full-window main route, not a fourth
+entry or preload. The old renderer/pages/styles are removed, not retained behind aliases.
+The component catalog and visual fixtures are dev/test-only; production builds include
+only main/auth/widget HTML. Set `CR_TOOLS_CATALOG=1` explicitly for a local catalog build.
 
 The renderer has no Node.js integration, filesystem access, tokens, full HWID,
 generic IPC, or generic settings API. Auth and main windows expose separate narrow
@@ -140,11 +149,11 @@ provider and cannot silently instantiate the Windows production identity.
 
 ## Capture Setup
 
-M3 implementation is complete. The Capture workspace explicitly enumerates Electron
-window/display sources, uses opaque short-lived keys, and creates bounded lazy previews.
-Starting setup captures the canonical frame before entering the main window's full-window
-editor. The editor maps pointer and numeric coordinates through a letterboxed contain transform
-and stages Trigger, Normal, and Precise regions before analysis/review/commit.
+Manual setup enumerates real window/display sources with opaque short-lived keys and
+bounded lazy previews. It captures a canonical frame before entering the main window's
+full-window editor. Pointer and numeric coordinates share a letterboxed contain transform;
+the staged regions are trigger, opponent nickname, and top-left evidence before
+analysis/review/commit. These semantic names are also used by the setup DTO and commands.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -277,12 +286,13 @@ background, including normal, evolution, and hero variants. Any failure displays
 and name. Renderers cannot provide an asset URL or perform direct HTTP requests.
 
 Widget controls are keyboard-focusable and labeled: pin, position lock, compact mode,
-opacity, deck tabs, and hide. The Settings page exposes the same behavior and honestly
-also owns manual update check, download, cancellation, and install controls.
+deck tabs, and hide. Escape hides the overlay; removed Ctrl+P/L/M shortcuts do nothing.
+Ctrl+wheel adjusts bounded opacity; Settings exposes width, opacity, and the same window
+behavior. Application updates have their own Settings page.
 
 ## Streamer Workspace
 
-M6 is implemented for the active V1 parity scope. The tabbed Streamer workspace supports
+The v1 streamer area has dedicated pages (not the old duplicate Twitch/accounts home) for
 Twitch connect/status/disconnect, automatic predictions, result-region calibration, automatic
 stream titles and Clash accounts, deck sharing, and adaptive OBS opponent/stats overlays.
 Alerts, Discord, the old generic OBS placeholder, and `smart_predictions` are intentionally not
@@ -408,7 +418,7 @@ retain bounded error bodies/messages and attach Retry-After metadata.
 Unknown future HTTP `status` or `reasonCode` strings normalize to `unavailable` with the
 allowlisted `H2H_SERVICE_UNAVAILABLE` capability error; they never leak into strict IPC.
 
-Main and widget have only canonical player-tag clipboard commands, not arbitrary clipboard writes.
+Only main exposes canonical player-tag clipboard copy; the overlay has no tag-copy capability.
 Widget settings accept bounded `contentHeight` (80–720), not arbitrary native bounds; normal and
 compact widths remain separately persisted. OBS bearer URLs, JWTs, raw API envelopes, HWNDs, and
 capture selectors never cross these bridges. The existing update view already supplies version,
@@ -423,3 +433,19 @@ the old file. Invalid/unreadable optional legacy prediction-result geometry is l
 and logs only the error type; it does not invalidate the capture-profile migration. Nickname
 confirmation/action share their trigger UUID, while `prediction_result` has an independent
 event UUID and must not be correlated by it.
+
+## v1 scope and future work
+
+The renderer presents real monitoring, opponent results/history, recorded Path of Legends
+H2H, manual capture profiles/setup, Twitch/predictions/title/chat/OBS settings, app settings,
+and updater state. Profile mutations use allowlisted code-only results with Russian text;
+monitor snapshots carry a monotonic sequence so delayed replies cannot restore old state.
+Saved setup outcomes distinguish local persistence, server synchronization, and runtime;
+unsent projections are warnings, with a retry only while their auth/profile association is valid.
+
+Automatic contextual/Cheddar setup is future engine work; v1 offers manual calibration only.
+H2H for an OCR not-found result and a personal-meetings OBS card are future contracts/UI,
+not synthetic empty histories. Deck archetypes are future data work; v1 shows available
+card/deck information and does not invent classifications. Global monitoring hotkeys,
+auto-hide, bug-report submission, and onboarding tours are not included. The tag palette's
+local Ctrl+K shortcut is separate from those removed global hotkeys.
