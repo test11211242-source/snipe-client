@@ -6,10 +6,12 @@ import {
 } from '@playwright/test'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+
+import { createDefaultSettings } from '../../electron/main/infrastructure/settings-repository'
 
 test.skip(process.platform !== 'win32', 'Packaged Electron smoke runs on Windows only')
 
@@ -123,12 +125,19 @@ test('packaged portable runtime contains the pinned capture stack', async () => 
   })
 })
 
-test('packaged app opens an isolated auth window and exits cleanly', async () => {
+test('packaged app opens isolated auth and exits cleanly with close-to-tray disabled', async () => {
   test.setTimeout(90_000)
 
   const userDataDirectory = await mkdtemp(join(tmpdir(), 'cr-tools-v2-e2e-'))
   let child: ChildProcess | undefined
   try {
+    const settings = createDefaultSettings()
+    settings.application.closeToTray = false
+    await writeFile(
+      join(userDataDirectory, 'settings.v2.json'),
+      JSON.stringify(settings),
+      'utf8',
+    )
     const environment = { ...process.env }
     delete environment['ELECTRON_RUN_AS_NODE']
     child = spawn(
@@ -171,7 +180,13 @@ test('packaged app opens an isolated auth window and exits cleanly', async () =>
     try {
       if (child?.exitCode === null) child.kill()
     } finally {
-      await rm(userDataDirectory, { force: true, recursive: true })
+      // Chromium's Windows file handles can outlive the main process exit.
+      await rm(userDataDirectory, {
+        force: true,
+        recursive: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      })
     }
   }
 })
@@ -263,6 +278,11 @@ test('packaged auth preload exposes a working IPC bridge', async () => {
     )
   } finally {
     await electronApp?.close().catch(() => undefined)
-    await rm(userDataDirectory, { force: true, recursive: true })
+    await rm(userDataDirectory, {
+      force: true,
+      recursive: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    })
   }
 })
