@@ -41,14 +41,21 @@ export function pointerToNormalized(
   }
 }
 
+const FRAME_BOUNDS: NormalizedRect = { x: 0, y: 0, width: 1, height: 1 }
+
 export function rectFromPoints(
   start: { x: number; y: number },
   end: { x: number; y: number },
+  bounds: NormalizedRect = FRAME_BOUNDS,
 ): NormalizedRect | null {
-  const x = Math.min(start.x, end.x)
-  const y = Math.min(start.y, end.y)
-  const width = Math.abs(end.x - start.x)
-  const height = Math.abs(end.y - start.y)
+  const left = clamp(start.x, bounds.x, bounds.x + bounds.width)
+  const top = clamp(start.y, bounds.y, bounds.y + bounds.height)
+  const right = clamp(end.x, bounds.x, bounds.x + bounds.width)
+  const bottom = clamp(end.y, bounds.y, bounds.y + bounds.height)
+  const x = Math.min(left, right)
+  const y = Math.min(top, bottom)
+  const width = Math.abs(right - left)
+  const height = Math.abs(bottom - top)
   return width >= 0.001 && height >= 0.001 ? { x, y, width, height } : null
 }
 
@@ -61,12 +68,17 @@ export type RectHit = { kind: 'handle'; corner: RectCorner } | { kind: 'body' }
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
 
-/** Moves a rect by a normalized delta and keeps it inside the frame. */
-export function moveRect(rect: NormalizedRect, dx: number, dy: number): NormalizedRect {
+/** Moves a rect by a normalized delta and keeps it inside the editing bounds. */
+export function moveRect(
+  rect: NormalizedRect,
+  dx: number,
+  dy: number,
+  bounds: NormalizedRect = FRAME_BOUNDS,
+): NormalizedRect {
   return {
     ...rect,
-    x: clamp(rect.x + dx, 0, 1 - rect.width),
-    y: clamp(rect.y + dy, 0, 1 - rect.height),
+    x: clamp(rect.x + dx, bounds.x, bounds.x + bounds.width - rect.width),
+    y: clamp(rect.y + dy, bounds.y, bounds.y + bounds.height - rect.height),
   }
 }
 
@@ -78,20 +90,26 @@ export function resizeCorner(
   rect: NormalizedRect,
   corner: RectCorner,
   point: { x: number; y: number },
+  bounds: NormalizedRect = FRAME_BOUNDS,
 ): NormalizedRect {
   const anchorX = corner === 'nw' || corner === 'sw' ? rect.x + rect.width : rect.x
   const anchorY = corner === 'nw' || corner === 'ne' ? rect.y + rect.height : rect.y
-  const axis = (anchor: number, value: number): { start: number; size: number } => {
+  const axis = (
+    anchor: number,
+    value: number,
+    min: number,
+    max: number,
+  ): { start: number; size: number } => {
     const forward = value >= anchor
     const size = clamp(
       Math.abs(value - anchor),
       MIN_REGION_SIDE,
-      forward ? 1 - anchor : anchor,
+      forward ? max - anchor : anchor - min,
     )
-    return { start: forward ? anchor : anchor - size, size }
+    return { start: clamp(forward ? anchor : anchor - size, min, max - size), size }
   }
-  const horizontal = axis(anchorX, point.x)
-  const vertical = axis(anchorY, point.y)
+  const horizontal = axis(anchorX, point.x, bounds.x, bounds.x + bounds.width)
+  const vertical = axis(anchorY, point.y, bounds.y, bounds.y + bounds.height)
   return {
     x: horizontal.start,
     y: vertical.start,
@@ -106,14 +124,15 @@ export function nudgeRect(
   key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown',
   step: number,
   resize: boolean,
+  bounds: NormalizedRect = FRAME_BOUNDS,
 ): NormalizedRect {
   const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0
   const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0
-  if (!resize) return moveRect(rect, dx, dy)
+  if (!resize) return moveRect(rect, dx, dy, bounds)
   return {
     ...rect,
-    width: clamp(rect.width + dx, MIN_REGION_SIDE, 1 - rect.x),
-    height: clamp(rect.height + dy, MIN_REGION_SIDE, 1 - rect.y),
+    width: clamp(rect.width + dx, MIN_REGION_SIDE, bounds.x + bounds.width - rect.x),
+    height: clamp(rect.height + dy, MIN_REGION_SIDE, bounds.y + bounds.height - rect.y),
   }
 }
 

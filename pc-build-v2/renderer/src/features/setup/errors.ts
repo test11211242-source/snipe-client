@@ -24,6 +24,7 @@ const COMMAND_FRAGMENTS: readonly (readonly [fragment: string, text: string])[] 
   ['Setup session is stale', 'Эта настройка уже закрыта или заменена другой.'],
   ['Setup session changed', 'Эта настройка уже закрыта или заменена другой.'],
   ['Setup command is stale', 'Состояние настройки изменилось. Мы его обновили.'],
+  ['inside the game rectangle', 'Отметьте область внутри игры'],
   [
     'Capture profiles changed',
     'Список профилей изменился, пока шла настройка. Начните заново.',

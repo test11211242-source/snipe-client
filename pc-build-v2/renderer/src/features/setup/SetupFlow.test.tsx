@@ -397,13 +397,14 @@ describe('setup flow: new profile', () => {
 })
 
 describe('setup flow: pointer region editing', () => {
-  async function editor(): Promise<SetupWorld> {
+  async function editor(overrides: Partial<SetupSessionView> = {}): Promise<SetupWorld> {
     const world = mountSetup(
       { name: 'setup', intent: { kind: 'resume' } },
       {
         session: {
           initial: sessionView({
             regions: { ...sessionView().regions, trigger: TRIGGER },
+            ...overrides,
           }),
         },
       },
@@ -427,6 +428,81 @@ describe('setup flow: pointer region editing', () => {
     expect(setRegionCalls(world)).toHaveLength(0)
     fireEvent.click(tab(/^Ник соперника/))
     await waitFor(() => expect(setRegionCalls(world)).toHaveLength(1))
+  })
+
+  it('constrains a newly drawn region to the game before saving it', async () => {
+    const world = mountSetup(
+      { name: 'setup', intent: { kind: 'resume' } },
+      {
+        session: {
+          initial: sessionView({
+            game: {
+              viewport: { x: 0.2, y: 0.2, width: 0.6, height: 0.6 },
+              aspect: 2,
+              source: 'freeze',
+            },
+          }),
+        },
+      },
+    )
+    await findEditor()
+    drag([0, 0], [800, 400])
+    expect(parseFloat(activeBox().style.left)).toBeCloseTo(20)
+    expect(parseFloat(activeBox().style.top)).toBeCloseTo(20)
+    expect(parseFloat(activeBox().style.width)).toBeCloseTo(60)
+    expect(parseFloat(activeBox().style.height)).toBeCloseTo(60)
+    fireEvent.click(tab(/^Ник соперника/))
+    await waitFor(() => expect(setRegionCalls(world)).toHaveLength(1))
+    expect(setRegionCalls(world)[0]?.rect['x']).toBe(0.2)
+    expect(setRegionCalls(world)[0]?.rect['width']).toBeCloseTo(0.6)
+  })
+
+  it('keeps pointer moves, corner resizes and keyboard edits inside the game', async () => {
+    await editor({
+      game: {
+        viewport: { x: 0.2, y: 0.2, width: 0.6, height: 0.6 },
+        aspect: 2,
+        source: 'freeze',
+      },
+      regions: {
+        ...sessionView().regions,
+        trigger: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 },
+      },
+    })
+    drag([320, 160], [800, 400])
+    expect(parseFloat(activeBox().style.left)).toBeCloseTo(60)
+    expect(parseFloat(activeBox().style.top)).toBeCloseTo(60)
+    expect(parseFloat(activeBox().style.width)).toBeCloseTo(20)
+    // Top-left resize stays at the game edge, with the opposite corner fixed.
+    drag([480, 240], [0, 0])
+    expect(parseFloat(activeBox().style.left)).toBeCloseTo(20)
+    expect(parseFloat(activeBox().style.top)).toBeCloseTo(20)
+    expect(parseFloat(activeBox().style.width)).toBeCloseTo(60)
+    for (const key of ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown']) {
+      fireEvent.keyDown(activeBox(), { key, shiftKey: true })
+      fireEvent.keyDown(activeBox(), { key, altKey: true, shiftKey: true })
+    }
+    expect(parseFloat(activeBox().style.left)).toBeCloseTo(25)
+    expect(parseFloat(activeBox().style.top)).toBeCloseTo(25)
+    expect(parseFloat(activeBox().style.width)).toBeCloseTo(55)
+    expect(parseFloat(activeBox().style.height)).toBeCloseTo(55)
+  })
+
+  it('shows a short action when main rejects a region crossing the game outline', async () => {
+    const world = await editor()
+    world.bridge.crTools.setup.setRegion.mockRejectedValueOnce(
+      new Error(
+        'Error invoking remote method: Error: Select the region inside the game rectangle',
+      ),
+    )
+    draw({ x: 0.5, y: 0.5, width: 0.1, height: 0.1 })
+    fireEvent.click(tab(/^Ник соперника/))
+    expect(await screen.findByText('Отметьте область внутри игры')).toBeVisible()
+    expect(screen.queryByText(/game rectangle/)).toBeNull()
+    expect(screen.getByRole('button', { name: /^Триггер/ })).toHaveAttribute(
+      'aria-current',
+      'step',
+    )
   })
 
   it('restores the region when the pointer is cancelled mid-drag', async () => {

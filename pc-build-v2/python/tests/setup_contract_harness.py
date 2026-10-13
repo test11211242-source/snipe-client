@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import threading
 from typing import Any
 
 import cv2
@@ -30,8 +31,8 @@ def emit_fixture(mode: str) -> None:
 
 
 def run_prepared(mode: str) -> None:
-    # Replace only capture IO and the sampling clock. History, detection, PNG
-    # encoding, command validation and CRT2 event production stay genuine.
+    # Replace capture IO; only the legacy deterministic fixtures replace the clock.
+    # History, detection, encoding and CRT2 event production stay genuine.
     original_publish = prepared_capture.LatestFrameStore.publish
     sample_index = 0
 
@@ -43,9 +44,30 @@ def run_prepared(mode: str) -> None:
 
     class SyntheticBackend:
         def __init__(self, _selector: dict[str, Any]) -> None:
-            pass
+            self._stopping = threading.Event()
+            self._thread: threading.Thread | None = None
 
         def start(self, on_frame: Any, _on_closed: Any) -> None:
+            if mode == "prepared-real-clock":
+                frames = []
+                for index in range(9):
+                    image, _ = arena(180, 320, seed=index, badge=False)
+                    image = np.clip(image.astype(np.int16) + (index % 2) * 80, 0, 255).astype(np.uint8)
+                    frame, _ = framed(image, toolbar=24)
+                    frames.append(frame)
+                on_frame(frames[0])  # Prepare is ready before the immediate freeze.
+
+                def publish_live() -> None:
+                    index = 1
+                    while not self._stopping.is_set():
+                        if self._stopping.wait(1 / 30):
+                            break
+                        on_frame(frames[(index // 9) % len(frames)])
+                        index += 1
+
+                self._thread = threading.Thread(target=publish_live)
+                self._thread.start()
+                return
             external_path = os.environ.get("SNIPE_SETUP_CONTRACT_FRAME")
             external = None
             if external_path:
@@ -63,9 +85,12 @@ def run_prepared(mode: str) -> None:
                 on_frame(frame)
 
         def stop(self) -> None:
-            pass
+            self._stopping.set()
+            if self._thread is not None:
+                self._thread.join()
 
-    prepared_capture.LatestFrameStore.publish = sampled_publish
+    if mode != "prepared-real-clock":
+        prepared_capture.LatestFrameStore.publish = sampled_publish
     prepared_capture.WindowsMonitorBackend = SyntheticBackend
     prepared_capture.main()
 
@@ -74,7 +99,7 @@ if __name__ == "__main__":
     mode = sys.argv[1]
     if mode in ("fixture-vs", "fixture-non-vs"):
         emit_fixture(mode)
-    elif mode in ("prepared", "prepared-insufficient"):
+    elif mode in ("prepared", "prepared-insufficient", "prepared-real-clock"):
         run_prepared(mode)
     else:
         raise ValueError("Unknown setup contract harness mode")

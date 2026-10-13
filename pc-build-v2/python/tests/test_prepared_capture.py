@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import io
+import threading
+import time
+from types import SimpleNamespace
 import pytest
 import numpy as np
 
+from capture.backend import CaptureBackendError
+import prepared_capture
 from prepared_capture import LatestFrameStore, validate_command
-from protocol.framing import ProtocolError
+from protocol.framing import ProtocolError, read_stream_envelope, write_envelope
 
 
 
@@ -127,3 +133,64 @@ def test_history_drops_alpha_without_losing_temporal_geometry() -> None:
     assert all(sample.shape == (2160, 3840, 3) for _, sample in store._history)
     assert sum(sample.nbytes for _, sample in store._history) == 8 * 2160 * 3840 * 3
     assert store._history[-1][1] is store._latest
+
+
+def test_history_wait_deadline_keeps_static_source_insufficient() -> None:
+    store = LatestFrameStore()
+    store.publish(np.zeros((32, 32, 3), np.uint8))
+    started = time.monotonic()
+    store.wait_for_history(timeout=0.03)
+    assert 0.025 <= time.monotonic() - started < 0.5
+    frame, _ = store.freeze()
+    assert store.game(frame) == {"rect": None, "reason": "insufficient_frames"}
+    assert len(store._history) == 1
+
+
+def test_source_closing_wakes_history_wait_without_a_frame() -> None:
+    store = LatestFrameStore()
+    closer = threading.Timer(0.03, store.close_source)
+    closer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(CaptureBackendError) as error:
+            store.wait_for_history()
+        assert error.value.code == "CAPTURE_SOURCE_STALE"
+        assert time.monotonic() - started < 0.5
+    finally:
+        closer.join()
+
+
+def test_prepare_then_immediate_freeze_live_backend_real_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from setup_contract_harness import run_prepared
+
+    commands = io.BytesIO()
+    session_id = "real-clock-retake"
+    write_envelope(commands, {
+        "protocolVersion": 1, "sessionId": session_id, "type": "start",
+        "selector": {"kind": "window", "windowHwnd": "123"},
+    })
+    write_envelope(commands, {
+        "protocolVersion": 1, "sessionId": session_id, "type": "freeze",
+    })
+    commands.seek(0)
+    events = io.BytesIO()
+    monkeypatch.setattr(prepared_capture.sys, "stdin", SimpleNamespace(buffer=commands))
+    monkeypatch.setattr(prepared_capture.sys, "stdout", SimpleNamespace(buffer=events))
+    # The harness replaces only capture IO; restore its backend after the test.
+    monkeypatch.setattr(prepared_capture, "WindowsMonitorBackend", prepared_capture.WindowsMonitorBackend)
+    started = time.monotonic()
+    run_prepared("prepared-real-clock")
+    elapsed = time.monotonic() - started
+    events.seek(0)
+    ready = read_stream_envelope(events, max_binary_bytes=0)
+    frozen = read_stream_envelope(events, max_binary_bytes=prepared_capture.MAX_PNG_BYTES)
+    assert ready.metadata["type"] == "ready"
+    assert frozen.metadata["type"] == "frozen"
+    assert ready.metadata["payload"]["frameSequence"] == 1
+    assert frozen.metadata["payload"]["game"]["rect"] == {
+        "x": 40, "y": 48, "width": 180, "height": 320,
+    }
+    assert frozen.metadata["payload"]["game"]["frames"] >= 8
+    assert 2.1 <= elapsed <= 3

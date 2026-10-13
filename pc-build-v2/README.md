@@ -187,10 +187,16 @@ analysis/review/commit. These semantic names are also used by the setup DTO and 
 
 New manual capture profiles and recalibrations are always game-relative. The required
 `startCaptureSetup.mode` is currently `manual`; automatic setup belongs to the next session.
-Prepared capture freezes its sampled history and returns the detected game rectangle and
-color-independent window-chrome templates. Missing or unreliable geometry ends setup with
+Prepared capture waits up to 2.5 seconds for eight real history samples spaced at least
+0.3 seconds apart before freezing, including immediate prepare → freeze on a retake.
+Publication or source closure wakes the wait. A static or rarely redrawing WGC window
+can still time out with `insufficient_frames`; frames are never duplicated to invent
+geometry. Freeze returns the detected game rectangle and color-independent window-chrome
+templates. Missing or unreliable geometry ends setup with
 `SETUP_GAME_NOT_FOUND` and requires a new frame; it never creates a full-frame fallback.
-Session regions remain frame-normalized for the editor; main validates them inside the game,
+Session regions remain frame-normalized for the editor; pointer drawing, moving, corner
+resizing and keyboard editing stay inside the game outline. Main still rejects regions
+outside the game with `SETUP_REGION_INVALID`, shown as «Отметьте область внутри игры»,
 then commits one protected `setup` layout in game fractions. Analyzer protocol 2 receives
 the game rectangle and chooses VS edge orientation when the marked trigger contains a
 recognized badge, otherwise the structural trigger. Both cases retain the legacy structural

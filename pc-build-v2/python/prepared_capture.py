@@ -18,10 +18,13 @@ MAX_PNG_BYTES = 32 * 1024 * 1024
 
 HISTORY_FRAMES = 8
 HISTORY_INTERVAL = 0.3
+HISTORY_WAIT_SECONDS = 2.5
 
 class LatestFrameStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._source_closed = False
         self._latest = None
         self._sequence = 0
         self._frozen = False
@@ -48,7 +51,23 @@ class LatestFrameStore:
             if now - self._last_sample >= HISTORY_INTERVAL:
                 self._history.append((self._sequence, copied))
                 self._last_sample = now
+            self._condition.notify_all()
             return first, self._sequence, width, height
+
+    def close_source(self) -> None:
+        with self._condition:
+            self._source_closed = True
+            self._condition.notify_all()
+
+    def wait_for_history(self, timeout: float = HISTORY_WAIT_SECONDS) -> None:
+        """Wait for real, spaced samples; never duplicate a static source's frame."""
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._source_closed or len(self._history) >= HISTORY_FRAMES,
+                timeout=timeout,
+            )
+            if self._source_closed:
+                raise CaptureBackendError("CAPTURE_SOURCE_STALE", "Capture source closed")
 
     def freeze(self) -> tuple[Any, int]:
         with self._lock:
@@ -153,6 +172,7 @@ def main() -> None:
             if stopping.is_set():
                 return
             source_closed.set()
+            store.close_source()
             emit(
                 "fatal",
                 {"code": "CAPTURE_SOURCE_STALE", "message": "Capture source closed"},
@@ -175,6 +195,7 @@ def main() -> None:
         if command_type != "freeze" or source_closed.is_set():
             raise ProtocolError("prepared capture command order is invalid")
 
+        store.wait_for_history()
         frame, frame_sequence = store.freeze()
         stopping.set()
         backend.stop()

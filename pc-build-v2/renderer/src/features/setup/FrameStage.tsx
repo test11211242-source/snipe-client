@@ -143,11 +143,20 @@ export function FrameStage({
 
   const apply = (gesture: Drag, at: Point): void => {
     if (gesture.mode === 'draw') {
-      onDraft(rectFromPoints(gesture.start, at) ?? gesture.origin)
+      onDraft(
+        rectFromPoints(gesture.start, at, gameViewport ?? undefined) ?? gesture.origin,
+      )
     } else if (gesture.mode === 'move') {
-      onDraft(moveRect(gesture.origin, at.x - gesture.start.x, at.y - gesture.start.y))
+      onDraft(
+        moveRect(
+          gesture.origin,
+          at.x - gesture.start.x,
+          at.y - gesture.start.y,
+          gameViewport ?? undefined,
+        ),
+      )
     } else {
-      onDraft(resizeCorner(gesture.origin, gesture.corner, at))
+      onDraft(resizeCorner(gesture.origin, gesture.corner, at, gameViewport ?? undefined))
     }
   }
 
@@ -276,6 +285,7 @@ export function FrameStage({
                         event.key,
                         event.shiftKey ? 0.05 : 0.01,
                         event.altKey,
+                        gameViewport ?? undefined,
                       ),
                     )
                   }
