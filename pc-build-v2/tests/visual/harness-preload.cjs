@@ -192,6 +192,7 @@ const monitor = {
   session: null,
   summary: fixture.summary ? expandSummary(fixture.summary) : null,
   historyError: null,
+  geometry: fixture.geometry ?? null,
 }
 const roles = fixture.player ? ['user'] : ['user', 'streamer']
 const data = {
@@ -611,6 +612,12 @@ const emptyRegions = {
   resultTrigger: null,
   resultData: null,
 }
+// `setup.game: true`: main found the game in the frozen frame (portrait area of the stand-in).
+const gameFx = () => ({
+  viewport: { x: 437.5 / 1280, y: 0, width: 405 / 1280, height: 1 },
+  aspect: 0.5625,
+  source: 'freeze',
+})
 const makeSession = (kind, name, patch = {}) => ({
   kind,
   sessionId: uuid(901),
@@ -624,7 +631,7 @@ const makeSession = (kind, name, patch = {}) => ({
   profileId: uuid(7),
   profileName: name,
   frameSize: { width: 1280, height: 720 },
-  game: null,
+  game: setupFx.game && kind === 'capture' ? gameFx() : null,
   triggerKind: null,
   regionOrigins: null,
   regions: { ...emptyRegions },
@@ -667,6 +674,7 @@ const initialSession = () => {
   return null
 }
 let session = initialSession()
+let startedOnce = false
 const frameScene = () =>
   session && session.kind === 'predictionResult' ? 'result' : 'vs'
 const bump = (patch) => {
@@ -1132,14 +1140,17 @@ contextBridge.exposeInMainWorld('crTools', {
   releaseCaptureSource: ok({ released: true }),
   startCaptureSetup: ({ mode, profileId, profileName }) => {
     if (mode !== 'manual') return Promise.reject(new Error('Manual setup mode required'))
-    session =
-      setupFx.start === 'failed'
-        ? makeSession('capture', profileName, {
-            state: 'FAILED',
-            frameSize: null,
-            error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
-          })
-        : makeSession('capture', profileName, { profileId: profileId ?? uuid(7) })
+    // `start: 'failed-once'`: only the first frozen frame fails (a retake then works).
+    const failing =
+      setupFx.start === 'failed' || (setupFx.start === 'failed-once' && !startedOnce)
+    startedOnce = true
+    session = failing
+      ? makeSession('capture', profileName, {
+          state: 'FAILED',
+          frameSize: null,
+          error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
+        })
+      : makeSession('capture', profileName, { profileId: profileId ?? uuid(7) })
     return Promise.resolve(session)
   },
   renameCaptureProfile: renameProfile,

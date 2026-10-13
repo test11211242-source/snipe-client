@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { SetupSessionView } from '../../../../shared/models/setup'
 import { monitorViewFixture } from '../../../../tests/monitor-fixtures'
 import { profilesFixture } from '../../test/bridge'
 import {
@@ -132,15 +133,19 @@ describe('setup flow: new profile', () => {
 
     // 5. the real analyzer, then review and commit.
     fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
-    expect(await screen.findByRole('heading', { name: 'Триггер проверен' })).toBeVisible()
+    expect(
+      await screen.findByRole('heading', { name: 'Проверьте области' }),
+    ).toBeInTheDocument()
     expect(setRegionCalls(world).map((call) => call.region)).toEqual([
       'trigger',
       'nickname',
       'topLeftEvidence',
     ])
     expect(crTools.setup.analyzeTrigger).toHaveBeenCalledTimes(1)
-    expect(screen.getByText('96%')).toBeVisible()
-    expect(await screen.findByTestId('trigger-inner-region')).toBeVisible()
+    // Owner rule: only the frame with zones and buttons, no analyzer details.
+    expect(screen.queryByText(/%|качеств|Триггер проверен|структур/i)).toBeNull()
+    expect(screen.queryByText(/Значок VS|привязан к игре|Имя на кадре/)).toBeNull()
+    expect(screen.queryByTestId('trigger-inner-region')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить профиль' }))
 
     // 6. outcome, then back to the previous destination without touching the monitor.
@@ -246,6 +251,148 @@ describe('setup flow: new profile', () => {
       await screen.findByRole('heading', { name: 'Откуда берём картинку?' }),
     ).toBeVisible()
     expect(world.bridge.crTools.setup.close).toHaveBeenCalledTimes(1)
+  })
+
+  const bluestacks = {
+    kind: 'window',
+    label: 'BlueStacks App Player',
+    titleHint: 'BlueStacks App Player',
+    executableLabel: 'HD-Player.exe',
+  } as const
+  const gameMissing = (): SetupSessionView =>
+    sessionView({
+      state: 'FAILED',
+      source: bluestacks,
+      frameSize: null,
+      error: { code: 'SETUP_GAME_NOT_FOUND', message: 'Game not found' },
+    })
+
+  /** Recalibrates a profile and freezes a frame in which main finds no game. */
+  async function freezeWithoutGame(): Promise<SetupWorld> {
+    const world = mountSetup({
+      name: 'setup',
+      intent: {
+        kind: 'recalibrate',
+        profileId: PROFILE_ID,
+        profileName: 'Основной',
+        expectedRevision: 1,
+      },
+    })
+    world.bridge.crTools.startCaptureSetup.mockImplementationOnce(() => {
+      world.fake.replace(gameMissing())
+      return Promise.resolve(world.fake.current())
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
+    const freeze = screen.getByRole('button', { name: /Заморозить кадр/ })
+    await waitFor(() => expect(freeze).toBeEnabled())
+    fireEvent.click(freeze)
+    await screen.findByRole('heading', {
+      name: 'Не вижу игру в окне — сделайте кадр ещё раз',
+    })
+    return world
+  }
+
+  it('says only that the game is missing and offers a fresh frame or another window', async () => {
+    const world = await freezeWithoutGame()
+    expect(screen.getByRole('button', { name: 'Сделать кадр ещё раз' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Выбрать окно' })).toBeEnabled()
+    // No region step, no save, no technical wording.
+    expect(screen.queryByRole('group', { name: STAGE })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Сохранить|Дальше/ })).toBeNull()
+    expect(screen.queryByText(/формат|игра не найдена|SETUP_/i)).toBeNull()
+    expect(world.bridge.crTools.setup.close).not.toHaveBeenCalled()
+  })
+
+  it('takes a fresh frame: prepares the same source, closes the failed session, freezes again', async () => {
+    const world = await freezeWithoutGame()
+    const { crTools } = world.bridge
+    crTools.prepareCaptureSource.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Сделать кадр ещё раз' }))
+    await findEditor()
+    expect(crTools.prepareCaptureSource).toHaveBeenCalledWith({
+      sourceKey: 'a'.repeat(32),
+      revision: 'c'.repeat(32),
+    })
+    expect(crTools.setup.close).toHaveBeenCalledTimes(1)
+    expect(crTools.startCaptureSetup).toHaveBeenCalledTimes(2)
+    expect(crTools.startCaptureSetup).toHaveBeenLastCalledWith({
+      mode: 'manual',
+      preparationId: '00000000-0000-4000-8000-0000000000b1',
+      profileId: PROFILE_ID,
+      profileName: 'Основной',
+      expectedRevision: 1,
+    })
+    const prepareOrder = crTools.prepareCaptureSource.mock.invocationCallOrder[0] ?? 0
+    const closeOrder = crTools.setup.close.mock.invocationCallOrder[0] ?? 0
+    expect(prepareOrder).toBeLessThan(closeOrder)
+  })
+
+  it('stays on the failure when the same source cannot be prepared', async () => {
+    const world = await freezeWithoutGame()
+    world.bridge.crTools.prepareCaptureSource.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'CAPTURE_PREPARATION_START_FAILED', message: 'failed' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Сделать кадр ещё раз' }))
+    expect(
+      await screen.findByText(
+        'Служба захвата не запустилась. Повторите выбор источника.',
+      ),
+    ).toBeVisible()
+    expect(world.bridge.crTools.setup.close).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Сделать кадр ещё раз' })).toBeEnabled()
+  })
+
+  it('lets the user pick another window after a missing game', async () => {
+    const world = await freezeWithoutGame()
+    fireEvent.click(screen.getByRole('button', { name: 'Выбрать окно' }))
+    expect(
+      await screen.findByRole('heading', { name: /Перенастройка «Основной»/ }),
+    ).toBeVisible()
+    expect(world.bridge.crTools.setup.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('draws the game outline in the editor and on the check, without any caption', async () => {
+    const game = {
+      viewport: { x: 0.2, y: 0, width: 0.5, height: 1 },
+      aspect: 0.5787,
+      source: 'freeze' as const,
+    }
+    mountSetup(
+      { name: 'setup', intent: { kind: 'resume' } },
+      {
+        session: {
+          initial: sessionView({
+            game,
+            triggerKind: 'vs_edge_orientation',
+            regionOrigins: {
+              trigger: 'manual',
+              nickname: 'manual',
+              topLeftEvidence: 'manual',
+            },
+            regions: {
+              trigger: TRIGGER,
+              nickname: NICK,
+              topLeftEvidence: EVIDENCE,
+              resultTrigger: null,
+              resultData: null,
+            },
+            triggerProfile: triggerProfile(),
+          }),
+        },
+      },
+    )
+    await findEditor()
+    const outline = screen.getByTestId('game-viewport')
+    expect(outline).toBeVisible()
+    expect(outline.style.left).toBe('20%')
+    expect(outline.style.width).toBe('50%')
+    expect(outline).toHaveTextContent('')
+    expect(screen.queryByText(/привязан к игре|Значок VS/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
+    await screen.findByRole('heading', { name: 'Проверьте области' })
+    expect(screen.getByTestId('game-viewport')).toBeVisible()
+    expect(screen.queryByText(/привязан к игре|Значок VS|%|качеств/)).toBeNull()
   })
 })
 
@@ -494,7 +641,7 @@ describe('setup flow: stale session and generation', () => {
     fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
     expect(await screen.findByText(/Не удалось найти устойчивую структуру/)).toBeVisible()
     expect(
-      screen.queryByRole('heading', { name: 'Триггер проверен' }),
+      screen.queryByRole('heading', { name: 'Проверьте области' }),
     ).not.toBeInTheDocument()
   })
 })
@@ -527,21 +674,15 @@ describe('setup flow: check and save', () => {
     )
     await findEditor()
     fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
-    await screen.findByRole('button', {
-      name: /Сохранить профиль|Всё равно сохранить профиль/,
-    })
+    await screen.findByRole('button', { name: 'Сохранить профиль' })
     return world
   }
 
-  it('warns about medium trigger quality but still allows saving', async () => {
+  it('shows no trigger quality, even when the analyzer graded it medium', async () => {
     await check('medium')
-    expect(
-      screen.getByRole('heading', { name: 'Триггер найден, но качество среднее' }),
-    ).toBeVisible()
-    expect(screen.getByText('71%')).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: 'Всё равно сохранить профиль' }),
-    ).toBeEnabled()
+    expect(screen.getByRole('heading', { name: 'Проверьте области' })).toBeInTheDocument()
+    expect(screen.queryByText(/%|качеств|Всё равно/i)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Сохранить профиль' })).toBeEnabled()
   })
 
   it('goes back to the regions to fix them', async () => {
@@ -970,7 +1111,7 @@ describe('setup flow: resume and result zones', () => {
     expect(setRegionCalls(world)[0]?.region).toBe('resultTrigger')
     draw(NICK)
     fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
-    await screen.findByRole('heading', { name: 'Триггер проверен' })
+    await screen.findByRole('heading', { name: 'Проверьте области' })
     expect(setRegionCalls(world).map((call) => call.region)).toEqual([
       'resultTrigger',
       'resultData',

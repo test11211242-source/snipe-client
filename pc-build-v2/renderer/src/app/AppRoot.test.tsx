@@ -188,6 +188,51 @@ describe('monitor ownership and continuity', () => {
     expect(await screen.findAllByRole('button', { name: 'Остановить' })).toHaveLength(2)
     expect(screen.queryByText('Не удалось запустить')).not.toBeInTheDocument()
   })
+
+  it.each([
+    ['locating', null, null],
+    ['armed', '9:16', null],
+    ['no_game', null, null],
+    ['aspect_mismatch', '9:19,5', null],
+    ['learning', '9:19,5', null],
+  ] as const)(
+    'says nothing about the game geometry in %s',
+    async (state, aspectLabel, learningFailure) => {
+      await renderApp({
+        monitor: monitorViewFixture({
+          state: 'READY',
+          runIntent: true,
+          geometry: { state, aspectLabel, learningFailure },
+        }),
+      })
+      await screen.findByText('Ждём бой', { selector: 'h2' })
+      const bar = screen.getByRole('navigation', { name: 'Главная панель' })
+      expect(screen.queryByText('Настройте профиль заново')).not.toBeInTheDocument()
+      expect(within(bar).queryByText(/формат|игр[аы] не|Профиль дополнен/i)).toBeNull()
+    },
+  )
+
+  it('asks to set the profile up again when learning the format failed', async () => {
+    await renderApp({
+      profiles: profilesFixture(['Основной']),
+      monitor: monitorViewFixture({
+        state: 'READY',
+        runIntent: true,
+        geometry: {
+          state: 'learning_failed',
+          aspectLabel: '9:19,5',
+          learningFailure: 'LEARN_TRIGGER_WEAK',
+        },
+      }),
+    })
+    expect(await screen.findByText('Настройте профиль заново')).toBeVisible()
+    expect(screen.queryByText(/LEARN_/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Настроить' }))
+    // Setup opens as a recalibration of the active profile, with no name step.
+    expect(
+      await screen.findByRole('heading', { name: 'Перенастройка «Основной»' }),
+    ).toBeVisible()
+  })
 })
 
 describe('global wiring', () => {

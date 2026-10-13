@@ -11,6 +11,7 @@ import { commandErrorMessage, viewErrorMessage } from './errors'
 import { RegionEditor } from './RegionEditor'
 import { CheckStep, FailureView, OutcomeView } from './ResultViews'
 import styles from './Setup.module.css'
+import { prepareSameSource } from './retake'
 import { SourceStage } from './SourceStage'
 import { StepBar } from './StepBar'
 import { useSetupSession } from './useSetupSession'
@@ -55,6 +56,7 @@ export function SetupFlow({
   const [phase, setPhase] = useState<Phase>('regions')
   const [typedName, setName] = useState<string | null>(null)
   const [exiting, setExiting] = useState(false)
+  const [retakeNote, setRetakeNote] = useState<string | null>(null)
   const name = typedName ?? defaultName(profiles.value?.profiles ?? [])
 
   useEffect(() => {
@@ -81,10 +83,16 @@ export function SetupFlow({
   const steps =
     intent.kind === 'rebind' ? FULL_STEPS.slice(1, 2) : FULL_STEPS.slice(offset)
   const effectivePhase: Phase = view?.state === 'REVIEW' ? 'check' : phase
+  // Main did not find the game in the frozen frame: there is nothing to mark yet.
+  const gameMissing =
+    stage === 'session' &&
+    view?.kind === 'capture' &&
+    view.state === 'FAILED' &&
+    view.error?.code === 'SETUP_GAME_NOT_FOUND'
   const fullIndex =
     stage === 'name'
       ? 0
-      : stage === 'source'
+      : stage === 'source' || gameMissing
         ? 1
         : view?.state === 'COMMITTED'
           ? FULL_STEPS.length
@@ -134,6 +142,7 @@ export function SetupFlow({
       })
       await session.adopt(next)
       setPhase('regions')
+      setRetakeNote(null)
       setStage('session')
       return null
     } catch (cause) {
@@ -169,6 +178,42 @@ export function SetupFlow({
     const ended = await session.end()
     setExiting(false)
     if (ended) setStage('source')
+  }
+
+  /**
+   * «Сделать кадр ещё раз» after a missing game: prepare the same source first, then close
+   * the failed session and freeze a fresh frame. The terminated prepared process is never
+   * reused. If the same source cannot be prepared the user stays on the failure view.
+   */
+  const retake = async (): Promise<void> => {
+    const failed = view
+    if (failed === null || exiting) return
+    setExiting(true)
+    setRetakeNote(null)
+    try {
+      const prepared = await prepareSameSource(failed.source)
+      if (!prepared.ok) {
+        setRetakeNote(prepared.message)
+        return
+      }
+      if (!(await session.end())) {
+        void window.crTools
+          .releaseCaptureSource({
+            sourceKey: prepared.preparation.sourceKey,
+            revision: prepared.preparation.revision,
+          })
+          .catch(() => undefined)
+        setRetakeNote('Не удалось закрыть прежнюю настройку. Повторите.')
+        return
+      }
+      const failure = await freeze(prepared.preparation)
+      if (failure !== null) {
+        toast.show({ message: failure })
+        setStage('source')
+      }
+    } finally {
+      setExiting(false)
+    }
   }
 
   let body: React.JSX.Element
@@ -234,6 +279,20 @@ export function SetupFlow({
     )
   } else if (view.state === 'COMMITTED') {
     body = <OutcomeView onDone={() => void done()} session={session} view={view} />
+  } else if (gameMissing) {
+    body = (
+      <FailureView
+        busy={exiting}
+        message={null}
+        note={retakeNote}
+        onClose={() => void exit()}
+        onRetry={() => void retake()}
+        retryLabel="Сделать кадр ещё раз"
+        secondary={{ label: 'Выбрать окно', onClick: () => void restart() }}
+        title="Не вижу игру в окне — сделайте кадр ещё раз"
+        view={view}
+      />
+    )
   } else if (view.state === 'FAILED' || view.state === 'CANCELLED') {
     const failed = view.state === 'FAILED'
     body = (

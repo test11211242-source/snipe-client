@@ -286,6 +286,10 @@
   padding: 0 var(--space-8);
 }
 
+.splitSingle {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .bezel {
   display: flex;
   flex-direction: column;
@@ -368,10 +372,11 @@
   box-shadow: var(--focus-ring);
 }
 
-.boxInner {
-  border-style: dashed;
-  border-color: var(--color-accent);
-  background: transparent;
+.gameOutline {
+  position: absolute;
+  border: 1px dashed var(--color-text);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.55);
+  pointer-events: none;
 }
 
 .boxLabel {
@@ -620,21 +625,8 @@
   text-align: right;
 }
 
-.conf {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.confTop {
-  display: flex;
-  justify-content: space-between;
-  color: var(--color-text-3);
-  font-size: var(--fs-xs);
-}
-
-.confTop b {
-  color: var(--color-text);
-  font-weight: var(--fw-semi);
+.bezelAlert {
+  padding-top: var(--space-3);
 }
 
 .tips {
@@ -721,6 +713,10 @@
     grid-template-columns: minmax(0, 1fr) 320px;
     gap: var(--space-6);
     padding: 0 var(--space-6);
+  }
+
+  .splitSingle {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .foot {

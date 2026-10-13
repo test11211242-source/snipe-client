@@ -1,0 +1,224 @@
+[
+  {
+    "name": "setup-game-regions-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "regions",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Ник соперника'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-game-regions-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "regions",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Ник соперника'); await h.sleep(500); })()"
+    ]
+  },
+  {
+    "name": "setup-game-check-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-check-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-check-medium-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "grade": "medium",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-check-medium-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "checked",
+        "grade": "medium",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-not-found-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed",
+        "failCode": "SETUP_GAME_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-not-found-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "start": "failed",
+        "failCode": "SETUP_GAME_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "setup-game-retake-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "game": true,
+        "start": "failed-once",
+        "failCode": "SETUP_GAME_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); h.click('Сделать кадр ещё раз'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "setup-game-retake-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "game": true,
+        "start": "failed-once",
+        "failCode": "SETUP_GAME_NOT_FOUND"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); h.click('Сделать кадр ещё раз'); await h.sleep(700); })()"
+    ]
+  },
+  {
+    "name": "monitor-learning-failed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "learning_failed",
+        "aspectLabel": "9:19,5",
+        "learningFailure": "LEARN_TRIGGER_WEAK"
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  },
+  {
+    "name": "monitor-learning-failed-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "learning_failed",
+        "aspectLabel": "9:19,5",
+        "learningFailure": "LEARN_TRIGGER_WEAK"
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  },
+  {
+    "name": "monitor-learning-silent-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "learning",
+        "aspectLabel": "9:19,5",
+        "learningFailure": null
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  },
+  {
+    "name": "monitor-learning-silent-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "learning",
+        "aspectLabel": "9:19,5",
+        "learningFailure": null
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  },
+  {
+    "name": "monitor-aspect-silent-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "aspect_mismatch",
+        "aspectLabel": "9:19,5",
+        "learningFailure": null
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  },
+  {
+    "name": "monitor-aspect-silent-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "geometry": {
+        "state": "aspect_mismatch",
+        "aspectLabel": "9:19,5",
+        "learningFailure": null
+      }
+    },
+    "steps": ["(async () => { const h = window.__h; await h.sleep(500); })()"]
+  }
+]

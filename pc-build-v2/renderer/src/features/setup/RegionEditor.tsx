@@ -101,6 +101,7 @@ export function RegionEditor({
               editable={editable}
               frameSize={frameSize}
               frameUrl={frameUrl}
+              gameViewport={view.game?.viewport ?? null}
               onDraft={setDraft}
             />
           ) : (

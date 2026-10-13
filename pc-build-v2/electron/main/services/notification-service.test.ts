@@ -86,31 +86,4 @@ describe('NotificationService', () => {
     service.stop()
     expect(dispose).toHaveBeenCalledTimes(1)
   })
-
-  it('shows a quiet learned-layout notification once and disposes its subscription', () => {
-    let learned: ((layoutId: string) => void | Promise<void>) | undefined
-    const dispose = vi.fn()
-    const create = vi.fn(() => ({ show: vi.fn() }))
-    const service = new NotificationService(
-      {
-        subscribeResults: () => vi.fn(),
-        subscribeLearnedLayouts: (listener) => {
-          learned = listener
-          return dispose
-        },
-      },
-      () => true,
-      create,
-    )
-    service.start()
-    void learned?.('synthetic-layout')
-    void learned?.('synthetic-layout')
-    expect(create).toHaveBeenCalledExactlyOnceWith({
-      title: 'CR Tools V2',
-      body: 'Профиль дополнен под новый формат',
-      silent: true,
-    })
-    service.stop()
-    expect(dispose).toHaveBeenCalledTimes(1)
-  })
 })

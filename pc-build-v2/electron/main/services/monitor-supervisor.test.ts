@@ -217,6 +217,10 @@ function gameHarness(structural = false, game = gameConfiguration(structural)) {
   return { ...test, game, append }
 }
 
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve()
+}
+
 function learnedEvent(game: CaptureConfiguration) {
   if (game.calibration.coordinateSpace !== 'game_relative')
     throw new Error('Expected game-relative fixture')
@@ -551,12 +555,10 @@ describe('MonitorSupervisor game-relative runtime', () => {
     expect(test.process.stop).toHaveBeenCalledTimes(stops)
   })
 
-  it('persists using startup identities and notifies only after save, without restarting', async () => {
+  it('persists using startup identities and applies the revision only after save, without restarting', async () => {
     const test = gameHarness()
     const saving = deferred<number>()
     test.append.mockReturnValue(saving.promise)
-    const notify = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     await test.supervisor.start()
     test.captureConfigurations.getActive.mockResolvedValue({
       collectionRevision: 2,
@@ -578,9 +580,11 @@ describe('MonitorSupervisor game-relative runtime', () => {
       learned.layout,
     )
     expect(test.captureConfigurations.getActive).toHaveBeenCalledTimes(1)
-    expect(notify).not.toHaveBeenCalled()
     saving.resolve(2)
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(learned.layout.layoutId))
+    await saving.promise
+    await settle()
+    test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', randomUUID())
+    expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(2)
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'READY',
       error: null,
@@ -592,11 +596,10 @@ describe('MonitorSupervisor game-relative runtime', () => {
   it('uses the persisted calibration revision for later search and results', async () => {
     const test = gameHarness()
     test.append.mockResolvedValue(7)
-    const notify = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     await test.supervisor.start()
     test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
+    await settle()
     const triggerId = randomUUID()
     test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', triggerId)
     expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(7)
@@ -623,16 +626,8 @@ describe('MonitorSupervisor game-relative runtime', () => {
     )
   })
 
-  it('isolates failed one-way notifications and disposes learned-layout subscriptions', async () => {
+  it('keeps persisting learned layouts when prediction-state listeners fail', async () => {
     const test = gameHarness()
-    const notify = vi.fn()
-    const dispose = test.supervisor.subscribeLearnedLayouts(notify)
-    test.supervisor.subscribeLearnedLayouts(() => {
-      throw new Error('synthetic listener failure')
-    })
-    test.supervisor.subscribeLearnedLayouts(() =>
-      Promise.reject(new Error('synthetic listener failure')),
-    )
     const prediction = vi.fn()
     test.supervisor.subscribePredictionStates(() => {
       throw new Error('synthetic listener failure')
@@ -645,12 +640,8 @@ describe('MonitorSupervisor game-relative runtime', () => {
     const stops = test.process.stop.mock.calls.length
     const learned = learnedEvent(test.game)
     test.listener()?.onLayoutLearned?.(learned)
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce())
-    dispose()
-    test.listener()?.onLayoutLearned?.(learned)
-    await vi.waitFor(() => expect(test.append).toHaveBeenCalledTimes(2))
-    await Promise.resolve()
-    expect(notify).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
+    await settle()
     test.listener()?.onPredictionState?.({ state: 'aspect_mismatch' })
     expect(prediction).toHaveBeenCalledWith('aspect_mismatch')
     expect(test.supervisor.getCurrentView()).toMatchObject({
@@ -663,12 +654,10 @@ describe('MonitorSupervisor game-relative runtime', () => {
   })
 
   it.each(['LAYOUT_STALE', 'LAYOUT_LIMIT', 'LAYOUT_SAVE_FAILED'])(
-    'does not restart or notify when persistence rejects %s',
+    'does not restart when persistence rejects %s',
     async (code) => {
       const test = gameHarness()
       test.append.mockRejectedValue(new ApplicationError(code, 'private storage detail'))
-      const notify = vi.fn()
-      test.supervisor.subscribeLearnedLayouts(notify)
       await test.supervisor.start()
       const stops = test.process.stop.mock.calls.length
       test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
@@ -685,7 +674,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
       expect(view.runIntent).toBe(true)
       expect(view.error?.code ?? null).toBe(code === 'LAYOUT_SAVE_FAILED' ? code : null)
       expect(view.error?.message ?? '').not.toContain('private')
-      expect(notify).not.toHaveBeenCalled()
       expect(test.process.start).toHaveBeenCalledTimes(1)
       expect(test.process.stop).toHaveBeenCalledTimes(stops)
     },
@@ -713,8 +701,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
     const test = gameHarness()
     const saving = deferred<number>()
     test.append.mockReturnValue(saving.promise)
-    const notify = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     await test.supervisor.start()
     const oldListener = test.listener()
     oldListener?.onLayoutLearned?.(learnedEvent(test.game))
@@ -730,7 +716,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
     })
     oldListener?.onLayoutLearned?.(learnedEvent(test.game))
     expect(test.append).toHaveBeenCalledTimes(1)
-    expect(notify).not.toHaveBeenCalled()
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'STOPPED',
       error: null,
@@ -870,8 +855,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
 
   it('keeps opponent OCR active after a save failure and clears it after a later save', async () => {
     const test = gameHarness()
-    const notify = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     test.append.mockRejectedValueOnce(new Error('synthetic disk failure'))
     await test.supervisor.start()
     const learned = learnedEvent(test.game)
@@ -910,7 +893,8 @@ describe('MonitorSupervisor game-relative runtime', () => {
       stats: { triggers: 1, requests: 1, playersNotFound: 1 },
     })
     test.listener()?.onLayoutLearned?.(learned)
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(learned.layout.layoutId))
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledTimes(2))
+    await settle()
     expect(test.supervisor.getCurrentView().error).toBeNull()
     expect(test.process.start).toHaveBeenCalledTimes(1)
     expect(test.process.stop).toHaveBeenCalledTimes(stops)
@@ -922,9 +906,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       const test = gameHarness()
       const saving = deferred<number>()
       test.append.mockReturnValueOnce(saving.promise)
-      const notify = vi.fn()
       const prediction = vi.fn()
-      test.supervisor.subscribeLearnedLayouts(notify)
       test.supervisor.subscribePredictionStates(prediction)
       await test.supervisor.start()
       const old = test.listener()
@@ -949,7 +931,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
       old?.onLayoutLearned?.(learnedEvent(test.game))
       old?.onPredictionState?.({ state: 'aspect_mismatch' })
       expect(test.append).toHaveBeenCalledTimes(1)
-      expect(notify).not.toHaveBeenCalled()
       expect(prediction).not.toHaveBeenCalled()
       expect(test.supervisor.getCurrentView()).toMatchObject({
         state: 'READY',
@@ -958,8 +939,9 @@ describe('MonitorSupervisor game-relative runtime', () => {
       })
       expect(test.process.start).toHaveBeenCalledTimes(2)
       test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
-      await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce())
-      expect(test.append).toHaveBeenCalledTimes(2)
+      await vi.waitFor(() => expect(test.append).toHaveBeenCalledTimes(2))
+      await settle()
+      expect(test.supervisor.getCurrentView().error).toBeNull()
     },
   )
 
@@ -967,9 +949,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     const test = gameHarness()
     const saving = deferred<undefined>()
     test.append.mockReturnValue(saving.promise)
-    const notify = vi.fn()
     const prediction = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     test.supervisor.subscribePredictionStates(prediction)
     await test.supervisor.start()
     const old = test.listener()
@@ -985,7 +965,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
     })
     old?.onPredictionState?.({ state: 'aspect_mismatch' })
     expect(test.append).toHaveBeenCalledTimes(1)
-    expect(notify).not.toHaveBeenCalled()
     expect(prediction).not.toHaveBeenCalled()
     expect(test.supervisor.getCurrentView().geometry).toBeNull()
     await test.supervisor.stop('auth_change')
@@ -1000,9 +979,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
         new ApplicationError('MONITOR_START_FAILED', 'synthetic failure'),
       )
     })
-    const notify = vi.fn()
     const prediction = vi.fn()
-    test.supervisor.subscribeLearnedLayouts(notify)
     test.supervisor.subscribePredictionStates(prediction)
     await test.supervisor.start()
     const before = test.supervisor.getCurrentView()
@@ -1025,7 +1002,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
     events.onLayoutLearned?.(learnedEvent(test.game))
     events.onPredictionState?.({ state: 'aspect_mismatch' })
     expect(test.append).not.toHaveBeenCalled()
-    expect(notify).not.toHaveBeenCalled()
     expect(prediction).not.toHaveBeenCalled()
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'FAILED',

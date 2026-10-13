@@ -7,7 +7,6 @@ import {
   moveRect,
   nudgeRect,
   pointerToNormalized,
-  projectInnerRect,
   rectFromPoints,
   rectToPixels,
   resizeCorner,
@@ -99,15 +98,6 @@ describe('setup region editing geometry', () => {
     })
     expect(hitRect(rect, { x: 0.3, y: 0.35 }, tolerance)).toEqual({ kind: 'body' })
     expect(hitRect(rect, { x: 0.9, y: 0.9 }, tolerance)).toBeNull()
-  })
-
-  it('projects the inner structure rect into the outer region', () => {
-    expect(
-      projectInnerRect(
-        { x: 0.2, y: 0.2, width: 0.4, height: 0.4 },
-        { x: 0.25, y: 0.5, width: 0.5, height: 0.25 },
-      ),
-    ).toEqual({ x: 0.3, y: 0.4, width: 0.2, height: 0.1 })
   })
 
   it('formats pixel readouts and compares rects', () => {

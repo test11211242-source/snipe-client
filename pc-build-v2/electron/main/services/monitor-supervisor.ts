@@ -146,7 +146,6 @@ export class MonitorSupervisor {
   #sessionTags = new Map<string, number>()
   #sessionRepeats = new Set<string>()
   #learnedLayoutHandler: LearnedLayoutHandler | null = null
-  readonly #learnedLayoutListeners = new Set<(layoutId: string) => void | Promise<void>>()
   readonly #predictionStateListeners = new Set<
     (state: MonitorPredictionStateEvent['payload']['state']) => void | Promise<void>
   >()
@@ -219,13 +218,6 @@ export class MonitorSupervisor {
 
   setLearnedLayoutHandler(handler: LearnedLayoutHandler): void {
     this.#learnedLayoutHandler = handler
-  }
-
-  subscribeLearnedLayouts(
-    listener: (layoutId: string) => void | Promise<void>,
-  ): () => void {
-    this.#learnedLayoutListeners.add(listener)
-    return () => this.#learnedLayoutListeners.delete(listener)
   }
 
   subscribePredictionStates(
@@ -861,13 +853,6 @@ export class MonitorSupervisor {
     if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
     this.#calibrationRevision = revision
     if (this.#view.error?.code === 'LAYOUT_SAVE_FAILED') this.patch({ error: null })
-    for (const listener of this.#learnedLayoutListeners) {
-      try {
-        void Promise.resolve(listener(learned.layout.layoutId)).catch(() => undefined)
-      } catch {
-        // Saving succeeded; notification failures cannot affect the active layout.
-      }
-    }
   }
 
   private acceptAction(

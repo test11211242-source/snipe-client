@@ -69,8 +69,8 @@ export function FrameStage({
   frameUrl,
   frameSize,
   boxes,
-  inner = null,
-  innerLabel = 'Найдена структура',
+  gameViewport = null,
+  inset = 0,
   editable,
   draft,
   onDraft,
@@ -80,9 +80,10 @@ export function FrameStage({
   frameUrl: string
   frameSize: PixelSize
   boxes: readonly StageBox[]
-  /** Structure the analyzer found inside the trigger, already in frame coordinates. */
-  inner?: NormalizedRect | null
-  innerLabel?: string
+  /** The game inside the frame, drawn as a thin outline without a label. */
+  gameViewport?: NormalizedRect | null
+  /** Margin kept around the frame so labels above its top edge stay visible. */
+  inset?: number
   editable: boolean
   draft: NormalizedRect | null
   onDraft: (rect: NormalizedRect | null) => void
@@ -97,16 +98,16 @@ export function FrameStage({
   useLayoutEffect(() => {
     const stage = stageRef.current
     if (stage === null) return undefined
-    const update = (): void =>
-      setTransform(
-        containTransform(
-          {
-            width: Math.max(1, stage.clientWidth),
-            height: Math.max(1, stage.clientHeight),
-          },
-          frameSize,
-        ),
+    const update = (): void => {
+      const fitted = containTransform(
+        {
+          width: Math.max(1, stage.clientWidth - 2 * inset),
+          height: Math.max(1, stage.clientHeight - 2 * inset),
+        },
+        frameSize,
       )
+      setTransform({ ...fitted, x: fitted.x + inset, y: fitted.y + inset })
+    }
     update()
     if (typeof ResizeObserver === 'undefined') {
       window.addEventListener('resize', update)
@@ -115,7 +116,7 @@ export function FrameStage({
     const observer = new ResizeObserver(update)
     observer.observe(stage)
     return () => observer.disconnect()
-  }, [frameSize])
+  }, [frameSize, inset])
 
   const point = (event: React.PointerEvent<HTMLDivElement>): Point | null => {
     const stage = stageRef.current
@@ -303,14 +304,13 @@ export function FrameStage({
               </div>
             )
           })}
-          {inner === null ? null : (
+          {gameViewport === null ? null : (
             <div
-              className={cx(styles['box'], styles['boxInner'])}
-              data-testid="trigger-inner-region"
-              style={boxStyle(inner)}
-            >
-              <i className={styles['boxLabel']}>{innerLabel}</i>
-            </div>
+              aria-hidden="true"
+              className={styles['gameOutline']}
+              data-testid="game-viewport"
+              style={boxStyle(gameViewport)}
+            />
           )}
         </div>
       )}
