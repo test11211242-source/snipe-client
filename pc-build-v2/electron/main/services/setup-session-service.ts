@@ -11,6 +11,11 @@ import {
   CaptureStatusSchema,
   NormalizedRectSchema,
   NormalizedRegionsSchema,
+  GameRelativeCalibrationSchema,
+  type GameLayout,
+  type PixelRectSchema,
+  type VsOrientationTriggerSchema,
+  type PixelSize,
   type CaptureConfiguration,
   type CapturePreference,
   type CaptureStatus,
@@ -32,7 +37,6 @@ import {
   captureConfigurationFingerprint,
   type CaptureConfigurationRepository,
 } from '../infrastructure/capture-configuration-repository'
-import { createLayoutCalibration } from '../infrastructure/capture-profile-migration'
 import type { ApiClient } from './api-client'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
@@ -53,6 +57,9 @@ import {
   type LegacyTriggerAnalysis,
 } from './capture-service'
 
+type PixelRect = z.infer<typeof PixelRectSchema>
+type VsOrientationTrigger = z.infer<typeof VsOrientationTriggerSchema>
+
 interface InternalSession {
   view: SetupSessionView
   selector: SetupCaptureSelector
@@ -60,6 +67,7 @@ interface InternalSession {
   controller: AbortController
   commitLocked: boolean
   legacyTriggerProfile: LegacyTriggerAnalysis | null
+  vsOrientation: VsOrientationTrigger | null
   profileTarget: SetupCaptureProfileTarget | null
   authGeneration: number
   pendingSync?: {
@@ -119,6 +127,38 @@ export function buildLegacyProjection(
     precise_data_area: { ...topLeftEvidence, ratio: regions.topLeftEvidence },
     screen_resolution: frame.size,
     updated_at: timestamp,
+  })
+}
+
+function frameToGameRect(
+  rect: NormalizedRect,
+  size: PixelSize,
+  game: PixelRect,
+): NormalizedRect {
+  const pixels = normalizedToPixelRect(rect, size)
+  const relative = NormalizedRectSchema.safeParse({
+    x: (pixels.x - game.x) / game.width,
+    y: (pixels.y - game.y) / game.height,
+    width: pixels.width / game.width,
+    height: pixels.height / game.height,
+  })
+  if (!relative.success) {
+    throw new ApplicationError(
+      'SETUP_REGION_INVALID',
+      'Select the region inside the game rectangle',
+    )
+  }
+  return relative.data
+}
+
+function gameToFrameRect(rect: NormalizedRect, layout: GameLayout): NormalizedRect {
+  const game = layout.referenceGameRect
+  const size = layout.referenceFrameSize
+  return NormalizedRectSchema.parse({
+    x: (game.x + Math.round(rect.x * game.width)) / size.width,
+    y: (game.y + Math.round(rect.y * game.height)) / size.height,
+    width: Math.round(rect.width * game.width) / size.width,
+    height: Math.round(rect.height * game.height) / size.height,
   })
 }
 
@@ -228,6 +268,7 @@ export class SetupSessionService {
       controller,
       commitLocked: false,
       legacyTriggerProfile: null,
+      vsOrientation: null,
       profileTarget,
       authGeneration,
       view: SetupSessionViewSchema.parse({
@@ -239,6 +280,9 @@ export class SetupSessionService {
         profileId: profileTarget?.profileId ?? null,
         profileName: profileTarget?.profileName ?? null,
         frameSize: null,
+        game: null,
+        regionOrigins: null,
+        triggerKind: null,
         regions: {
           trigger: null,
           nickname: null,
@@ -256,11 +300,34 @@ export class SetupSessionService {
       session.frame =
         preparedFrame ?? (await this.capture.capture(selector, controller.signal))
       if (this.#session !== session || controller.signal.aborted) return session.view
+      const game = kind === 'capture' ? session.frame.game : undefined
+      if (kind === 'capture' && !game?.rect) {
+        throw new ApplicationError(
+          'SETUP_GAME_NOT_FOUND',
+          'Не вижу игру в окне — сделайте кадр ещё раз',
+        )
+      }
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'SELECTING',
         generation: session.view.generation + 1,
         frameSize: session.frame.size,
+        game: !game?.rect
+          ? null
+          : {
+              viewport: {
+                x: game.rect.x / session.frame.size.width,
+                y: game.rect.y / session.frame.size.height,
+                width: game.rect.width / session.frame.size.width,
+                height: game.rect.height / session.frame.size.height,
+              },
+              aspect: game.aspect,
+              source: 'freeze',
+            },
+        regionOrigins:
+          kind === 'capture'
+            ? { trigger: 'manual', nickname: 'manual', topLeftEvidence: 'manual' }
+            : null,
       })
     } catch (error) {
       if (this.#session === session && !controller.signal.aborted) {
@@ -369,15 +436,30 @@ export class SetupSessionService {
       )
     }
     const validated = NormalizedRectSchema.parse(rect)
+    if (session.view.kind === 'capture') {
+      const game = session.frame?.game
+      if (session.frame === null || !game?.rect) {
+        throw new ApplicationError(
+          'SETUP_GAME_NOT_FOUND',
+          'Не вижу игру в окне — сделайте кадр ещё раз',
+        )
+      }
+      frameToGameRect(validated, session.frame.size, game.rect)
+    }
     if (region === 'trigger' || region === 'resultTrigger') {
       session.legacyTriggerProfile = null
+      session.vsOrientation = null
     }
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       generation: generation + 1,
       regions: { ...session.view.regions, [region]: validated },
+      regionOrigins:
+        session.view.regionOrigins === null
+          ? null
+          : { ...session.view.regionOrigins, [region]: 'manual' },
       ...(region === 'trigger' || region === 'resultTrigger'
-        ? { triggerProfile: null }
+        ? { triggerProfile: null, triggerKind: null }
         : {}),
       error: null,
     })
@@ -423,6 +505,7 @@ export class SetupSessionService {
       )
     session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'ANALYZING' })
     session.legacyTriggerProfile = null
+    session.vsOrientation = null
     const operationGeneration = generation
     try {
       const canonicalTrigger = canonicalizeNormalizedRect(trigger, session.frame.size)
@@ -430,6 +513,7 @@ export class SetupSessionService {
         session.frame,
         canonicalTrigger,
         session.controller.signal,
+        session.view.kind === 'capture' ? (session.frame.game?.rect ?? null) : null,
       )
       if (
         this.#session !== session ||
@@ -439,12 +523,16 @@ export class SetupSessionService {
         return session.view
       }
       session.legacyTriggerProfile = analysis.legacyProfile
+      session.vsOrientation =
+        session.view.kind === 'capture' ? analysis.vsOrientation : null
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'SELECTING',
         generation: generation + 1,
         regions: { ...session.view.regions, [triggerRegion]: canonicalTrigger },
         triggerProfile: analysis.profile,
+        triggerKind:
+          session.vsOrientation === null ? 'structural' : 'vs_edge_orientation',
         error: null,
       })
     } catch (error) {
@@ -524,6 +612,13 @@ export class SetupSessionService {
     const legacyTriggerProfile = session.legacyTriggerProfile
     if (frame === null || triggerProfile === null || legacyTriggerProfile === null) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
+    }
+    const game = frame.game
+    if (session.view.game === null || !game?.rect) {
+      throw new ApplicationError(
+        'SETUP_GAME_NOT_FOUND',
+        'Не вижу игру в окне — сделайте кадр ещё раз',
+      )
     }
     const regions = NormalizedRegionsSchema.parse({
       trigger: session.view.regions.trigger,
@@ -615,14 +710,6 @@ export class SetupSessionService {
     }
     const activateProfile = existingProfile === undefined || existingProfile.isActive
     const timestamp = this.now().toISOString()
-    const projection = buildLegacyProjection(
-      frame,
-      regions,
-      triggerProfile,
-      legacyTriggerProfile,
-      session.view.source,
-      timestamp,
-    )
     try {
       const previous = await this.repository.get(user.id, profileTarget.profileId)
       if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
@@ -638,20 +725,79 @@ export class SetupSessionService {
           identity: session.view.source,
           lastVerifiedAt: timestamp,
         },
-        calibration: createLayoutCalibration(
-          randomUUID(),
-          (previous?.configuration.calibration.revision ?? 0) + 1,
-          frame.size,
-          regions,
-          triggerProfile,
-          timestamp,
-          'manual',
-        ),
+        calibration: GameRelativeCalibrationSchema.parse({
+          schemaVersion: 2,
+          coordinateSpace: 'game_relative',
+          calibrationId: randomUUID(),
+          revision: (previous?.configuration.calibration.revision ?? 0) + 1,
+          layouts: [
+            {
+              layoutId: randomUUID(),
+              layoutSource: 'setup',
+              gameAspect: game.aspect,
+              referenceFrameSize: frame.size,
+              referenceGameRect: game.rect,
+              windowChrome: game.chrome,
+              expectedLayout: 'cr_battle_vs',
+              triggerRegion: frameToGameRect(regions.trigger, frame.size, game.rect),
+              nicknameRegion: frameToGameRect(regions.nickname, frame.size, game.rect),
+              topLeftEvidenceRegion: frameToGameRect(
+                regions.topLeftEvidence,
+                frame.size,
+                game.rect,
+              ),
+              trigger: session.vsOrientation ?? {
+                kind: 'structural',
+                profile: triggerProfile,
+              },
+              provenance: {
+                trigger: {
+                  origin: 'manual',
+                  confidence: null,
+                  analyzerVersion: triggerProfile.analyzer.version,
+                },
+                nickname: { origin: 'manual', confidence: null, analyzerVersion: null },
+                topLeftEvidence: {
+                  origin: 'manual',
+                  confidence: null,
+                  analyzerVersion: null,
+                },
+                viewport: {
+                  origin: 'auto',
+                  confidence: null,
+                  analyzerVersion: 'm9-geom-1',
+                },
+              },
+              calibratedAt: timestamp,
+            },
+          ],
+          validationStatus: 'validated',
+          calibratedAt: timestamp,
+        }),
       }
       const config = CaptureConfigurationSchema.parse({
         ...unsigned,
         fingerprint: captureConfigurationFingerprint(unsigned),
       })
+      const layout =
+        unsigned.calibration.coordinateSpace === 'game_relative'
+          ? unsigned.calibration.layouts[0]
+          : undefined
+      if (layout === undefined) {
+        throw new ApplicationError('SETUP_INCOMPLETE', 'Setup layout is unavailable')
+      }
+      const projection = buildLegacyProjection(
+        frame,
+        {
+          trigger: gameToFrameRect(layout.triggerRegion, layout),
+          nickname: gameToFrameRect(layout.nicknameRegion, layout),
+          topLeftEvidence: gameToFrameRect(layout.topLeftEvidenceRegion, layout),
+        },
+        triggerProfile,
+        legacyTriggerProfile,
+        session.view.source,
+        timestamp,
+      )
       await this.repository.save(config, {
         profileId: profileTarget.profileId,
         profileName: profileTarget.profileName,

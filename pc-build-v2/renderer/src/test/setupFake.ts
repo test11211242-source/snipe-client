@@ -52,6 +52,9 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
     profileId: PROFILE_ID,
     profileName: 'Ноутбук',
     frameSize: FRAME,
+    game: null,
+    triggerKind: null,
+    regionOrigins: null,
     regions: {
       trigger: null,
       nickname: null,

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { PublicErrorSchema } from '../errors/application-error'
+import { GameAspectSchema } from '../contracts/game-aspect'
 import {
   CapturePreferenceSchema,
   CaptureProfileIdSchema,
@@ -44,6 +45,23 @@ export const SetupSessionViewSchema = z
     profileId: CaptureProfileIdSchema.nullable().default(null),
     profileName: CaptureProfileNameSchema.nullable().default(null),
     frameSize: PixelSizeSchema.nullable(),
+    game: z
+      .object({
+        viewport: NormalizedRectSchema,
+        aspect: GameAspectSchema,
+        source: z.enum(['auto', 'freeze']),
+      })
+      .strict()
+      .nullable(),
+    regionOrigins: z
+      .object({
+        trigger: z.enum(['auto', 'manual']),
+        nickname: z.enum(['auto', 'manual']),
+        topLeftEvidence: z.enum(['auto', 'manual']),
+      })
+      .strict()
+      .nullable(),
+    triggerKind: z.enum(['vs_edge_orientation', 'structural']).nullable(),
     regions: z
       .object({
         trigger: NormalizedRectSchema.nullable(),

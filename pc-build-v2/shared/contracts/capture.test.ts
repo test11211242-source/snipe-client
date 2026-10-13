@@ -35,6 +35,22 @@ describe('capture contracts', () => {
     }
   })
 
+  it('requires explicit manual mode and rejects unsupported automatic setup', () => {
+    const payload = {
+      preparationId: 'd52a21a9-3794-4a51-a292-60ec1ce9c238',
+      profileId: null,
+      profileName: 'Manual',
+      expectedRevision: 0,
+    }
+    expect(StartSetupPayloadSchema.parse({ ...payload, mode: 'manual' })).toEqual({
+      ...payload,
+      mode: 'manual',
+    })
+    for (const invalid of [payload, { ...payload, mode: 'auto' }]) {
+      expect(StartSetupPayloadSchema.safeParse(invalid).success).toBe(false)
+    }
+  })
+
   it('rejects renderer fields outside the narrow command DTO', () => {
     expect(() =>
       SetRegionPayloadSchema.parse({
@@ -47,7 +63,11 @@ describe('capture contracts', () => {
     ).toThrow()
     expect(() =>
       StartSetupPayloadSchema.parse({
+        mode: 'manual',
         preparationId: 'd52a21a9-3794-4a51-a292-60ec1ce9c238',
+        profileId: null,
+        profileName: 'Manual',
+        expectedRevision: 0,
         windowHwnd: '123',
       }),
     ).toThrow()

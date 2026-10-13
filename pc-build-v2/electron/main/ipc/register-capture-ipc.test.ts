@@ -174,6 +174,9 @@ describe('main-window setup capability', () => {
     state: 'SELECTING',
     source,
     frameSize: { width: 100, height: 100 },
+    game: null,
+    triggerKind: null,
+    regionOrigins: null,
     regions: { trigger: null, nickname: null, topLeftEvidence: null },
     triggerProfile: null,
     error: null,
@@ -205,7 +208,25 @@ describe('main-window setup capability', () => {
     const preparations = {
       freeze: vi.fn().mockResolvedValue({
         source: { selector: { kind: 'window', windowHwnd: '10' }, preference: source },
-        frame: { size: { width: 100, height: 100 }, png: Buffer.from('png') },
+        frame: {
+          size: { width: 100, height: 100 },
+          png: Buffer.from('png'),
+          game: {
+            rect: { x: 20, y: 0, width: 56, height: 100 },
+            aspect: 0.56,
+            chrome: {
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: 0,
+              topEdges: null,
+              bottomEdges: null,
+              leftEdges: null,
+              rightEdges: null,
+            },
+            frames: 8,
+          },
+        },
       }),
     }
     const dispose = registerCaptureIpc({
@@ -253,17 +274,36 @@ describe('main-window setup capability', () => {
   )
   it('freezes and starts capture in main without opening or closing another window', async () => {
     const test = setupHarness()
-    await registeredHandler(MAIN_CAPTURE_IPC_CHANNELS.startSetup)(event, {
+    const result = await registeredHandler(MAIN_CAPTURE_IPC_CHANNELS.startSetup)(event, {
+      mode: 'manual',
       preparationId: preparation.preparationId,
       profileId,
       profileName: 'Profile',
       expectedRevision: 2,
     })
+    expect(result).toEqual(view)
+    expect(test.preparations.freeze).toHaveBeenCalledWith(preparation.preparationId)
     expect(test.setup.start).toHaveBeenCalledWith(
-      expect.anything(),
+      { kind: 'window', windowHwnd: '10' },
       source,
       'capture',
-      expect.anything(),
+      expect.objectContaining({
+        game: {
+          rect: { x: 20, y: 0, width: 56, height: 100 },
+          aspect: 0.56,
+          frames: 8,
+          chrome: {
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            topEdges: null,
+            bottomEdges: null,
+            leftEdges: null,
+            rightEdges: null,
+          },
+        },
+      }),
       { profileId, profileName: 'Profile', expectedRevision: 2 },
     )
     await registeredHandler(SETUP_IPC_CHANNELS.startResult)(event, {
@@ -274,4 +314,22 @@ describe('main-window setup capability', () => {
     expect(test.windows.close).not.toHaveBeenCalled()
     test.dispose()
   })
+  it.each([undefined, 'auto'])(
+    'rejects mode %s before consuming the preparation',
+    async (mode) => {
+      const test = setupHarness()
+      const payload = {
+        preparationId: preparation.preparationId,
+        profileId,
+        profileName: 'Profile',
+        expectedRevision: 2,
+        ...(mode === undefined ? {} : { mode }),
+      }
+      await expect(
+        registeredHandler(MAIN_CAPTURE_IPC_CHANNELS.startSetup)(event, payload),
+      ).rejects.toThrow()
+      expect(test.preparations.freeze).not.toHaveBeenCalled()
+      expect(test.setup.start).not.toHaveBeenCalled()
+    },
+  )
 })

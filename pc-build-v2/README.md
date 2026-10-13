@@ -185,6 +185,20 @@ full-window editor. Pointer and numeric coordinates share a letterboxed contain 
 the staged regions are trigger, opponent nickname, and top-left evidence before
 analysis/review/commit. These semantic names are also used by the setup DTO and commands.
 
+New manual capture profiles and recalibrations are always game-relative. The required
+`startCaptureSetup.mode` is currently `manual`; automatic setup belongs to the next session.
+Prepared capture freezes its sampled history and returns the detected game rectangle and
+color-independent window-chrome templates. Missing or unreliable geometry ends setup with
+`SETUP_GAME_NOT_FOUND` and requires a new frame; it never creates a full-frame fallback.
+Session regions remain frame-normalized for the editor; main validates them inside the game,
+then commits one protected `setup` layout in game fractions. Analyzer protocol 2 receives
+the game rectangle and chooses VS edge orientation when the marked trigger contains a
+recognized badge, otherwise the structural trigger. Both cases retain the legacy structural
+analysis for the unchanged server projection, derived from the saved setup layout.
+The renderer contract includes `game`, `regionOrigins`, and `triggerKind`; game outlines,
+VS-specific review text and frame-retry actions are separate UI-session work. Existing
+migrated full-frame profiles and full-frame prediction-result setup remain unchanged.
+
 Install the Python environment on Windows with Python 3.10 or newer:
 
 ```powershell

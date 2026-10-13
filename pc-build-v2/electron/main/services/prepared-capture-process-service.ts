@@ -13,7 +13,7 @@ import {
   encodeBinaryEnvelope,
   type BinaryEnvelope,
 } from './binary-protocol'
-import type { CapturedFrame } from './capture-service'
+import { PreparedCaptureGameSchema, type CapturedFrame } from './capture-service'
 import {
   createDefaultProcessTreeKill,
   type ProcessTreeKill,
@@ -22,7 +22,8 @@ import {
 const READY_TIMEOUT_MS = 8_000
 const FREEZE_TIMEOUT_MS = 15_000
 const STOP_TIMEOUT_MS = 3_000
-const MAX_METADATA_BYTES = 64 * 1024
+// Four bounded chrome strip templates can exceed the old 64 KiB event limit.
+const MAX_METADATA_BYTES = 1024 * 1024
 const MAX_PNG_BYTES = 32 * 1024 * 1024
 const MAX_STDERR_BYTES = 16 * 1024
 const MAX_PIXELS = 20_000_000
@@ -48,6 +49,7 @@ const ReadyPayloadSchema = z
 const FrozenPayloadSchema = ReadyPayloadSchema.extend({
   mimeType: z.literal('image/png'),
   byteLength: z.number().int().positive().max(MAX_PNG_BYTES),
+  game: PreparedCaptureGameSchema,
 }).strict()
 
 const FatalPayloadSchema = z
@@ -433,6 +435,13 @@ export class PreparedCaptureProcessService {
     ) {
       throw new Error('Frozen frame is invalid')
     }
+    if (
+      payload.game.rect !== null &&
+      (payload.game.rect.x + payload.game.rect.width > payload.width ||
+        payload.game.rect.y + payload.game.rect.height > payload.height)
+    ) {
+      throw new Error('Prepared game rectangle exceeds the frozen frame')
+    }
     if (owned.freezeTimer !== null) clearTimeout(owned.freezeTimer)
     owned.freezeTimer = null
     owned.stopping = true
@@ -442,6 +451,7 @@ export class PreparedCaptureProcessService {
     resolve({
       size: { width: payload.width, height: payload.height },
       png: Buffer.from(envelope.binary),
+      game: payload.game,
     })
   }
 

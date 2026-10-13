@@ -63,6 +63,8 @@ export function viewErrorMessage(error: {
   message: string
 }): string | null {
   switch (error.code) {
+    case 'SETUP_GAME_NOT_FOUND':
+      return 'Не вижу игру в окне — сделайте кадр ещё раз'
     case 'CAPTURE_PROFILE_STALE':
       return 'Список профилей изменился, пока шла настройка. Отмените её и начните заново.'
     case 'CAPTURE_PROFILE_NAME_CONFLICT':

@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react'
 import { vi } from 'vitest'
 
+import { StartSetupPayloadSchema } from '../../../shared/contracts/capture-ipc'
 import { AppRoot } from '../app/AppRoot'
 import type { AppRoute } from '../app/router'
 import { installBridge, type Bridge, type BridgeOptions } from './bridge'
@@ -43,12 +44,11 @@ export function mountSetup(
         },
       }),
   )
-  bridge.crTools.startCaptureSetup.mockImplementation(
-    ({ profileId, profileName }: { profileId: string | null; profileName: string }) => {
-      fake.replace(sessionView({ profileId: profileId ?? PROFILE_ID, profileName }))
-      return Promise.resolve(fake.current())
-    },
-  )
+  bridge.crTools.startCaptureSetup.mockImplementation((rawPayload: unknown) => {
+    const { profileId, profileName } = StartSetupPayloadSchema.parse(rawPayload)
+    fake.replace(sessionView({ profileId: profileId ?? PROFILE_ID, profileName }))
+    return Promise.resolve(fake.current())
+  })
   render(<AppRoot initialRoute={route} />)
   return { bridge, fake }
 }

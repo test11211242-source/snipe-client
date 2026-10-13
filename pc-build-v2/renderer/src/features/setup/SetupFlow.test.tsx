@@ -105,6 +105,7 @@ describe('setup flow: new profile', () => {
     fireEvent.click(freeze)
     await findEditor()
     expect(crTools.startCaptureSetup).toHaveBeenCalledWith({
+      mode: 'manual',
       preparationId: '00000000-0000-4000-8000-0000000000b1',
       profileId: null,
       profileName: 'Ноутбук',
@@ -1022,6 +1023,7 @@ describe('setup flow: existing profile intents', () => {
     fireEvent.click(screen.getByRole('button', { name: /Заморозить кадр/ }))
     await findEditor()
     expect(world.bridge.crTools.startCaptureSetup).toHaveBeenCalledWith({
+      mode: 'manual',
       preparationId: '00000000-0000-4000-8000-0000000000b1',
       profileId: PROFILE_ID,
       profileName: 'Основной',

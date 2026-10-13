@@ -128,6 +128,7 @@ export function SetupFlow({
           }
     try {
       const next = await window.crTools.startCaptureSetup({
+        mode: 'manual',
         preparationId: preparation.preparationId,
         ...target,
       })

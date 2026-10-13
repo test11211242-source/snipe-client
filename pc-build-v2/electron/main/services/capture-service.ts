@@ -2,14 +2,19 @@ import { randomUUID } from 'node:crypto'
 
 import { z } from 'zod'
 
+import { GameAspectSchema } from '../../../shared/contracts/game-aspect'
 import {
   ApplicationError,
   PublicErrorSchema,
 } from '../../../shared/errors/application-error'
 import {
   NormalizedRectSchema,
+  PixelRectSchema,
   PixelSizeSchema,
   TriggerProfileSchema,
+  VsBadgeSchema,
+  VsOrientationTriggerSchema,
+  WindowChromeSchema,
   type NormalizedRect,
   type PixelSize,
   type TriggerProfile,
@@ -46,7 +51,46 @@ export type LegacyTriggerAnalysis = z.infer<typeof LegacyTriggerAnalysisSchema>
 export interface TriggerAnalysis {
   profile: TriggerProfile
   legacyProfile: LegacyTriggerAnalysis
+  vsOrientation: z.infer<typeof VsOrientationTriggerSchema> | null
+  vsBadge: z.infer<typeof VsBadgeSchema> | null
 }
+
+export const PreparedCaptureGameSchema = z.union([
+  z
+    .object({
+      rect: PixelRectSchema,
+      aspect: GameAspectSchema,
+      chrome: WindowChromeSchema,
+      frames: z.number().int().min(8).max(9),
+    })
+    .strict()
+    .superRefine((game, context) => {
+      if (
+        game.rect.width < 50 ||
+        game.rect.height < 50 ||
+        Math.abs(game.aspect - game.rect.width / game.rect.height) > 1e-9
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['rect'],
+          message: 'Invalid prepared game geometry',
+        })
+      }
+    }),
+  z
+    .object({
+      rect: z.null(),
+      reason: z.enum([
+        'too_small',
+        'aspect_out_of_range',
+        'unstable',
+        'insufficient_frames',
+      ]),
+    })
+    .strict(),
+])
+
+export type PreparedCaptureGame = z.infer<typeof PreparedCaptureGameSchema>
 
 const CaptureResultSchema = z.discriminatedUnion('ok', [
   z
@@ -73,16 +117,18 @@ const CaptureResultSchema = z.discriminatedUnion('ok', [
 const AnalysisResultSchema = z.discriminatedUnion('ok', [
   z
     .object({
-      protocolVersion: z.literal(1),
+      protocolVersion: z.literal(2),
       requestId: z.uuid(),
       ok: z.literal(true),
       profile: TriggerProfileSchema,
       legacyProfile: LegacyTriggerAnalysisSchema,
+      vsOrientation: VsOrientationTriggerSchema.nullable(),
+      vsBadge: VsBadgeSchema.nullable(),
     })
     .strict(),
   z
     .object({
-      protocolVersion: z.literal(1),
+      protocolVersion: z.literal(2),
       requestId: z.string().min(1),
       ok: z.literal(false),
       error: PublicErrorSchema,
@@ -93,6 +139,7 @@ const AnalysisResultSchema = z.discriminatedUnion('ok', [
 export interface CapturedFrame {
   size: PixelSize
   png: Buffer
+  game?: PreparedCaptureGame
 }
 
 function toWorkerSelector(selector: SetupCaptureSelector): unknown {
@@ -196,6 +243,7 @@ export class CaptureService {
     frame: CapturedFrame,
     triggerRect: NormalizedRect,
     signal?: AbortSignal,
+    gameRect: z.infer<typeof PixelRectSchema> | null = null,
   ): Promise<TriggerAnalysis> {
     const requestId = randomUUID()
     const result = await this.worker.execute({
@@ -204,10 +252,11 @@ export class CaptureService {
       scriptPath: this.analyzeScriptPath,
       input: encodeBinaryEnvelope(
         {
-          protocolVersion: 1,
+          protocolVersion: 2,
           requestId,
           operation: 'analyze_trigger',
           outerRect: normalizedToPixelRect(triggerRect, frame.size),
+          gameRect,
         },
         frame.png,
       ),
@@ -224,6 +273,11 @@ export class CaptureService {
     }
     if (!metadata.ok)
       throw new ApplicationError(metadata.error.code, metadata.error.message)
-    return { profile: metadata.profile, legacyProfile: metadata.legacyProfile }
+    return {
+      profile: metadata.profile,
+      legacyProfile: metadata.legacyProfile,
+      vsOrientation: metadata.vsOrientation,
+      vsBadge: metadata.vsBadge,
+    }
   }
 }

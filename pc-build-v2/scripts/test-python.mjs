@@ -3,12 +3,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
+import { pythonTestExecutable as python } from './python-test-interpreter.mjs'
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const python = join(
-  root,
-  '.venv',
-  process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
-)
 if (!existsSync(python)) {
   console.log('Creating the isolated Python test environment (.venv).')
   const setup = spawnSync(

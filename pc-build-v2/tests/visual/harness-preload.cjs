@@ -624,6 +624,9 @@ const makeSession = (kind, name, patch = {}) => ({
   profileId: uuid(7),
   profileName: name,
   frameSize: { width: 1280, height: 720 },
+  game: null,
+  triggerKind: null,
+  regionOrigins: null,
   regions: { ...emptyRegions },
   triggerProfile: null,
   error: null,
@@ -1127,7 +1130,8 @@ contextBridge.exposeInMainWorld('crTools', {
         : { ok: true, preparation: { sourceKey, revision, preparationId: uuid(902) } },
     ),
   releaseCaptureSource: ok({ released: true }),
-  startCaptureSetup: ({ profileId, profileName }) => {
+  startCaptureSetup: ({ mode, profileId, profileName }) => {
+    if (mode !== 'manual') return Promise.reject(new Error('Manual setup mode required'))
     session =
       setupFx.start === 'failed'
         ? makeSession('capture', profileName, {

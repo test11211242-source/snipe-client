@@ -115,6 +115,7 @@ export const CapturePreparationResponseSchema = z.discriminatedUnion('ok', [
 export const ReleasePreparationResultSchema = z.object({ released: z.boolean() }).strict()
 export const StartSetupPayloadSchema = z
   .object({
+    mode: z.literal('manual'),
     preparationId: z.uuid(),
     profileId: CaptureProfileIdSchema.nullable(),
     profileName: CaptureProfileNameSchema,
