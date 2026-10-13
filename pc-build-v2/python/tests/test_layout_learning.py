@@ -7,7 +7,7 @@ from game_geometry import GameGeometry
 from geometry.vs_finder import Candidate, NORM_C, NORM_W
 from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import Badge
-from layout_learning import LayoutLearning, transfer_zone
+from layout_learning import LayoutLearning, transfer_corner_zone, transfer_zone
 from synthetic_frames import arena
 from test_game_geometry import game_layout, game_payload
 from test_trigger_engine import profile_for, trigger_image
@@ -337,19 +337,21 @@ def test_saved_layout_rearm_resets_consecutive_rejections_and_failed_state():
 
 def test_transferred_manual_evidence_is_clipped_but_nickname_is_not():
     layout = game_layout()
-    layout["regions"]["topLeftEvidenceRegion"] = {"x": 0.05, "y": 0, "width": 0.3, "height": 0.3}
+    layout["regions"]["topLeftEvidenceRegion"] = {"x": 0.05, "y": 0.8, "width": 0.3, "height": 0.3}
     layout["zonesOrigin"]["topLeftEvidence"] = "manual"
     engine = TriggerEngine(game_payload([layout]))
     output, events = run_new_format(engine)
     assert len(output) == 1
     learned = engine.geometry.layouts[-1]
-    transferred = transfer_zone(layout["regions"]["topLeftEvidenceRegion"], Badge(**layout["badge"]),
-                                Badge(**learned["badge"]), layout["gameAspect"], learned["gameAspect"])
-    assert transferred["y"] < 0
+    # The corner-anchored zone scales with the interface, not with the badge.
+    transferred = transfer_corner_zone(layout["regions"]["topLeftEvidenceRegion"], layout["gameAspect"],
+                                       learned["gameAspect"])
+    assert transferred["y"] + transferred["height"] > 1
     evidence = learned["regions"]["topLeftEvidenceRegion"]
-    assert evidence["y"] == 0
-    assert evidence["height"] == pytest.approx(transferred["y"] + transferred["height"])
+    assert evidence["y"] == pytest.approx(transferred["y"])
+    assert evidence["height"] == pytest.approx(1 - transferred["y"])
     assert evidence["x"] == pytest.approx(transferred["x"])
+    assert evidence["width"] == pytest.approx(transferred["width"])
     wire = next(value["layout"] for _, kind, value in events if kind == "layout_learned")
     assert wire["topLeftEvidenceRegion"] == evidence
     assert wire["zonesOrigin"]["topLeftEvidence"] == "manual"

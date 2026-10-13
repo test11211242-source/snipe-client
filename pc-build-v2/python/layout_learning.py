@@ -10,7 +10,7 @@ from geometry.aspect import ASPECT_MAX, ASPECT_MIN, aspects_overlap
 from geometry.game_rect import RectResult, pixel_rect
 from geometry.vs_finder import MATCH_T, VSConfirmer, normalize_game, search
 from geometry.vs_orient_trigger import OrientationTrigger
-from geometry.zones import Badge, _clip, layout_rejection, regions
+from geometry.zones import UI_ASPECT, Badge, _clip, layout_rejection, regions
 
 LEARNING_HISTORY = 15
 
@@ -22,6 +22,15 @@ def transfer_zone(zone, source: Badge, target: Badge, old_aspect: float, new_asp
               "width": zone["width"] / source.width * target.width,
               "height": zone["height"] / (source.width * old_aspect) * target.width * new_aspect}
     return values
+
+
+def transfer_corner_zone(zone, old_aspect: float, new_aspect: float):
+    """The top-left zone hangs from the game corner and scales with the interface."""
+    old_unit, new_unit = min(1.0, old_aspect / UI_ASPECT), min(1.0, new_aspect / UI_ASPECT)
+    horizontal = old_aspect / old_unit * new_unit / new_aspect
+    vertical = new_unit / old_unit
+    return {"x": zone["x"] * horizontal, "y": zone["y"] * vertical,
+            "width": zone["width"] * horizontal, "height": zone["height"] * vertical}
 
 
 class LayoutLearning:
@@ -133,9 +142,12 @@ class LayoutLearning:
             origins = source["zonesOrigin"]
             for name, origin_name in (("nicknameRegion", "nickname"), ("topLeftEvidenceRegion", "topLeftEvidence")):
                 if origins[origin_name] == "manual":
-                    new_regions[name] = transfer_zone(source["regions"][name], Badge(**source["badge"]), candidate.badge,
-                                                     source["gameAspect"], geometry.aspect)
-                    zone = new_regions[name]
+                    if name == "topLeftEvidenceRegion":
+                        zone = transfer_corner_zone(source["regions"][name], source["gameAspect"], geometry.aspect)
+                    else:
+                        zone = transfer_zone(source["regions"][name], Badge(**source["badge"]), candidate.badge,
+                                             source["gameAspect"], geometry.aspect)
+                    new_regions[name] = zone
                     if name == "topLeftEvidenceRegion":
                         clipped = _clip(zone["x"], zone["y"], zone["x"] + zone["width"], zone["y"] + zone["height"])
                         if clipped.width <= 0 or clipped.height <= 0:

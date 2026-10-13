@@ -31,13 +31,37 @@ def _clip(x0: float, y0: float, x1: float, y1: float) -> FractionRect:
     return FractionRect(x0, y0, max(0.0, x1 - x0), max(0.0, y1 - y0))
 
 
+# The in-game interface scales with the game height down to 9:16; narrower
+# games (1080x2400) scale it with the width instead.
+UI_ASPECT = 9 / 16
+# Opponent name, clan and medals in the top-left corner during the battle, in
+# interface units (the 9:16 game height); on spectate they sit below the
+# played-cards strip.
+TOP_LEFT_WIDTH = 0.28
+TOP_LEFT_HEIGHT = 0.105
+SPECTATE_TOP_LEFT_Y = 0.135
+
+
+def layout_kind(badge: Badge) -> str | None:
+    """Own battles (Trainer Cheddar included) and friend spectating differ in VS height."""
+    if badge.cy >= 0.46:
+        return "spectate"
+    if 0.40 <= badge.cy:
+        return "battle"
+    return None
+
+
 def regions(badge: Badge, aspect: float) -> dict[str, FractionRect]:
     cx, cy, w, h = badge.cx, badge.cy, badge.width, badge.height
     uh = w * aspect
+    unit = min(1.0, aspect / UI_ASPECT)
+    top = SPECTATE_TOP_LEFT_Y * unit if layout_kind(badge) == "spectate" else 0.0
     return {
         "trigger": _clip(cx - w * 0.65, cy - h / 2 - 0.15 * uh, cx + w * 0.65, cy + h / 2 + 0.15 * uh),
-        "nickname": _clip(cx - 2.00 * w, cy - 1.30 * uh, cx + 2.20 * w, cy - 0.32 * uh),
-        "topLeftEvidence": _clip(cx - 2.30 * w, cy - 2.70 * uh, cx - 0.40 * w, cy - 1.30 * uh),
+        # Field test 1: from left of the name to just past the VS badge, the
+        # name line and the clan/medals line below it (owner's target).
+        "nickname": _clip(cx - 2.25 * w, cy - 1.50 * uh, cx + 0.87 * w, cy - 0.27 * uh),
+        "topLeftEvidence": _clip(0.0, top, TOP_LEFT_WIDTH * unit / aspect, top + TOP_LEFT_HEIGHT * unit),
     }
 
 
