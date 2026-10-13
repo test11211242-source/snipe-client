@@ -122,15 +122,19 @@ const settingsRepository = new SettingsRepository(
 )
 const settings = new AppSettingsController(settingsRepository, app, logger)
 const predictionResults = new PredictionResultConfigurationRepository(
-  join(app.getPath('userData'), 'prediction-result-config.v4'),
+  join(app.getPath('userData'), 'prediction-result-config.v5'),
   nodePredictionResultFileSystem,
-  join(app.getPath('userData'), 'prediction-result-config.v3'),
+  [
+    join(app.getPath('userData'), 'prediction-result-config.v4'),
+    join(app.getPath('userData'), 'prediction-result-config.v3'),
+  ],
   logger,
 )
 const captureConfigurations = new CaptureConfigurationRepository(
-  join(app.getPath('userData'), 'capture-profiles.v4'),
+  join(app.getPath('userData'), 'capture-profiles.v5'),
   nodeCaptureConfigurationFileSystem,
   {
+    previousDirectory: join(app.getPath('userData'), 'capture-profiles.v4'),
     legacyDirectory: join(app.getPath('userData'), 'capture-profiles.v3'),
     migratePredictionReference: (...args) =>
       predictionResults.migrateCaptureReference(...args),
@@ -211,6 +215,7 @@ const monitor = new MonitorSupervisor(
   ocr,
   undefined,
   new MonitorJournalRepository(join(app.getPath('userData'), 'monitor-journal.v1')),
+  logger,
 )
 const predictionPreferences = new PredictionPreferencesRepository(
   join(app.getPath('userData'), 'prediction-preferences.v1'),
@@ -236,6 +241,9 @@ captureProfiles = new CaptureProfileService(
   monitor,
   () => predictions.state,
   predictionResults,
+)
+monitor.setLearnedLayoutHandler((userId, profileId, calibrationId, layout) =>
+  captureProfiles.appendLearnedLayout(userId, profileId, calibrationId, layout),
 )
 setup.configureCaptureProfileLifecycle(
   () => captureProfiles.assertCanChangeProfile(),

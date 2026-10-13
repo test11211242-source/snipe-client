@@ -132,6 +132,8 @@ def test_learned_manual_zones_are_transferred_not_replaced():
     expected = transfer_zone(layout["regions"]["nicknameRegion"], Badge(**layout["badge"]), Badge(**learned["badge"]), layout["gameAspect"], learned["gameAspect"])
     assert learned["regions"]["nicknameRegion"] == pytest.approx(expected)
     assert learned["zonesOrigin"] == layout["zonesOrigin"]
+    wire = next(value["layout"] for _, kind, value in events if kind == "layout_learned")
+    assert wire["zonesOrigin"] == layout["zonesOrigin"]
 
 
 @pytest.mark.parametrize("weak,code", [("mask", "LEARN_TRIGGER_WEAK"), ("before", "LEARN_SELF_CHECK_FAILED")])

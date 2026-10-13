@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { MonitorLearningCodeSchema } from '../contracts/monitor-protocol'
+
 export const MonitorStateSchema = z.enum([
   'STOPPED',
   'PREFLIGHT',
@@ -150,6 +152,21 @@ export const MonitorSessionSchema = z
   })
   .strict()
 
+export const MonitorGeometrySchema = z
+  .object({
+    state: z.enum([
+      'locating',
+      'armed',
+      'no_game',
+      'aspect_mismatch',
+      'learning',
+      'learning_failed',
+    ]),
+    aspectLabel: z.string().min(1).max(80).nullable(),
+    learningFailure: MonitorLearningCodeSchema.nullable(),
+  })
+  .strict()
+
 export const MonitorViewSchema = z
   .object({
     seq: z.number().int().nonnegative().default(0),
@@ -165,6 +182,7 @@ export const MonitorViewSchema = z
     session: MonitorSessionSchema.nullable().default(null),
     summary: MonitorSessionSchema.nullable().default(null),
     historyError: MonitorPublicErrorSchema.nullable().default(null),
+    geometry: MonitorGeometrySchema.nullable().default(null),
   })
   .strict()
 

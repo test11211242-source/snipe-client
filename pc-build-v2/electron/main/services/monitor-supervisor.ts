@@ -14,7 +14,14 @@ import {
   type MonitorSession,
   type DeckMode,
 } from '../../../shared/models/monitor'
-import { MonitorStartPayloadSchema } from '../../../shared/contracts/monitor-protocol'
+import {
+  MonitorStartPayloadSchema,
+  type GameLayoutWire,
+  type MonitorGeometryEvent,
+  type MonitorLearningEvent,
+  type MonitorLayoutLearnedEvent,
+  type MonitorPredictionStateEvent,
+} from '../../../shared/contracts/monitor-protocol'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import {
   DEFAULT_MONITOR_PREFERENCES,
@@ -36,6 +43,13 @@ import {
   type MonitorJournal,
   type MonitorJournalRepository,
 } from '../infrastructure/monitor-journal-repository'
+
+type LearnedLayoutHandler = (
+  userId: string,
+  profileId: string,
+  calibrationId: string,
+  layout: GameLayoutWire,
+) => Promise<void>
 
 interface SearchAction extends MonitorAction {
   triggerId: string
@@ -130,6 +144,11 @@ export class MonitorSupervisor {
   #journalWrite: Promise<void> | null = null
   #sessionTags = new Map<string, number>()
   #sessionRepeats = new Set<string>()
+  #learnedLayoutHandler: LearnedLayoutHandler | null = null
+  readonly #learnedLayoutListeners = new Set<(layoutId: string) => void | Promise<void>>()
+  readonly #predictionStateListeners = new Set<
+    (state: MonitorPredictionStateEvent['payload']['state']) => void | Promise<void>
+  >()
 
   constructor(
     private readonly auth: AuthSession,
@@ -140,6 +159,7 @@ export class MonitorSupervisor {
     private readonly ocr: OcrApiClient,
     private readonly now: () => Date = () => new Date(),
     private readonly journalRepository?: MonitorJournalRepository,
+    private readonly logger?: { warn: (message: string, context?: unknown) => void },
   ) {
     this.#userContextId = this.auth.getView().user?.id ?? null
   }
@@ -194,6 +214,26 @@ export class MonitorSupervisor {
   subscribeViews(listener: (view: MonitorView) => void): () => void {
     this.#viewListeners.add(listener)
     return () => this.#viewListeners.delete(listener)
+  }
+
+  setLearnedLayoutHandler(handler: LearnedLayoutHandler): void {
+    this.#learnedLayoutHandler = handler
+  }
+
+  subscribeLearnedLayouts(
+    listener: (layoutId: string) => void | Promise<void>,
+  ): () => void {
+    this.#learnedLayoutListeners.add(listener)
+    return () => this.#learnedLayoutListeners.delete(listener)
+  }
+
+  subscribePredictionStates(
+    listener: (
+      state: MonitorPredictionStateEvent['payload']['state'],
+    ) => void | Promise<void>,
+  ): () => void {
+    this.#predictionStateListeners.add(listener)
+    return () => this.#predictionStateListeners.delete(listener)
   }
 
   async getHistory(offset = 0, limit = 50): Promise<MonitorResult[]> {
@@ -355,6 +395,7 @@ export class MonitorSupervisor {
       session: null,
       summary: null,
       historyError: null,
+      geometry: null,
     })
     return true
   }
@@ -391,6 +432,7 @@ export class MonitorSupervisor {
     const startedAt = continuing ? session.startedAt : this.now().toISOString()
     this.transition('PREFLIGHT', {
       error: null,
+      geometry: null,
       runIntent: true,
       startedAt,
       ...(continuing
@@ -439,7 +481,7 @@ export class MonitorSupervisor {
     ++this.#stopIntentGeneration
     this.cancelRecovery()
     this.clearRetry()
-    this.patch({ runIntent: false, search: null })
+    this.patch({ runIntent: false, search: null, geometry: null })
     if (reason !== null) this.finalizeSession(reason)
     if (this.#stopPromise !== null) return this.#stopPromise
     if (this.#view.state === 'STOPPED') {
@@ -537,16 +579,21 @@ export class MonitorSupervisor {
           'CAPTURE_NOT_CONFIGURED',
           'Configure a capture profile',
         )
+      const activeCalibration = active.profile.configuration.calibration
+      const bindingFingerprint =
+        activeCalibration.coordinateSpace === 'game_relative'
+          ? `game:${active.profile.profileId}:${activeCalibration.calibrationId}`
+          : active.profile.configuration.fingerprint
       if (
         this.#bindingFingerprint !== null &&
-        this.#bindingFingerprint !== active.profile.configuration.fingerprint
+        this.#bindingFingerprint !== bindingFingerprint
       ) {
         throw new ApplicationError(
           'CAPTURE_CALIBRATION_INVALID',
           'The capture profile changed during recovery',
         )
       }
-      this.#bindingFingerprint = active.profile.configuration.fingerprint
+      this.#bindingFingerprint = bindingFingerprint
       this.#profileId = active.profile.profileId
       this.#calibrationRevision = active.profile.configuration.calibration.revision
       if (this.#view.session !== null && this.#view.session.initialProfileId === null) {
@@ -571,19 +618,65 @@ export class MonitorSupervisor {
         },
       })
       this.transition('STARTING')
+      const calibration = resolved.configuration.calibration
+      const profileId = active.profile.profileId
+      const calibrationId = calibration.calibrationId
+      const primary =
+        calibration.coordinateSpace === 'game_relative'
+          ? {
+              kind: 'game_relative' as const,
+              profileCalibrationId: calibrationId,
+              layouts: calibration.layouts.map((layout) => ({
+                layoutId: layout.layoutId,
+                layoutSource: layout.layoutSource,
+                calibratedAt: layout.calibratedAt,
+                gameAspect: layout.gameAspect,
+                windowChrome: layout.windowChrome,
+                regions: {
+                  trigger: layout.triggerRegion,
+                  nicknameRegion: layout.nicknameRegion,
+                  topLeftEvidenceRegion: layout.topLeftEvidenceRegion,
+                },
+                trigger: layout.trigger,
+                badge:
+                  layout.trigger.kind === 'vs_edge_orientation'
+                    ? layout.trigger.badge
+                    : null,
+                zonesOrigin: {
+                  nickname:
+                    layout.provenance.nickname.origin === 'auto' ? 'auto' : 'manual',
+                  topLeftEvidence:
+                    layout.provenance.topLeftEvidence.origin === 'auto'
+                      ? 'auto'
+                      : 'manual',
+                },
+              })),
+              learning: {
+                enabled: calibration.layouts.some(
+                  (layout) => layout.trigger.kind === 'vs_edge_orientation',
+                ),
+                maxLayouts: 4,
+              },
+            }
+          : {
+              kind: 'full_frame' as const,
+              configuredFrameSize: calibration.referenceFrameSize,
+              regions: {
+                trigger: calibration.triggerRegion,
+                nicknameRegion: calibration.nicknameRegion,
+                topLeftEvidenceRegion: calibration.topLeftEvidenceRegion,
+              },
+              triggerProfile: calibration.triggerProfile,
+            }
+      this.patch({
+        geometry:
+          primary.kind === 'game_relative'
+            ? { state: 'locating', aspectLabel: null, learningFailure: null }
+            : null,
+      })
       const payload = MonitorStartPayloadSchema.parse({
         selector: resolved.selector,
-        primary: {
-          kind: 'full_frame',
-          configuredFrameSize: resolved.configuration.calibration.referenceFrameSize,
-          regions: {
-            trigger: resolved.configuration.calibration.triggerRegion,
-            nicknameRegion: resolved.configuration.calibration.nicknameRegion,
-            topLeftEvidenceRegion:
-              resolved.configuration.calibration.topLeftEvidenceRegion,
-          },
-          triggerProfile: resolved.configuration.calibration.triggerProfile,
-        },
+        primary,
         capturePolicy: 'immediate_nickname',
         limits: {
           fps: 10,
@@ -611,6 +704,44 @@ export class MonitorSupervisor {
           this.acceptAction(generation, userId, contextGeneration, action),
         onPredictionResult: (action) =>
           this.acceptPredictionResult(generation, userId, contextGeneration, action),
+        onGeometry: (geometry) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            this.acceptGeometry(geometry)
+        },
+        onLearning: (learning) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            this.acceptLearning(learning)
+        },
+        onLayoutLearned: (learned) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            void this.acceptLearnedLayout(
+              generation,
+              userId,
+              contextGeneration,
+              profileId,
+              calibrationId,
+              learned,
+            )
+        },
+        onPredictionState: ({ state }) => {
+          if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
+          for (const listener of this.#predictionStateListeners) {
+            try {
+              void Promise.resolve(listener(state)).catch(() => undefined)
+            } catch {
+              // One-way prediction notifications cannot stop opponent monitoring.
+            }
+          }
+        },
         onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
         onExit: (error) => {
           if (error !== null) this.failRun(generation, userId, contextGeneration, error)
@@ -648,6 +779,76 @@ export class MonitorSupervisor {
       this.finalizeSession('failed')
     }
     return this.#view
+  }
+
+  private acceptGeometry(geometry: MonitorGeometryEvent['payload']): void {
+    const state = geometry.state === 'aspect_unknown' ? 'learning' : geometry.state
+    const learningFailed =
+      state === 'learning' && this.#view.geometry?.state === 'learning_failed'
+    this.patch({
+      geometry: {
+        state: learningFailed ? 'learning_failed' : state,
+        aspectLabel:
+          geometry.gameAspect === null
+            ? null
+            : `9:${Number((9 / geometry.gameAspect).toFixed(1))}`,
+        learningFailure: learningFailed
+          ? (this.#view.geometry?.learningFailure ?? null)
+          : null,
+      },
+    })
+  }
+
+  private acceptLearning(learning: MonitorLearningEvent['payload']): void {
+    this.patch({
+      geometry: {
+        state: learning.status === 'failed' ? 'learning_failed' : 'learning',
+        aspectLabel: this.#view.geometry?.aspectLabel ?? null,
+        learningFailure: learning.status === 'failed' ? learning.reason : null,
+      },
+    })
+  }
+
+  private async acceptLearnedLayout(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    profileId: string,
+    calibrationId: string,
+    learned: MonitorLayoutLearnedEvent['payload'],
+  ): Promise<void> {
+    if (learned.calibrationId !== calibrationId) {
+      this.logger?.warn('Learned layout not saved', { code: 'LAYOUT_STALE' })
+      return
+    }
+    try {
+      if (this.#learnedLayoutHandler === null)
+        throw new ApplicationError('LAYOUT_SAVE_FAILED', 'Layout storage unavailable')
+      await this.#learnedLayoutHandler(userId, profileId, calibrationId, learned.layout)
+    } catch (error) {
+      const code = error instanceof ApplicationError ? error.code : 'LAYOUT_SAVE_FAILED'
+      this.logger?.warn('Learned layout not saved', { code })
+      if (
+        code !== 'LAYOUT_STALE' &&
+        code !== 'LAYOUT_LIMIT' &&
+        this.isRuntimeCurrent(generation, userId, contextGeneration)
+      )
+        this.patch({
+          error: publicError(
+            new ApplicationError('LAYOUT_SAVE_FAILED', 'Layout storage failed'),
+          ),
+        })
+      return
+    }
+    if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
+    if (this.#view.error?.code === 'LAYOUT_SAVE_FAILED') this.patch({ error: null })
+    for (const listener of this.#learnedLayoutListeners) {
+      try {
+        void Promise.resolve(listener(learned.layout.layoutId)).catch(() => undefined)
+      } catch {
+        // Saving succeeded; notification failures cannot affect the active layout.
+      }
+    }
   }
 
   private acceptAction(
@@ -1033,6 +1234,17 @@ export class MonitorSupervisor {
     )
   }
 
+  private isRuntimeCurrent(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+  ): boolean {
+    return (
+      this.isCurrent(generation, userId, contextGeneration) &&
+      ['STARTING', 'READY'].includes(this.#view.state)
+    )
+  }
+
   private isUserContextCurrent(
     userId: string | null,
     contextGeneration: number,
@@ -1239,6 +1451,7 @@ export class MonitorSupervisor {
       session: null,
       summary: null,
       historyError: null,
+      geometry: null,
     })
   }
 }

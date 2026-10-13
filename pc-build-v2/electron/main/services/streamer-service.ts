@@ -175,6 +175,12 @@ export class StreamerService {
               profileId: active.profile.profileId,
               configurationRevision: active.profile.configuration.revision,
               configurationFingerprint: active.profile.configuration.fingerprint,
+              ...(active.profile.configuration.calibration.coordinateSpace ===
+              'game_relative'
+                ? {
+                    calibrationId: active.profile.configuration.calibration.calibrationId,
+                  }
+                : {}),
             })
         } catch {
           resultConfigured = null

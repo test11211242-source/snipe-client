@@ -46,6 +46,7 @@ const view: MonitorView = {
   session: null,
   summary: null,
   historyError: null,
+  geometry: null,
 }
 
 beforeEach(() => {

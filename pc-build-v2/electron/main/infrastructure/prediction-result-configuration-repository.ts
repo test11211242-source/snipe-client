@@ -55,7 +55,7 @@ export class PredictionResultConfigurationRepository {
   constructor(
     private readonly directory: string,
     private readonly fs: PredictionResultFileSystem = nodePredictionResultFileSystem,
-    private readonly legacyDirectory?: string,
+    private readonly legacyDirectory?: string | readonly string[],
     private readonly logger?: Pick<StructuredLogger, 'warn'>,
   ) {}
 
@@ -113,39 +113,48 @@ export class PredictionResultConfigurationRepository {
     oldFingerprint: string,
     configuration: CaptureConfiguration,
   ): Promise<void> {
-    const legacyDirectory = this.legacyDirectory
-    if (legacyDirectory === undefined) return
+    const legacyDirectories =
+      typeof this.legacyDirectory === 'string'
+        ? [this.legacyDirectory]
+        : (this.legacyDirectory ?? [])
+    if (legacyDirectories.length === 0) return
     await this.serialized(async () => {
       const existing = await this.readConfiguration(
         userId,
         profileFileName(userId, profileId),
       )
       if (existing !== null) return
-      const legacy = new PredictionResultConfigurationRepository(legacyDirectory, this.fs)
-      let previous: PredictionResultConfiguration | null
-      try {
-        previous =
-          (await legacy.readConfiguration(userId, profileFileName(userId, profileId))) ??
-          (profileId === migratedCaptureProfileId(userId)
-            ? await legacy.readConfiguration(userId, fileName(userId))
-            : null)
-      } catch (error) {
-        this.logger?.warn('Legacy result geometry was not attached', {
-          errorType:
-            error instanceof z.ZodError
-              ? 'ZodError'
-              : error instanceof SyntaxError
-                ? 'SyntaxError'
-                : 'Error',
-        })
-        return
+      let previous: PredictionResultConfiguration | null = null
+      for (const directory of legacyDirectories) {
+        const legacy = new PredictionResultConfigurationRepository(directory, this.fs)
+        try {
+          const candidate =
+            (await legacy.readConfiguration(
+              userId,
+              profileFileName(userId, profileId),
+            )) ??
+            (profileId === migratedCaptureProfileId(userId)
+              ? await legacy.readConfiguration(userId, fileName(userId))
+              : null)
+          if (
+            candidate?.captureProfileId === profileId &&
+            candidate.captureConfigurationRevision === oldRevision &&
+            candidate.captureConfigurationFingerprint === oldFingerprint
+          ) {
+            previous = candidate
+            break
+          }
+        } catch (error) {
+          // Invalid optional old geometry is inactive; I/O failures must retry
+          // migration rather than permanently commit a capture without its result.
+          if (!(error instanceof z.ZodError) && !(error instanceof SyntaxError))
+            throw error
+          this.logger?.warn('Legacy result geometry was not attached', {
+            errorType: error instanceof z.ZodError ? 'ZodError' : 'SyntaxError',
+          })
+        }
       }
-      if (
-        previous?.captureProfileId !== profileId ||
-        previous.captureConfigurationRevision !== oldRevision ||
-        previous.captureConfigurationFingerprint !== oldFingerprint
-      )
-        return
+      if (previous === null) return
       const { fingerprint: _fingerprint, ...unsigned } = previous
       void _fingerprint
       const migrated = {

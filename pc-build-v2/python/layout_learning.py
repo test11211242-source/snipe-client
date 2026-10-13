@@ -143,7 +143,7 @@ class LayoutLearning:
                     "referenceGameRect": pixel_rect(confirmation_rect), "windowChrome": layout["windowChrome"],
                     "expectedLayout": "cr_battle_vs", "triggerRegion": new_regions["trigger"],
                     "nicknameRegion": new_regions["nicknameRegion"], "topLeftEvidenceRegion": new_regions["topLeftEvidenceRegion"],
-                    "trigger": layout["trigger"], "confidence": check.confidence}
+                    "trigger": layout["trigger"], "zonesOrigin": dict(origins), "confidence": check.confidence}
             self.rejected_count, self.failed, self._latched = 0, False, True
             return layout, wire, confirmation, confirmation_rect
         candidate = search(frame, geometry.rect)

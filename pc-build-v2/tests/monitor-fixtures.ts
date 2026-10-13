@@ -92,5 +92,6 @@ export function monitorLearnedLayoutFixture(): GameLayoutWire {
     topLeftEvidenceRegion: layout.regions.topLeftEvidenceRegion,
     trigger: layout.trigger,
     confidence: 0.9,
+    zonesOrigin: { ...layout.zonesOrigin },
   }
 }

@@ -9,6 +9,7 @@ import type { CaptureTargetResolver } from './capture-target-resolver'
 import { SetupSessionService, buildLegacyProjection } from './setup-session-service'
 import { LegacyOcrRegionsSchema } from '../../../shared/models/setup'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
+import type { PredictionResultConfiguration } from '../../../shared/models/prediction-result'
 
 const profile = {
   schemaVersion: 3 as const,
@@ -150,6 +151,32 @@ async function readyForCommit(
 }
 
 describe('SetupSessionService', () => {
+  it('creates a fresh calibration identity on every setup and recalibration commit', async () => {
+    const test = harness()
+    const oldId = '00000000-0000-4000-8000-000000000090'
+    test.repository.get.mockResolvedValue({
+      configuration: { revision: 7, calibration: { calibrationId: oldId, revision: 4 } },
+    })
+    const firstReady = await readyForCommit(test.service)
+    await test.service.commit(firstReady.sessionId, firstReady.generation)
+    const first = test.repository.save.mock.calls[0]?.[0] as
+      | {
+          calibration: { calibrationId: string }
+        }
+      | undefined
+    expect(first?.calibration.calibrationId).not.toBe(oldId)
+    expect(first?.calibration.calibrationId).toMatch(/^[a-f0-9-]{36}$/)
+    const secondReady = await readyForCommit(test.service)
+    await test.service.commit(secondReady.sessionId, secondReady.generation)
+    const second = test.repository.save.mock.calls[1]?.[0] as
+      | {
+          calibration: { calibrationId: string }
+        }
+      | undefined
+    expect(second?.calibration.calibrationId).not.toBe(first?.calibration.calibrationId)
+    expect(second?.calibration.calibrationId).not.toBe(oldId)
+  })
+
   it('M6 #11 marks the saved projection unsent when auth changes immediately after local persistence', async () => {
     const test = harness()
     const ready = await readyForCommit(test.service)
@@ -524,80 +551,106 @@ describe('SetupSessionService', () => {
     expect(repository.save).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps saved local result zones when the second projection write fails', async () => {
-    const capture = {
-      capture: vi.fn().mockResolvedValue(frame),
-      analyze: vi.fn().mockResolvedValue(analysis),
-    }
-    const resultRepository = { load: vi.fn().mockResolvedValue(null), save: vi.fn() }
-    const resultRequests: { path: string; body: unknown }[] = []
-    const rawApi = {
-      request: vi.fn((request: { path: string; body: unknown }) => {
-        resultRequests.push(request)
-        return Promise.resolve(
-          resultRequests.length === 1
-            ? { ok: true, status: 200, data: { success: true } }
-            : { ok: false, error: { code: 'NETWORK_UNAVAILABLE', message: 'offline' } },
-        )
-      }),
-    }
-    const service = new SetupSessionService(
-      capture as never,
-      {
-        load: vi.fn(),
-        save: vi.fn(),
-        list: vi.fn().mockResolvedValue(resultProfileStatus),
-      } as never,
-      rawApi as never,
-      {
-        getView: () => ({ user: { id: '42' } }),
-        getContextGeneration: () => 1,
-        getAccessToken: vi.fn().mockResolvedValue('secret'),
-      } as never,
-      () => new Date('2026-07-12T12:00:00.000Z'),
-      resultRepository as never,
-      { request: vi.fn() } as never,
-    )
-    let view = await service.start(
-      selector,
-      preference,
-      'predictionResult',
-      undefined,
-      resultTarget,
-    )
-    view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
-      x: 0.1,
-      y: 0.1,
-      width: 0.2,
-      height: 0.2,
-    })
-    view = service.setRegion(view.sessionId, view.generation, 'resultData', {
-      x: 0.2,
-      y: 0.2,
-      width: 0.5,
-      height: 0.5,
-    })
-    view = await service.analyzeTrigger(view.sessionId, view.generation)
-    view = service.review(view.sessionId, view.generation)
-    const result = await service.commit(view.sessionId, view.generation)
-    expect(result).toMatchObject({
-      state: 'COMMITTED',
-      saveOutcome: { local: 'saved', projection: 'failed', warning: 'SETUP_SYNC_FAILED' },
-    })
-    expect(resultRequests.map((request) => request.path)).toEqual([
-      '/api/streamer/result-trigger-area',
-      '/api/streamer/result-data-area',
-    ])
-    expect(resultRequests[0]?.body).toMatchObject({
-      trigger_profile: {
-        template_gray_base64: legacyProfile.templateGrayBase64,
-        thumbnail_hash: legacyProfile.thumbnailHash,
-        feature_mode: legacyProfile.featureMode,
-        hash_threshold: 5,
-      },
-    })
-    expect(resultRepository.save).toHaveBeenCalledOnce()
-  })
+  it.each([false, true])(
+    'keeps saved local result zones when projection fails (calibration binding: %s)',
+    async (gameRelative) => {
+      const capture = {
+        capture: vi.fn().mockResolvedValue(frame),
+        analyze: vi.fn().mockResolvedValue(analysis),
+      }
+      const resultRepository = {
+        load: vi.fn().mockResolvedValue(null),
+        save: vi
+          .fn<
+            (
+              configuration: PredictionResultConfiguration,
+              profileId: string,
+            ) => Promise<void>
+          >()
+          .mockResolvedValue(undefined),
+      }
+      const resultRequests: { path: string; body: unknown }[] = []
+      const rawApi = {
+        request: vi.fn((request: { path: string; body: unknown }) => {
+          resultRequests.push(request)
+          return Promise.resolve(
+            resultRequests.length === 1
+              ? { ok: true, status: 200, data: { success: true } }
+              : { ok: false, error: { code: 'NETWORK_UNAVAILABLE', message: 'offline' } },
+          )
+        }),
+      }
+      const service = new SetupSessionService(
+        capture as never,
+        {
+          load: vi.fn(),
+          save: vi.fn(),
+          list: vi.fn().mockResolvedValue({
+            ...resultProfileStatus,
+            profiles: resultProfileStatus.profiles.map((profile) => ({
+              ...profile,
+              ...(gameRelative ? { calibrationId: resultTarget.profileId } : {}),
+            })),
+          }),
+        } as never,
+        rawApi as never,
+        {
+          getView: () => ({ user: { id: '42' } }),
+          getContextGeneration: () => 1,
+          getAccessToken: vi.fn().mockResolvedValue('secret'),
+        } as never,
+        () => new Date('2026-07-12T12:00:00.000Z'),
+        resultRepository as never,
+        { request: vi.fn() } as never,
+      )
+      let view = await service.start(
+        selector,
+        preference,
+        'predictionResult',
+        undefined,
+        resultTarget,
+      )
+      view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
+        x: 0.1,
+        y: 0.1,
+        width: 0.2,
+        height: 0.2,
+      })
+      view = service.setRegion(view.sessionId, view.generation, 'resultData', {
+        x: 0.2,
+        y: 0.2,
+        width: 0.5,
+        height: 0.5,
+      })
+      view = await service.analyzeTrigger(view.sessionId, view.generation)
+      view = service.review(view.sessionId, view.generation)
+      const result = await service.commit(view.sessionId, view.generation)
+      expect(result).toMatchObject({
+        state: 'COMMITTED',
+        saveOutcome: {
+          local: 'saved',
+          projection: 'failed',
+          warning: 'SETUP_SYNC_FAILED',
+        },
+      })
+      expect(resultRequests.map((request) => request.path)).toEqual([
+        '/api/streamer/result-trigger-area',
+        '/api/streamer/result-data-area',
+      ])
+      expect(resultRequests[0]?.body).toMatchObject({
+        trigger_profile: {
+          template_gray_base64: legacyProfile.templateGrayBase64,
+          thumbnail_hash: legacyProfile.thumbnailHash,
+          feature_mode: legacyProfile.featureMode,
+          hash_threshold: 5,
+        },
+      })
+      expect(resultRepository.save).toHaveBeenCalledOnce()
+      expect(resultRepository.save.mock.calls[0]?.[0].captureCalibrationId).toBe(
+        gameRelative ? resultTarget.profileId : undefined,
+      )
+    },
+  )
 
   it('does not change the server when the local result commit fails', async () => {
     const resultRepository = {

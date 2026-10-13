@@ -137,14 +137,19 @@ and can be retried later, distinct from game API outages. Codes, not HTTP status
 identify account causes; raw server responses never reach the old form's messages.
 
 Capture configuration is separate and per server user under
-`userData/capture-profiles.v4/` (collection schema 3, configuration schema 2).
-It separates private `SourceBinding` identity from `LayoutCalibration`, with semantic
-nickname/evidence/trigger regions, structural templates, revision and fingerprint.
-V3 collection and legacy single-config imports preserve IDs, names, timestamps,
-active profile, geometry and template quality; old files remain untouched. Imports
-have unknown viewport/layout and null whole-layout confidence, not fabricated
-automatic-calibration quality. Prediction result references migrate only from the
-exact validated old profile revision/fingerprint. No migration contacts the server.
+`userData/capture-profiles.v5/` (collection schema 4, configuration schema 3,
+calibration schema 2). Private `SourceBinding` identity is separate from either
+full-frame calibration or up to four game-relative layouts. V4 profiles migrate
+field-for-field except schema versions/fingerprints; V3 collection and legacy
+single-config imports preserve IDs, names, timestamps, active profile, geometry,
+and template quality. Old capture and prediction-result roots remain untouched.
+Imports use strict schemas and exact validated old fingerprints, with resumable
+results-first then atomic capture rename; no migration contacts the server.
+Game-relative result zones bind to profile/calibration identity, so learned-layout
+append requires only one atomic capture write and no monitor restart or result
+rewrite. Full-frame result zones retain revision/fingerprint binding. Every setup
+or recalibration creates a fresh calibration identity. Only the oldest learned
+layout may be evicted; setup layouts and transferred manual-zone provenance survive.
 There are no screenshots, RGB templates, tokens or full executable paths on disk.
 A saved HWND is a private binding hint, never a renderer source identifier.
 Setup atomically saves the canonical local model before posting its schema-version 2

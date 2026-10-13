@@ -630,7 +630,7 @@ export class SetupSessionService {
         return this.captureCommitAuthFailure(session, generation)
       }
       const unsigned: Omit<CaptureConfiguration, 'fingerprint'> = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         userId: user.id,
         revision: (previous?.configuration.revision ?? 0) + 1,
         committedAt: timestamp,
@@ -639,7 +639,7 @@ export class SetupSessionService {
           lastVerifiedAt: timestamp,
         },
         calibration: createLayoutCalibration(
-          previous?.configuration.calibration.calibrationId ?? randomUUID(),
+          randomUUID(),
           (previous?.configuration.calibration.revision ?? 0) + 1,
           frame.size,
           regions,
@@ -822,6 +822,9 @@ export class SetupSessionService {
         captureProfileId: resultProfileId,
         captureConfigurationRevision: captureProfile.configurationRevision,
         captureConfigurationFingerprint: captureProfile.configurationFingerprint,
+        ...(captureProfile.calibrationId === undefined
+          ? {}
+          : { captureCalibrationId: captureProfile.calibrationId }),
         revision: (previous?.revision ?? 0) + 1,
         committedAt: timestamp,
         source: session.view.source,

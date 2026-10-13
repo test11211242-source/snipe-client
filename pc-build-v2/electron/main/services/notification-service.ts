@@ -7,15 +7,18 @@ interface NativeNotification {
 
 export class NotificationService {
   #dispose: (() => void) | null = null
+  #disposeLearnedLayouts: (() => void) | null = null
   readonly #seen = new Set<string>()
   readonly #order: string[] = []
 
   constructor(
-    private readonly monitor: Pick<MonitorSupervisor, 'subscribeResults'>,
+    private readonly monitor: Pick<MonitorSupervisor, 'subscribeResults'> &
+      Partial<Pick<MonitorSupervisor, 'subscribeLearnedLayouts'>>,
     private readonly supported: () => boolean,
     private readonly create: (options: {
       title: string
       body: string
+      silent?: boolean
     }) => NativeNotification,
     private readonly enabled: () => boolean = () => true,
   ) {}
@@ -23,10 +26,28 @@ export class NotificationService {
   start(): void {
     if (this.#dispose !== null) return
     this.#dispose = this.monitor.subscribeResults((result) => this.accept(result))
+    this.#disposeLearnedLayouts =
+      this.monitor.subscribeLearnedLayouts?.((layoutId) => {
+        const key = `layout:${layoutId}`
+        if (this.#seen.has(key) || !this.enabled() || !this.supported()) return
+        this.#seen.add(key)
+        this.#order.push(key)
+        while (this.#order.length > 100) {
+          const oldest = this.#order.shift()
+          if (oldest !== undefined) this.#seen.delete(oldest)
+        }
+        this.create({
+          title: 'CR Tools V2',
+          body: 'Профиль дополнен под новый формат',
+          silent: true,
+        }).show()
+      }) ?? null
   }
 
   stop(): void {
     this.#dispose?.()
+    this.#disposeLearnedLayouts?.()
+    this.#disposeLearnedLayouts = null
     this.#dispose = null
     this.#seen.clear()
     this.#order.length = 0

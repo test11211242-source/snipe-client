@@ -4,8 +4,17 @@ import {
   PixelSizeSchema,
   NormalizedRectSchema,
   TriggerProfileSchema,
+  PixelRectSchema,
+  WindowChromeSchema as MonitorWindowChromeSchema,
+  VsBadgeSchema as MonitorVsBadgeSchema,
+  GameTriggerSchema,
 } from '../models/capture'
 import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
+export {
+  WindowChromeSchema as MonitorWindowChromeSchema,
+  VsBadgeSchema as MonitorVsBadgeSchema,
+  VsOrientationTriggerSchema as MonitorVsOrientationTriggerSchema,
+} from '../models/capture'
 
 export const MONITOR_PROTOCOL_VERSION = 4
 export const MONITOR_MAX_COMMAND_LINE_BYTES = 1024 * 1024
@@ -48,112 +57,6 @@ export const MonitorLimitsSchema = z
   })
   .strict()
 
-const PixelRectSchema = z
-  .object({
-    x: z.number().int().nonnegative(),
-    y: z.number().int().nonnegative(),
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
-  })
-  .strict()
-
-const CanonicalBase64Schema = z
-  .string()
-  .max(87_384)
-  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
-  .refine((value) => {
-    if (value.endsWith('==')) return /[AQgw]==$/.test(value)
-    if (value.endsWith('=')) return /[AEIMQUYcgkosw048]=$/.test(value)
-    return true
-  }, 'Base64 must use canonical padding bits')
-
-function decodedByteLength(value: string): number {
-  return (value.length / 4) * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0)
-}
-
-const StripEdgesSchema = z
-  .object({
-    length: z.literal(256),
-    thickness: z.number().int().min(1).max(256),
-    angleQ8Base64: CanonicalBase64Schema,
-    weightQ8Base64: CanonicalBase64Schema,
-  })
-  .strict()
-  .superRefine((strip, context) => {
-    for (const field of ['angleQ8Base64', 'weightQ8Base64'] as const) {
-      if (decodedByteLength(strip[field]) !== strip.length * strip.thickness) {
-        context.addIssue({
-          code: 'custom',
-          path: [field],
-          message: 'Invalid strip byte length',
-        })
-      }
-    }
-  })
-
-export const MonitorWindowChromeSchema = z
-  .object({
-    top: z.number().int().min(0).max(2048),
-    bottom: z.number().int().min(0).max(2048),
-    left: z.number().int().min(0).max(2048),
-    right: z.number().int().min(0).max(2048),
-    topEdges: StripEdgesSchema.nullable(),
-    bottomEdges: StripEdgesSchema.nullable(),
-    leftEdges: StripEdgesSchema.nullable(),
-    rightEdges: StripEdgesSchema.nullable(),
-  })
-  .strict()
-
-export const MonitorVsBadgeSchema = z
-  .object({
-    cx: z.number().positive().max(1),
-    cy: z.number().positive().max(1),
-    width: z.number().positive().max(1),
-    height: z.number().positive().max(1),
-  })
-  .strict()
-
-export const MonitorVsOrientationTriggerSchema = z
-  .object({
-    kind: z.literal('vs_edge_orientation'),
-    algorithm: z.literal('vs-orient-1'),
-    badge: MonitorVsBadgeSchema,
-    normalizedSize: z
-      .object({
-        width: z.literal(96),
-        height: z.number().int().min(64).max(160),
-      })
-      .strict(),
-    cropMargin: z.literal(0.08),
-    padding: z.literal(4),
-    maxShift: z.literal(3),
-    threshold: z.literal(0.5),
-    angleQ8Base64: CanonicalBase64Schema,
-    weightQ8Base64: CanonicalBase64Schema,
-    templateHash64: z.string().regex(/^[a-f0-9]{16}$/),
-    maskAreaRatio: z.number().min(0).max(1),
-  })
-  .strict()
-  .superRefine((trigger, context) => {
-    for (const field of ['angleQ8Base64', 'weightQ8Base64'] as const) {
-      if (
-        decodedByteLength(trigger[field]) !==
-        trigger.normalizedSize.width * trigger.normalizedSize.height
-      ) {
-        context.addIssue({
-          code: 'custom',
-          path: [field],
-          message: 'Invalid orientation byte length',
-        })
-      }
-    }
-  })
-
-const GameTriggerSchema = z.discriminatedUnion('kind', [
-  MonitorVsOrientationTriggerSchema,
-  z.object({ kind: z.literal('structural'), profile: TriggerProfileSchema }).strict(),
-])
-
 const MonitorRegionsSchema = z
   .object({
     trigger: NormalizedRectSchema,
@@ -183,7 +86,6 @@ export const MonitorCommandLayoutSchema = z
   })
   .strict()
 
-// Runtime-only shape; persisted calibration models remain unchanged until A3.
 export const GameLayoutWireSchema = z
   .object({
     layoutId: z.uuid(),
@@ -198,6 +100,7 @@ export const GameLayoutWireSchema = z
     nicknameRegion: NormalizedRectSchema,
     topLeftEvidenceRegion: NormalizedRectSchema,
     trigger: GameTriggerSchema,
+    zonesOrigin: MonitorCommandLayoutSchema.shape.zonesOrigin,
     confidence: z.number().min(0).max(1),
   })
   .strict()

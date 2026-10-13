@@ -214,6 +214,39 @@ describe('PredictionCoordinator', () => {
     ).toBe(false)
   })
 
+  it('starts with calibration-bound result zones after a learned-layout revision', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const calibrationId = '00000000-0000-4000-8000-000000000010'
+    const test = harness(
+      false,
+      undefined,
+      {
+        list: vi.fn().mockResolvedValue({
+          activeProfileId: profileId,
+          profiles: [
+            {
+              profileId,
+              calibrationId,
+              configurationRevision: 4,
+              configurationFingerprint: 'b'.repeat(64),
+            },
+          ],
+        }),
+      },
+      {
+        ...configuration,
+        captureProfileId: profileId,
+        captureCalibrationId: calibrationId,
+        captureConfigurationRevision: 1,
+        captureConfigurationFingerprint: 'a'.repeat(64),
+      },
+    )
+    await test.coordinator.start(settings)
+    expect(
+      test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
+    ).toBe(true)
+  })
+
   it('does not stop a different user server after an auth transition', async () => {
     const test = harness()
     test.coordinator.observeServerState(true, '42')
