@@ -185,8 +185,9 @@ full-window editor. Pointer and numeric coordinates share a letterboxed contain 
 the staged regions are trigger, opponent nickname, and top-left evidence before
 analysis/review/commit. These semantic names are also used by the setup DTO and commands.
 
-New manual capture profiles and recalibrations are always game-relative. The required
-`startCaptureSetup.mode` is currently `manual`; automatic setup belongs to the next session.
+New capture profiles and recalibrations are always game-relative.
+`startCaptureSetup.mode` explicitly selects `manual` or `auto`. The automatic main-process
+flow is available through the preload contract; its renderer screens are a separate session.
 Prepared capture waits up to 2.5 seconds for eight real history samples spaced at least
 0.3 seconds apart before freezing, including immediate prepare → freeze on a retake.
 Publication or source closure wakes the wait. A static or rarely redrawing WGC window
@@ -204,6 +205,22 @@ analysis for the unchanged server projection, derived from the saved setup layou
 The renderer contract includes `game`, `regionOrigins`, and `triggerKind`; game outlines,
 VS-specific review text and frame-retry actions are separate UI-session work. Existing
 migrated full-frame profiles and full-frame prediction-result setup remain unchanged.
+
+Automatic setup transfers ownership of the warm capture process to a `DETECTING` session.
+Prepared-capture protocol 2 analyzes the latest live frame at up to 10 fps for a real
+60-second deadline, supplies bounded JPEG previews at most once per second, and confirms
+VS with pre-onset evidence and a following-frame self-check. Success enters `SELECTING`
+with the confirmation PNG, frame-normalized zones, automatic provenance, orientation
+trigger and structural/legacy compatibility analysis. No timeout or weak detection is
+treated as success. Failed analysis can retry the same live source or switch to the manual
+editor using the candidate frame, otherwise a fresh freeze. Source/session/auth generation
+checks fence asynchronous results; closing or saving releases the live process.
+The optional `/api/ocr/setup-name-check` request uses only an in-memory nickname PNG from
+that same confirmation frame, once per successful detection. Its ten-second deadline,
+offline/provider errors and every non-200 response (including old-server 404) produce only
+unavailable diagnostics; saving never waits for it. Detection codes, phases, confidence
+and name-check results are diagnostic-only. The later renderer must follow the minimal
+user-facing wording in M9 specification §1.3.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 

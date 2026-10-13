@@ -33,7 +33,7 @@ def test_latest_frame_store_freezes_the_last_published_copy() -> None:
 def test_prepared_capture_commands_are_strict() -> None:
     session_id, command_type = validate_command(
         {
-            "protocolVersion": 1,
+            "protocolVersion": 2,
             "sessionId": "session",
             "type": "start",
             "selector": {"kind": "window", "windowHwnd": "123"},
@@ -44,7 +44,7 @@ def test_prepared_capture_commands_are_strict() -> None:
     with pytest.raises(ProtocolError):
         validate_command(
             {
-                "protocolVersion": 1,
+                "protocolVersion": 2,
                 "sessionId": "session",
                 "type": "freeze",
                 "unexpected": True,
@@ -168,11 +168,11 @@ def test_prepare_then_immediate_freeze_live_backend_real_clock(
     commands = io.BytesIO()
     session_id = "real-clock-retake"
     write_envelope(commands, {
-        "protocolVersion": 1, "sessionId": session_id, "type": "start",
+        "protocolVersion": 2, "sessionId": session_id, "type": "start",
         "selector": {"kind": "window", "windowHwnd": "123"},
     })
     write_envelope(commands, {
-        "protocolVersion": 1, "sessionId": session_id, "type": "freeze",
+        "protocolVersion": 2, "sessionId": session_id, "type": "freeze",
     })
     commands.seek(0)
     events = io.BytesIO()
@@ -194,3 +194,46 @@ def test_prepare_then_immediate_freeze_live_backend_real_clock(
     }
     assert frozen.metadata["payload"]["game"]["frames"] >= 8
     assert 2.1 <= elapsed <= 3
+
+
+def test_protocol_two_cancel_fence_and_retry_keep_backend_alive(monkeypatch):
+    commands, events = io.BytesIO(), io.BytesIO()
+    session = "live-retry"
+    for command in (
+        {"type": "start", "selector": {"kind": "window", "windowHwnd": "123"}},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+        {"type": "analyze_cancel"},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+        {"type": "analyze_cancel"},
+        {"type": "stop"},
+    ):
+        write_envelope(commands, {"protocolVersion": 2, "sessionId": session, **command})
+    commands.seek(0)
+    stopped = []
+
+    class Backend:
+        def __init__(self, selector):
+            assert selector == {"kind": "window", "windowHwnd": "123"}
+
+        def start(self, on_frame, _on_closed):
+            on_frame(np.zeros((32, 32, 3), np.uint8))
+
+        def stop(self):
+            stopped.append(True)
+
+    monkeypatch.setattr(prepared_capture, "WindowsMonitorBackend", Backend)
+    monkeypatch.setattr(prepared_capture.sys, "stdin", SimpleNamespace(buffer=commands))
+    monkeypatch.setattr(prepared_capture.sys, "stdout", SimpleNamespace(buffer=events))
+    prepared_capture.main()
+    events.seek(0)
+    envelopes = []
+    while events.tell() < len(events.getvalue()):
+        envelopes.append(read_stream_envelope(events, max_binary_bytes=prepared_capture.MAX_PNG_BYTES))
+    types = [envelope.metadata["type"] for envelope in envelopes]
+    assert types[0] == "ready"
+    assert types[-2:] == ["analysis_cancelled", "stopped"]
+    assert types.count("analysis_cancelled") == 2
+    assert "analysis_result" not in types and "fatal" not in types
+    assert stopped == [True]
+    assert all(envelope.metadata["protocolVersion"] == 2 for envelope in envelopes)
+    assert [envelope.metadata["sequence"] for envelope in envelopes] == list(range(1, len(envelopes) + 1))

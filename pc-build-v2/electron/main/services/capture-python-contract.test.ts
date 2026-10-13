@@ -41,7 +41,14 @@ function fixture(mode: 'fixture-vs' | 'fixture-non-vs'): Buffer {
   return result.stdout
 }
 
-function preparedService(mode: 'prepared' | 'prepared-insufficient') {
+function preparedService(
+  mode:
+    | 'prepared'
+    | 'prepared-insufficient'
+    | 'prepared-auto-success'
+    | 'prepared-auto-spectate'
+    | 'prepared-auto-source-lost',
+) {
   let closed: Promise<void> | undefined
   const spawnPrepared: PreparedCaptureSpawn = (executable, args, options) => {
     const child = spawn(executable, [...args, mode], {
@@ -107,6 +114,89 @@ describe('genuine Python setup output → strict TS capture contracts', () => {
       const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
       const frame = await service.freeze(prepared.sessionId)
       expect(frame.game).toEqual({ rect: null, reason: 'insufficient_frames' })
+      await waitForClose()
+    } finally {
+      await service.stop()
+    }
+  }, 30_000)
+
+  it('parses genuine automatic analysis, preview and confirmation PNG while retaining capture for freeze', async () => {
+    const { service, waitForClose } = preparedService('prepared-auto-success')
+    try {
+      const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
+      const progress = vi.fn()
+      const preview = vi.fn()
+      const { result, frame } = await service.analyze(
+        prepared.sessionId,
+        progress,
+        preview,
+      )
+      expect(result.ok).toBe(true)
+      expect(progress).toHaveBeenCalled()
+      expect(preview).toHaveBeenCalledWith(
+        expect.objectContaining({ mimeType: 'image/jpeg' }),
+      )
+      expect(frame?.size).toEqual(prepared.size)
+      expect(frame?.png.readUInt32BE(16)).toBe(frame?.size.width)
+      expect(frame?.game).toMatchObject({ frames: 8 })
+      expect(service.isAlive(prepared.sessionId)).toBe(true)
+      const frozen = await service.freeze(prepared.sessionId)
+      expect(frozen.size).toEqual(prepared.size)
+      await waitForClose()
+    } finally {
+      await service.stop()
+    }
+  }, 30_000)
+
+  it('parses genuine spectate rejection with its candidate PNG and valid geometry', async () => {
+    const { service, waitForClose } = preparedService('prepared-auto-spectate')
+    try {
+      const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
+      const { result, frame } = await service.analyze(
+        prepared.sessionId,
+        vi.fn(),
+        vi.fn(),
+      )
+      expect(result).toMatchObject({ ok: false, code: 'AUTO_SPECTATE_LIKE' })
+      expect(frame?.game?.rect).not.toBeNull()
+      expect(frame?.png.byteLength).toBeGreaterThan(24)
+      expect(service.isAlive(prepared.sessionId)).toBe(true)
+      await service.stop(prepared.sessionId)
+      await waitForClose()
+    } finally {
+      await service.stop()
+    }
+  }, 30_000)
+
+  it('parses genuine source-loss analysis output', async () => {
+    const { service, waitForClose } = preparedService('prepared-auto-source-lost')
+    try {
+      const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
+      await expect(
+        service.analyze(prepared.sessionId, vi.fn(), vi.fn()),
+      ).resolves.toMatchObject({
+        result: { ok: false, code: 'AUTO_SOURCE_LOST' },
+        frame: null,
+      })
+      await waitForClose()
+    } finally {
+      await service.stop()
+    }
+  }, 30_000)
+
+  it('joins genuine analysis cancellation before retry consumes fresh events', async () => {
+    const { service, waitForClose } = preparedService('prepared-auto-success')
+    try {
+      const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
+      const analysis = service.analyze(prepared.sessionId, vi.fn(), vi.fn())
+      const rejected = expect(analysis).rejects.toMatchObject({
+        code: 'CAPTURE_PREPARATION_CANCELLED',
+      })
+      await service.cancelAnalysis(prepared.sessionId)
+      await rejected
+      const retry = await service.analyze(prepared.sessionId, vi.fn(), vi.fn())
+      expect(retry.result.ok).toBe(true)
+      await service.stop(prepared.sessionId)
       await waitForClose()
     } finally {
       await service.stop()

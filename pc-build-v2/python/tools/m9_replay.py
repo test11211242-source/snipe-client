@@ -1,6 +1,6 @@
 """Offline M9 replay: setup, fixed-badge rule (c), and the actual runtime.
 
-Usage: m9_replay.py {setup|orient|runtime} --manifest <external.json> --out <external-dir>
+Usage: m9_replay.py {setup|orient|runtime|autosetup} --manifest <external.json> --out <external-dir>
 Manifest JSON: {"recordings": [{"key": "sample1", "path": "video.mp4",
 "kind": "cheddar|ranked|spectate|long|language|toolbar|titlebar",
 "vsOnsets": [4.6], "vsDuration": 1.9, "gameAspect": 0.5625,
@@ -20,7 +20,7 @@ REPORT recording keys and an external titlebar image. Pass --titlebar-image and
 --titlebar-rect X Y WIDTH HEIGHT, or supply manifest runtime.titlebarImage and
 runtime.titlebarRect. Titlebar crop coordinates are caller-owned evidence.
 Runtime does not run the 17 fixed-badge distortions; it uses the REPORT resize,
-border, same-canvas shrink and titlebar matrix instead. Autosetup belongs to B2.
+border, same-canvas shrink and titlebar matrix instead. Autosetup uses the live engine.
 """
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
 from geometry.zones import Badge, regions
 from trigger_engine import TemporalGate, TriggerEngine
 from monitor_protocol import validate_start_payload
+from auto_setup import AutoSetupEngine, DEADLINE_MS
 
 
 def _hsv(image: np.ndarray, dh: int = 0, saturation: float = 1.0) -> np.ndarray:
@@ -675,9 +676,88 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     return result
 
 
+def autosetup_replay(manifest: Path, output: Path, *, overlays: bool = False,
+                     prototype_jpeg92: bool = False) -> dict[str, Any]:
+    """Feed real recordings through the production engine, with disclosed replay time."""
+    output = output.resolve()
+    if output.is_relative_to(Path(__file__).resolve().parents[2]):
+        raise ValueError("Replay output must be outside the repository")
+    output.mkdir(parents=True, exist_ok=True)
+    records = json.loads(manifest.read_text(encoding="utf-8"))["recordings"]
+    normal, spectate, timeout = {}, {}, {}
+    for record in records:
+        if record["key"] not in _RUNTIME_NORMAL + _RUNTIME_SPECTATE:
+            continue
+        frames = decode(manifest.parent / record["path"], prototype_jpeg92=prototype_jpeg92)
+        engine = AutoSetupEngine(0.0)
+        outcome = None
+        for index, frame in enumerate(frames):
+            outcome = engine.process(frame, index / 10)
+            if outcome is not None:
+                break
+        if outcome is None:
+            outcome = engine.deadline()
+        payload = outcome.result
+        cell = {"ok": payload["ok"], "code": payload.get("code"), "framesAnalyzed": engine.frames_analyzed,
+                "elapsedS": round(index / 10, 1), "confirmationFrame": None, "zoneErrors": {},
+                "maxZoneError": None, "zonesWithinTolerance": False}
+        if payload["ok"]:
+            cell["confirmationFrame"] = round(payload["timings"]["confirmMs"] / 100)
+            cell["confidence"] = payload["confidence"]
+            cell["selfCheck"] = payload["selfCheck"]
+            cell["timings"] = payload["timings"]
+            cell["regions"] = payload["regions"]
+            reference = record.get("referenceBadge")
+            expected = ({key: value.to_dict() for key, value in regions(Badge(**reference), record["gameAspect"]).items()}
+                        if reference else {})
+            for key, values in record.get("referenceRegions", {}).items():
+                expected[key] = dict(zip(("x", "y", "width", "height"), values))
+            for key, zone in expected.items():
+                cell["zoneErrors"][key] = {coordinate: round(abs(payload["regions"][key][coordinate] - value), 6)
+                                          for coordinate, value in zone.items()}
+            cell["maxZoneError"] = max((value for zone in cell["zoneErrors"].values() for value in zone.values()), default=None)
+            cell["zonesWithinTolerance"] = cell["maxZoneError"] is not None and cell["maxZoneError"] <= .005
+        if overlays and outcome.frame is not None:
+            image = outcome.frame.copy()
+            game = payload["game"]["rect"]
+            for zone in payload["regions"].values():
+                x = game["x"] + round(zone["x"] * game["width"])
+                y = game["y"] + round(zone["y"] * game["height"])
+                w, h = round(zone["width"] * game["width"]), round(zone["height"] * game["height"])
+                cv2.rectangle(image, (x, y), (x + w, y + h), (255, 255, 255), 2)
+            cv2.imwrite(str(output / (record["key"] + ".png")), image)
+        (spectate if record["kind"] == "spectate" else normal)[record["key"]] = cell
+        if record["kind"] == "cheddar":
+            # Only decode the genuine pre-VS segment: no repeated final frames.
+            stop = max(0, round(min(record["vsOnsets"]) * 10) - 2)
+            no_vs = AutoSetupEngine(0.0)
+            early = None
+            for sample, frame in enumerate(frames[:stop]):
+                early = no_vs.process(frame, sample / 10)
+                if early is not None:
+                    break
+            timed_out = early if early is not None else no_vs.process(frames[0], DEADLINE_MS / 1000)
+            timeout[record["key"]] = {"ok": timed_out.result["ok"], "code": timed_out.result.get("code"),
+                                      "deadlineMs": DEADLINE_MS, "earlyResult": early is not None,
+                                      "framesAnalyzed": no_vs.frames_analyzed}
+        del frames
+    checks = {"fiveNormalSuccess": len(normal) == 5 and all(cell["ok"] for cell in normal.values()),
+              "threeSpectateRejected": len(spectate) == 3 and all(not cell["ok"] and cell["code"] == "AUTO_SPECTATE_LIKE"
+                                                                  for cell in spectate.values()),
+              "zonesWithin005": len(normal) == 5 and all(cell["zonesWithinTolerance"] for cell in normal.values()),
+              "noVsTimeout": len(timeout) == 5 and all(not cell["ok"] and cell["code"] == "AUTO_VS_TIMEOUT"
+                                                       and not cell["earlyResult"] for cell in timeout.values())}
+    result = {"mode": "autosetup", "timeBasis": "0.1-second decoded samples; deadline advanced to 60s without fabricated frames",
+              "normal": normal, "spectate": spectate, "noVs": timeout,
+              "acceptance": {"passed": all(checks.values()), "checks": checks}}
+    (output / "results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(json.dumps({"acceptance": result["acceptance"]}, sort_keys=True))
+    return result
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("setup", "orient", "runtime"))
+    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--distortions", choices=("all", "none"), default="all")
@@ -686,7 +766,10 @@ if __name__ == "__main__":
     parser.add_argument("--titlebar-image", type=Path)
     parser.add_argument("--titlebar-rect", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     args = parser.parse_args()
-    if args.mode == "runtime":
+    if args.mode == "autosetup":
+        result = autosetup_replay(args.manifest, args.out, overlays=args.overlays,
+                                 prototype_jpeg92=args.prototype_jpeg92)
+    elif args.mode == "runtime":
         result = runtime_replay(args.manifest, args.out, overlays=args.overlays,
                                 prototype_jpeg92=args.prototype_jpeg92, titlebar_image=args.titlebar_image,
                                 titlebar_rect=args.titlebar_rect)

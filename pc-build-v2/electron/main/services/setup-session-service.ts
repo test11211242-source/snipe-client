@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto'
 
 import { z } from 'zod'
 
+import {
+  AutoSetupCodeSchema,
+  type AutoSetupCode,
+  type AnalysisProgress,
+  type AnalysisResult,
+  type DetectionPreview,
+} from '../../../shared/contracts/auto-setup'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
   CaptureConfigurationSchema,
@@ -31,6 +38,7 @@ import {
   type SetupFrame,
   type SetupSessionView,
   type SetupRuntimeOutcome,
+  type SetupNameCheck,
 } from '../../../shared/models/setup'
 import type { SetupCaptureSelector } from '../domain/capture-source'
 import {
@@ -56,6 +64,11 @@ import {
   type CaptureService,
   type LegacyTriggerAnalysis,
 } from './capture-service'
+import type { LivePreparedCapture } from './capture-preparation-service'
+
+export interface SetupNameChecker {
+  checkSetupName(png: Buffer, signal?: AbortSignal): Promise<SetupNameCheck>
+}
 
 type PixelRect = z.infer<typeof PixelRectSchema>
 type VsOrientationTrigger = z.infer<typeof VsOrientationTriggerSchema>
@@ -70,6 +83,11 @@ interface InternalSession {
   vsOrientation: VsOrientationTrigger | null
   profileTarget: SetupCaptureProfileTarget | null
   authGeneration: number
+  live?: LivePreparedCapture
+  detectionController?: AbortController
+  detectionOperation?: Promise<void>
+  detectionPreview?: DetectionPreview
+  autoConfidence?: number
   pendingSync?: {
     requests: { path: `/api/${string}`; body: unknown }[]
     captureFingerprint: string
@@ -204,6 +222,7 @@ export class SetupSessionService {
     private readonly resultRepository?: PredictionResultConfigurationRepository,
     private readonly authenticatedApi?: AuthenticatedApiClient,
     private readonly targetResolver?: CaptureTargetResolver,
+    private readonly nameChecker?: SetupNameChecker,
   ) {}
 
   configureCaptureProfileLifecycle(
@@ -230,6 +249,486 @@ export class SetupSessionService {
     )
   }
 
+  async startAuto(
+    selector: SetupCaptureSelector,
+    preference: CapturePreference,
+    live: LivePreparedCapture,
+    requestedProfile?: Omit<SetupCaptureProfileTarget, 'userId'>,
+  ): Promise<SetupSessionView> {
+    try {
+      return await this.serializedStart(async () => {
+        if (
+          this.#session !== null &&
+          !['COMMITTED', 'CANCELLED', 'FAILED'].includes(this.#session.view.state)
+        ) {
+          throw new ApplicationError('SETUP_ALREADY_ACTIVE', 'Настройка уже открыта')
+        }
+        const authGeneration = this.auth.getContextGeneration()
+        const userId = this.auth.getView().user?.id ?? null
+        const profileTarget = await this.resolveProfileTarget(userId, requestedProfile)
+        if (
+          this.auth.getContextGeneration() !== authGeneration ||
+          this.auth.getView().user?.id !== userId
+        ) {
+          throw new ApplicationError('AUTH_CONTEXT_CHANGED', 'Войдите ещё раз')
+        }
+        if (this.#session !== null) await this.stopLive(this.#session)
+        if (
+          this.auth.getContextGeneration() !== authGeneration ||
+          this.auth.getView().user?.id !== userId
+        ) {
+          throw new ApplicationError('AUTH_CONTEXT_CHANGED', 'Войдите ещё раз')
+        }
+        const session: InternalSession = {
+          selector,
+          live,
+          frame: null,
+          controller: new AbortController(),
+          commitLocked: false,
+          legacyTriggerProfile: null,
+          vsOrientation: null,
+          profileTarget,
+          authGeneration,
+          view: SetupSessionViewSchema.parse({
+            kind: 'capture',
+            sessionId: randomUUID(),
+            generation: 0,
+            state: 'DETECTING',
+            source: preference,
+            profileId: profileTarget.profileId,
+            profileName: profileTarget.profileName,
+            frameSize: null,
+            game: null,
+            regionOrigins: null,
+            triggerKind: null,
+            regions: {
+              trigger: null,
+              nickname: null,
+              topLeftEvidence: null,
+              resultTrigger: null,
+              resultData: null,
+            },
+            triggerProfile: null,
+            error: null,
+          }),
+        }
+        this.#session = session
+        this.launchDetection(session)
+        return session.view
+      })
+    } catch (error) {
+      await live.stop()
+      throw error
+    }
+  }
+
+  retryDetection(sessionId: string, generation: number): SetupSessionView {
+    const session = this.assertCommand(sessionId, generation)
+    if (
+      session.view.state !== 'DETECTING' ||
+      session.view.detection?.status !== 'failed'
+    ) {
+      throw this.detectionStateInvalid()
+    }
+    if (!session.live?.isAlive()) {
+      throw new ApplicationError('SETUP_SOURCE_LOST', 'Окно игры закрыто или свёрнуто')
+    }
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      generation: generation + 1,
+    })
+    this.launchDetection(session)
+    return session.view
+  }
+
+  getDetectionPreview(sessionId: string): DetectionPreview | null {
+    const session = this.#session
+    if (session?.view.sessionId !== sessionId) {
+      throw new ApplicationError('SETUP_SESSION_STALE', 'Настройка изменилась')
+    }
+    this.assertCommand(sessionId, session.view.generation)
+    if (
+      session.view.state !== 'DETECTING' ||
+      session.view.detection?.status !== 'running'
+    ) {
+      throw this.detectionStateInvalid()
+    }
+    return session.detectionPreview ?? null
+  }
+
+  async switchToManual(sessionId: string, generation: number): Promise<SetupSessionView> {
+    const session = this.assertCommand(sessionId, generation)
+    if (session.view.state !== 'DETECTING') {
+      throw this.detectionStateInvalid()
+    }
+    // Fence callbacks before waiting for the analyzer to relinquish the live frame.
+    session.detectionController?.abort()
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      state: 'CAPTURING',
+      generation: generation + 1,
+    })
+    const operationGeneration = session.view.generation
+    try {
+      await session.live?.cancelAnalysis()
+      await session.detectionOperation
+      if (!this.currentDetectionOperation(session, operationGeneration, 'CAPTURING')) {
+        return session.view
+      }
+      const retainedFrame = session.frame
+      const retained = retainedFrame?.game?.rect != null
+      const frame = retained
+        ? retainedFrame
+        : await session.live?.freeze(session.controller.signal)
+      if (!this.currentDetectionOperation(session, operationGeneration, 'CAPTURING')) {
+        return session.view
+      }
+      if (frame == null) {
+        throw new ApplicationError('SETUP_SOURCE_LOST', 'Окно игры закрыто или свёрнуто')
+      }
+      if (!frame.game?.rect) {
+        throw new ApplicationError(
+          'SETUP_GAME_NOT_FOUND',
+          'Не вижу игру в окне — сделайте кадр ещё раз',
+        )
+      }
+      session.frame = frame
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'SELECTING',
+        frameSize: frame.size,
+        game: {
+          viewport: this.gameViewport(frame),
+          aspect: frame.game.aspect,
+          source: retained ? 'auto' : 'freeze',
+        },
+        regionOrigins: session.view.regionOrigins ?? {
+          trigger: 'manual',
+          nickname: 'manual',
+          topLeftEvidence: 'manual',
+        },
+        error: null,
+      })
+    } catch (error) {
+      if (this.currentDetectionOperation(session, operationGeneration, 'CAPTURING')) {
+        session.view = SetupSessionViewSchema.parse({
+          ...session.view,
+          state: 'FAILED',
+          error: publicFailure(error),
+        })
+      }
+    }
+    await this.stopLive(session)
+    return session.view
+  }
+
+  private detectionStateInvalid(): ApplicationError {
+    return new ApplicationError(
+      'SETUP_DETECTION_STATE_INVALID',
+      'Настройка изменилась — откройте её ещё раз',
+    )
+  }
+
+  private launchDetection(session: InternalSession): void {
+    session.detectionController?.abort()
+    const controller = new AbortController()
+    session.detectionController = controller
+    session.frame = null
+    session.legacyTriggerProfile = null
+    session.vsOrientation = null
+    delete session.detectionPreview
+    delete session.autoConfidence
+    const startedAt = this.now()
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      state: 'DETECTING',
+      frameSize: null,
+      game: null,
+      regionOrigins: null,
+      triggerKind: null,
+      triggerProfile: null,
+      regions: {
+        ...session.view.regions,
+        trigger: null,
+        nickname: null,
+        topLeftEvidence: null,
+      },
+      error: null,
+      detection: {
+        status: 'running',
+        phase: null,
+        startedAt: startedAt.toISOString(),
+        deadlineAt: new Date(startedAt.getTime() + 60_000).toISOString(),
+        game: null,
+        failure: null,
+        frameAvailable: false,
+        nameCheck: { status: 'pending', text: null },
+      },
+    })
+    session.detectionOperation = this.runDetection(
+      session,
+      session.view.generation,
+      controller,
+    )
+  }
+
+  private currentDetectionOperation(
+    session: InternalSession,
+    generation: number,
+    state: SetupSessionView['state'] = 'DETECTING',
+  ): boolean {
+    if (this.#session !== session || session.controller.signal.aborted) return false
+    if (!this.hasCurrentAuthContext(session)) {
+      this.cancelForAuthTransition()
+      return false
+    }
+    return this.isCurrentOperation(session, generation, state)
+  }
+
+  private gameViewport(frame: CapturedFrame): NormalizedRect {
+    const rect = frame.game?.rect
+    if (!rect) {
+      throw new ApplicationError(
+        'SETUP_GAME_NOT_FOUND',
+        'Не вижу игру в окне — сделайте кадр ещё раз',
+      )
+    }
+    return NormalizedRectSchema.parse({
+      x: rect.x / frame.size.width,
+      y: rect.y / frame.size.height,
+      width: rect.width / frame.size.width,
+      height: rect.height / frame.size.height,
+    })
+  }
+
+  private async runDetection(
+    session: InternalSession,
+    generation: number,
+    controller: AbortController,
+  ): Promise<void> {
+    let timer: NodeJS.Timeout | undefined
+    const { promise: cancelled, reject: rejectCancellation } =
+      Promise.withResolvers<never>()
+    const rejectCancelled = () =>
+      rejectCancellation(
+        new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Настройка отменена'),
+      )
+    controller.signal.addEventListener('abort', rejectCancelled, { once: true })
+    const current = () =>
+      !controller.signal.aborted &&
+      session.view.detection?.status === 'running' &&
+      this.currentDetectionOperation(session, generation)
+    try {
+      const live = session.live
+      if (live === undefined) {
+        this.failDetection(session, 'AUTO_SOURCE_LOST')
+        return
+      }
+      const operation = live.analyze(
+        (progress: AnalysisProgress) => {
+          if (!current()) return
+          session.view = SetupSessionViewSchema.parse({
+            ...session.view,
+            detection: {
+              ...session.view.detection,
+              phase: progress.phase,
+            },
+          })
+        },
+        (preview) => {
+          if (current()) session.detectionPreview = preview
+        },
+        controller.signal,
+      )
+      const timeout = Promise.withResolvers<never>()
+      timer = setTimeout(() => {
+        timeout.reject(
+          new ApplicationError(
+            'AUTO_INTERNAL_TIMEOUT',
+            'Не получилось настроить автоматически',
+          ),
+        )
+        void this.stopLive(session)
+      }, 65_000)
+      const analyzed = await Promise.race([operation, cancelled, timeout.promise])
+      clearTimeout(timer)
+      if (!current()) return
+      this.retainDetectionCandidate(session, analyzed.result, analyzed.frame)
+      if (!analyzed.result.ok) {
+        this.failDetection(session, analyzed.result.code)
+        return
+      }
+      if (!session.frame?.game?.rect) {
+        this.failDetection(session, 'AUTO_INTERNAL_ERROR')
+        return
+      }
+      const trigger = NormalizedRectSchema.parse(session.view.regions.trigger)
+      const canonicalTrigger = canonicalizeNormalizedRect(trigger, session.frame.size)
+      // Orientation acceptance is authoritative. The ancillary analyzer supplies
+      // the structural and legacy profiles required by persistence/projection.
+      const analysis = await Promise.race([
+        this.capture.analyze(
+          session.frame,
+          canonicalTrigger,
+          controller.signal,
+          session.frame.game.rect,
+        ),
+        cancelled,
+      ])
+      if (!current()) return
+      session.legacyTriggerProfile = analysis.legacyProfile
+      session.vsOrientation = analyzed.result.trigger
+      session.autoConfidence = analyzed.result.confidence
+      session.view = SetupSessionViewSchema.parse({
+        ...session.view,
+        state: 'SELECTING',
+        generation: generation + 1,
+        regions: { ...session.view.regions, trigger: canonicalTrigger },
+        triggerProfile: analysis.profile,
+        triggerKind: 'vs_edge_orientation',
+        detection: { ...session.view.detection, status: 'succeeded', failure: null },
+      })
+      void this.checkDetectionName(session, controller)
+    } catch (error) {
+      if (!current()) return
+      const code = AutoSetupCodeSchema.safeParse(
+        error instanceof ApplicationError ? error.code : null,
+      )
+      this.failDetection(session, code.success ? code.data : 'AUTO_INTERNAL_ERROR')
+    } finally {
+      clearTimeout(timer)
+      controller.signal.removeEventListener('abort', rejectCancelled)
+    }
+  }
+
+  private retainDetectionCandidate(
+    session: InternalSession,
+    result: AnalysisResult,
+    frame: CapturedFrame | null,
+  ): void {
+    const game = result.game
+    session.frame = frame
+    if (frame !== null && game != null) {
+      session.frame = { ...frame, game: { ...game, frames: 8 } }
+    }
+    const retainedFrame = session.frame
+    const retainedGame = retainedFrame?.game
+    const viewport =
+      retainedFrame !== null && retainedGame?.rect
+        ? this.gameViewport(retainedFrame)
+        : null
+    const toFrame = (rect: NormalizedRect, viewport: NormalizedRect): NormalizedRect =>
+      NormalizedRectSchema.parse({
+        x: viewport.x + rect.x * viewport.width,
+        y: viewport.y + rect.y * viewport.height,
+        width: rect.width * viewport.width,
+        height: rect.height * viewport.height,
+      })
+    const regions =
+      viewport !== null && result.regions != null
+        ? {
+            trigger: toFrame(result.regions.trigger, viewport),
+            nickname: toFrame(result.regions.nickname, viewport),
+            topLeftEvidence: toFrame(result.regions.topLeftEvidence, viewport),
+          }
+        : null
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      frameSize: frame?.size ?? null,
+      game:
+        viewport === null || !retainedGame?.rect
+          ? null
+          : {
+              viewport,
+              aspect: retainedGame.aspect,
+              source: 'auto',
+            },
+      regions: { ...session.view.regions, ...regions },
+      regionOrigins:
+        regions === null
+          ? null
+          : {
+              trigger: 'auto',
+              nickname: 'auto',
+              topLeftEvidence: 'auto',
+            },
+      detection: {
+        ...session.view.detection,
+        game:
+          viewport === null || !retainedGame?.rect
+            ? null
+            : { viewport, aspect: retainedGame.aspect },
+        frameAvailable: frame !== null,
+      },
+    })
+  }
+
+  private failDetection(session: InternalSession, code: AutoSetupCode): void {
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      detection: {
+        ...session.view.detection,
+        status: 'failed',
+        failure: { code },
+        nameCheck: { status: 'skipped', text: null },
+      },
+    })
+  }
+
+  private async checkDetectionName(
+    session: InternalSession,
+    controller: AbortController,
+  ): Promise<void> {
+    let nameCheck: SetupNameCheck = { status: 'skipped', text: null }
+    try {
+      if (this.nameChecker !== undefined) {
+        const frame = session.frame
+        const nickname = session.view.regions.nickname
+        if (frame === null || nickname === null) {
+          throw new ApplicationError('SETUP_INCOMPLETE', 'Setup crop is unavailable')
+        }
+        const crop = await this.capture.crop(frame, nickname, controller.signal)
+        if (
+          controller.signal.aborted ||
+          session.controller.signal.aborted ||
+          this.#session !== session
+        )
+          return
+        if (!this.hasCurrentAuthContext(session)) {
+          this.cancelForAuthTransition()
+          return
+        }
+        nameCheck =
+          crop.byteLength === 0
+            ? { status: 'unavailable', text: null }
+            : await this.nameChecker.checkSetupName(crop, controller.signal)
+      }
+    } catch {
+      nameCheck = { status: 'unavailable', text: null }
+    }
+    if (
+      this.#session !== session ||
+      session.controller.signal.aborted ||
+      controller.signal.aborted ||
+      session.detectionController !== controller
+    )
+      return
+    if (!this.hasCurrentAuthContext(session)) {
+      this.cancelForAuthTransition()
+      return
+    }
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      detection: { ...session.view.detection, nameCheck },
+    })
+  }
+
+  private async stopLive(session: InternalSession): Promise<void> {
+    const live = session.live
+    delete session.live
+    delete session.detectionPreview
+    if (live !== undefined) await live.stop()
+  }
   private async performStart(
     selector: SetupCaptureSelector,
     preference: CapturePreference,
@@ -262,6 +761,7 @@ export class SetupSessionService {
         'The signed-in session changed while setup was starting',
       )
     }
+    if (this.#session !== null) await this.stopLive(this.#session)
     const session: InternalSession = {
       selector,
       frame: null,
@@ -282,6 +782,7 @@ export class SetupSessionService {
         frameSize: null,
         game: null,
         regionOrigins: null,
+        detection: null,
         triggerKind: null,
         regions: {
           trigger: null,
@@ -393,6 +894,7 @@ export class SetupSessionService {
     if (this.#session === null)
       throw new ApplicationError('SETUP_NOT_ACTIVE', 'No setup is active')
     if (!this.hasCurrentAuthContext(this.#session)) {
+      this.cancelForAuthTransition()
       throw new ApplicationError(
         'AUTH_CONTEXT_CHANGED',
         'The signed-in session changed while setup was open',
@@ -445,6 +947,18 @@ export class SetupSessionService {
         )
       }
       frameToGameRect(validated, session.frame.size, game.rect)
+    }
+    const previous = session.view.regions[region]
+    if (
+      (region === 'trigger' || region === 'nickname' || region === 'topLeftEvidence') &&
+      session.view.regionOrigins?.[region] === 'auto' &&
+      previous !== null &&
+      previous.x === validated.x &&
+      previous.y === validated.y &&
+      previous.width === validated.width &&
+      previous.height === validated.height
+    ) {
+      return session.view
     }
     if (region === 'trigger' || region === 'resultTrigger') {
       session.legacyTriggerProfile = null
@@ -515,11 +1029,7 @@ export class SetupSessionService {
         session.controller.signal,
         session.view.kind === 'capture' ? (session.frame.game?.rect ?? null) : null,
       )
-      if (
-        this.#session !== session ||
-        session.view.generation !== operationGeneration ||
-        session.view.state !== 'ANALYZING'
-      ) {
+      if (!this.currentDetectionOperation(session, operationGeneration, 'ANALYZING')) {
         return session.view
       }
       session.legacyTriggerProfile = analysis.legacyProfile
@@ -536,7 +1046,7 @@ export class SetupSessionService {
         error: null,
       })
     } catch (error) {
-      if (session.view.state === 'ANALYZING') {
+      if (this.currentDetectionOperation(session, operationGeneration, 'ANALYZING')) {
         session.view = SetupSessionViewSchema.parse({
           ...session.view,
           state: 'SELECTING',
@@ -634,6 +1144,7 @@ export class SetupSessionService {
       state: 'SAVING',
       error: null,
     })
+    void this.stopLive(session)
     const token = await this.auth.getAccessToken()
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
     if (
@@ -752,19 +1263,37 @@ export class SetupSessionService {
               },
               provenance: {
                 trigger: {
-                  origin: 'manual',
-                  confidence: null,
-                  analyzerVersion: triggerProfile.analyzer.version,
+                  origin: session.view.regionOrigins?.trigger ?? 'manual',
+                  confidence:
+                    session.view.regionOrigins?.trigger === 'auto'
+                      ? (session.autoConfidence ?? null)
+                      : null,
+                  analyzerVersion:
+                    session.vsOrientation?.algorithm ?? triggerProfile.analyzer.version,
                 },
-                nickname: { origin: 'manual', confidence: null, analyzerVersion: null },
+                nickname: {
+                  origin: session.view.regionOrigins?.nickname ?? 'manual',
+                  confidence:
+                    session.view.regionOrigins?.nickname === 'auto'
+                      ? (session.autoConfidence ?? null)
+                      : null,
+                  analyzerVersion:
+                    session.view.regionOrigins?.nickname === 'auto' ? 'm9-geom-1' : null,
+                },
                 topLeftEvidence: {
-                  origin: 'manual',
-                  confidence: null,
-                  analyzerVersion: null,
+                  origin: session.view.regionOrigins?.topLeftEvidence ?? 'manual',
+                  confidence:
+                    session.view.regionOrigins?.topLeftEvidence === 'auto'
+                      ? (session.autoConfidence ?? null)
+                      : null,
+                  analyzerVersion:
+                    session.view.regionOrigins?.topLeftEvidence === 'auto'
+                      ? 'm9-geom-1'
+                      : null,
                 },
                 viewport: {
                   origin: 'auto',
-                  confidence: null,
+                  confidence: session.autoConfidence ?? null,
                   analyzerVersion: 'm9-geom-1',
                 },
               },
@@ -1039,6 +1568,7 @@ export class SetupSessionService {
     restartCapture: boolean,
     recheck = false,
   ): Promise<SetupSessionView> {
+    await this.stopLive(session)
     session.frame = null
     session.legacyTriggerProfile = null
     let projection: 'synced' | 'failed' | 'not_required'
@@ -1231,6 +1761,8 @@ export class SetupSessionService {
       )
     }
     session.controller.abort()
+    session.detectionController?.abort()
+    void this.stopLive(session)
     session.frame = null
     session.legacyTriggerProfile = null
     session.view = SetupSessionViewSchema.parse({
@@ -1245,6 +1777,8 @@ export class SetupSessionService {
   cancelForAuthTransition(): void {
     const session = this.#session
     if (session !== null) {
+      session.detectionController?.abort()
+      void this.stopLive(session)
       if (
         session.pendingSync !== undefined &&
         session.view.saveOutcome?.projection === 'not_attempted'
@@ -1291,6 +1825,8 @@ export class SetupSessionService {
         'The signed-in session changed while setup was open',
       )
     }
+    session.detectionController?.abort()
+    void this.stopLive(session)
     return ['COMMITTED', 'CANCELLED', 'FAILED'].includes(session.view.state)
       ? session.view
       : this.cancel(sessionId, generation)
@@ -1321,6 +1857,7 @@ export class SetupSessionService {
       throw new ApplicationError('SETUP_GENERATION_STALE', 'Setup command is stale')
     }
     if (!this.hasCurrentAuthContext(session)) {
+      this.cancelForAuthTransition()
       throw new ApplicationError(
         'AUTH_CONTEXT_CHANGED',
         'The signed-in session changed while setup was open',

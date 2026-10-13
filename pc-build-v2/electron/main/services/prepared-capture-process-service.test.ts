@@ -47,7 +47,7 @@ class FakeChild extends EventEmitter implements PreparedCaptureChild {
     this.stdout.write(
       encodeBinaryEnvelope(
         {
-          protocolVersion: 1,
+          protocolVersion: 2,
           sessionId: this.sessionId(),
           sequence,
           type,
@@ -87,6 +87,53 @@ const game = {
     rightEdges: null,
   },
   frames: 8,
+}
+
+const badge = { cx: 0.496, cy: 0.429, width: 0.211, height: 0.147 }
+const success = {
+  ok: true,
+  frameWidth: 1280,
+  frameHeight: 720,
+  game: { rect: game.rect, aspect: game.aspect, chrome: game.chrome },
+  badge,
+  regions: {
+    trigger: { x: 0.35, y: 0.3, width: 0.3, height: 0.25 },
+    nickname: { x: 0.1, y: 0.2, width: 0.8, height: 0.1 },
+    topLeftEvidence: { x: 0.01, y: 0.05, width: 0.4, height: 0.15 },
+  },
+  trigger: {
+    kind: 'vs_edge_orientation',
+    algorithm: 'vs-orient-1',
+    badge,
+    normalizedSize: { width: 96, height: 96 },
+    cropMargin: 0.08,
+    padding: 4,
+    maxShift: 3,
+    threshold: 0.5,
+    angleQ8Base64: Buffer.alloc(96 * 96).toString('base64'),
+    weightQ8Base64: Buffer.alloc(96 * 96, 255).toString('base64'),
+    templateHash64: 'a'.repeat(16),
+    maskAreaRatio: 0.6,
+  },
+  confidence: 0.9,
+  selfCheck: { minVs: 0.8, maxBefore: 0.1, frames: 12 },
+  timings: { onsetMs: 2500, confirmMs: 2700 },
+}
+
+async function analyzingService() {
+  const child = new FakeChild()
+  const treeKill = vi.fn().mockResolvedValue(undefined)
+  const service = new PreparedCaptureProcessService(
+    'python.exe',
+    'prepared_capture.py',
+    { warn: vi.fn() },
+    vi.fn(() => child),
+    treeKill,
+  )
+  const starting = service.start({ kind: 'window', windowHwnd: '123' })
+  child.event(1, 'ready', { frameSequence: 1, width: 1280, height: 720 })
+  const { sessionId } = await starting
+  return { child, service, sessionId, treeKill }
 }
 
 describe('PreparedCaptureProcessService', () => {
@@ -133,7 +180,7 @@ describe('PreparedCaptureProcessService', () => {
     )
     expect(child.commands[0]?.metadata).toMatchObject({
       type: 'start',
-      protocolVersion: 1,
+      protocolVersion: 2,
       selector: { kind: 'window', windowHwnd: '123' },
     })
     child.event(1, 'ready', {
@@ -240,6 +287,8 @@ describe('PreparedCaptureProcessService', () => {
     ['game outside frame', { game: { ...game, rect: { ...game.rect, x: 1000 } } }],
     ['game below frame', { game: { ...game, rect: { ...game.rect, y: 100 } } }],
     ['aspect mismatch', { game: { ...game, aspect: game.aspect + 0.01 } }],
+    ['PNG byte-length mismatch', { byteLength: 25 }],
+    ['PNG dimensions mismatch', { width: 1279 }],
   ])('rejects frozen %s', async (_name, fields) => {
     const child = new FakeChild()
     const service = new PreparedCaptureProcessService(
@@ -323,5 +372,301 @@ describe('PreparedCaptureProcessService', () => {
     )
     await expect(freezing).resolves.toMatchObject({ game: largeGame })
     child.emit('close', 0, null)
+  })
+
+  it('streams strict progress and bounded JPEG preview, preserving the confirmation frame for retry and freeze', async () => {
+    const { child, service, sessionId } = await analyzingService()
+    const onProgress = vi.fn()
+    const onPreview = vi.fn()
+    const analysis = service.analyze(sessionId, onProgress, onPreview)
+    expect(child.commands.at(-1)?.metadata).toEqual({
+      protocolVersion: 2,
+      sessionId,
+      type: 'analyze',
+      deadlineMs: 60_000,
+      targetFps: 10,
+    })
+    const progress = {
+      phase: 'waiting_vs',
+      elapsedMs: 1000,
+      game: { rect: game.rect, aspect: game.aspect },
+      framesAnalyzed: 10,
+    }
+    child.event(2, 'analysis_progress', progress)
+    // Minimal bounded JPEG header with a baseline SOF carrying the real dimensions.
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 100, 0, 200, 1, 0xff, 0xd9,
+    ])
+    child.event(
+      3,
+      'analysis_preview',
+      {
+        width: 200,
+        height: 100,
+        mimeType: 'image/jpeg',
+        byteLength: jpeg.byteLength,
+      },
+      jpeg,
+    )
+    expect(onProgress).toHaveBeenCalledWith(progress)
+    expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ bytes: jpeg }))
+    const image = png(1280, 720)
+    child.event(4, 'analysis_result', success, image)
+    await expect(analysis).resolves.toEqual({
+      result: success,
+      frame: { size: { width: 1280, height: 720 }, png: image, game },
+    })
+    expect(service.isAlive(sessionId)).toBe(true)
+    const retry = service.analyze(sessionId, vi.fn(), vi.fn())
+    child.event(5, 'analysis_result', { ok: false, code: 'AUTO_VS_TIMEOUT' })
+    await expect(retry).resolves.toEqual({
+      result: { ok: false, code: 'AUTO_VS_TIMEOUT' },
+      frame: null,
+    })
+    const freeze = service.freeze(sessionId)
+    child.event(
+      6,
+      'frozen',
+      {
+        frameSequence: 99,
+        width: 1280,
+        height: 720,
+        mimeType: 'image/png',
+        byteLength: image.byteLength,
+        game,
+      },
+      image,
+    )
+    await expect(freeze).resolves.toMatchObject({ png: image })
+    child.emit('close', 0, null)
+  })
+
+  it('fences cancellation and retry using the joined-worker acknowledgement', async () => {
+    const { child, service, sessionId } = await analyzingService()
+    const first = service.analyze(sessionId, vi.fn(), vi.fn())
+    const rejected = expect(first).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_CANCELLED',
+    })
+    const cancelling = service.cancelAnalysis(sessionId)
+    expect(child.commands.at(-1)?.metadata).toMatchObject({ type: 'analyze_cancel' })
+    const onProgress = vi.fn()
+    const retry = service.analyze(sessionId, onProgress, vi.fn())
+    child.event(2, 'analysis_result', success, png(1280, 720))
+    expect(child.commands.at(-1)?.metadata).toMatchObject({ type: 'analyze_cancel' })
+    child.event(3, 'analysis_cancelled', {})
+    await cancelling
+    await rejected
+    expect(child.commands.at(-1)?.metadata).toMatchObject({ type: 'analyze' })
+    expect(onProgress).not.toHaveBeenCalled()
+    child.event(4, 'analysis_result', { ok: false, code: 'AUTO_GAME_NOT_FOUND' })
+    await expect(retry).resolves.toMatchObject({
+      result: { code: 'AUTO_GAME_NOT_FOUND' },
+    })
+    const stop = service.stop(sessionId)
+    child.emit('close', 0, null)
+    await stop
+  })
+
+  it('kills analysis only at deadline plus five seconds and resolves the internal timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const { child, service, sessionId, treeKill } = await analyzingService()
+      const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+      await vi.advanceTimersByTimeAsync(64_999)
+      expect(treeKill).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(analysis).resolves.toMatchObject({
+        result: { ok: false, code: 'AUTO_INTERNAL_TIMEOUT' },
+        frame: null,
+      })
+      expect(treeKill).toHaveBeenCalledWith(child.pid)
+      expect(service.isAlive(sessionId)).toBe(false)
+      child.emit('close', null, 'SIGKILL')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['fatal', 'close', 'error'] as const)(
+    'maps %s during analysis without hanging',
+    async (event) => {
+      const { child, service, sessionId } = await analyzingService()
+      const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+      if (event === 'fatal')
+        child.event(2, 'fatal', { code: 'CAPTURE_SOURCE_LOST', message: 'Source gone' })
+      if (event === 'close') child.emit('close', 1, null)
+      if (event === 'error') child.emit('error', new Error('Process failed'))
+      await expect(analysis).resolves.toMatchObject({
+        result: { code: event === 'error' ? 'AUTO_INTERNAL_ERROR' : 'AUTO_SOURCE_LOST' },
+      })
+      child.emit('close', 1, null)
+    },
+  )
+
+  it.each<[string, unknown, Buffer]>([
+    ['unknown field', { ...success, extra: true }, png(1280, 720)],
+    ['missing PNG', success, Buffer.alloc(0)],
+    ['PNG width mismatch', success, png(1279, 720)],
+    [
+      'oversized frame',
+      { ...success, frameWidth: 16384, frameHeight: 16384 },
+      png(16384, 16384),
+    ],
+    [
+      'game exceeds frame',
+      { ...success, game: { ...success.game, rect: { ...game.rect, x: 1000 } } },
+      png(1280, 720),
+    ],
+    ['badge mismatch', { ...success, badge: { ...badge, cx: 0.5 } }, png(1280, 720)],
+    ['failure code', { ok: false, code: 'AUTO_UNKNOWN' }, Buffer.alloc(0)],
+    [
+      'unpaired dimensions',
+      { ok: false, code: 'AUTO_VS_TIMEOUT', frameWidth: 1280 },
+      Buffer.alloc(0),
+    ],
+  ])('rejects malformed analysis result: %s', async (_name, payload, binary) => {
+    const { child, service, sessionId, treeKill } = await analyzingService()
+    const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+    child.event(2, 'analysis_result', payload, binary)
+    await expect(analysis).resolves.toMatchObject({
+      result: { code: 'AUTO_INTERNAL_ERROR' },
+      frame: null,
+    })
+    expect(treeKill).toHaveBeenCalledOnce()
+    child.emit('close', 1, null)
+  })
+
+  it.each<[unknown, Buffer]>([
+    [{ width: 641, height: 1, mimeType: 'image/jpeg', byteLength: 14 }, Buffer.alloc(14)],
+    [
+      { width: 200, height: 100, mimeType: 'image/jpeg', byteLength: 13 },
+      Buffer.alloc(14),
+    ],
+    [
+      { width: 200, height: 100, mimeType: 'image/jpeg', byteLength: 14, bytes: [] },
+      Buffer.alloc(14),
+    ],
+    [
+      { width: 200, height: 100, mimeType: 'image/jpeg', byteLength: 14 },
+      Buffer.alloc(14),
+    ],
+  ])('rejects malformed JPEG preview', async (payload, binary) => {
+    const { child, service, sessionId } = await analyzingService()
+    const onPreview = vi.fn()
+    const analysis = service.analyze(sessionId, vi.fn(), onPreview)
+    child.event(2, 'analysis_preview', payload, binary)
+    await expect(analysis).resolves.toMatchObject({
+      result: { code: 'AUTO_INTERNAL_ERROR' },
+    })
+    expect(onPreview).not.toHaveBeenCalled()
+    child.emit('close', 1, null)
+  })
+
+  it('rejects progress moving backwards and stale process operations', async () => {
+    const { child, service, sessionId } = await analyzingService()
+    expect(service.isAlive('stale')).toBe(false)
+    await service.stop('stale')
+    expect(child.commands).toHaveLength(1)
+    const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+    child.event(2, 'analysis_progress', {
+      phase: 'locating_game',
+      elapsedMs: 500,
+      game: null,
+      framesAnalyzed: 5,
+    })
+    child.event(3, 'analysis_progress', {
+      phase: 'locating_game',
+      elapsedMs: 499,
+      game: null,
+      framesAnalyzed: 5,
+    })
+    await expect(analysis).resolves.toMatchObject({
+      result: { code: 'AUTO_INTERNAL_ERROR' },
+    })
+    child.emit('close', 1, null)
+  })
+
+  it('kills a stuck cancellation fence instead of allowing a retry to consume stale output', async () => {
+    vi.useFakeTimers()
+    try {
+      const { child, service, sessionId, treeKill } = await analyzingService()
+      const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+      const cancelled = expect(analysis).rejects.toMatchObject({
+        code: 'CAPTURE_PREPARATION_CANCELLED',
+      })
+      const cancellation = service.cancelAnalysis(sessionId)
+      const rejected = expect(cancellation).rejects.toMatchObject({
+        code: 'AUTO_INTERNAL_TIMEOUT',
+      })
+      await vi.advanceTimersByTimeAsync(5000)
+      await cancelled
+      await rejected
+      expect(treeKill).toHaveBeenCalledOnce()
+      expect(service.isAlive(sessionId)).toBe(false)
+      child.emit('close', null, 'SIGKILL')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels via AbortSignal and completes the acknowledgement before freeze', async () => {
+    const { child, service, sessionId } = await analyzingService()
+    const controller = new AbortController()
+    const analysis = service.analyze(sessionId, vi.fn(), vi.fn(), controller.signal)
+    const rejected = expect(analysis).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_CANCELLED',
+    })
+    controller.abort()
+    const cancellation = service.cancelAnalysis(sessionId)
+    child.event(2, 'analysis_cancelled', {})
+    await cancellation
+    await rejected
+    const frame = png(1280, 720)
+    const frozen = service.freeze(sessionId)
+    child.event(
+      3,
+      'frozen',
+      {
+        frameSequence: 5,
+        width: 1280,
+        height: 720,
+        mimeType: 'image/png',
+        byteLength: frame.byteLength,
+        game,
+      },
+      frame,
+    )
+    await expect(frozen).resolves.toMatchObject({ png: frame })
+    child.emit('close', 0, null)
+  })
+
+  it('marks a wire source-loss result dead even when the worker has not closed yet', async () => {
+    const { child, service, sessionId, treeKill } = await analyzingService()
+    const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+    child.event(2, 'analysis_result', { ok: false, code: 'AUTO_SOURCE_LOST' })
+    await expect(analysis).resolves.toMatchObject({
+      result: { code: 'AUTO_SOURCE_LOST' },
+    })
+    expect(service.isAlive(sessionId)).toBe(false)
+    expect(treeKill).toHaveBeenCalledOnce()
+    child.emit('close', 1, null)
+  })
+
+  it('rejects protocol-1 prepared events rather than accepting mixed subprocess versions', async () => {
+    const { child, service, sessionId } = await analyzingService()
+    const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+    child.stdout.write(
+      encodeBinaryEnvelope({
+        protocolVersion: 1,
+        sessionId,
+        sequence: 2,
+        type: 'analysis_result',
+        payload: { ok: false, code: 'AUTO_VS_TIMEOUT' },
+      }),
+    )
+    await expect(analysis).resolves.toMatchObject({
+      result: { code: 'AUTO_INTERNAL_ERROR' },
+    })
+    child.emit('close', 1, null)
   })
 })

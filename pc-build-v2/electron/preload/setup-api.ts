@@ -2,6 +2,8 @@ import { ipcRenderer } from 'electron'
 import {
   CaptureProfileCommandSchema,
   EmptyCapturePayloadSchema,
+  DetectionPreviewPayloadSchema,
+  DetectionPreviewResultSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
@@ -51,6 +53,15 @@ export const setupApi: CrToolsSetupApi = Object.freeze<CrToolsSetupApi>({
       ),
     ),
   retrySync: command(SETUP_IPC_CHANNELS.retrySync),
+  retryDetection: command(SETUP_IPC_CHANNELS.retryDetection),
+  switchToManual: command(SETUP_IPC_CHANNELS.switchToManual),
+  getDetectionPreview: async (raw) =>
+    DetectionPreviewResultSchema.parse(
+      await ipcRenderer.invoke(
+        SETUP_IPC_CHANNELS.getDetectionPreview,
+        DetectionPreviewPayloadSchema.parse(raw),
+      ),
+    ),
   analyzeTrigger: command(SETUP_IPC_CHANNELS.analyzeTrigger),
   review: command(SETUP_IPC_CHANNELS.review),
   commit: command(SETUP_IPC_CHANNELS.commit),

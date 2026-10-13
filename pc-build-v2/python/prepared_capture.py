@@ -12,6 +12,7 @@ from capture.backend import CaptureBackendError
 from capture.monitor_backend import WindowsMonitorBackend
 from protocol.framing import ProtocolError, read_stream_envelope, write_envelope
 from geometry.game_rect import detect, pixel_rect
+from auto_setup import DEADLINE_MS, TARGET_FPS, LiveAnalysis, encode_png
 
 MAX_PIXELS = 20_000_000
 MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -53,6 +54,11 @@ class LatestFrameStore:
                 self._last_sample = now
             self._condition.notify_all()
             return first, self._sequence, width, height
+
+    def snapshot(self) -> tuple[Any, int, bool]:
+        """Published frames are immutable; analysis holds references without copying."""
+        with self._lock:
+            return self._latest, self._sequence, self._source_closed
 
     def close_source(self) -> None:
         with self._condition:
@@ -103,14 +109,34 @@ class LatestFrameStore:
 
 
 def validate_command(metadata: dict[str, Any], expected_type: str | None = None) -> tuple[str, str]:
-    if set(metadata) not in ({"protocolVersion", "sessionId", "type", "selector"}, {"protocolVersion", "sessionId", "type"}):
+    base = {"protocolVersion", "sessionId", "type"}
+    command_type = metadata.get("type")
+    fields = {"start": base | {"selector"}, "analyze": base | {"deadlineMs", "targetFps"},
+              "freeze": base, "stop": base, "analyze_cancel": base}
+    if not isinstance(command_type, str) or command_type not in fields or set(metadata) != fields[command_type]:
         raise ProtocolError("prepared capture command fields are invalid")
-    if metadata.get("protocolVersion") != 1:
+    if type(metadata.get("protocolVersion")) is not int or metadata["protocolVersion"] != 2:
         raise ProtocolError("prepared capture protocol version is invalid")
     session_id = metadata.get("sessionId")
-    command_type = metadata.get("type")
-    if not isinstance(session_id, str) or not isinstance(command_type, str):
+    if not isinstance(session_id, str) or not 1 <= len(session_id) <= 128:
         raise ProtocolError("prepared capture command identity is invalid")
+    if command_type == "analyze" and (type(metadata["deadlineMs"]) is not int or metadata["deadlineMs"] != DEADLINE_MS
+            or type(metadata["targetFps"]) is not int or metadata["targetFps"] != TARGET_FPS):
+        raise ProtocolError("prepared capture analysis limits are invalid")
+    if command_type == "start":
+        selector = metadata["selector"]
+        if not isinstance(selector, dict):
+            raise ProtocolError("prepared capture selector is invalid")
+        if selector.get("kind") == "window" and set(selector) == {"kind", "windowHwnd"}:
+            from capture.backend import parse_window_hwnd
+            parse_window_hwnd(selector["windowHwnd"])
+        elif selector.get("kind") == "display" and set(selector) == {"kind", "displayDeviceName", "electronDisplayId"}:
+            device, display_id = selector["displayDeviceName"], selector["electronDisplayId"]
+            if (not isinstance(device, str) or not device.startswith(r"\\.\DISPLAY") or len(device) > 32
+                    or not isinstance(display_id, str) or not 1 <= len(display_id) <= 128):
+                raise ProtocolError("prepared capture display selector is invalid")
+        else:
+            raise ProtocolError("prepared capture selector is invalid")
     if expected_type is not None and command_type != expected_type:
         raise ProtocolError("prepared capture command order is invalid")
     return session_id, command_type
@@ -121,6 +147,7 @@ def main() -> None:
     backend: WindowsMonitorBackend | None = None
     session_id = "unknown"
     event_sequence = 0
+    analysis: LiveAnalysis | None = None
 
     def emit(event_type: str, payload: dict[str, Any], binary: bytes = b"") -> None:
         nonlocal event_sequence
@@ -129,7 +156,7 @@ def main() -> None:
             write_envelope(
                 sys.stdout.buffer,
                 {
-                    "protocolVersion": 1,
+                    "protocolVersion": 2,
                     "sessionId": session_id,
                     "sequence": event_sequence,
                     "type": event_type,
@@ -173,54 +200,58 @@ def main() -> None:
                 return
             source_closed.set()
             store.close_source()
-            emit(
-                "fatal",
-                {"code": "CAPTURE_SOURCE_STALE", "message": "Capture source closed"},
-            )
+            if analysis is None or (analysis.thread.ident is not None and not analysis.thread.is_alive()):
+                emit(
+                    "fatal",
+                    {"code": "CAPTURE_SOURCE_STALE", "message": "Capture source closed"},
+                )
 
         backend = WindowsMonitorBackend(selector)
         backend.start(on_frame, on_closed)
-        command = read_stream_envelope(sys.stdin.buffer, max_binary_bytes=0)
-        if command.binary:
-            raise ProtocolError("prepared capture command must not contain binary data")
-        command_session_id, command_type = validate_command(command.metadata)
-        if command_session_id != session_id:
-            raise ProtocolError("prepared capture session is stale")
-
-        if command_type == "stop":
+        while True:
+            command = read_stream_envelope(sys.stdin.buffer, max_binary_bytes=0)
+            if command.binary:
+                raise ProtocolError("prepared capture command must not contain binary data")
+            command_session_id, command_type = validate_command(command.metadata)
+            if command_session_id != session_id:
+                raise ProtocolError("prepared capture session is stale")
+            if command_type == "analyze":
+                if analysis is not None and analysis.thread.is_alive():
+                    raise ProtocolError("prepared capture analysis is already running")
+                analysis = LiveAnalysis(store, emit)
+                analysis.start()
+                continue
+            if command_type == "analyze_cancel":
+                if analysis is not None:
+                    analysis.cancel()
+                    analysis = None
+                emit("analysis_cancelled", {})
+                continue
+            if analysis is not None:
+                analysis.cancel()
+                analysis = None
+            if command_type == "stop":
+                stopping.set()
+                backend.stop()
+                backend = None
+                emit("stopped", {})
+                return
+            if command_type != "freeze" or source_closed.is_set():
+                raise ProtocolError("prepared capture command order is invalid")
+            store.wait_for_history()
+            frame, frame_sequence = store.freeze()
             stopping.set()
             backend.stop()
-            emit("stopped", {})
+            backend = None
+            png_bytes = encode_png(frame)
+            height, width = frame.shape[:2]
+            emit(
+                "frozen",
+                {"frameSequence": frame_sequence, "width": int(width), "height": int(height),
+                 "mimeType": "image/png", "byteLength": len(png_bytes), "game": store.game(frame)},
+                png_bytes,
+            )
             return
-        if command_type != "freeze" or source_closed.is_set():
-            raise ProtocolError("prepared capture command order is invalid")
-
-        store.wait_for_history()
-        frame, frame_sequence = store.freeze()
-        stopping.set()
-        backend.stop()
-        backend = None
-        import cv2
-
-        encoded, png = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-        if not encoded:
-            raise CaptureBackendError("PNG_ENCODE_FAILED", "Could not encode capture")
-        png_bytes = png.tobytes()
-        height, width = frame.shape[:2]
-        if len(png_bytes) == 0 or len(png_bytes) > MAX_PNG_BYTES:
-            raise CaptureBackendError("PNG_INVALID", "Capture PNG is invalid or too large")
-        emit(
-            "frozen",
-            {
-                "frameSequence": frame_sequence,
-                "width": int(width),
-                "height": int(height),
-                "mimeType": "image/png",
-                "byteLength": len(png_bytes),
-                "game": store.game(frame),
-            },
-            png_bytes,
-        )
     except (ProtocolError, CaptureBackendError, Exception) as error:
         code = getattr(error, "code", "PREPARED_CAPTURE_FAILED")
         try:
@@ -228,6 +259,8 @@ def main() -> None:
         except Exception:
             pass
     finally:
+        if analysis is not None:
+            analysis.cancel()
         if backend is not None:
             try:
                 backend.stop()

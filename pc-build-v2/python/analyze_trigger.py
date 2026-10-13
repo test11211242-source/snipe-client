@@ -383,17 +383,45 @@ def _classify_vs(image: np.ndarray, rect: tuple[int, int, int, int],
 
 
 
+def crop_region(png: bytes, outer_rect: Any) -> tuple[bytes, int, int]:
+    """Losslessly crop the provided confirmation PNG entirely in memory."""
+    if not png.startswith(b"\x89PNG\r\n\x1a\n") or len(png) > MAX_PNG_BYTES:
+        raise ProtocolError("crop input must be a bounded PNG")
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if image is None or image.ndim not in (2, 3):
+        raise ProtocolError("PNG cannot be decoded")
+    height, width = image.shape[:2]
+    if width <= 0 or height <= 0 or width * height > MAX_PIXELS:
+        raise ProtocolError("image dimensions exceed limits")
+    x, y, rect_width, rect_height = validate_pixel_rect(outer_rect, width, height)
+    ok, encoded = cv2.imencode(".png", image[y:y + rect_height, x:x + rect_width],
+                               [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    if not ok or not 0 < encoded.nbytes <= MAX_PNG_BYTES:
+        raise ProtocolError("crop PNG cannot be encoded within limits")
+    return encoded.tobytes(), rect_width, rect_height
+
+
 def main() -> None:
     request_id = os.environ.get("CR_TOOLS_REQUEST_ID", "unknown")
     try:
         envelope = read_envelope(sys.stdin.buffer, max_binary_bytes=MAX_PNG_BYTES)
         metadata = envelope.metadata
-        if set(metadata) != {"protocolVersion", "requestId", "operation", "outerRect", "gameRect"}:
+        operation = metadata.get("operation")
+        fields = {"protocolVersion", "requestId", "operation", "outerRect"}
+        if operation == "analyze_trigger":
+            fields.add("gameRect")
+        if operation not in ("analyze_trigger", "crop_region") or set(metadata) != fields:
             raise ProtocolError("analyzer request fields are invalid")
-        if metadata["protocolVersion"] != 2 or metadata["operation"] != "analyze_trigger":
-            raise ProtocolError("analyzer request version or operation is invalid")
+        if type(metadata["protocolVersion"]) is not int or metadata["protocolVersion"] != 2:
+            raise ProtocolError("analyzer request version is invalid")
         if metadata["requestId"] != request_id:
             raise ProtocolError("analyzer request id is invalid")
+        if operation == "crop_region":
+            png, width, height = crop_region(envelope.binary, metadata["outerRect"])
+            write_envelope(sys.stdout.buffer,
+                           {"protocolVersion": 2, "requestId": request_id, "ok": True,
+                            "width": width, "height": height, "mimeType": "image/png", "byteLength": len(png)}, png)
+            return
         profile, legacy_profile = analyze_result(
             envelope.binary, metadata["outerRect"]
         )

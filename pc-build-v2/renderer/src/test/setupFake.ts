@@ -52,6 +52,7 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
     profileId: PROFILE_ID,
     profileName: 'Ноутбук',
     frameSize: FRAME,
+    detection: null,
     game: null,
     triggerKind: null,
     regionOrigins: null,
@@ -239,6 +240,9 @@ export function createSetupFake(options: SetupFakeOptions = {}): SetupFake {
     }),
     finish: vi.fn(),
     startResult: vi.fn(),
+    retryDetection: vi.fn(),
+    switchToManual: vi.fn(),
+    getDetectionPreview: vi.fn(),
   } satisfies Record<keyof CrToolsSetupApi, AsyncMock>
 
   return {

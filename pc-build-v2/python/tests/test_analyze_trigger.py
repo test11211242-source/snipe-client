@@ -162,3 +162,63 @@ def test_optional_vs_classification_does_not_hide_protocol_errors() -> None:
     image, outer = coarse_selection()
     with pytest.raises(ProtocolError):
         analyze_vs(encode(image), outer, {"x": -1, "y": 0, "width": 100, "height": 100})
+
+
+def test_crop_region_losslessly_preserves_selected_confirmation_pixels():
+    from analyze_trigger import crop_region
+    image = np.random.default_rng(19).integers(0, 256, (80, 120, 4), dtype=np.uint8)
+    png, width, height = crop_region(encode(image), {"x": 13, "y": 21, "width": 57, "height": 32})
+    crop = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+    assert (width, height) == (57, 32)
+    assert np.array_equal(crop, image[21:53, 13:70])
+
+
+@pytest.mark.parametrize("rect", [
+    {"x": -1, "y": 0, "width": 5, "height": 5},
+    {"x": 0, "y": 0, "width": 321, "height": 1},
+    {"x": 0, "y": 0, "width": 0, "height": 5},
+    {"x": 0, "y": 0, "width": True, "height": 5},
+    {"x": 0, "y": 0, "width": 5, "height": 5, "extra": 1},
+])
+def test_crop_region_rejects_invalid_rectangles(rect):
+    from analyze_trigger import crop_region
+    image, _ = coarse_selection()
+    with pytest.raises(ProtocolError):
+        crop_region(encode(image), rect)
+
+
+def test_crop_region_rejects_non_png_input():
+    from analyze_trigger import crop_region
+    image, outer = coarse_selection()
+    ok, jpeg = cv2.imencode(".jpg", image)
+    assert ok
+    with pytest.raises(ProtocolError):
+        crop_region(jpeg.tobytes(), outer)
+
+
+@pytest.mark.parametrize("changes", [{}, {"gameRect": None}, {"protocolVersion": 1}, {"unexpected": True}])
+def test_crop_region_protocol_is_strict_and_returns_png(monkeypatch, changes):
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+    image, outer = coarse_selection()
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    metadata = {"protocolVersion": 2, "requestId": "crop", "operation": "crop_region", "outerRect": outer}
+    write_envelope(incoming, {**metadata, **changes}, encode(image))
+    incoming.seek(0)
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "crop")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=analyze_trigger.MAX_PNG_BYTES)
+    if changes:
+        assert not response.metadata["ok"]
+        assert response.metadata["error"]["code"] == "ANALYSIS_FAILED"
+        assert not response.binary
+    else:
+        assert response.metadata == {"protocolVersion": 2, "requestId": "crop", "ok": True,
+                                     "width": 240, "height": 180, "mimeType": "image/png",
+                                     "byteLength": len(response.binary)}
+        crop = cv2.imdecode(np.frombuffer(response.binary, np.uint8), cv2.IMREAD_UNCHANGED)
+        assert np.array_equal(crop, image[30:210, 40:280])

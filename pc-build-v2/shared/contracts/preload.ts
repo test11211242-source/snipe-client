@@ -13,11 +13,13 @@ import type { AuthView } from '../models/auth'
 import type { RealtimeStatus } from '../models/network'
 import type { LoginPayload, RegisterPayload } from './auth-ipc'
 import type { AppSettingsView, AppSettingsUpdate, HelloResult } from './app'
+import type { DetectionPreview } from './auto-setup'
 import type {
   CapturePreparationResponse,
   CaptureProfileCommand,
   CaptureProfileNamePayload,
   CaptureProfileCommandResult,
+  DetectionPreviewPayload,
   PreviewPayload,
   RebindCaptureProfilePayload,
   SetRegionPayload,
@@ -121,6 +123,11 @@ export interface CrToolsSetupApi {
   startResult: (payload: CaptureProfileCommand) => Promise<SetupSessionView>
   getSession: () => Promise<SetupSessionView>
   getFrame: (payload: SetupCommand) => Promise<SetupFrame>
+  retryDetection: (payload: SetupCommand) => Promise<SetupSessionView>
+  switchToManual: (payload: SetupCommand) => Promise<SetupSessionView>
+  getDetectionPreview: (
+    payload: DetectionPreviewPayload,
+  ) => Promise<DetectionPreview | null>
   setRegion: (payload: SetRegionPayload) => Promise<SetupSessionView>
   finish: (payload: SetRegionPayload) => Promise<SetupSessionView>
   analyzeTrigger: (payload: SetupCommand) => Promise<SetupSessionView>

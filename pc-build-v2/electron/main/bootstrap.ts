@@ -186,6 +186,7 @@ const targetResolver = new CaptureTargetResolver(
   captureConfigurations,
   captureSources,
 )
+const ocr = new OcrApiClient(globalThis.fetch, auth, server, logger)
 const setup = new SetupSessionService(
   capture,
   captureConfigurations,
@@ -195,6 +196,7 @@ const setup = new SetupSessionService(
   predictionResults,
   authenticatedApi,
   targetResolver,
+  ocr,
 )
 const monitorProcess = new MonitorProcessService(
   pythonExecutable,
@@ -205,7 +207,6 @@ const monitorProcess = new MonitorProcessService(
   undefined,
   verifyRuntime,
 )
-const ocr = new OcrApiClient(globalThis.fetch, auth, server, logger)
 const monitor = new MonitorSupervisor(
   auth,
   captureConfigurations,

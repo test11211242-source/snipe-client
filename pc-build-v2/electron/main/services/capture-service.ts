@@ -55,6 +55,28 @@ export interface TriggerAnalysis {
   vsBadge: z.infer<typeof VsBadgeSchema> | null
 }
 
+const CropResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      protocolVersion: z.literal(2),
+      requestId: z.uuid(),
+      ok: z.literal(true),
+      width: PixelSizeSchema.shape.width,
+      height: PixelSizeSchema.shape.height,
+      mimeType: z.literal('image/png'),
+      byteLength: z.number().int().positive().max(MAX_PNG_BYTES),
+    })
+    .strict(),
+  z
+    .object({
+      protocolVersion: z.literal(2),
+      requestId: z.string().min(1),
+      ok: z.literal(false),
+      error: PublicErrorSchema,
+    })
+    .strict(),
+])
+
 export const PreparedCaptureGameSchema = z.union([
   z
     .object({
@@ -279,5 +301,49 @@ export class CaptureService {
       vsOrientation: metadata.vsOrientation,
       vsBadge: metadata.vsBadge,
     }
+  }
+
+  async crop(
+    frame: CapturedFrame,
+    rect: NormalizedRect,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    const requestId = randomUUID()
+    const pixels = normalizedToPixelRect(rect, frame.size)
+    const result = await this.worker.execute({
+      requestId,
+      executable: this.pythonExecutable,
+      scriptPath: this.analyzeScriptPath,
+      input: encodeBinaryEnvelope(
+        {
+          protocolVersion: 2,
+          requestId,
+          operation: 'crop_region',
+          outerRect: pixels,
+        },
+        frame.png,
+      ),
+      timeoutMs: 12_000,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const envelope = decodeBinaryEnvelope(result.stdout, {
+      maxMetadataBytes: 128 * 1024,
+      maxBinaryBytes: MAX_PNG_BYTES,
+    })
+    const metadata = CropResultSchema.parse(envelope.metadata)
+    if (metadata.requestId !== result.requestId) {
+      throw new ApplicationError('WORKER_RESULT_STALE', 'Crop result is stale')
+    }
+    if (!metadata.ok) {
+      throw new ApplicationError(metadata.error.code, metadata.error.message)
+    }
+    if (
+      metadata.byteLength !== envelope.binary.byteLength ||
+      metadata.width !== pixels.width ||
+      metadata.height !== pixels.height
+    ) {
+      throw new ApplicationError('CAPTURE_INVALID', 'Crop dimensions are invalid')
+    }
+    return envelope.binary
   }
 }

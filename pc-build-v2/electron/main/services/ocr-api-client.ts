@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import { z } from 'zod'
+import type { SetupNameCheck } from '../../../shared/models/setup'
 import {
   MonitorResultSchema,
   type DeckMode,
@@ -12,6 +14,14 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_IMAGE_PIXELS = 20_000_000
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const OCR_TIMEOUT_MS = 150_000
+const SETUP_NAME_TIMEOUT_MS = 10_000
+const SetupNameResponseSchema = z
+  .object({
+    schema: z.literal(1),
+    text: z.string().max(1000).nullable(),
+    isTrainer: z.boolean().nullable(),
+  })
+  .strict()
 
 export interface OcrLogger {
   debug: (message: string, context?: unknown) => void
@@ -209,6 +219,83 @@ export class OcrApiClient {
     private readonly config: ServerConfig,
     private readonly logger: OcrLogger,
   ) {}
+
+  async checkSetupName(image: Buffer, signal?: AbortSignal): Promise<SetupNameCheck> {
+    const unavailable: SetupNameCheck = { status: 'unavailable', text: null }
+    const dimensions = pngDimensions(image)
+    if (
+      dimensions === null ||
+      dimensions.width <= 0 ||
+      dimensions.height <= 0 ||
+      dimensions.width > 8192 ||
+      dimensions.height > 8192 ||
+      dimensions.width * dimensions.height > MAX_IMAGE_PIXELS ||
+      image.byteLength > MAX_IMAGE_BYTES ||
+      signal?.aborted
+    ) {
+      return unavailable
+    }
+    const controller = new AbortController()
+    const cancel = (): void => controller.abort()
+    signal?.addEventListener('abort', cancel, { once: true })
+    const timer = setTimeout(cancel, SETUP_NAME_TIMEOUT_MS)
+    const { promise: aborted, resolve: resolveAborted } =
+      Promise.withResolvers<SetupNameCheck>()
+    const abortListener = (): void => resolveAborted(unavailable)
+    controller.signal.addEventListener('abort', abortListener, { once: true })
+    const request = async (): Promise<SetupNameCheck> => {
+      try {
+        const token = await this.auth.getAccessToken()
+        if (token === null || controller.signal.aborted) return unavailable
+        const form = new FormData()
+        form.append(
+          'image',
+          new Blob([Uint8Array.from(image)], { type: 'image/png' }),
+          'setup.png',
+        )
+        const response = await this.fetchImplementation(
+          `${this.config.apiUrl}/api/ocr/setup-name-check`,
+          {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+              'X-Client-Platform': 'pc',
+            },
+            body: form,
+            signal: controller.signal,
+          },
+        )
+        if (response.status !== 200) {
+          await response.body?.cancel().catch(() => undefined)
+          return unavailable
+        }
+        const text = await boundedText(response)
+        controller.signal.throwIfAborted()
+        if (text === null) return unavailable
+        const parsed = SetupNameResponseSchema.safeParse(JSON.parse(text) as unknown)
+        if (!parsed.success) return unavailable
+        return {
+          status:
+            parsed.data.isTrainer === null
+              ? 'skipped'
+              : parsed.data.isTrainer
+                ? 'trainer'
+                : 'not_trainer',
+          text: safeText(parsed.data.text, 1000),
+        }
+      } catch {
+        return unavailable
+      }
+    }
+    try {
+      return await Promise.race([request(), aborted])
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
+      controller.signal.removeEventListener('abort', abortListener)
+    }
+  }
 
   async process(request: OcrRequest): Promise<MonitorResult> {
     const dimensions = pngDimensions(request.image)

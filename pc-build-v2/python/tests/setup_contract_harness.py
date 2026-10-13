@@ -48,6 +48,27 @@ def run_prepared(mode: str) -> None:
             self._thread: threading.Thread | None = None
 
         def start(self, on_frame: Any, _on_closed: Any) -> None:
+            if mode.startswith("prepared-auto-"):
+                frames = []
+                for index in range(60):
+                    image, _ = arena(seed=index, badge=40 <= index < 48,
+                                     cy=.523 if mode == "prepared-auto-spectate" else .429)
+                    frame, _ = framed(image, mixed=True)
+                    frames.append(frame)
+                on_frame(frames[0])
+
+                def publish_analysis() -> None:
+                    index = 1
+                    while not self._stopping.wait(.1):
+                        if mode == "prepared-auto-source-lost" and index == 3:
+                            _on_closed()
+                            return
+                        on_frame(frames[index % len(frames)])
+                        index += 1
+
+                self._thread = threading.Thread(target=publish_analysis)
+                self._thread.start()
+                return
             if mode == "prepared-real-clock":
                 frames = []
                 for index in range(9):
@@ -89,7 +110,7 @@ def run_prepared(mode: str) -> None:
             if self._thread is not None:
                 self._thread.join()
 
-    if mode != "prepared-real-clock":
+    if mode != "prepared-real-clock" and not mode.startswith("prepared-auto-"):
         prepared_capture.LatestFrameStore.publish = sampled_publish
     prepared_capture.WindowsMonitorBackend = SyntheticBackend
     prepared_capture.main()
@@ -99,7 +120,8 @@ if __name__ == "__main__":
     mode = sys.argv[1]
     if mode in ("fixture-vs", "fixture-non-vs"):
         emit_fixture(mode)
-    elif mode in ("prepared", "prepared-insufficient", "prepared-real-clock"):
+    elif mode in ("prepared", "prepared-insufficient", "prepared-real-clock",
+                  "prepared-auto-success", "prepared-auto-spectate", "prepared-auto-source-lost"):
         run_prepared(mode)
     else:
         raise ValueError("Unknown setup contract harness mode")

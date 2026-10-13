@@ -187,6 +187,10 @@ describe('main-window setup capability', () => {
     const windows = { assertSender: vi.fn(), close: vi.fn() }
     const setup = {
       start: vi.fn().mockResolvedValue(view),
+      startAuto: vi.fn().mockResolvedValue(view),
+      retryDetection: vi.fn().mockReturnValue(view),
+      switchToManual: vi.fn().mockResolvedValue(view),
+      getDetectionPreview: vi.fn().mockReturnValue(null),
       startPredictionResult: vi.fn().mockResolvedValue(view),
       getSession: vi.fn().mockReturnValue(view),
       getFrame: vi.fn().mockReturnValue({
@@ -206,6 +210,10 @@ describe('main-window setup capability', () => {
       close: vi.fn().mockReturnValue(view),
     }
     const preparations = {
+      takeLive: vi.fn().mockResolvedValue({
+        source: { selector: { kind: 'window', windowHwnd: '10' }, preference: source },
+        capture: { stop: vi.fn().mockResolvedValue(undefined) },
+      }),
       freeze: vi.fn().mockResolvedValue({
         source: { selector: { kind: 'window', windowHwnd: '10' }, preference: source },
         frame: {
@@ -252,7 +260,9 @@ describe('main-window setup capability', () => {
                   region: 'nickname',
                   rect: { x: 0, y: 0, width: 0.5, height: 0.5 },
                 }
-              : command
+              : name === 'getDetectionPreview'
+                ? { sessionId }
+                : command
       const handler = registeredHandler(channel)
       await handler(event, payload)
       expect(test.windows.assertSender).toHaveBeenCalledWith(
@@ -314,7 +324,49 @@ describe('main-window setup capability', () => {
     expect(test.windows.close).not.toHaveBeenCalled()
     test.dispose()
   })
-  it.each([undefined, 'auto'])(
+  it('transfers live ownership to auto setup without freezing', async () => {
+    const test = setupHarness()
+    await registeredHandler(MAIN_CAPTURE_IPC_CHANNELS.startSetup)(event, {
+      mode: 'auto',
+      preparationId: preparation.preparationId,
+      profileId,
+      profileName: 'Profile',
+      expectedRevision: 2,
+    })
+    expect(test.preparations.takeLive).toHaveBeenCalledWith(preparation.preparationId)
+    expect(test.preparations.freeze).not.toHaveBeenCalled()
+    const live = (await test.preparations.takeLive.mock.results[0]?.value) as {
+      capture: { stop: () => Promise<void> }
+    }
+    expect(test.setup.startAuto).toHaveBeenCalledWith(
+      { kind: 'window', windowHwnd: '10' },
+      source,
+      live.capture,
+      { profileId, profileName: 'Profile', expectedRevision: 2 },
+    )
+  })
+
+  it('stops the transferred capture if auto session creation is rejected', async () => {
+    const test = setupHarness()
+    const stop = vi.fn().mockResolvedValue(undefined)
+    test.preparations.takeLive.mockResolvedValue({
+      source: { selector: { kind: 'window', windowHwnd: '10' }, preference: source },
+      capture: { stop },
+    })
+    test.setup.startAuto.mockRejectedValue(new Error('SETUP_ALREADY_ACTIVE'))
+    await expect(
+      registeredHandler(MAIN_CAPTURE_IPC_CHANNELS.startSetup)(event, {
+        mode: 'auto',
+        preparationId: preparation.preparationId,
+        profileId,
+        profileName: 'Profile',
+        expectedRevision: 2,
+      }),
+    ).rejects.toThrow('SETUP_ALREADY_ACTIVE')
+    expect(stop).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([undefined, 'invalid'])(
     'rejects mode %s before consuming the preparation',
     async (mode) => {
       const test = setupHarness()

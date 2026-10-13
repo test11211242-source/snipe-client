@@ -35,7 +35,7 @@ describe('capture contracts', () => {
     }
   })
 
-  it('requires explicit manual mode and rejects unsupported automatic setup', () => {
+  it('requires an explicit manual or automatic setup mode', () => {
     const payload = {
       preparationId: 'd52a21a9-3794-4a51-a292-60ec1ce9c238',
       profileId: null,
@@ -46,7 +46,11 @@ describe('capture contracts', () => {
       ...payload,
       mode: 'manual',
     })
-    for (const invalid of [payload, { ...payload, mode: 'auto' }]) {
+    expect(StartSetupPayloadSchema.parse({ ...payload, mode: 'auto' })).toEqual({
+      ...payload,
+      mode: 'auto',
+    })
+    for (const invalid of [payload, { ...payload, mode: 'unsupported' }]) {
       expect(StartSetupPayloadSchema.safeParse(invalid).success).toBe(false)
     }
   })

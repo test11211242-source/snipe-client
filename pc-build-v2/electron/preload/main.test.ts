@@ -59,24 +59,30 @@ beforeEach(() => {
 })
 
 describe('manual capture setup preload boundary', () => {
-  it('forwards explicit manual mode and validates the returned session', async () => {
-    electron.invoke.mockResolvedValue(view)
-    await expect(startCaptureSetup({ ...payload, mode: 'manual' })).resolves.toEqual(view)
-    expect(electron.invoke).toHaveBeenCalledWith(MAIN_CAPTURE_IPC_CHANNELS.startSetup, {
-      ...payload,
-      mode: 'manual',
-    })
-  })
-
-  it.each([undefined, 'auto'])('rejects mode %s without invoking main', async (mode) => {
-    await expect(
-      startCaptureSetup({
+  it.each(['manual', 'auto'])(
+    'forwards explicit %s mode and validates the returned session',
+    async (mode) => {
+      electron.invoke.mockResolvedValue(view)
+      await expect(startCaptureSetup({ ...payload, mode })).resolves.toEqual(view)
+      expect(electron.invoke).toHaveBeenCalledWith(MAIN_CAPTURE_IPC_CHANNELS.startSetup, {
         ...payload,
-        ...(mode === undefined ? {} : { mode }),
-      }),
-    ).rejects.toThrow()
-    expect(electron.invoke).not.toHaveBeenCalled()
-  })
+        mode,
+      })
+    },
+  )
+
+  it.each([undefined, 'unsupported'])(
+    'rejects mode %s without invoking main',
+    async (mode) => {
+      await expect(
+        startCaptureSetup({
+          ...payload,
+          ...(mode === undefined ? {} : { mode }),
+        }),
+      ).rejects.toThrow()
+      expect(electron.invoke).not.toHaveBeenCalled()
+    },
+  )
 
   it('rejects extra request fields without invoking main', async () => {
     await expect(

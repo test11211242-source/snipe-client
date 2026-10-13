@@ -5,6 +5,15 @@ import type { Readable, Writable } from 'node:stream'
 
 import { z } from 'zod'
 
+import {
+  AnalysisProgressSchema,
+  AnalysisResultSchema,
+  DetectionPreviewSchema,
+  type AnalysisProgress,
+  type AnalysisResult,
+  type AutoSetupCode,
+  type DetectionPreview,
+} from '../../../shared/contracts/auto-setup'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { PixelSizeSchema } from '../../../shared/models/capture'
 import type { SetupCaptureSelector } from '../domain/capture-source'
@@ -22,6 +31,8 @@ import {
 const READY_TIMEOUT_MS = 8_000
 const FREEZE_TIMEOUT_MS = 15_000
 const STOP_TIMEOUT_MS = 3_000
+const ANALYSIS_TIMEOUT_MS = 65_000
+const CANCEL_TIMEOUT_MS = 5_000
 // Four bounded chrome strip templates can exceed the old 64 KiB event limit.
 const MAX_METADATA_BYTES = 1024 * 1024
 const MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -30,10 +41,19 @@ const MAX_PIXELS = 20_000_000
 
 const EventSchema = z
   .object({
-    protocolVersion: z.literal(1),
+    protocolVersion: z.literal(2),
     sessionId: z.uuid(),
     sequence: z.number().int().positive(),
-    type: z.enum(['ready', 'frozen', 'fatal', 'stopped']),
+    type: z.enum([
+      'ready',
+      'frozen',
+      'fatal',
+      'stopped',
+      'analysis_progress',
+      'analysis_preview',
+      'analysis_result',
+      'analysis_cancelled',
+    ]),
     payload: z.record(z.string(), z.unknown()),
   })
   .strict()
@@ -56,6 +76,15 @@ const FatalPayloadSchema = z
   .object({
     code: z.string().min(1).max(100),
     message: z.string().min(1).max(300),
+  })
+  .strict()
+
+const PreviewPayloadSchema = z
+  .object({
+    width: DetectionPreviewSchema.shape.width,
+    height: DetectionPreviewSchema.shape.height,
+    mimeType: DetectionPreviewSchema.shape.mimeType,
+    byteLength: DetectionPreviewSchema.shape.byteLength,
   })
   .strict()
 
@@ -83,6 +112,23 @@ export type PreparedCaptureSpawn = (
 ) => PreparedCaptureChild
 
 interface OwnedProcess {
+  analysis: {
+    resolve: (value: { result: AnalysisResult; frame: CapturedFrame | null }) => void
+    reject: (error: Error) => void
+    onProgress: (progress: AnalysisProgress) => void
+    onPreview: (preview: DetectionPreview) => void
+    timer: NodeJS.Timeout
+    detachAbort: () => void
+    elapsedMs: number
+    framesAnalyzed: number
+  } | null
+  cancellation: {
+    promise: Promise<void>
+    resolve: () => void
+    reject: (error: Error) => void
+    timer: NodeJS.Timeout
+  } | null
+  size: { width: number; height: number } | null
   generation: number
   sessionId: string
   child: PreparedCaptureChild
@@ -133,6 +179,35 @@ function pngDimensions(image: Buffer): { width: number; height: number } | null 
     return null
   }
   return { width: image.readUInt32BE(16), height: image.readUInt32BE(20) }
+}
+
+function jpegDimensions(image: Buffer): { width: number; height: number } | null {
+  if (
+    image.byteLength < 4 ||
+    image.readUInt16BE(0) !== 0xffd8 ||
+    image.readUInt16BE(image.byteLength - 2) !== 0xffd9
+  )
+    return null
+  let offset = 2
+  while (offset + 4 <= image.byteLength) {
+    if (image[offset] !== 0xff) return null
+    while (image[offset] === 0xff) offset++
+    const marker = image[offset++]
+    if (marker === 0xda || marker === 0xd9 || marker === undefined) return null
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
+    if (offset + 2 > image.byteLength) return null
+    const length = image.readUInt16BE(offset)
+    if (length < 2 || offset + length > image.byteLength) return null
+    if ([0xc0, 0xc1, 0xc2].includes(marker)) {
+      if (length < 8) return null
+      return {
+        width: image.readUInt16BE(offset + 5),
+        height: image.readUInt16BE(offset + 3),
+      }
+    }
+    offset += length
+  }
+  return null
 }
 
 export class PreparedCaptureProcessService {
@@ -213,6 +288,9 @@ export class PreparedCaptureProcessService {
       ready: false,
       stopping: false,
       stderrBytes: 0,
+      analysis: null,
+      cancellation: null,
+      size: null,
       freezeTimer: null,
       stopTimer: null,
       resolveReady,
@@ -248,7 +326,7 @@ export class PreparedCaptureProcessService {
     try {
       child.stdin.write(
         encodeBinaryEnvelope({
-          protocolVersion: 1,
+          protocolVersion: 2,
           sessionId,
           type: 'start',
           selector: workerSelector(selector),
@@ -261,13 +339,138 @@ export class PreparedCaptureProcessService {
     }
   }
 
+  isAlive(sessionId: string): boolean {
+    const owned = this.#owned
+    return owned?.sessionId === sessionId && owned.ready && !owned.stopping
+  }
+
+  getSize(sessionId: string): { width: number; height: number } | null {
+    return this.#owned?.sessionId === sessionId ? this.#owned.size : null
+  }
+
+  async analyze(
+    sessionId: string,
+    onProgress: (progress: AnalysisProgress) => void,
+    onPreview: (preview: DetectionPreview) => void,
+    signal?: AbortSignal,
+  ): Promise<{ result: AnalysisResult; frame: CapturedFrame | null }> {
+    const owned = this.#owned
+    if (owned?.sessionId !== sessionId || !this.isAlive(sessionId)) {
+      throw new ApplicationError(
+        'CAPTURE_PREPARATION_STALE',
+        'Capture is no longer available',
+      )
+    }
+    if (owned.cancellation !== null) await owned.cancellation.promise
+    if (!this.current(owned) || owned.stopping) {
+      return { result: { ok: false, code: 'AUTO_SOURCE_LOST' }, frame: null }
+    }
+    if (owned.analysis !== null || owned.resolveFreeze !== null) {
+      throw new ApplicationError(
+        'CAPTURE_PREPARATION_OWNED',
+        'Capture already has an active operation',
+      )
+    }
+    if (signal?.aborted) {
+      throw new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled')
+    }
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      result: AnalysisResult
+      frame: CapturedFrame | null
+    }>()
+    const abort = (): void => {
+      void this.cancelAnalysis(sessionId).catch(() => undefined)
+    }
+    owned.analysis = {
+      resolve,
+      reject,
+      onProgress,
+      onPreview,
+      elapsedMs: 0,
+      framesAnalyzed: 0,
+      detachAbort: () => signal?.removeEventListener('abort', abort),
+      timer: setTimeout(() => {
+        this.fail(
+          owned,
+          'AUTO_INTERNAL_TIMEOUT',
+          new Error('Analysis deadline exceeded'),
+          'AUTO_INTERNAL_TIMEOUT',
+        )
+      }, ANALYSIS_TIMEOUT_MS),
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      owned.child.stdin.write(
+        encodeBinaryEnvelope({
+          protocolVersion: 2,
+          sessionId,
+          type: 'analyze',
+          deadlineMs: 60_000,
+          targetFps: 10,
+        }),
+      )
+    } catch (cause) {
+      this.fail(
+        owned,
+        'AUTO_INTERNAL_ERROR',
+        cause instanceof Error ? cause : new Error('Analysis write failed'),
+      )
+    }
+    return promise
+  }
+
+  cancelAnalysis(sessionId: string): Promise<void> {
+    const owned = this.#owned
+    if (owned?.sessionId !== sessionId || owned.stopping) return Promise.resolve()
+    if (owned.cancellation !== null) return owned.cancellation.promise
+    const analysis = owned.analysis
+    if (analysis === null) return Promise.resolve()
+    owned.analysis = null
+    clearTimeout(analysis.timer)
+    analysis.detachAbort()
+    analysis.reject(
+      new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled'),
+    )
+    const { promise, resolve, reject } = Promise.withResolvers<undefined>()
+    owned.cancellation = {
+      promise,
+      resolve: () => resolve(undefined),
+      reject,
+      timer: setTimeout(() => {
+        this.fail(
+          owned,
+          'AUTO_INTERNAL_TIMEOUT',
+          new Error('Analysis cancellation exceeded deadline'),
+        )
+      }, CANCEL_TIMEOUT_MS),
+    }
+    try {
+      owned.child.stdin.write(
+        encodeBinaryEnvelope({
+          protocolVersion: 2,
+          sessionId,
+          type: 'analyze_cancel',
+        }),
+      )
+    } catch (cause) {
+      this.fail(
+        owned,
+        'AUTO_INTERNAL_ERROR',
+        cause instanceof Error ? cause : new Error('Analysis cancellation failed'),
+      )
+    }
+    return promise
+  }
+
   freeze(sessionId: string, signal?: AbortSignal): Promise<CapturedFrame> {
     const owned = this.#owned
     if (
       owned?.sessionId !== sessionId ||
       !owned.ready ||
       owned.stopping ||
-      owned.resolveFreeze !== null
+      owned.resolveFreeze !== null ||
+      owned.analysis !== null ||
+      owned.cancellation !== null
     ) {
       return Promise.reject(
         new ApplicationError(
@@ -286,7 +489,7 @@ export class PreparedCaptureProcessService {
         reject(
           new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled'),
         )
-        void this.stop()
+        void this.stop(sessionId)
       }
       owned.resolveFreeze = (frame) => {
         signal?.removeEventListener('abort', abort)
@@ -309,7 +512,7 @@ export class PreparedCaptureProcessService {
       try {
         owned.child.stdin.write(
           encodeBinaryEnvelope({
-            protocolVersion: 1,
+            protocolVersion: 2,
             sessionId,
             type: 'freeze',
           }),
@@ -332,7 +535,8 @@ export class PreparedCaptureProcessService {
     })
   }
 
-  async stop(): Promise<void> {
+  async stop(sessionId?: string): Promise<void> {
+    if (sessionId !== undefined && this.#owned?.sessionId !== sessionId) return
     if (this.#starting) {
       this.#starting = false
       ++this.#generation
@@ -349,6 +553,15 @@ export class PreparedCaptureProcessService {
       })
     }
     owned.stopping = true
+    const analysis = owned.analysis
+    if (analysis !== null) {
+      owned.analysis = null
+      clearTimeout(analysis.timer)
+      analysis.detachAbort()
+      analysis.reject(
+        new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled'),
+      )
+    }
     this.rejectPending(
       owned,
       new ApplicationError('CAPTURE_PREPARATION_CANCELLED', 'Capture was cancelled'),
@@ -360,7 +573,7 @@ export class PreparedCaptureProcessService {
     try {
       owned.child.stdin.write(
         encodeBinaryEnvelope({
-          protocolVersion: 1,
+          protocolVersion: 2,
           sessionId: owned.sessionId,
           type: 'stop',
         }),
@@ -406,6 +619,7 @@ export class PreparedCaptureProcessService {
       const payload = ReadyPayloadSchema.parse(event.payload)
       const size = PixelSizeSchema.parse({ width: payload.width, height: payload.height })
       if (size.width * size.height > MAX_PIXELS) throw new Error('Frame is too large')
+      owned.size = size
       owned.ready = true
       clearTimeout(owned.readyTimer)
       owned.resolveReady({ sessionId: owned.sessionId, size })
@@ -413,13 +627,19 @@ export class PreparedCaptureProcessService {
     }
     if (event.type === 'fatal') {
       const payload = FatalPayloadSchema.parse(event.payload)
-      this.fail(owned, payload.code, new Error(payload.message))
+      if (envelope.binary.byteLength !== 0) throw new Error('Fatal event has binary data')
+      this.fail(owned, payload.code, new Error(payload.message), 'AUTO_SOURCE_LOST')
       return
     }
     if (event.type === 'stopped') {
+      z.object({}).strict().parse(event.payload)
       if (!owned.stopping || envelope.binary.byteLength !== 0) {
         throw new Error('Unexpected stopped event')
       }
+      return
+    }
+    if (event.type.startsWith('analysis_')) {
+      this.handleAnalysisEvent(owned, event.type, event.payload, envelope.binary)
       return
     }
     if (!owned.ready || owned.resolveFreeze === null || owned.stopping) {
@@ -455,6 +675,97 @@ export class PreparedCaptureProcessService {
     })
   }
 
+  private handleAnalysisEvent(
+    owned: OwnedProcess,
+    type: string,
+    payload: Record<string, unknown>,
+    binary: Buffer,
+  ): void {
+    if (!owned.ready || owned.stopping || owned.resolveFreeze !== null) {
+      throw new Error('Analysis event arrived out of order')
+    }
+    if (type === 'analysis_cancelled') {
+      z.object({}).strict().parse(payload)
+      if (binary.byteLength !== 0 || owned.cancellation === null) {
+        throw new Error('Unexpected analysis cancellation acknowledgement')
+      }
+      const cancellation = owned.cancellation
+      owned.cancellation = null
+      clearTimeout(cancellation.timer)
+      cancellation.resolve()
+      return
+    }
+    if (owned.analysis === null && owned.cancellation === null) {
+      throw new Error('Analysis event without active analysis')
+    }
+    if (type === 'analysis_progress') {
+      const progress = AnalysisProgressSchema.parse(payload)
+      if (binary.byteLength !== 0) throw new Error('Progress has binary data')
+      const analysis = owned.analysis
+      if (analysis !== null) {
+        if (
+          progress.elapsedMs < analysis.elapsedMs ||
+          progress.framesAnalyzed < analysis.framesAnalyzed
+        ) {
+          throw new Error('Analysis progress moved backwards')
+        }
+        analysis.elapsedMs = progress.elapsedMs
+        analysis.framesAnalyzed = progress.framesAnalyzed
+        analysis.onProgress(progress)
+      }
+      return
+    }
+    if (type === 'analysis_preview') {
+      const preview = DetectionPreviewSchema.parse({
+        ...PreviewPayloadSchema.parse(payload),
+        bytes: binary,
+      })
+      const dimensions = jpegDimensions(binary)
+      if (dimensions?.width !== preview.width || dimensions.height !== preview.height) {
+        throw new Error('Analysis JPEG dimensions are invalid')
+      }
+      owned.analysis?.onPreview(preview)
+      return
+    }
+    const result = AnalysisResultSchema.parse(payload)
+    let frame: CapturedFrame | null = null
+    if (result.ok || binary.byteLength > 0) {
+      const dimensions = pngDimensions(binary)
+      if (
+        binary.byteLength === 0 ||
+        binary.byteLength > MAX_PNG_BYTES ||
+        dimensions?.width !== result.frameWidth ||
+        dimensions?.height !== result.frameHeight ||
+        result.frameWidth === undefined ||
+        result.frameHeight === undefined
+      )
+        throw new Error('Analysis PNG dimensions are invalid')
+      frame = {
+        size: { width: result.frameWidth, height: result.frameHeight },
+        png: binary,
+        ...(result.game ? { game: { ...result.game, frames: 8 } } : {}),
+      }
+      owned.size = frame.size
+    }
+    // The acknowledgement fences retries: discard all analysis events preceding it.
+    if (owned.cancellation !== null) return
+    if (!result.ok && result.code === 'AUTO_SOURCE_LOST') void this.kill(owned)
+    this.finishAnalysis(owned, result, frame)
+  }
+
+  private finishAnalysis(
+    owned: OwnedProcess,
+    result: AnalysisResult,
+    frame: CapturedFrame | null = null,
+  ): void {
+    const analysis = owned.analysis
+    if (analysis === null) return
+    owned.analysis = null
+    clearTimeout(analysis.timer)
+    analysis.detachAbort()
+    analysis.resolve({ result, frame })
+  }
+
   private handleStderr(owned: OwnedProcess, chunk: Buffer | string): void {
     if (!this.current(owned)) return
     owned.stderrBytes += Buffer.byteLength(chunk)
@@ -477,6 +788,7 @@ export class PreparedCaptureProcessService {
     signal: NodeJS.Signals | null,
   ): void {
     if (!this.current(owned)) return
+    this.finishAnalysis(owned, { ok: false, code: 'AUTO_SOURCE_LOST' })
     try {
       owned.decoder.finish()
     } catch (error) {
@@ -502,17 +814,30 @@ export class PreparedCaptureProcessService {
     resolveStop?.()
   }
 
-  private fail(owned: OwnedProcess, code: string, cause: Error): void {
+  private fail(
+    owned: OwnedProcess,
+    code: string,
+    cause: Error,
+    analysisCode: AutoSetupCode = 'AUTO_INTERNAL_ERROR',
+  ): void {
     if (!this.current(owned)) return
     const error = new ApplicationError(code, 'The selected source capture failed', {
       cause,
     })
+    this.finishAnalysis(owned, { ok: false, code: analysisCode })
     this.rejectPending(owned, error)
     void this.kill(owned)
   }
 
   private rejectPending(owned: OwnedProcess, error: Error): void {
     if (!owned.ready) owned.rejectReady(error)
+    this.finishAnalysis(owned, { ok: false, code: 'AUTO_INTERNAL_ERROR' })
+    if (owned.cancellation !== null) {
+      const cancellation = owned.cancellation
+      owned.cancellation = null
+      clearTimeout(cancellation.timer)
+      cancellation.reject(error)
+    }
     owned.rejectFreeze?.(error)
     owned.resolveFreeze = null
     owned.rejectFreeze = null
@@ -538,6 +863,8 @@ export class PreparedCaptureProcessService {
     clearTimeout(owned.readyTimer)
     if (owned.freezeTimer !== null) clearTimeout(owned.freezeTimer)
     if (owned.stopTimer !== null) clearTimeout(owned.stopTimer)
+    if (owned.analysis !== null) clearTimeout(owned.analysis.timer)
+    if (owned.cancellation !== null) clearTimeout(owned.cancellation.timer)
     owned.child.stdin.removeListener('error', owned.handlers.stdinError)
     owned.child.stdout.removeListener('data', owned.handlers.stdout)
     owned.child.stderr.removeListener('data', owned.handlers.stderr)
