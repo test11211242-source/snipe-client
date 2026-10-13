@@ -46,7 +46,7 @@ function preparedService(
     | 'prepared'
     | 'prepared-insufficient'
     | 'prepared-auto-success'
-    | 'prepared-auto-spectate'
+    | 'prepared-auto-layout-unexpected'
     | 'prepared-auto-source-lost',
 ) {
   let closed: Promise<void> | undefined
@@ -148,8 +148,8 @@ describe('genuine Python setup output → strict TS capture contracts', () => {
     }
   }, 30_000)
 
-  it('parses genuine spectate rejection with its candidate PNG and valid geometry', async () => {
-    const { service, waitForClose } = preparedService('prepared-auto-spectate')
+  it('parses a genuine layout rejection with its candidate PNG and valid geometry', async () => {
+    const { service, waitForClose } = preparedService('prepared-auto-layout-unexpected')
     try {
       const prepared = await service.start({ kind: 'window', windowHwnd: '123' })
       const { result, frame } = await service.analyze(
@@ -157,7 +157,7 @@ describe('genuine Python setup output → strict TS capture contracts', () => {
         vi.fn(),
         vi.fn(),
       )
-      expect(result).toMatchObject({ ok: false, code: 'AUTO_SPECTATE_LIKE' })
+      expect(result).toMatchObject({ ok: false, code: 'AUTO_LAYOUT_UNEXPECTED' })
       expect(frame?.game?.rect).not.toBeNull()
       expect(frame?.png.byteLength).toBeGreaterThan(24)
       expect(service.isAlive(prepared.sessionId)).toBe(true)

@@ -429,13 +429,13 @@ describe('MonitorSupervisor game-relative runtime', () => {
     }
     events?.onLearning?.({
       status: 'failed',
-      reason: 'LEARN_SPECTATE_LIKE',
+      reason: 'LEARN_LAYOUT_UNEXPECTED',
       rejectedCount: 3,
     })
     expect(test.supervisor.getCurrentView().geometry).toEqual({
       state: 'learning_failed',
       aspectLabel: '9:12',
-      learningFailure: 'LEARN_SPECTATE_LIKE',
+      learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
     })
     events?.onGeometry?.({
       state: 'aspect_unknown',
@@ -468,7 +468,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     const events = test.listener()
     events?.onLearning?.({
       status: 'failed',
-      reason: 'LEARN_SPECTATE_LIKE',
+      reason: 'LEARN_LAYOUT_UNEXPECTED',
       rejectedCount: 2,
     })
     events?.onLearning?.({
@@ -478,7 +478,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     })
     expect(test.supervisor.getCurrentView().geometry).toMatchObject({
       state: 'learning_failed',
-      learningFailure: 'LEARN_SPECTATE_LIKE',
+      learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
     })
     for (const state of ['no_game', 'aspect_mismatch', 'aspect_unknown'] as const) {
       events?.onGeometry?.({
@@ -491,7 +491,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       })
       expect(test.supervisor.getCurrentView().geometry).toMatchObject({
         state: 'learning_failed',
-        learningFailure: 'LEARN_SPECTATE_LIKE',
+        learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
       })
     }
     events?.onLearning?.({ status: 'waiting_vs', reason: null, rejectedCount: 0 })

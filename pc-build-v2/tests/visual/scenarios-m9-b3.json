@@ -110,13 +110,13 @@
     ]
   },
   {
-    "name": "setup-auto-fail-spectate-wide",
+    "name": "setup-auto-fail-layout-wide",
     "width": 1100,
     "height": 700,
     "fixture": {
       "setup": {
         "session": "detectFailed",
-        "autoCode": "AUTO_SPECTATE_LIKE"
+        "autoCode": "AUTO_LAYOUT_UNEXPECTED"
       }
     },
     "steps": [
@@ -124,13 +124,13 @@
     ]
   },
   {
-    "name": "setup-auto-fail-spectate-mini",
+    "name": "setup-auto-fail-layout-mini",
     "width": 460,
     "height": 700,
     "fixture": {
       "setup": {
         "session": "detectFailed",
-        "autoCode": "AUTO_SPECTATE_LIKE"
+        "autoCode": "AUTO_LAYOUT_UNEXPECTED"
       }
     },
     "steps": [

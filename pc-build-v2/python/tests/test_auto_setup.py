@@ -66,15 +66,15 @@ def test_confirmation_waits_for_following_frame():
     assert engine.outcome is None
 
 
-def test_spectate_rejection_preserves_candidate_frame_geometry_and_zones():
+def test_spectate_vs_is_set_up_like_an_own_battle():
+    # Owner decision (field test 1): spectating friends is a normal setup source.
     engine = AutoSetupEngine(0)
     outcome, frames = feed_vs(engine, cy=.523)
-    assert outcome.result["code"] == "AUTO_SPECTATE_LIKE"
-    assert not outcome.result["ok"]
-    assert outcome.frame is frames[2]
+    assert outcome.result["ok"]
     assert outcome.result["game"]["rect"] == {"x": 40, "y": 24, "width": 360, "height": 640}
     assert outcome.result["badge"]["cy"] >= .46
-    assert outcome.result["regions"]["nickname"]["height"] > 0
+    assert outcome.result["regions"]["topLeftEvidence"]["y"] == pytest.approx(.135)
+    assert outcome.result["trigger"]["badge"]["cy"] >= .46
 
 
 @pytest.mark.parametrize("failure", ["AUTO_TRIGGER_WEAK", "AUTO_SELF_CHECK_FAILED"])

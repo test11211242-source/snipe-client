@@ -50,16 +50,27 @@ def test_auto_learning_appends_and_fires_on_confirmation_frame_after_selfcheck()
     assert any(kind == "learning" and value["status"] == "waiting_vs" for _, kind, value in events)
 
 
-def test_spectate_rejected_once_per_vs_and_two_failures_show_failed():
+def test_own_battle_profile_ignores_spectate_vs_without_failing():
+    # Owner decision (field test 1): never cross-learn between own battles and spectating.
     engine = TriggerEngine(game_payload())
     first_output, first_events = run_new_format(engine, cy=0.523)
     second_output, second_events = run_new_format(engine, cy=0.523, begin=7)
     assert first_output == second_output == []
-    rejected = [value for _, kind, value in first_events + second_events if kind == "learning" and value["status"] == "rejected"]
-    assert [value["reason"] for value in rejected] == ["LEARN_SPECTATE_LIKE"] * 2
-    assert [value["rejectedCount"] for value in rejected] == [1, 2]
-    failed = [value for _, kind, value in second_events if kind == "learning" and value["status"] == "failed"]
-    assert failed == [{"status": "failed", "reason": "LEARN_SPECTATE_LIKE", "rejectedCount": 2}]
+    statuses = [value["status"] for _, kind, value in first_events + second_events if kind == "learning"]
+    assert "rejected" not in statuses and "failed" not in statuses
+    assert not any(kind == "layout_learned" for _, kind, _ in first_events + second_events)
+
+
+def test_spectate_profile_learns_only_from_spectate_vs():
+    spectate = game_layout(cy=0.523)
+    engine = TriggerEngine(game_payload([spectate]))
+    output, events = run_new_format(engine)
+    assert output == []
+    assert not any(kind == "layout_learned" for _, kind, _ in events)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.523)]))
+    output, events = run_new_format(engine, cy=0.523)
+    assert len(output) == 1
+    assert sum(kind == "layout_learned" for _, kind, _ in events) == 1
 
 
 def test_structural_profile_unknown_format_reports_honest_failure():
@@ -95,8 +106,8 @@ def test_no_game_waits_without_entering_learning_or_counting_mismatch():
 def test_no_game_clears_evidence_without_resetting_learning_episode(episode):
     engine = TriggerEngine(game_payload())
     if episode == "failed":
-        run_new_format(engine, cy=0.523)
-        run_new_format(engine, cy=0.523, begin=7)
+        run_new_format(engine, cy=0.39)
+        run_new_format(engine, cy=0.39, begin=7)
         begin = 14
         assert engine.learner.failed
         assert engine.learner.rejected_count == 2
@@ -121,7 +132,7 @@ def test_no_game_clears_evidence_without_resetting_learning_episode(episode):
     assert (learner.active, learner.failed, learner.rejected_count) == episode_state
     assert not any(kind in ("learning", "layout_learned") for kind, _ in events)
     output, resumed_events = run_new_format(engine, begin=begin + 2,
-                                             cy=0.523 if episode == "failed" else 0.429)
+                                             cy=0.39 if episode == "failed" else 0.429)
     if episode == "failed":
         assert output == []
         assert learner.failed
@@ -313,8 +324,8 @@ def test_vs_soon_after_aspect_unknown_learns_and_fires_first_battle(onset):
 
 def test_saved_layout_rearm_resets_consecutive_rejections_and_failed_state():
     engine = TriggerEngine(game_payload())
-    _, first_events = run_new_format(engine, cy=0.523)
-    _, second_events = run_new_format(engine, cy=0.523, begin=7)
+    _, first_events = run_new_format(engine, cy=0.39)
+    _, second_events = run_new_format(engine, cy=0.39, begin=7)
     assert engine.learner.rejected_count == 2
     assert engine.learner.failed
     assert any(kind == "learning" and value["status"] == "failed" for _, kind, value in second_events)
@@ -325,11 +336,11 @@ def test_saved_layout_rearm_resets_consecutive_rejections_and_failed_state():
     assert engine.learner.rejected_count == 0
     assert not engine.learner.failed
     assert engine.learner._last_sample == -float("inf")
-    _, third_events = run_new_format(engine, cy=0.523, begin=14.1)
+    _, third_events = run_new_format(engine, cy=0.39, begin=14.1)
     rejected = [value for _, kind, value in third_events if kind == "learning" and value["status"] == "rejected"]
     assert [value["rejectedCount"] for value in rejected] == [1]
     assert not any(kind == "learning" and value["status"] == "failed" for _, kind, value in third_events)
-    _, fourth_events = run_new_format(engine, cy=0.523, begin=21.1)
+    _, fourth_events = run_new_format(engine, cy=0.39, begin=21.1)
     assert any(kind == "learning" and value["status"] == "failed" and value["rejectedCount"] == 2
                for _, kind, value in fourth_events)
     assert any(kind == "learning" and value["status"] == "rejected" for _, kind, value in first_events)

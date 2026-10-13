@@ -31,8 +31,6 @@ export function autoFailureText(code: string | null): string {
       return 'Экран боя не появился за минуту'
     case 'AUTO_SOURCE_LOST':
       return SOURCE_LOST_TEXT
-    case 'AUTO_SPECTATE_LIKE':
-      return 'Похоже, это не ваш бой. Зайдите к Тренеру Чеддеру'
     default:
       return 'Не получилось настроить автоматически'
   }

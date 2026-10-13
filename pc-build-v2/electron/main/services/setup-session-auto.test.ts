@@ -343,7 +343,7 @@ describe('automatic setup session lifecycle', () => {
     const test = harness()
     const started = await test.service.startAuto(selector, preference, test.live)
     requiredFixture(test.operations[0]).resolve({
-      result: { ok: false, code: 'AUTO_SPECTATE_LIKE', game, regions },
+      result: { ok: false, code: 'AUTO_LAYOUT_UNEXPECTED', game, regions },
       frame,
     })
     await settle()
@@ -353,7 +353,7 @@ describe('automatic setup session lifecycle', () => {
       generation: started.generation,
       detection: {
         status: 'failed',
-        failure: { code: 'AUTO_SPECTATE_LIKE' },
+        failure: { code: 'AUTO_LAYOUT_UNEXPECTED' },
         frameAvailable: true,
       },
     })

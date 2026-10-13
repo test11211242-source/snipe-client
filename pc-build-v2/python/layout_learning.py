@@ -10,7 +10,7 @@ from geometry.aspect import ASPECT_MAX, ASPECT_MIN, aspects_overlap
 from geometry.game_rect import RectResult, pixel_rect
 from geometry.vs_finder import MATCH_T, VSConfirmer, normalize_game, search
 from geometry.vs_orient_trigger import OrientationTrigger
-from geometry.zones import UI_ASPECT, Badge, _clip, layout_rejection, regions
+from geometry.zones import UI_ASPECT, Badge, _clip, layout_kind, layout_rejection, regions
 
 LEARNING_HISTORY = 15
 
@@ -195,9 +195,14 @@ class LayoutLearning:
         confirmed = self._confirmer.update(frame, geometry.rect, candidate, game=game, before_games=before_games)
         if confirmed and not self._latched and candidate is not None:
             rejection = layout_rejection(candidate.badge, geometry.aspect)
+            kinds = {layout_kind(Badge(**layout["badge"])) for layout in self.layouts if layout["badge"] is not None}
             sources = [layout for layout in self.layouts if layout["badge"] is not None and
                        abs(candidate.cy - layout["badge"]["cy"]) <= 0.02]
-            if rejection or not sources:
+            if not rejection and layout_kind(candidate.badge) not in kinds:
+                # A profile learns only from its own VS layout: own-battle
+                # profiles ignore spectating and vice versa, without failing.
+                self._latched = True
+            elif rejection or not sources:
                 self._reject("LEARN_" + (rejection or "LAYOUT_UNEXPECTED"))
             else:
                 source = min(sources, key=lambda layout: abs(geometry.aspect / layout["gameAspect"] - 1))

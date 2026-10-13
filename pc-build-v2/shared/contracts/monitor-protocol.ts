@@ -274,7 +274,6 @@ export const MonitorGeometryEventSchema = ProtocolBaseSchema.extend({
 }).strict()
 
 export const MonitorLearningCodeSchema = z.enum([
-  'LEARN_SPECTATE_LIKE',
   'LEARN_LAYOUT_UNEXPECTED',
   'LEARN_LAYOUT_OVERLAP',
   'LEARN_NICKNAME_ZONE_CLIPPED',

@@ -240,7 +240,6 @@ describe('automatic setup: failures', () => {
   const CASES: readonly (readonly [AutoSetupCode, string, boolean])[] = [
     ['AUTO_VS_TIMEOUT', 'Экран боя не появился за минуту', false],
     ['AUTO_SOURCE_LOST', LOST, true],
-    ['AUTO_SPECTATE_LIKE', 'Похоже, это не ваш бой. Зайдите к Тренеру Чеддеру', false],
     ...OTHER.map((code) => [code, GENERIC, false] as const),
   ]
 

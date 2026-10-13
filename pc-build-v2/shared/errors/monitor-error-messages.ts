@@ -17,7 +17,6 @@ export const MONITOR_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.f
   HISTORY_STORAGE_FAILED: 'Не удалось прочитать или сохранить историю сессий.',
   LAYOUT_SAVE_FAILED:
     'Профиль не удалось дополнить. Новый формат работает до перезапуска мониторинга.',
-  LEARN_SPECTATE_LIKE: 'Похоже, это наблюдение за чужим боем.',
   LEARN_LAYOUT_UNEXPECTED: 'Значок VS находится в неожиданном месте.',
   LEARN_LAYOUT_OVERLAP: 'Новый формат слишком близок к уже сохранённому формату игры.',
   LEARN_NICKNAME_ZONE_CLIPPED: 'Зона ника выходит за границы игры.',

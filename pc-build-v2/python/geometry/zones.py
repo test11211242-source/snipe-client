@@ -44,9 +44,9 @@ SPECTATE_TOP_LEFT_Y = 0.135
 
 def layout_kind(badge: Badge) -> str | None:
     """Own battles (Trainer Cheddar included) and friend spectating differ in VS height."""
-    if badge.cy >= 0.46:
+    if 0.46 <= badge.cy < 0.58:
         return "spectate"
-    if 0.40 <= badge.cy:
+    if 0.40 <= badge.cy < 0.46:
         return "battle"
     return None
 
@@ -66,9 +66,7 @@ def regions(badge: Badge, aspect: float) -> dict[str, FractionRect]:
 
 
 def layout_rejection(badge: Badge, aspect: float) -> str | None:
-    if badge.cy >= 0.46:
-        return "SPECTATE_LIKE"
-    if not 0.40 <= badge.cy < 0.46 or not 0.46 <= badge.cx <= 0.53:
+    if layout_kind(badge) is None or not 0.46 <= badge.cx <= 0.53:
         return "LAYOUT_UNEXPECTED"
     nickname = regions(badge, aspect)["nickname"]
     if nickname.height < 0.5 * 0.98 * badge.width * aspect or badge.cx - 1.71 * badge.width < 0:

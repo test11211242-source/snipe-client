@@ -52,7 +52,7 @@ def run_prepared(mode: str) -> None:
                 frames = []
                 for index in range(60):
                     image, _ = arena(seed=index, badge=40 <= index < 48,
-                                     cy=.523 if mode == "prepared-auto-spectate" else .429)
+                                     cy=.39 if mode == "prepared-auto-layout-unexpected" else .429)
                     frame, _ = framed(image, mixed=True)
                     frames.append(frame)
                 on_frame(frames[0])
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     if mode in ("fixture-vs", "fixture-non-vs"):
         emit_fixture(mode)
     elif mode in ("prepared", "prepared-insufficient", "prepared-real-clock",
-                  "prepared-auto-success", "prepared-auto-spectate", "prepared-auto-source-lost"):
+                  "prepared-auto-success", "prepared-auto-layout-unexpected", "prepared-auto-source-lost"):
         run_prepared(mode)
     else:
         raise ValueError("Unknown setup contract harness mode")

@@ -39,9 +39,14 @@ Prepared capture remains protocol 1 until the live-analysis commands in M9 B2.
 
 `game_geometry.py` tracks the game rectangle across window resizing and OBS
 same-canvas scaling, subtracts matching saved chrome, and selects a saved layout
-within 3% aspect tolerance. Unknown aspects block primary firing after detection
+within 3% aspect tolerance. Chrome whose saved template no longer matches after a
+window resize (fixed-size title-bar icons), or that a fullscreen profile never
+saved, is inferred from the layout aspect, snapped to its full-width edge and
+confirmed by the saved thickness or by a static band above a moving game.
+Unknown aspects block primary firing after detection
 and enter `aspect_unknown` after 20 mismatching frames. `layout_learning.py` searches
-at 5 Hz, reuses setup acceptance and self-checks, rejects spectate, and immediately
+at 5 Hz, reuses setup acceptance and self-checks, learns only from the profile's
+own VS layout (own battle or spectate; the other kind is ignored), and immediately
 activates an accepted layout while retaining the nickname from its confirmation
 frame. The engine exposes geometry/learning/learned-layout events; monitor assigns
 the shared trigger UUID. Layout learning is unavailable to legacy full-frame
@@ -67,7 +72,7 @@ a Git repository, and writes numeric/code-only `results.json`.
 Replay output identifies its sampling convention and includes explicit acceptance
 results; a failed replay exits nonzero. Director-approved regression bounds are
 minimum stable rule-(c) VS score ≥0.70 under the worst distortion, non-VS maximum
-≤0.30, and spectate rejection by the layout check. The prototype's measured 0.74
+≤0.30, and spectate setups accepted by the layout check. The prototype's measured 0.74
 minimum is not a production threshold: `ORIENT_T=0.50` and setup self-check bounds
 (VS ≥0.50, pre-VS <0.30) remain unchanged.
 
@@ -93,8 +98,12 @@ cases, two mid-stream frame resizes, two same-canvas game shrinks, and three
 titlebar cases (22 positives); six ordinary-profile/spectate negatives; four
 unknown-aspect recordings with learning disabled. It then feeds four complete
 source/target recording pairs into one engine with learning enabled, requiring
-the second recording to learn and fire on the same VS, and checks three
-cross-aspect spectate pairs for explicit rejection.
+the second recording to learn and fire on the same VS, and checks that three
+cross-aspect spectate pairs are ignored without learning or failing. A profile
+set up on `spectate_1` must fire once per VS on all three spectate recordings and
+never on the five own-battle recordings, and sixteen `windowResize` cells (a
+non-stretching title bar from the external titlebar crop) must fire once per VS
+for fullscreen profiles in a window and small-window profiles resized.
 
 Numeric output reports firing frames, per-VS counts/delays, false/blocked fires,
 geometry states, learning codes/confidence, action sizes and process timings.
@@ -111,7 +120,7 @@ All four second recordings must learn and emit an action on that same VS. Paired
 independent recordings use an explicitly reported simulated 16-second timestamp
 gap without inserted frames, preserving the production 15-second cooldown;
 target-relative delays and frame bounds exclude the gap. Missing cases, rejected
-normal layouts, missing learning events/actions, or unexpected spectate acceptance
+normal or spectate setups, missing learning events/actions, or cross-kind fires
 fail the command with a nonzero exit. The 17 A1 distortion flags do not change this
 runtime matrix.
 

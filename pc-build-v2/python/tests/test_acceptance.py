@@ -33,7 +33,7 @@ def test_success_margin_is_measured() -> None:
     ({"game": RectResult((0, 0, 800, 800), 1, "aspect_out_of_range")}, "ASPECT_UNSUPPORTED"),
     ({"geometry_frames": 7}, "GAME_NOT_FOUND"),
     ({"confirmed": False}, "VS_NOT_FOUND"),
-    ({"badge": Badge(.496, .523, .22, .148)}, "SPECTATE_LIKE"),
+    ({"badge": Badge(.496, .60, .22, .148)}, "LAYOUT_UNEXPECTED"),
     ({"badge": Badge(.4, .429, .22, .148)}, "LAYOUT_UNEXPECTED"),
     ({"badge": Badge(.496, .429, .30, .20)}, "NICKNAME_ZONE_CLIPPED"),
     ({"trigger": None}, "TRIGGER_WEAK"),
@@ -76,11 +76,11 @@ def test_owner_recording_replay(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("minimum,maximum,code,expected", [
-    (.70, .30, "SPECTATE_LIKE", True),
-    (.732733846, .207509414, "SPECTATE_LIKE", True),
-    (.699, .20, "SPECTATE_LIKE", False),
-    (.80, .301, "SPECTATE_LIKE", False),
-    (.80, .20, None, False),
+    (.70, .30, None, True),
+    (.732733846, .207509414, None, True),
+    (.699, .20, None, False),
+    (.80, .301, None, False),
+    (.80, .20, "LAYOUT_UNEXPECTED", False),
 ])
 def test_director_approved_replay_bounds(minimum: float, maximum: float, code: str | None, expected: bool) -> None:
     from tools.m9_replay import evaluate_replay

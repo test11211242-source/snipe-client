@@ -13,8 +13,8 @@ from test_trigger_engine import payload, profile_for, trigger_image
 from trigger_engine import PredictionTriggerEngine, TriggerEngine
 
 
-def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10-13T12:00:00Z", chrome=None):
-    frame, badge = arena(width, height)
+def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10-13T12:00:00Z", chrome=None, cy=0.429):
+    frame, badge = arena(width, height, cy=cy)
     zones = regions(badge, width / height)
     return {"layoutId": str(uuid.uuid4()), "layoutSource": source, "calibratedAt": calibrated_at,
             "gameAspect": width / height, "windowChrome": chrome or detect([frame]).chrome,

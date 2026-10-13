@@ -24,8 +24,8 @@ def test_field_test_1_numeric_regions(badge: Badge, aspect: float, expected: tup
 
 
 @pytest.mark.parametrize("badge,code", [
-    (Badge(.496, .523, .22, .148), "SPECTATE_LIKE"),
-    (Badge(.496, .46, .22, .148), "SPECTATE_LIKE"),
+    (Badge(.496, .523, .22, .148), None),
+    (Badge(.496, .60, .22, .148), "LAYOUT_UNEXPECTED"),
     (Badge(.45, .429, .22, .148), "LAYOUT_UNEXPECTED"),
     (Badge(.496, .39, .22, .148), "LAYOUT_UNEXPECTED"),
     (Badge(.496, .429, .30, .20), "NICKNAME_ZONE_CLIPPED"),

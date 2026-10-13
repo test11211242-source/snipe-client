@@ -224,16 +224,17 @@ def evaluate_replay(result: dict[str, Any], *, expected_cells: int, spectate_key
     totals = result["totals"]
     spectate_cells = [cell for key, cell in result["cells"].items() if key.split("|", 1)[0] in spectate_keys]
     seen_spectate = {key.split("|", 1)[0] for key in result["cells"] if key.split("|", 1)[0] in spectate_keys}
-    rejected = seen_spectate == spectate_keys and all(cell.get("code") == "SPECTATE_LIKE" for cell in spectate_cells)
+    # Owner decision (field test 1): spectate VS screens are set up like own battles.
+    spectate_ok = seen_spectate == spectate_keys and all(cell.get("code") is None for cell in spectate_cells)
     complete = totals["cells"] == expected_cells and totals["confirmed"] == expected_cells
     normal_accepted = all(cell.get("code") is None for key, cell in result["cells"].items()
                           if key.split("|", 1)[0] not in spectate_keys)
-    setup_ok = complete and totals["falseCandidates"] == 0 and totals["earlyConfirms"] == 0 and rejected and normal_accepted
+    setup_ok = complete and totals["falseCandidates"] == 0 and totals["earlyConfirms"] == 0 and spectate_ok and normal_accepted
     orientation_ok = result["mode"] != "orient" or (
         totals["orientVsMin"] >= 0.70 and totals["orientNonMax"] <= 0.30 and totals["crossFires"] == 0
         and all(len(cell.get("orient", {}).get("fires", [])) == 1 for cell in result["cells"].values()))
     return {"passed": bool(setup_ok and orientation_ok), "minVsRequired": 0.70, "maxNonVsAllowed": 0.30,
-            "spectateLayoutRejected": rejected, "spectateCases": len(spectate_cells),
+            "spectateLayoutAccepted": spectate_ok, "spectateCases": len(spectate_cells),
             "expectedCases": expected_cells}
 
 
@@ -316,7 +317,6 @@ def replay(mode: str, manifest: Path, output: Path, *, all_distortions: bool = T
                         "nonMax": max((cell["nonMax"] for cell in cells), default=0)}
     result["totals"].update({
         "accepted": sum(cell.get("code") is None for cell in cells),
-        "spectateRejected": sum(cell.get("code") == "SPECTATE_LIKE" for cell in cells),
         "regionMaxError": max((cell.get("regionMaxError", 0) for cell in cells), default=0),
         "centerMaxError": max((abs(error) for cell in cells for key, error in cell.get("badgeError", {}).items()
                                if key in ("cx", "cy")), default=0),
@@ -521,20 +521,27 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
     rejection_ok = len(rejections) == 3 and all(
         cell["targetFireCount"] == 0 and cell["falseFires"] == 0
         and not any(event["type"] == "layout_learned" for event in cell["events"])
-        and any(event["type"] == "learning" and event.get("status") == "rejected"
-                and event.get("reason") == "LEARN_SPECTATE_LIKE" for event in cell["events"])
+        and not any(event["type"] == "learning" and event.get("status") in ("rejected", "failed")
+                    for event in cell["events"])
         for cell in rejections)
+    spectate_profile = list(result["spectateProfile"].values())
+    spectate_ok = len(spectate_profile) == 8 and sum(cell["expectFires"] for cell in spectate_profile) == 3 and all(
+        (cell["vsFireCounts"] and all(count == 1 for count in cell["vsFireCounts"]) and cell["falseFires"] == 0
+         and [action["frame"] for action in cell["actions"]] == cell["fires"])
+        if cell["expectFires"] else not cell["fires"] and not cell["actions"]
+        for cell in spectate_profile)
     resize = list(result["windowResize"].values())
     resize_ok = len(resize) == 16 and all(
         cell["vsFireCounts"] and all(count == 1 for count in cell["vsFireCounts"])
         and cell["falseFires"] == 0 and not cell["blockedFires"]
         and [action["frame"] for action in cell["actions"]] == cell["fires"] for cell in resize)
-    setup_ok = len(result["setups"]) == 8 and all(
+    setup_ok = len(result["setups"]) == 9 and all(
         setup.get("code") is None for setup in result["setups"].values())
     checks = {"setupAccepted": setup_ok, "runtime22OneFirePerVs": positive_ok,
               "crossSpectateZeroOf6": cross_ok, "aspectBlocked4Within2S": blocked_ok,
               "secondRecordingLearned4WithSameVsFire": learning_ok,
-              "crossAspectSpectateRejected3": rejection_ok,
+              "crossAspectSpectateIgnored3": rejection_ok,
+              "spectateProfile3FireOwnBattles0": spectate_ok,
               "windowResize16OneFirePerVs": resize_ok}
     return {"passed": all(checks.values()), "checks": checks, "positiveRequired": 22,
             "crossRequired": 6, "aspectRequired": 4, "learningRequired": 4,
@@ -572,7 +579,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result: dict[str, Any] = {
         "mode": "runtime", "sampling": "prototype-jpeg92" if prototype_jpeg92 else "direct-video",
         "setups": {}, "positive": {}, "cross": {}, "aspectBlocked": {}, "learning": {}, "learningSpectate": {},
-        "windowResize": {},
+        "windowResize": {}, "spectateProfile": {},
     }
     profiles: dict[str, dict[str, Any]] = {}
     rects: dict[str, PixelRect] = {}
@@ -611,6 +618,21 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
         for source in _RUNTIME_NORMAL[:2]:
             run("cross", source + "_on_" + target, source, frames, [])
         del frames
+    # Owner decision (field test 1): a profile set up on a spectate VS fires on
+    # spectate and never on own battles.
+    frames = load(_RUNTIME_SPECTATE[0])
+    profile, setup = _runtime_profile(frames, records[_RUNTIME_SPECTATE[0]])
+    result["setups"]["spectate_profile"] = setup
+    del frames
+    if profile is not None:
+        profiles["spectate_profile"] = profile
+        for target in _RUNTIME_SPECTATE + _RUNTIME_NORMAL:
+            frames = load(target)
+            own = target in _RUNTIME_SPECTATE
+            cell = run("spectateProfile", "spectate_profile_on_" + target, "spectate_profile", frames,
+                       _runtime_windows(records[target]) if own else [])
+            cell["expectFires"] = own
+            del frames
     for source in _RUNTIME_NORMAL[:2]:
         if source not in profiles:
             continue
@@ -709,7 +731,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result["totals"] = {
         "positiveCases": len(positive), "positiveFires": sum(len(cell["fires"]) for cell in positive),
         "falseFires": sum(cell["falseFires"] for group in ("positive", "cross", "aspectBlocked", "learning",
-                                                           "learningSpectate", "windowResize")
+                                                           "learningSpectate", "windowResize", "spectateProfile")
                           for cell in result[group].values()),
         "crossCases": len(cross), "crossFires": sum(len(cell["fires"]) for cell in cross),
         "aspectBlockedCases": len(result["aspectBlocked"]), "learningCases": len(result["learning"]),
@@ -792,9 +814,9 @@ def autosetup_replay(manifest: Path, output: Path, *, overlays: bool = False,
                                       "framesAnalyzed": no_vs.frames_analyzed}
         del frames
     checks = {"fiveNormalSuccess": len(normal) == 5 and all(cell["ok"] for cell in normal.values()),
-              "threeSpectateRejected": len(spectate) == 3 and all(not cell["ok"] and cell["code"] == "AUTO_SPECTATE_LIKE"
-                                                                  for cell in spectate.values()),
-              "zonesWithin005": len(normal) == 5 and all(cell["zonesWithinTolerance"] for cell in normal.values()),
+              "threeSpectateSuccess": len(spectate) == 3 and all(cell["ok"] for cell in spectate.values()),
+              "zonesWithin005": len(normal) == 5 and all(cell["zonesWithinTolerance"] for cell in normal.values())
+                                and all(cell["zonesWithinTolerance"] for cell in spectate.values()),
               "noVsTimeout": len(timeout) == 5 and all(not cell["ok"] and cell["code"] == "AUTO_VS_TIMEOUT"
                                                        and not cell["earlyResult"] for cell in timeout.values())}
     result = {"mode": "autosetup", "timeBasis": "0.1-second decoded samples; deadline advanced to 60s without fabricated frames",
