@@ -150,6 +150,14 @@ append requires only one atomic capture write and no monitor restart or result
 rewrite. Full-frame result zones retain revision/fingerprint binding. Every setup
 or recalibration creates a fresh calibration identity. Only the oldest learned
 layout may be evicted; setup layouts and transferred manual-zone provenance survive.
+Game-relative recovery intentionally reloads current source/zones under the same
+calibration identity. Every game-relative profile receives learning events:
+structural-only profiles report that manual recalibration is required, without VS
+finder work. Learning failures remain visible through subsequent rejected screens
+and temporary geometry loss until a saved layout arms or a new episode begins.
+Saved-layout matches and missing-game states discard old pre-VS evidence. A learned
+append returns its persisted calibration revision for later search/result records;
+stale append logs include profile, calibration and layout identifiers.
 There are no screenshots, RGB templates, tokens or full executable paths on disk.
 A saved HWND is a private binding hint, never a renderer source identifier.
 Setup atomically saves the canonical local model before posting its schema-version 2

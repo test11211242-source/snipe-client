@@ -91,6 +91,84 @@ def test_no_game_waits_without_entering_learning_or_counting_mismatch():
         assert not engine.learner.active
 
 
+@pytest.mark.parametrize("episode", ["inactive", "waiting", "failed"])
+def test_no_game_clears_evidence_without_resetting_learning_episode(episode):
+    engine = TriggerEngine(game_payload())
+    if episode == "failed":
+        run_new_format(engine, cy=0.523)
+        run_new_format(engine, cy=0.523, begin=7)
+        begin = 14
+        assert engine.learner.failed
+        assert engine.learner.rejected_count == 2
+    else:
+        count = 16 if episode == "inactive" else 25
+        run_new_format(engine, count=count, onset=1000)
+        begin = count / 10
+        assert engine.learner.active == (episode == "waiting")
+    learner = engine.learner
+    assert learner._history
+    assert learner._last_history_sample != -float("inf")
+    episode_state = (learner.active, learner.failed, learner.rejected_count)
+    events = []
+    for index in range(20):
+        assert engine.process(np.zeros((640, 480, 3), np.uint8), begin + index / 10) is None
+        events.extend(engine.take_events())
+    assert engine.geometry.state == "no_game"
+    assert not learner._history
+    assert learner._last_history_sample == -float("inf")
+    assert learner._pending is None
+    assert learner._onset is None
+    assert (learner.active, learner.failed, learner.rejected_count) == episode_state
+    assert not any(kind in ("learning", "layout_learned") for kind, _ in events)
+    output, resumed_events = run_new_format(engine, begin=begin + 2,
+                                             cy=0.523 if episode == "failed" else 0.429)
+    if episode == "failed":
+        assert output == []
+        assert learner.failed
+        assert learner.rejected_count == 3
+        assert any(kind == "learning" and value["status"] == "rejected" and value["rejectedCount"] == 3
+                   for _, kind, value in resumed_events)
+        assert not any(kind == "learning" and value["status"] in ("waiting_vs", "failed")
+                       for _, kind, value in resumed_events)
+    else:
+        assert len(output) == 1
+        assert sum(kind == "layout_learned" for _, kind, _ in resumed_events) == 1
+
+
+def test_short_mismatch_rearm_cannot_supply_empty_evidence_to_next_immediate_vs():
+    engine = TriggerEngine(game_payload())
+    # Keep one source canvas throughout: a shape reset must not hide stale evidence.
+    def canvas(index, *, badge):
+        frame = np.zeros((640, 360, 3), np.uint8)
+        frame[:, 36:324] = arena(288, 640, seed=index, badge=badge)[0]
+        return frame
+
+    for index in range(16):
+        assert engine.process(canvas(index, badge=False), index / 10) is None
+        assert engine.geometry.state == "aspect_mismatch"
+        assert not engine.learner.active
+    assert engine.learner._history
+    assert engine.process(arena(badge=False)[0], 1.6) is None
+    assert engine.geometry.state == "armed_provisional"
+    assert not engine.learner.active
+    assert not engine.learner._history
+    assert engine.learner._last_history_sample == -float("inf")
+    engine.take_events()
+    events = []
+    for index in range(70):
+        # VS is already present on every frame of the new format; there is no
+        # empty pre-VS frame in this episode to certify confirmation/self-check.
+        assert engine.process(canvas(index, badge=True), 1.7 + index / 10) is None
+        events.extend(engine.take_events())
+    assert engine.geometry.state == "aspect_unknown"
+    assert engine.learner.active
+    assert engine.learner._history
+    assert all(timestamp >= 1.7 for timestamp, _ in engine.learner._history)
+    assert engine.learner._pending is None
+    assert len(engine.geometry.layouts) == 1
+    assert not any(kind == "layout_learned" for kind, _ in events)
+
+
 def test_unsupported_format_fails_without_null_reason():
     engine = TriggerEngine(game_payload())
     events = []
@@ -309,7 +387,7 @@ def test_learning_acceptance_uses_symmetric_wire_aspect_overlap(monkeypatch, sou
     if accepted:
         assert learned[1]["gameAspect"] == 480 / 640
     else:
-        assert ("learning", {"status": "rejected", "reason": "LEARN_LAYOUT_UNEXPECTED", "rejectedCount": 1}) in learner.take_events()
+        assert ("learning", {"status": "rejected", "reason": "LEARN_LAYOUT_OVERLAP", "rejectedCount": 1}) in learner.take_events()
 
 
 def test_learning_sample_shares_normalized_game_between_buffer_search_and_confirmer(monkeypatch):

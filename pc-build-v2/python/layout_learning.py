@@ -53,18 +53,23 @@ class LayoutLearning:
         self._latched = True
         self._pending = None
 
-    def reset(self):
-        self.active = False
-        self.rejected_count = 0
-        self.failed = False
+    def clear_evidence(self):
+        """Discard frame evidence without clearing the learning failure episode."""
         self._history.clear()
-        self._confirmer = VSConfirmer(history_frames=LEARNING_HISTORY)
+        if self._shape is not None:
+            self._confirmer = VSConfirmer(history_frames=LEARNING_HISTORY)
         self._pending = None
-        self._latched = False
         self._onset = None
         self._shape = None
         self._last_sample = -float("inf")
         self._last_history_sample = -float("inf")
+
+    def reset(self):
+        self.active = False
+        self.rejected_count = 0
+        self.failed = False
+        self.clear_evidence()
+        self._latched = False
 
     def buffer(self, frame, now, geometry):
         """Collect pre-VS evidence during mismatch, before the expensive finder starts."""
@@ -87,7 +92,7 @@ class LayoutLearning:
         return None
 
     def process(self, frame, now, geometry):
-        if not self.enabled:
+        if not self.enabled or geometry.rect is None:
             return None
         if not self.active:
             self.active = True
@@ -98,11 +103,10 @@ class LayoutLearning:
             self._event("waiting_vs")
         if not any(layout["trigger"]["kind"] == "vs_edge_orientation" for layout in self.layouts):
             return None
-        if geometry.rect is None or geometry.reason != "ok":
-            reason = "LEARN_GAME_NOT_FOUND" if geometry.rect is None else "LEARN_ASPECT_UNSUPPORTED"
+        if geometry.reason != "ok":
             if not self.failed:
                 self.failed = True
-                self._event("failed", reason)
+                self._event("failed", "LEARN_ASPECT_UNSUPPORTED")
             self._pending = None
             return None
         if now - self._last_sample < 0.2 - 1e-9:
@@ -146,7 +150,7 @@ class LayoutLearning:
                 self._reject("LEARN_ASPECT_UNSUPPORTED")
                 return None
             if any(aspects_overlap(layout["gameAspect"], aspect) for layout in self.layouts):
-                self._reject("LEARN_LAYOUT_UNEXPECTED")
+                self._reject("LEARN_LAYOUT_OVERLAP")
                 return None
             if len(self.layouts) >= 4:
                 learned = [layout for layout in self.layouts if layout["layoutSource"] == "learned"]

@@ -295,7 +295,7 @@ describe('monitor protocol v4', () => {
     ],
     ['learning', { status: 'waiting_vs', reason: null, rejectedCount: 0 }],
     ['learning', { status: 'rejected', reason: 'LAYOUT_LIMIT', rejectedCount: 1 }],
-    ['learning', { status: 'failed', reason: 'LEARN_GAME_NOT_FOUND', rejectedCount: 2 }],
+    ['learning', { status: 'failed', reason: 'LEARN_LAYOUT_OVERLAP', rejectedCount: 2 }],
     [
       'layout_learned',
       {

@@ -688,7 +688,7 @@ describe('MonitorProcessService', () => {
     child.event(2, 'prediction_state', { state: 'active' })
     child.event(3, 'learning', {
       status: 'failed',
-      reason: 'LEARN_GAME_NOT_FOUND',
+      reason: 'LEARN_STRUCTURAL_TRIGGER',
       rejectedCount: 0,
     })
     child.event(4, 'layout_learned', {

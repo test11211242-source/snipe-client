@@ -72,9 +72,9 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
           profileId: string,
           calibrationId: string,
           layout: GameLayout,
-        ) => Promise<void>
+        ) => Promise<number>
       >()
-      .mockResolvedValue(undefined),
+      .mockResolvedValue(2),
   }
   const monitorView = {
     state: 'READY' as const,
@@ -291,7 +291,9 @@ describe('CaptureProfileService', () => {
     }
     const test = harness('active', results)
     const learned = monitorLearnedLayoutFixture()
-    await test.service.appendLearnedLayout('user-1', PRIMARY_ID, PRIMARY_ID, learned)
+    await expect(
+      test.service.appendLearnedLayout('user-1', PRIMARY_ID, PRIMARY_ID, learned),
+    ).resolves.toBe(2)
     expect(test.repository.appendLearnedLayout).toHaveBeenCalledWith(
       'user-1',
       PRIMARY_ID,

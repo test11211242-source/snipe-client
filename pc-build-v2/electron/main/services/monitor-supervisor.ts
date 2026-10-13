@@ -49,7 +49,7 @@ type LearnedLayoutHandler = (
   profileId: string,
   calibrationId: string,
   layout: GameLayoutWire,
-) => Promise<void>
+) => Promise<number>
 
 interface SearchAction extends MonitorAction {
   triggerId: string
@@ -135,6 +135,7 @@ export class MonitorSupervisor {
   #bindingFingerprint: string | null = null
   #profileId: string | null = null
   #calibrationRevision: number | null = null
+  #learningFailure: MonitorLearningEvent['payload'] | null = null
   #lastTriggerId: string | null = null
   #retry: { action: SearchAction; attemptId: string; expiresAt: number } | null = null
   #retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -420,6 +421,7 @@ export class MonitorSupervisor {
     const generation = ++this.#generation
     this.#runController.abort()
     this.#runController = new AbortController()
+    this.#learningFailure = null
     this.#pendingAction = null
     this.#ocrActive = false
     const session = this.#view.session
@@ -580,6 +582,8 @@ export class MonitorSupervisor {
           'Configure a capture profile',
         )
       const activeCalibration = active.profile.configuration.calibration
+      // Same-calibration game-relative recovery intentionally reloads the latest
+      // source and zones; only a new profile/calibration invalidates its binding.
       const bindingFingerprint =
         activeCalibration.coordinateSpace === 'game_relative'
           ? `game:${active.profile.profileId}:${activeCalibration.calibrationId}`
@@ -652,9 +656,7 @@ export class MonitorSupervisor {
                 },
               })),
               learning: {
-                enabled: calibration.layouts.some(
-                  (layout) => layout.trigger.kind === 'vs_edge_orientation',
-                ),
+                enabled: true,
                 maxLayouts: 4,
               },
             }
@@ -783,28 +785,28 @@ export class MonitorSupervisor {
 
   private acceptGeometry(geometry: MonitorGeometryEvent['payload']): void {
     const state = geometry.state === 'aspect_unknown' ? 'learning' : geometry.state
-    const learningFailed =
-      state === 'learning' && this.#view.geometry?.state === 'learning_failed'
+    if (state === 'armed') this.#learningFailure = null
     this.patch({
       geometry: {
-        state: learningFailed ? 'learning_failed' : state,
+        state: this.#learningFailure !== null ? 'learning_failed' : state,
         aspectLabel:
           geometry.gameAspect === null
             ? null
             : `9:${Number((9 / geometry.gameAspect).toFixed(1))}`,
-        learningFailure: learningFailed
-          ? (this.#view.geometry?.learningFailure ?? null)
-          : null,
+        learningFailure: this.#learningFailure?.reason ?? null,
       },
     })
   }
 
   private acceptLearning(learning: MonitorLearningEvent['payload']): void {
+    // Python emits waiting_vs only when it actually starts a fresh episode.
+    if (learning.status === 'waiting_vs') this.#learningFailure = null
+    else if (learning.status === 'failed') this.#learningFailure = learning
     this.patch({
       geometry: {
-        state: learning.status === 'failed' ? 'learning_failed' : 'learning',
+        state: this.#learningFailure !== null ? 'learning_failed' : 'learning',
         aspectLabel: this.#view.geometry?.aspectLabel ?? null,
-        learningFailure: learning.status === 'failed' ? learning.reason : null,
+        learningFailure: this.#learningFailure?.reason ?? null,
       },
     })
   }
@@ -818,16 +820,32 @@ export class MonitorSupervisor {
     learned: MonitorLayoutLearnedEvent['payload'],
   ): Promise<void> {
     if (learned.calibrationId !== calibrationId) {
-      this.logger?.warn('Learned layout not saved', { code: 'LAYOUT_STALE' })
+      this.logger?.warn('Learned layout not saved', {
+        code: 'LAYOUT_STALE',
+        profileId,
+        calibrationId,
+        layoutId: learned.layout.layoutId,
+      })
       return
     }
+    let revision: number
     try {
       if (this.#learnedLayoutHandler === null)
         throw new ApplicationError('LAYOUT_SAVE_FAILED', 'Layout storage unavailable')
-      await this.#learnedLayoutHandler(userId, profileId, calibrationId, learned.layout)
+      revision = await this.#learnedLayoutHandler(
+        userId,
+        profileId,
+        calibrationId,
+        learned.layout,
+      )
     } catch (error) {
       const code = error instanceof ApplicationError ? error.code : 'LAYOUT_SAVE_FAILED'
-      this.logger?.warn('Learned layout not saved', { code })
+      this.logger?.warn('Learned layout not saved', {
+        code,
+        profileId,
+        calibrationId,
+        layoutId: learned.layout.layoutId,
+      })
       if (
         code !== 'LAYOUT_STALE' &&
         code !== 'LAYOUT_LIMIT' &&
@@ -841,6 +859,7 @@ export class MonitorSupervisor {
       return
     }
     if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
+    this.#calibrationRevision = revision
     if (this.#view.error?.code === 'LAYOUT_SAVE_FAILED') this.patch({ error: null })
     for (const listener of this.#learnedLayoutListeners) {
       try {

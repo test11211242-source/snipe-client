@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 3,
+  "userId": "synthetic-v4-6159cdd-user",
+  "revision": 23,
+  "fingerprint": "b9c0ce3adec7a305595cb479c847e8d85624962832f1c01a106b577d1d2b0c90",
+  "activeProfileId": "6159cdd0-0000-4000-8000-000000000002",
+  "profiles": [
+    {
+      "profileId": "6159cdd0-0000-4000-8000-000000000001",
+      "profileName": "Synthetic Emulator",
+      "createdAt": "2026-07-15T07:00:00.000Z",
+      "updatedAt": "2026-07-18T09:30:00.000Z",
+      "configuration": {
+        "schemaVersion": 2,
+        "userId": "synthetic-v4-6159cdd-user",
+        "revision": 7,
+        "fingerprint": "538497195c24366d047e3e95fc3412dcb300f44b373f76787837ecbe86809b45",
+        "committedAt": "2026-07-18T09:30:00.000Z",
+        "sourceBinding": {
+          "identity": {
+            "kind": "window",
+            "label": "Synthetic Emulator",
+            "titleHint": "Synthetic Clash Royale",
+            "executableLabel": "synthetic-emulator.exe",
+            "windowHwnd": "987654321"
+          },
+          "lastVerifiedAt": "2026-07-18T10:45:00.000Z"
+        },
+        "calibration": {
+          "schemaVersion": 1,
+          "calibrationId": "6159cdd0-0000-4000-8000-000000000001",
+          "revision": 5,
+          "referenceFrameSize": {
+            "width": 1920,
+            "height": 1080
+          },
+          "coordinateSpace": "full_frame_normalized",
+          "gameViewport": {
+            "x": 0.3125,
+            "y": 0.0625,
+            "width": 0.375,
+            "height": 0.875
+          },
+          "expectedLayout": "synthetic-portrait-v4",
+          "triggerRegion": {
+            "x": 0.4375,
+            "y": 0.375,
+            "width": 0.125,
+            "height": 0.125
+          },
+          "nicknameRegion": {
+            "x": 0.375,
+            "y": 0.1875,
+            "width": 0.25,
+            "height": 0.0625
+          },
+          "topLeftEvidenceRegion": {
+            "x": 0.34375,
+            "y": 0.125,
+            "width": 0.1875,
+            "height": 0.125
+          },
+          "triggerProfile": {
+            "schemaVersion": 3,
+            "analyzer": {
+              "name": "cr-tools-trigger-analyzer",
+              "version": "2.0.0"
+            },
+            "innerRect": {
+              "x": 0.125,
+              "y": 0.125,
+              "width": 0.75,
+              "height": 0.75
+            },
+            "structureAlgorithm": "max-channel-scharr-v1",
+            "structureHash64": "ffffffffffffffff",
+            "matcherMode": "edge",
+            "normalizedTemplateSize": {
+              "width": 128,
+              "height": 128
+            },
+            "structureTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAABEklEQVR4nO3O4UZDAQCA0Wsyk8xkkslMkslMJjOZTCaZZDKTZJJkMjOZmZnJzEwmSTJJkkmSTJIkyWSSJDMzmcxMkklmMjOzx+jPd57gCIKoSyzp7pHKeuV9/YoBpWpwaFg9otGO6sb0hnHjhGnSPDVtmZm1ztns8wuLjqXllVXnmsvtWff6/IFgaCMcicY241vbO7t7if2Dw6Pj5Mnp2flF6vLq+ub27v4h/Zh5en55fcvm8oX34kepXPn8+q7+/Nbqf41mqy0QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBP470AF7D8HSEDHWPAAAAABJRU5ErkJggg==",
+            "edgeTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAAAYklEQVR4nO3OoREAAAgDMfZfGgyWQ9Wl9kVTvatj6R4/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+PoAqzfw4hrR0isAAAAASUVORK5CYII=",
+            "orientationTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAAAY0lEQVR4nO3OoREAAAgDMUZj/6kwWA5Vl9oXTfWujqV7/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODrA9K5AD33F0O2AAAAAElFTkSuQmCC",
+            "quality": {
+              "grade": "high",
+              "score": 0.875,
+              "edgePixelCount": 4096,
+              "edgeCoverage": 0.75,
+              "keypointsCount": 0,
+              "cropConfidence": 0.875,
+              "cropAreaRatio": 0.5625
+            }
+          },
+          "provenance": {
+            "trigger": {
+              "origin": "auto",
+              "confidence": 0.875,
+              "analyzerVersion": "2.0.0"
+            },
+            "nickname": {
+              "origin": "manual",
+              "confidence": null,
+              "analyzerVersion": null
+            },
+            "topLeftEvidence": {
+              "origin": "imported",
+              "confidence": 0.625,
+              "analyzerVersion": "1.9.0"
+            },
+            "viewport": {
+              "origin": "auto",
+              "confidence": 0.9375,
+              "analyzerVersion": "synthetic-viewport-1"
+            }
+          },
+          "validationStatus": "validated",
+          "calibratedAt": "2026-07-17T08:15:00.000Z"
+        }
+      }
+    },
+    {
+      "profileId": "6159cdd0-0000-4000-8000-000000000002",
+      "profileName": "Synthetic Display",
+      "createdAt": "2026-07-15T07:00:00.000Z",
+      "updatedAt": "2026-07-19T09:30:00.000Z",
+      "configuration": {
+        "schemaVersion": 2,
+        "userId": "synthetic-v4-6159cdd-user",
+        "revision": 8,
+        "fingerprint": "768137717a017700c42ae15a91d789e864068f0217d2291d7ba198c04d774b7a",
+        "committedAt": "2026-07-19T09:30:00.000Z",
+        "sourceBinding": {
+          "identity": {
+            "kind": "display",
+            "label": "Synthetic Display",
+            "displayId": "synthetic-display-2"
+          },
+          "lastVerifiedAt": null
+        },
+        "calibration": {
+          "schemaVersion": 1,
+          "calibrationId": "6159cdd0-0000-4000-8000-000000000002",
+          "revision": 6,
+          "referenceFrameSize": {
+            "width": 1920,
+            "height": 1080
+          },
+          "coordinateSpace": "full_frame_normalized",
+          "gameViewport": {
+            "x": 0.3125,
+            "y": 0.0625,
+            "width": 0.375,
+            "height": 0.875
+          },
+          "expectedLayout": "synthetic-portrait-v4",
+          "triggerRegion": {
+            "x": 0.4375,
+            "y": 0.375,
+            "width": 0.125,
+            "height": 0.125
+          },
+          "nicknameRegion": {
+            "x": 0.375,
+            "y": 0.1875,
+            "width": 0.25,
+            "height": 0.0625
+          },
+          "topLeftEvidenceRegion": {
+            "x": 0.34375,
+            "y": 0.125,
+            "width": 0.1875,
+            "height": 0.125
+          },
+          "triggerProfile": {
+            "schemaVersion": 3,
+            "analyzer": {
+              "name": "cr-tools-trigger-analyzer",
+              "version": "2.0.0"
+            },
+            "innerRect": {
+              "x": 0.125,
+              "y": 0.125,
+              "width": 0.75,
+              "height": 0.75
+            },
+            "structureAlgorithm": "max-channel-scharr-v1",
+            "structureHash64": "ffffffffffffffff",
+            "matcherMode": "edge",
+            "normalizedTemplateSize": {
+              "width": 128,
+              "height": 128
+            },
+            "structureTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAABEklEQVR4nO3O4UZDAQCA0Wsyk8xkkslMkslMJjOZTCaZZDKTZJJkMjOZmZnJzEwmSTJJkkmSTJIkyWSSJDMzmcxMkklmMjOzx+jPd57gCIKoSyzp7pHKeuV9/YoBpWpwaFg9otGO6sb0hnHjhGnSPDVtmZm1ztns8wuLjqXllVXnmsvtWff6/IFgaCMcicY241vbO7t7if2Dw6Pj5Mnp2flF6vLq+ub27v4h/Zh5en55fcvm8oX34kepXPn8+q7+/Nbqf41mqy0QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBP470AF7D8HSEDHWPAAAAABJRU5ErkJggg==",
+            "edgeTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAAAYklEQVR4nO3OoREAAAgDMfZfGgyWQ9Wl9kVTvatj6R4/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+PoAqzfw4hrR0isAAAAASUVORK5CYII=",
+            "orientationTemplateBase64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAAAAADmVT4XAAAAY0lEQVR4nO3OoREAAAgDMUZj/6kwWA5Vl9oXTfWujqV7/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODrA9K5AD33F0O2AAAAAElFTkSuQmCC",
+            "quality": {
+              "grade": "high",
+              "score": 0.875,
+              "edgePixelCount": 4096,
+              "edgeCoverage": 0.75,
+              "keypointsCount": 0,
+              "cropConfidence": 0.875,
+              "cropAreaRatio": 0.5625
+            }
+          },
+          "provenance": {
+            "trigger": {
+              "origin": "auto",
+              "confidence": 0.875,
+              "analyzerVersion": "2.0.0"
+            },
+            "nickname": {
+              "origin": "manual",
+              "confidence": null,
+              "analyzerVersion": null
+            },
+            "topLeftEvidence": {
+              "origin": "imported",
+              "confidence": 0.625,
+              "analyzerVersion": "1.9.0"
+            },
+            "viewport": {
+              "origin": "auto",
+              "confidence": 0.9375,
+              "analyzerVersion": "synthetic-viewport-1"
+            }
+          },
+          "validationStatus": "imported",
+          "calibratedAt": "2026-07-18T08:15:00.000Z"
+        }
+      }
+    }
+  ]
+}

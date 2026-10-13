@@ -531,9 +531,13 @@ class TriggerEngine:
                         return encode_action_png(crop(confirmation, data_rect), self.limits)
             elif self.geometry.state == "aspect_mismatch":
                 self.learner.buffer(bgr, now, self.geometry)
+            elif self.geometry.state == "no_game":
+                self.learner.clear_evidence()
             return None
         if self.learner.active:
             self.learner.reset()
+        else:
+            self.learner.clear_evidence()
         matcher = self._matcher(layout)
         if layout["trigger"]["kind"] == "vs_edge_orientation":
             score = matcher.score(bgr, rect)

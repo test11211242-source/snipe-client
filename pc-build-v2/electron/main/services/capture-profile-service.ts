@@ -328,7 +328,7 @@ export class CaptureProfileService {
     profileId: string,
     calibrationId: string,
     layout: GameLayoutWire,
-  ): Promise<void> {
+  ): Promise<number> {
     const context = this.requireAuthContext()
     return this.serialized(async () => {
       this.assertAuthContext(context)
@@ -359,7 +359,12 @@ export class CaptureProfileService {
           viewport: { ...geometry },
         },
       })
-      await this.repository.appendLearnedLayout(userId, profileId, calibrationId, learned)
+      return this.repository.appendLearnedLayout(
+        userId,
+        profileId,
+        calibrationId,
+        learned,
+      )
     })
   }
 

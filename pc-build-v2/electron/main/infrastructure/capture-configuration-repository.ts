@@ -594,12 +594,12 @@ export class CaptureConfigurationRepository {
     profileId: string,
     calibrationId: string,
     layout: GameLayout,
-  ): Promise<void> {
+  ): Promise<number> {
     const validatedLayout = GameLayoutSchema.parse(layout)
     if (validatedLayout.layoutSource !== 'learned') {
       throw new ApplicationError('LAYOUT_STALE', 'Only learned layouts can be appended')
     }
-    await this.serialized(async () => {
+    return this.serialized(async () => {
       const collection = await this.readOrMigrate(userId)
       const index =
         collection?.profiles.findIndex((profile) => profile.profileId === profileId) ?? -1
@@ -653,6 +653,7 @@ export class CaptureConfigurationRepository {
         configuration,
       }
       await this.writeCollection(this.reviseCollection(collection, profiles))
+      return configuration.calibration.revision
     }).catch((error: unknown) => {
       if (error instanceof ApplicationError) throw error
       throw new ApplicationError(

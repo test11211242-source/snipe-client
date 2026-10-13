@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -38,6 +39,7 @@ import {
   type LegacyCaptureConfiguration,
   V4CaptureCollectionSchema,
   V4CaptureConfigurationSchema,
+  type V4CaptureCollection,
   type V4CaptureProfile,
 } from './capture-profile-migration'
 
@@ -754,6 +756,151 @@ describe('capture-profiles.v4 to v5 strict rollback migration', () => {
     await expect(target.list('user')).resolves.toBeNull()
     await expect(target.load('user')).resolves.toBeNull()
     expect(files.size).toBe(0)
+  })
+
+  it('migrates frozen 6159cdd v4 bytes without rewriting rollback input or changing old fields', async () => {
+    // Handcrafted from the schema and SHA-256 JSON signing order at 6159cdd.
+    // Keep this input frozen: never generate it with the current capture schemas.
+    const bytes = await readFile(
+      new URL('../../../tests/capture-profiles.v4.6159cdd.json', import.meta.url),
+      'utf8',
+    )
+    const old = JSON.parse(bytes) as V4CaptureCollection
+    expect(V4CaptureCollectionSchema.parse(old)).toEqual(old)
+    expect(old.fingerprint).toBe(
+      'b9c0ce3adec7a305595cb479c847e8d85624962832f1c01a106b577d1d2b0c90',
+    )
+    const { fingerprint: oldFingerprint, ...unsignedOld } = old
+    expect(createHash('sha256').update(JSON.stringify(unsignedOld)).digest('hex')).toBe(
+      oldFingerprint,
+    )
+    expect(old.profiles.map((profile) => profile.configuration.fingerprint)).toEqual([
+      '538497195c24366d047e3e95fc3412dcb300f44b373f76787837ecbe86809b45',
+      '768137717a017700c42ae15a91d789e864068f0217d2291d7ba198c04d774b7a',
+    ])
+    const first = required(old.profiles[0]).configuration
+    expect(first.sourceBinding).toEqual({
+      identity: {
+        kind: 'window',
+        label: 'Synthetic Emulator',
+        titleHint: 'Synthetic Clash Royale',
+        executableLabel: 'synthetic-emulator.exe',
+        windowHwnd: '987654321',
+      },
+      lastVerifiedAt: '2026-07-18T10:45:00.000Z',
+    })
+    expect(first.calibration).toMatchObject({
+      coordinateSpace: 'full_frame_normalized',
+      referenceFrameSize: { width: 1920, height: 1080 },
+      gameViewport: { x: 0.3125, y: 0.0625, width: 0.375, height: 0.875 },
+      expectedLayout: 'synthetic-portrait-v4',
+      provenance: {
+        trigger: { origin: 'auto', confidence: 0.875, analyzerVersion: '2.0.0' },
+        nickname: { origin: 'manual', confidence: null, analyzerVersion: null },
+        topLeftEvidence: {
+          origin: 'imported',
+          confidence: 0.625,
+          analyzerVersion: '1.9.0',
+        },
+        viewport: {
+          origin: 'auto',
+          confidence: 0.9375,
+          analyzerVersion: 'synthetic-viewport-1',
+        },
+      },
+      triggerProfile: {
+        normalizedTemplateSize: { width: 128, height: 128 },
+        structureHash64: 'ffffffffffffffff',
+        quality: { edgePixelCount: 4096, cropAreaRatio: 0.5625 },
+      },
+    })
+    for (const template of [
+      first.calibration.triggerProfile.structureTemplateBase64,
+      first.calibration.triggerProfile.edgeTemplateBase64,
+      first.calibration.triggerProfile.orientationTemplateBase64,
+    ]) {
+      expect(template).toMatch(/^iVBORw0KGgo/)
+      expect(template.length).toBeGreaterThan(100)
+    }
+
+    const userId = old.userId
+    const inputs = new Map([[previousPath('/v4', userId), bytes]])
+    for (const profile of old.profiles) {
+      const { fingerprint, ...unsigned } = profile.configuration
+      expect(createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')).toBe(
+        fingerprint,
+      )
+      inputs.set(
+        join('/results-v4', `${userHash(userId)}.${profile.profileId}.json`),
+        JSON.stringify(previousResult(profile)),
+      )
+    }
+    const { fs, files } = memoryFileSystem(inputs)
+    const results = new PredictionResultConfigurationRepository('/results-v5', fs, [
+      '/results-v4',
+    ])
+    const options = {
+      previousDirectory: '/v4',
+      migratePredictionReference: results.migrateCaptureReference.bind(results),
+    }
+    const target = new CaptureConfigurationRepository('/v5', fs, options)
+    const status = await target.list(userId)
+    expect(status).toMatchObject({
+      activeProfileId: old.activeProfileId,
+      revision: 23,
+      profileCount: 2,
+    })
+    const migrated = readCollection(files, '/v5', userId)
+    expect(migrated).toEqual({
+      ...old,
+      schemaVersion: 4,
+      fingerprint: migrated.fingerprint,
+      profiles: old.profiles.map((profile, index) => ({
+        ...profile,
+        configuration: {
+          ...profile.configuration,
+          schemaVersion: 3,
+          fingerprint: required(migrated.profiles[index]).configuration.fingerprint,
+          calibration: { ...profile.configuration.calibration, schemaVersion: 2 },
+        },
+      })),
+    })
+    expect(migrated.fingerprint).not.toBe(old.fingerprint)
+    const { fingerprint, ...unsigned } = migrated
+    expect(captureProfileCollectionFingerprint(unsigned)).toBe(fingerprint)
+    for (const [index, profile] of migrated.profiles.entries()) {
+      const previous = required(old.profiles[index])
+      expect(profile.configuration.fingerprint).not.toBe(
+        previous.configuration.fingerprint,
+      )
+      const { fingerprint: configurationFingerprint, ...unsignedConfiguration } =
+        profile.configuration
+      expect(captureConfigurationFingerprint(unsignedConfiguration)).toBe(
+        configurationFingerprint,
+      )
+      const result = required(await results.load(userId, profile.profileId))
+      expect(result).toEqual({
+        ...previousResult(previous),
+        fingerprint: result.fingerprint,
+        captureConfigurationFingerprint: configurationFingerprint,
+      })
+      const { fingerprint: resultFingerprint, ...unsignedResult } = result
+      expect(predictionResultFingerprint(unsignedResult)).toBe(resultFingerprint)
+    }
+    for (const [path, input] of inputs) expect(files.get(path)).toBe(input)
+    const committed = required(files.get(profilePath('/v5', userId)))
+    const reopened = new CaptureConfigurationRepository('/v5', fs, options)
+    await expect(reopened.list(userId)).resolves.toEqual(status)
+    await expect(reopened.load(userId)).resolves.toEqual(
+      required(
+        migrated.profiles.find((profile) => profile.profileId === old.activeProfileId),
+      ).configuration,
+    )
+    for (const profile of migrated.profiles) {
+      await expect(reopened.get(userId, profile.profileId)).resolves.toEqual(profile)
+    }
+    expect(files.get(profilePath('/v5', userId))).toBe(committed)
+    for (const [path, input] of inputs) expect(files.get(path)).toBe(input)
   })
 
   it.each([1, 20])(
