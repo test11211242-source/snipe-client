@@ -197,6 +197,7 @@ const setup = new SetupSessionService(
   authenticatedApi,
   targetResolver,
   ocr,
+  logger,
 )
 const monitorProcess = new MonitorProcessService(
   pythonExecutable,
@@ -234,6 +235,7 @@ const predictions = new PredictionCoordinator(
       throw new Error('Capture profile service is unavailable')
     return captureProfiles.runCaptureCommit(operation)
   },
+  logger,
 )
 captureProfiles = new CaptureProfileService(
   auth,

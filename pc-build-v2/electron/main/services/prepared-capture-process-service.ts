@@ -628,7 +628,14 @@ export class PreparedCaptureProcessService {
     if (event.type === 'fatal') {
       const payload = FatalPayloadSchema.parse(event.payload)
       if (envelope.binary.byteLength !== 0) throw new Error('Fatal event has binary data')
-      this.fail(owned, payload.code, new Error(payload.message), 'AUTO_SOURCE_LOST')
+      this.fail(
+        owned,
+        payload.code,
+        new Error(payload.message),
+        payload.code === 'CAPTURE_SOURCE_STALE'
+          ? 'AUTO_SOURCE_LOST'
+          : 'AUTO_INTERNAL_ERROR',
+      )
       return
     }
     if (event.type === 'stopped') {
@@ -639,6 +646,7 @@ export class PreparedCaptureProcessService {
       return
     }
     if (event.type.startsWith('analysis_')) {
+      if (owned.stopping) return
       this.handleAnalysisEvent(owned, event.type, event.payload, envelope.binary)
       return
     }
@@ -788,7 +796,7 @@ export class PreparedCaptureProcessService {
     signal: NodeJS.Signals | null,
   ): void {
     if (!this.current(owned)) return
-    this.finishAnalysis(owned, { ok: false, code: 'AUTO_SOURCE_LOST' })
+    this.finishAnalysis(owned, { ok: false, code: 'AUTO_INTERNAL_ERROR' })
     try {
       owned.decoder.finish()
     } catch (error) {

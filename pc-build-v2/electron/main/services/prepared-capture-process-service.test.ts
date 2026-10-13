@@ -467,6 +467,35 @@ describe('PreparedCaptureProcessService', () => {
     await stop
   })
 
+  it('ignores every analysis event already in flight while stopping cleanly', async () => {
+    const { child, service, sessionId, treeKill } = await analyzingService()
+    const onProgress = vi.fn()
+    const onPreview = vi.fn()
+    const analysis = service.analyze(sessionId, onProgress, onPreview)
+    const rejected = expect(analysis).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_CANCELLED',
+    })
+    const stopping = service.stop(sessionId)
+    child.event(2, 'analysis_progress', {
+      phase: 'waiting_vs',
+      elapsedMs: 1000,
+      game: { rect: game.rect, aspect: game.aspect },
+      framesAnalyzed: 10,
+    })
+    child.event(3, 'analysis_preview', {}, Buffer.from('discarded preview'))
+    child.event(4, 'analysis_result', success, png(1280, 720))
+    child.event(5, 'analysis_cancelled', {})
+    expect(onProgress).not.toHaveBeenCalled()
+    expect(onPreview).not.toHaveBeenCalled()
+    expect(treeKill).not.toHaveBeenCalled()
+    expect(child.commands.at(-1)?.metadata).toMatchObject({ type: 'stop' })
+    child.event(6, 'stopped', {})
+    child.emit('close', 0, null)
+    await rejected
+    await expect(stopping).resolves.toBeUndefined()
+    expect(treeKill).not.toHaveBeenCalled()
+  })
+
   it('kills analysis only at deadline plus five seconds and resolves the internal timeout', async () => {
     vi.useFakeTimers()
     try {
@@ -493,11 +522,11 @@ describe('PreparedCaptureProcessService', () => {
       const { child, service, sessionId } = await analyzingService()
       const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
       if (event === 'fatal')
-        child.event(2, 'fatal', { code: 'CAPTURE_SOURCE_LOST', message: 'Source gone' })
+        child.event(2, 'fatal', { code: 'CAPTURE_SOURCE_STALE', message: 'Source gone' })
       if (event === 'close') child.emit('close', 1, null)
       if (event === 'error') child.emit('error', new Error('Process failed'))
       await expect(analysis).resolves.toMatchObject({
-        result: { code: event === 'error' ? 'AUTO_INTERNAL_ERROR' : 'AUTO_SOURCE_LOST' },
+        result: { code: event === 'fatal' ? 'AUTO_SOURCE_LOST' : 'AUTO_INTERNAL_ERROR' },
       })
       child.emit('close', 1, null)
     },
@@ -651,6 +680,25 @@ describe('PreparedCaptureProcessService', () => {
     expect(treeKill).toHaveBeenCalledOnce()
     child.emit('close', 1, null)
   })
+
+  it.each([
+    ['CAPTURE_SOURCE_STALE', 'AUTO_SOURCE_LOST'],
+    ['PREPARED_CAPTURE_FAILED', 'AUTO_INTERNAL_ERROR'],
+  ])(
+    'classifies fatal %s without claiming unrelated process failures lost the source',
+    async (code, expected) => {
+      const { child, service, sessionId, treeKill } = await analyzingService()
+      const analysis = service.analyze(sessionId, vi.fn(), vi.fn())
+      child.event(2, 'fatal', { code, message: 'private fatal detail' })
+      await expect(analysis).resolves.toMatchObject({
+        result: { ok: false, code: expected },
+        frame: null,
+      })
+      expect(service.isAlive(sessionId)).toBe(false)
+      expect(treeKill).toHaveBeenCalledOnce()
+      child.emit('close', 1, null)
+    },
+  )
 
   it('rejects protocol-1 prepared events rather than accepting mixed subprocess versions', async () => {
     const { child, service, sessionId } = await analyzingService()

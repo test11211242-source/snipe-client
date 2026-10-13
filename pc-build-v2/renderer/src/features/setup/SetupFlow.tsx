@@ -67,6 +67,7 @@ export function SetupFlow({
   // Sessions the user took to the manual editor / whose window is gone (by session id).
   const [adjustingFor, setAdjustingFor] = useState<string | null>(null)
   const [lostFor, setLostFor] = useState<string | null>(null)
+  const [unavailableFor, setUnavailableFor] = useState<string | null>(null)
   const name = typedName ?? defaultName(profiles.value?.profiles ?? [])
 
   useEffect(() => {
@@ -91,14 +92,22 @@ export function SetupFlow({
   // A retry that finds the window gone leaves the old failure on the view; remember that
   // this session's source is dead so the retry is not offered again.
   const sessionId = view?.sessionId ?? null
-  const commandError = session.error
-  if (sessionId !== null && commandError === SOURCE_LOST_TEXT && lostFor !== sessionId) {
+  const commandCode = session.errorCode
+  if (sessionId !== null && isSourceLostCode(commandCode) && lostFor !== sessionId) {
     setLostFor(sessionId)
+  }
+  if (
+    sessionId !== null &&
+    commandCode === 'SETUP_CAPTURE_UNAVAILABLE' &&
+    unavailableFor !== sessionId
+  ) {
+    setUnavailableFor(sessionId)
   }
 
   const result = view?.kind === 'predictionResult' && stage === 'session'
   const adjusting = view !== null && adjustingFor === view.sessionId
   const sourceLost = view !== null && lostFor === view.sessionId
+  const captureUnavailable = view !== null && unavailableFor === view.sessionId
   const detection = view?.kind === 'capture' ? view.detection : null
   // Automatic setup succeeded and the user has not started editing: save or adjust.
   const autoSuccess =
@@ -403,6 +412,7 @@ export function SetupFlow({
   } else if (view.state === 'DETECTING') {
     body = (
       <AutoStage
+        captureUnavailable={captureUnavailable}
         exiting={exiting}
         onChooseWindow={() => void restart()}
         onManual={() => void manual()}

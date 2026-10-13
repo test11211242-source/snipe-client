@@ -346,6 +346,25 @@ describe('main-window setup capability', () => {
     )
   })
 
+  it('returns an explicit retry envelope so Electron preserves public error codes', async () => {
+    const test = setupHarness()
+    const retry = registeredHandler(SETUP_IPC_CHANNELS.retryDetection)
+    expect(await retry(event, command)).toEqual({ ok: true, session: view })
+    test.setup.retryDetection.mockImplementationOnce(() => {
+      throw new ApplicationError(
+        'SETUP_CAPTURE_UNAVAILABLE',
+        'Не получилось настроить автоматически',
+      )
+    })
+    expect(await retry(event, command)).toEqual({
+      ok: false,
+      error: {
+        code: 'SETUP_CAPTURE_UNAVAILABLE',
+        message: 'Не получилось настроить автоматически',
+      },
+    })
+  })
+
   it('stops the transferred capture if auto session creation is rejected', async () => {
     const test = setupHarness()
     const stop = vi.fn().mockResolvedValue(undefined)

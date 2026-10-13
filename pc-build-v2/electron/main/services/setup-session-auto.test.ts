@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -16,6 +18,13 @@ import type { LivePreparedCapture } from './capture-preparation-service'
 import type { CapturedFrame, CaptureService } from './capture-service'
 import { SetupSessionService } from './setup-session-service'
 import type { SetupNameChecker } from './setup-session-service'
+import { BinaryEnvelopeStreamDecoder, encodeBinaryEnvelope } from './binary-protocol'
+import { CapturePreparationService } from './capture-preparation-service'
+import {
+  PreparedCaptureProcessService,
+  type PreparedCaptureChild,
+} from './prepared-capture-process-service'
+import type { CaptureSourceRegistry } from './capture-source-registry'
 
 const chrome = {
   top: 0,
@@ -138,7 +147,13 @@ function harness(nameChecker?: SetupNameChecker) {
       return deferred.promise
     }),
     cancelAnalysis: vi.fn().mockResolvedValue(undefined),
-    freeze: vi.fn().mockResolvedValue(frame),
+    freeze: vi.fn<LivePreparedCapture['freeze']>(() =>
+      alive
+        ? Promise.resolve(frame)
+        : Promise.reject(
+            new ApplicationError('CAPTURE_PREPARATION_STALE', 'Source ended'),
+          ),
+    ),
     stop: vi.fn(() => {
       alive = false
       return Promise.resolve()
@@ -169,6 +184,7 @@ function harness(nameChecker?: SetupNameChecker) {
       .fn()
       .mockResolvedValue({ ok: true, status: 200, data: { success: true } }),
   }
+  const logger = { info: vi.fn(), warn: vi.fn() }
   const service = new SetupSessionService(
     capture as unknown as CaptureService,
     repository as unknown as CaptureConfigurationRepository,
@@ -179,6 +195,7 @@ function harness(nameChecker?: SetupNameChecker) {
     undefined,
     undefined,
     nameChecker,
+    logger,
   )
   return {
     service,
@@ -186,6 +203,7 @@ function harness(nameChecker?: SetupNameChecker) {
     operations,
     capture,
     repository,
+    logger,
     changeAuth: () => {
       authGeneration += 1
     },
@@ -193,6 +211,80 @@ function harness(nameChecker?: SetupNameChecker) {
       alive = false
     },
   }
+}
+
+// Same framed fake-child boundary as the process tests, with real preparation ownership.
+class SessionCaptureChild extends EventEmitter implements PreparedCaptureChild {
+  stdin = new PassThrough()
+  stdout = new PassThrough()
+  stderr = new PassThrough()
+  commands: string[] = []
+  sessionId = ''
+  sequence = 0
+  killed = false
+
+  constructor() {
+    super()
+    const decoder = new BinaryEnvelopeStreamDecoder({
+      maxMetadataBytes: 64 * 1024,
+      maxBinaryBytes: 0,
+    })
+    this.stdin.on('data', (chunk: Buffer) => {
+      for (const envelope of decoder.push(chunk)) {
+        const command = envelope.metadata as { type: string; sessionId: string }
+        this.sessionId = command.sessionId
+        this.commands.push(command.type)
+        if (command.type === 'start') {
+          queueMicrotask(() =>
+            this.send('ready', {
+              frameSequence: 1,
+              width: frame.size.width,
+              height: frame.size.height,
+            }),
+          )
+        }
+      }
+    })
+  }
+
+  send(type: string, payload: unknown): void {
+    this.stdout.write(
+      encodeBinaryEnvelope({
+        protocolVersion: 2,
+        sessionId: this.sessionId,
+        sequence: ++this.sequence,
+        type,
+        payload,
+      }),
+    )
+  }
+
+  kill(): boolean {
+    this.killed = true
+    queueMicrotask(() => this.emit('close', 0, null))
+    return true
+  }
+}
+
+async function joinedHarness() {
+  const test = harness()
+  const child = new SessionCaptureChild()
+  const process = new PreparedCaptureProcessService(
+    'python.exe',
+    'prepared_capture.py',
+    test.logger,
+    () => child,
+  )
+  const preparations = new CapturePreparationService(
+    {
+      resolve: vi.fn().mockResolvedValue({ selector, preference }),
+    } as unknown as CaptureSourceRegistry,
+    process,
+  )
+  const prepared = await preparations.prepare('source', 'revision')
+  const { capture } = await preparations.takeLive(prepared.preparationId)
+  const view = await test.service.startAuto(selector, preference, capture)
+  return { ...test, child, process, preparations, view }
 }
 
 async function settle() {
@@ -398,12 +490,14 @@ describe('automatic setup session lifecycle', () => {
     expect(test.service.getSession().state).toBe('DETECTING')
     expect(() =>
       test.service.retryDetection(started.sessionId, started.generation),
-    ).toThrow(expect.objectContaining({ code: 'SETUP_SOURCE_LOST' }))
+    ).toThrow(expect.objectContaining({ code: 'SETUP_CAPTURE_UNAVAILABLE' }))
   })
 
   it('does not accept detection if ancillary structural/legacy analysis fails', async () => {
     const test = harness()
-    test.capture.analyze.mockRejectedValueOnce(new Error('worker failed'))
+    test.capture.analyze.mockRejectedValueOnce(
+      new ApplicationError('TRIGGER_STRUCTURE_WEAK', 'worker failed'),
+    )
     const started = await test.service.startAuto(selector, preference, test.live)
     requiredFixture(test.operations[0]).resolve({ result: success, frame })
     await settle()
@@ -416,6 +510,9 @@ describe('automatic setup session lifecycle', () => {
         failure: { code: 'AUTO_INTERNAL_ERROR' },
         frameAvailable: true,
       },
+    })
+    expect(test.logger.warn).toHaveBeenCalledWith('setup.auto_analysis_failed', {
+      code: 'TRIGGER_STRUCTURE_WEAK',
     })
     const manual = await test.service.switchToManual(
       started.sessionId,
@@ -488,6 +585,7 @@ describe('automatic setup session lifecycle', () => {
       detection: { status: 'succeeded' },
       regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
     })
+    expect(test.live.stop).toHaveBeenCalledOnce()
     expect(test.capture.analyze).toHaveBeenCalledWith(
       expect.objectContaining({ png: frame.png }),
       selected.regions.trigger,
@@ -548,7 +646,7 @@ describe('automatic setup session lifecycle', () => {
     })
   })
 
-  it('name check is one cropped request, nonblocking save and completion does not change generation', async () => {
+  it('name check is one cropped request, nonblocking save aborts its pending diagnostics', async () => {
     const result = Promise.withResolvers<SetupNameCheck>()
     const checker = {
       checkSetupName: vi.fn<SetupNameChecker['checkSetupName']>(() => result.promise),
@@ -571,11 +669,34 @@ describe('automatic setup session lifecycle', () => {
     view = test.service.review(view.sessionId, view.generation)
     view = await test.service.commit(view.sessionId, view.generation)
     expect(view.state).toBe('COMMITTED')
+    expect(requiredFixture(checker.checkSetupName.mock.calls[0])[1]?.aborted).toBe(true)
     result.resolve({ status: 'trainer', text: 'Trainer Cheddar' })
     await settle()
     expect(test.service.getSession()).toMatchObject({
       generation: view.generation,
-      detection: { nameCheck: { status: 'trainer', text: 'Trainer Cheddar' } },
+      detection: { nameCheck: { status: 'pending', text: null } },
+    })
+  })
+
+  it('logs a completed name check status without image or recognized text', async () => {
+    const test = harness({
+      checkSetupName: vi.fn().mockResolvedValue({
+        status: 'trainer',
+        text: 'Private nickname',
+        httpStatus: 200,
+      }),
+    })
+    await test.service.startAuto(selector, preference, test.live)
+    requiredFixture(test.operations[0]).resolve({ result: success, frame })
+    await settle()
+    expect(test.logger.info).toHaveBeenCalledWith('setup.name_check', {
+      status: 'trainer',
+      httpStatus: 200,
+    })
+    expect(JSON.stringify(test.logger.info.mock.calls)).not.toContain('Private nickname')
+    expect(test.service.getSession().detection?.nameCheck).toEqual({
+      status: 'trainer',
+      text: 'Private nickname',
     })
   })
 
@@ -695,6 +816,26 @@ describe('automatic setup session lifecycle', () => {
     )
   })
 
+  it('maps a failed freeze after actual source loss to the source-lost manual screen', async () => {
+    const test = harness()
+    const started = await test.service.startAuto(selector, preference, test.live)
+    test.loseSource()
+    requiredFixture(test.operations[0]).resolve({
+      result: { ok: false, code: 'AUTO_SOURCE_LOST' },
+      frame: null,
+    })
+    await settle()
+    const manual = await test.service.switchToManual(
+      started.sessionId,
+      started.generation,
+    )
+    expect(test.live.freeze).toHaveBeenCalledOnce()
+    expect(manual).toMatchObject({
+      state: 'FAILED',
+      error: { code: 'SETUP_SOURCE_LOST' },
+    })
+  })
+
   it('handles manual transition after internal timeout as a source loss, not an invalid command', async () => {
     vi.useFakeTimers()
     const test = harness()
@@ -708,5 +849,57 @@ describe('automatic setup session lifecycle', () => {
       state: 'FAILED',
       error: { code: 'SETUP_SOURCE_LOST' },
     })
+  })
+
+  it('joins real preparation/process ownership for source loss then manual fallback', async () => {
+    const test = await joinedHarness()
+    test.child.send('analysis_result', { ok: false, code: 'AUTO_SOURCE_LOST' })
+    await settle()
+    expect(test.child.killed).toBe(true)
+    expect(test.service.getSession().detection?.failure?.code).toBe('AUTO_SOURCE_LOST')
+    const manual = await test.service.switchToManual(
+      test.view.sessionId,
+      test.view.generation,
+    )
+    expect(manual).toMatchObject({
+      state: 'FAILED',
+      error: { code: 'SETUP_SOURCE_LOST' },
+    })
+    expect(test.child.commands).not.toContain('freeze')
+  })
+
+  it('joins a fatal arriving while failed and refuses retry without claiming window loss', async () => {
+    const test = await joinedHarness()
+    test.child.send('analysis_result', { ok: false, code: 'AUTO_VS_TIMEOUT' })
+    await settle()
+    test.child.send('fatal', {
+      code: 'PREPARED_CAPTURE_FAILED',
+      message: 'worker failed',
+    })
+    await settle()
+    expect(test.child.killed).toBe(true)
+    expect(() =>
+      test.service.retryDetection(test.view.sessionId, test.view.generation),
+    ).toThrow(expect.objectContaining({ code: 'SETUP_CAPTURE_UNAVAILABLE' }))
+    test.service.close(test.view.sessionId, test.view.generation)
+  })
+
+  it('joins cancellation with in-flight analysis events and stops without protocol failure', async () => {
+    const test = await joinedHarness()
+    test.service.cancel(test.view.sessionId, test.view.generation)
+    test.child.send('analysis_progress', {
+      phase: 'waiting_vs',
+      elapsedMs: 10,
+      framesAnalyzed: 1,
+      game: null,
+    })
+    test.child.send('analysis_result', { ok: false, code: 'AUTO_VS_TIMEOUT' })
+    test.child.send('stopped', {})
+    test.child.emit('close', 0, null)
+    await settle()
+    expect(test.child.commands).toContain('stop')
+    expect(test.child.killed).toBe(false)
+    expect(test.logger.warn).not.toHaveBeenCalled()
+    expect(test.service.getSession().state).toBe('CANCELLED')
   })
 })

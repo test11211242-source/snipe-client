@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
+import ctypes
+from ctypes import wintypes
 import time
 import sys
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from capture.backend import CaptureBackendError
 from capture.monitor_backend import WindowsMonitorBackend
@@ -142,6 +144,18 @@ def validate_command(metadata: dict[str, Any], expected_type: str | None = None)
     return session_id, command_type
 
 
+def window_iconic_probe(selector: dict[str, Any]) -> Callable[[], bool] | None:
+    if selector["kind"] != "window":
+        return None
+    from capture.backend import parse_window_hwnd
+
+    hwnd = parse_window_hwnd(selector["windowHwnd"])
+    is_iconic = ctypes.WinDLL("user32", use_last_error=True).IsIconic
+    is_iconic.argtypes = [wintypes.HWND]
+    is_iconic.restype = wintypes.BOOL
+    return lambda: bool(is_iconic(hwnd))
+
+
 def main() -> None:
     output_lock = threading.Lock()
     backend: WindowsMonitorBackend | None = None
@@ -217,8 +231,10 @@ def main() -> None:
                 raise ProtocolError("prepared capture session is stale")
             if command_type == "analyze":
                 if analysis is not None and analysis.thread.is_alive():
-                    raise ProtocolError("prepared capture analysis is already running")
-                analysis = LiveAnalysis(store, emit)
+                    if not analysis.finishing.is_set():
+                        raise ProtocolError("prepared capture analysis is already running")
+                    analysis.thread.join()
+                analysis = LiveAnalysis(store, emit, is_iconic=window_iconic_probe(selector))
                 analysis.start()
                 continue
             if command_type == "analyze_cancel":

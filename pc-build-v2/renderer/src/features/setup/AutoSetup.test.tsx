@@ -169,6 +169,16 @@ describe('automatic setup: waiting', () => {
     await heading(WAIT)
     expect(screen.queryByRole('img', { name: 'Картинка окна игры' })).toBeNull()
     expect(screen.getByRole('status', { name: 'Ждём картинку окна' })).toBeVisible()
+    const spinner = screen.getByRole('status', { name: 'Ждём картинку окна' })
+    expect(spinner).toBeEmptyDOMElement()
+    expect(document.body.textContent).not.toContain('Ждём картинку окна')
+  })
+
+  it('keeps the transient opening spinner label out of visible setup text', async () => {
+    mountAuto(detectingView({ detection: null }))
+    const spinner = await screen.findByRole('status', { name: 'Открываем настройку' })
+    expect(spinner).toBeEmptyDOMElement()
+    expect(document.body.textContent).not.toContain('Открываем настройку')
   })
 
   it('keeps polling the session and shows the result when main succeeds', async () => {
@@ -304,7 +314,10 @@ describe('automatic setup: failures', () => {
   })
 
   it('turns a retry that finds the window gone into the source-lost screen', async () => {
-    const world = mountAuto(failedDetectionView('AUTO_VS_TIMEOUT'), { sourceLost: true })
+    const world = mountAuto(failedDetectionView('AUTO_VS_TIMEOUT'))
+    world.bridge.crTools.setup.retryDetection.mockRejectedValueOnce(
+      Object.assign(new Error('Private source failure'), { code: 'SETUP_SOURCE_LOST' }),
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Попробовать ещё раз' }))
     await heading(LOST)
     expect(screen.queryByRole('button', { name: 'Попробовать ещё раз' })).toBeNull()
@@ -312,6 +325,40 @@ describe('automatic setup: failures', () => {
     expect(button('Настроить вручную')).toBeEnabled()
     expect(screen.queryByText(LOST, { selector: 'p, span, div' })).toBeNull()
     expect(world.bridge.crTools.setup.retryDetection).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not infer a lost source from an unrelated command message', async () => {
+    const world = mountAuto(failedDetectionView('AUTO_VS_TIMEOUT'))
+    world.bridge.crTools.setup.retryDetection.mockRejectedValueOnce(
+      Object.assign(new Error(LOST), { code: 'SETUP_ANALYSIS_BUSY' }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Попробовать ещё раз' }))
+    await screen.findByText(LOST)
+    expect(
+      screen.getByRole('heading', { name: 'Экран боя не появился за минуту' }),
+    ).toBeVisible()
+    expect(button('Попробовать ещё раз')).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Выбрать окно' })).toBeNull()
+  })
+
+  it('offers a new source rather than a dead retry after an internal capture failure', async () => {
+    const world = mountAuto(failedDetectionView('AUTO_VS_TIMEOUT'))
+    world.bridge.crTools.setup.retryDetection.mockRejectedValueOnce(
+      Object.assign(new Error('private process failure'), {
+        code: 'SETUP_CAPTURE_UNAVAILABLE',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Попробовать ещё раз' }))
+    await heading(GENERIC)
+    expect(screen.getAllByRole('heading')).toHaveLength(1)
+    expect(document.body.textContent).not.toMatch(
+      /private process failure|закрыто|свёрнуто/,
+    )
+    expect(screen.queryByRole('button', { name: 'Попробовать ещё раз' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Настроить вручную' })).toBeNull()
+    fireEvent.click(button('Выбрать окно'))
+    await heading('Откуда берём картинку?')
+    expect(world.bridge.crTools.setup.cancel).toHaveBeenCalledTimes(1)
   })
 
   it('shows the source-lost phrase when switching to manual finds no window', async () => {

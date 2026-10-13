@@ -38,7 +38,9 @@ describe('automatic setup preload', () => {
   it.each(['retryDetection', 'switchToManual'] as const)(
     'validates and forwards %s with generation fencing',
     async (method) => {
-      electron.invoke.mockResolvedValue(view)
+      electron.invoke.mockResolvedValue(
+        method === 'retryDetection' ? { ok: true, session: view } : view,
+      )
       await expect(setupApi[method](command)).resolves.toEqual(view)
       expect(electron.invoke).toHaveBeenCalledWith(SETUP_IPC_CHANNELS[method], command)
       electron.invoke.mockClear()
@@ -46,6 +48,17 @@ describe('automatic setup preload', () => {
         setupApi[method]({ ...command, extra: true } as never),
       ).rejects.toThrow()
       expect(electron.invoke).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['SETUP_SOURCE_LOST', 'SETUP_CAPTURE_UNAVAILABLE'])(
+    'preserves retry command error code %s across IPC',
+    async (code) => {
+      electron.invoke.mockResolvedValue({
+        ok: false,
+        error: { code, message: 'Не получилось настроить автоматически' },
+      })
+      await expect(setupApi.retryDetection(command)).rejects.toMatchObject({ code })
     },
   )
 

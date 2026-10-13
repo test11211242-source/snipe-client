@@ -68,7 +68,20 @@ const COMMAND_FRAGMENTS: readonly (readonly [fragment: string, text: string])[] 
   ['atomic save', 'Сохранение ещё идёт. Подождите несколько секунд.'],
 ]
 
+/** Structured command codes survive setup IPC; never infer state from translated text. */
+export function commandErrorCode(cause: unknown): string | null {
+  return typeof cause === 'object' &&
+    cause !== null &&
+    'code' in cause &&
+    typeof cause.code === 'string'
+    ? cause.code
+    : null
+}
+
 export function commandErrorMessage(cause: unknown, fallback: string): string {
+  const code = commandErrorCode(cause)
+  if (isSourceLostCode(code)) return SOURCE_LOST_TEXT
+  if (code === 'SETUP_CAPTURE_UNAVAILABLE') return autoFailureText(null)
   const message = cause instanceof Error ? cause.message : ''
   return (
     COMMAND_FRAGMENTS.find(([fragment]) => message.includes(fragment))?.[1] ?? fallback
@@ -96,6 +109,8 @@ export function viewErrorMessage(error: {
       return 'Не вижу игру в окне — сделайте кадр ещё раз'
     case 'SETUP_SOURCE_LOST':
       return SOURCE_LOST_TEXT
+    case 'SETUP_CAPTURE_UNAVAILABLE':
+      return autoFailureText(null)
     case 'CAPTURE_PROFILE_STALE':
       return 'Список профилей изменился, пока шла настройка. Отмените её и начните заново.'
     case 'CAPTURE_PROFILE_NAME_CONFLICT':

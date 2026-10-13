@@ -18,6 +18,7 @@ import {
   PreviewPayloadSchema,
   ReleasePreparationResultSchema,
   RebindCaptureProfilePayloadSchema,
+  RetryDetectionResponseSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
@@ -235,9 +236,20 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
   ipcMain.handle(SETUP_IPC_CHANNELS.retryDetection, (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = SetupCommandSchema.parse(rawPayload)
-    return SetupSessionResultSchema.parse(
-      dependencies.setup.retryDetection(payload.sessionId, payload.generation),
-    )
+    try {
+      return RetryDetectionResponseSchema.parse({
+        ok: true,
+        session: dependencies.setup.retryDetection(payload.sessionId, payload.generation),
+      })
+    } catch (error) {
+      return RetryDetectionResponseSchema.parse({
+        ok: false,
+        error:
+          error instanceof ApplicationError
+            ? error.toPublicError()
+            : { code: 'SETUP_FAILED', message: 'Не получилось настроить автоматически' },
+      })
+    }
   })
   ipcMain.handle(SETUP_IPC_CHANNELS.switchToManual, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')

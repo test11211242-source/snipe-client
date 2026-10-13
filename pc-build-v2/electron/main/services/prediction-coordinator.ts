@@ -10,6 +10,7 @@ import type { PredictionPreferences } from '../../../shared/models/streamer'
 import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { AuthSession } from './auth-session'
+import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { AuthenticatedApiClient } from './api-client'
 import type { MonitorAction } from './monitor-process-service'
 import type { MonitorSupervisor } from './monitor-supervisor'
@@ -39,7 +40,7 @@ export class PredictionCoordinator {
   #disposeResult: (() => void) | null = null
   #disposeState: (() => void) | null = null
   #disposeViews: (() => void) | null = null
-  #suspended = false
+  #monitorPredictionState: 'active' | 'aspect_mismatch' | null = null
 
   constructor(
     private readonly auth: AuthSession,
@@ -50,6 +51,7 @@ export class PredictionCoordinator {
     private readonly runLifecycle: (operation: () => Promise<void>) => Promise<void> = (
       operation,
     ) => operation(),
+    private readonly logger?: Pick<StructuredLogger, 'info'>,
   ) {}
 
   get state(): PredictionRuntimeState {
@@ -62,7 +64,7 @@ export class PredictionCoordinator {
 
   /** Predictions are active but the result trigger waits for the configured aspect ratio. */
   get suspended(): boolean {
-    return this.#suspended
+    return this.#state === 'active' && this.#monitorPredictionState === 'aspect_mismatch'
   }
 
   observeServerState(
@@ -94,11 +96,11 @@ export class PredictionCoordinator {
     // The result trigger pauses (without ending monitoring) while the game window has
     // another aspect ratio than the configured result frame; surface that, never hide it.
     this.#disposeState = this.monitor.subscribePredictionStates((state) => {
-      this.#suspended = state === 'aspect_mismatch' && this.#state === 'active'
+      this.#monitorPredictionState = state
     })
     // A new monitor process starts its result trigger active again, without an event.
     this.#disposeViews = this.monitor.subscribeViews((view) => {
-      if (view.state !== 'READY') this.#suspended = false
+      if (view.state !== 'READY') this.#monitorPredictionState = null
     })
   }
 
@@ -120,7 +122,6 @@ export class PredictionCoordinator {
     settings: PredictionPreferences,
     generation: number,
   ): Promise<void> {
-    this.#suspended = false
     this.#eventController.abort()
     this.#eventController = new AbortController()
     const view = this.auth.getView()
@@ -292,7 +293,6 @@ export class PredictionCoordinator {
 
   private async performStop(bestEffort: boolean): Promise<void> {
     ++this.#generation
-    this.#suspended = false
     this.#eventController.abort()
     const locallyStopped = this.#state === 'stopped' && !this.#monitorOwned
     const serverStopped = await this.stopServer().catch(() => false)
@@ -380,7 +380,12 @@ export class PredictionCoordinator {
   }
 
   private enqueueBattleStart(): void {
-    if (this.#state !== 'active' || this.#pendingBattle) return
+    if (this.#state !== 'active') return
+    if (this.suspended) {
+      this.logger?.info('prediction.battle_start_skipped', { reason: 'aspect_mismatch' })
+      return
+    }
+    if (this.#pendingBattle) return
     this.#pendingBattle = true
     const generation = this.#generation
     this.#eventQueue = this.#eventQueue
@@ -394,6 +399,12 @@ export class PredictionCoordinator {
           !this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration)
         )
           return
+        if (this.suspended) {
+          this.logger?.info('prediction.battle_start_skipped', {
+            reason: 'aspect_mismatch',
+          })
+          return
+        }
         await this.api.request({
           method: 'POST',
           path: '/api/streamer/bot/battle-start',

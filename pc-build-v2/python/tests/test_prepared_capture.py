@@ -223,6 +223,7 @@ def test_protocol_two_cancel_fence_and_retry_keep_backend_alive(monkeypatch):
 
     monkeypatch.setattr(prepared_capture, "WindowsMonitorBackend", Backend)
     monkeypatch.setattr(prepared_capture.sys, "stdin", SimpleNamespace(buffer=commands))
+    monkeypatch.setattr(prepared_capture, "window_iconic_probe", lambda _selector: lambda: False)
     monkeypatch.setattr(prepared_capture.sys, "stdout", SimpleNamespace(buffer=events))
     prepared_capture.main()
     events.seek(0)
@@ -237,3 +238,176 @@ def test_protocol_two_cancel_fence_and_retry_keep_backend_alive(monkeypatch):
     assert stopped == [True]
     assert all(envelope.metadata["protocolVersion"] == 2 for envelope in envelopes)
     assert [envelope.metadata["sequence"] for envelope in envelopes] == list(range(1, len(envelopes) + 1))
+
+
+def test_window_iconic_probe_uses_pointer_sized_hwnd(monkeypatch):
+    calls = []
+
+    class IsIconic:
+        def __call__(self, hwnd):
+            calls.append(hwnd)
+            return 1
+
+    is_iconic = IsIconic()
+
+    def win_dll(name, *, use_last_error):
+        assert name == "user32" and use_last_error
+        return SimpleNamespace(IsIconic=is_iconic)
+
+    monkeypatch.setattr(prepared_capture.ctypes, "WinDLL", win_dll, raising=False)
+    probe = prepared_capture.window_iconic_probe({"kind": "window", "windowHwnd": "4294967419"})
+    assert probe() is True
+    assert calls == [4294967419]
+    assert is_iconic.argtypes == [prepared_capture.wintypes.HWND]
+    assert is_iconic.restype == prepared_capture.wintypes.BOOL
+
+
+def test_display_selector_never_calls_is_iconic(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Display capture must not load or query user32.IsIconic")
+
+    monkeypatch.setattr(prepared_capture.ctypes, "WinDLL", forbidden, raising=False)
+    selector = {"kind": "display", "displayDeviceName": r"\\.\DISPLAY1", "electronDisplayId": "1"}
+    assert prepared_capture.window_iconic_probe(selector) is None
+
+
+def test_retry_after_result_joins_finishing_worker_before_starting_another(monkeypatch):
+    commands, events = io.BytesIO(), io.BytesIO()
+    selector = {"kind": "display", "displayDeviceName": r"\\.\DISPLAY1", "electronDisplayId": "1"}
+    for command in (
+        {"type": "start", "selector": selector},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+        {"type": "stop"},
+    ):
+        write_envelope(commands, {"protocolVersion": 2, "sessionId": "finishing-retry", **command})
+    commands.seek(0)
+    workers, joined = [], []
+    result_sent, exit_allowed = threading.Event(), threading.Event()
+    read_command = prepared_capture.read_stream_envelope
+    reads = [0]
+
+    def read_after_result(*args, **kwargs):
+        reads[0] += 1
+        if reads[0] == 3:
+            assert result_sent.wait(1)
+            assert workers[0].thread.is_alive()
+        return read_command(*args, **kwargs)
+
+    class Backend:
+        def __init__(self, selected):
+            assert selected == selector
+
+        def start(self, on_frame, _on_closed):
+            on_frame(np.zeros((32, 32, 3), np.uint8))
+
+        def stop(self):
+            pass
+
+    class Analysis(prepared_capture.LiveAnalysis):
+        def __init__(self, store, emit, **kwargs):
+            if workers:
+                assert not workers[0].thread.is_alive()
+            assert kwargs["is_iconic"] is None
+            super().__init__(store, emit, **kwargs)
+            self.first = not workers
+            workers.append(self)
+            store.close_source()
+            if self.first:
+                join = self.thread.join
+
+                def join_finishing(*args, **kwargs):
+                    assert self.finishing.is_set()
+                    joined.append(True)
+                    exit_allowed.set()
+                    join(timeout=1)
+                    assert not self.thread.is_alive()
+
+                self.thread.join = join_finishing
+
+        def _send(self, event, payload, binary=b""):
+            super()._send(event, payload, binary)
+            if self.first and event == "analysis_result":
+                result_sent.set()
+                assert exit_allowed.wait(1)
+
+    monkeypatch.setattr(prepared_capture, "WindowsMonitorBackend", Backend)
+    monkeypatch.setattr(prepared_capture, "LiveAnalysis", Analysis)
+    monkeypatch.setattr(prepared_capture, "read_stream_envelope", read_after_result)
+    monkeypatch.setattr(prepared_capture.sys, "stdin", SimpleNamespace(buffer=commands))
+    monkeypatch.setattr(prepared_capture.sys, "stdout", SimpleNamespace(buffer=events))
+    prepared_capture.main()
+    events.seek(0)
+    envelopes = []
+    while events.tell() < len(events.getvalue()):
+        envelopes.append(read_stream_envelope(events, max_binary_bytes=prepared_capture.MAX_PNG_BYTES))
+    types = [envelope.metadata["type"] for envelope in envelopes]
+    assert len(workers) == 2 and joined == [True]
+    assert types[:2] == ["ready", "analysis_result"]
+    assert "fatal" not in types and types[-1] == "stopped"
+    assert not any(worker.thread.is_alive() for worker in workers)
+
+
+def test_second_analyze_does_not_join_a_genuinely_running_worker(monkeypatch):
+    commands, events = io.BytesIO(), io.BytesIO()
+    selector = {"kind": "display", "displayDeviceName": r"\\.\DISPLAY1", "electronDisplayId": "1"}
+    for command in (
+        {"type": "start", "selector": selector},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+        {"type": "analyze", "deadlineMs": 60000, "targetFps": 10},
+    ):
+        write_envelope(commands, {"protocolVersion": 2, "sessionId": "running-analysis", **command})
+    commands.seek(0)
+    workers = []
+    processing, release = threading.Event(), threading.Event()
+
+    class Backend:
+        def __init__(self, selected):
+            assert selected == selector
+
+        def start(self, on_frame, _on_closed):
+            on_frame(np.zeros((32, 32, 3), np.uint8))
+
+        def stop(self):
+            pass
+
+    class Analysis(prepared_capture.LiveAnalysis):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+            self.engine.process = self.process
+
+        def process(self, _frame, _now):
+            processing.set()
+            assert release.wait(1)
+            return None
+
+        def start(self):
+            super().start()
+            assert processing.wait(1)
+
+        def cancel(self):
+            # The second analyze must fail before cleanup joins this active worker.
+            assert not self.finishing.is_set()
+            events.seek(0)
+            types = []
+            while events.tell() < len(events.getvalue()):
+                types.append(read_stream_envelope(events, max_binary_bytes=prepared_capture.MAX_PNG_BYTES).metadata["type"])
+            assert types[-1] == "fatal"
+            self.cancelled.set()
+            release.set()
+            super().cancel()
+
+    monkeypatch.setattr(prepared_capture, "WindowsMonitorBackend", Backend)
+    monkeypatch.setattr(prepared_capture, "LiveAnalysis", Analysis)
+    monkeypatch.setattr(prepared_capture.sys, "stdin", SimpleNamespace(buffer=commands))
+    monkeypatch.setattr(prepared_capture.sys, "stdout", SimpleNamespace(buffer=events))
+    prepared_capture.main()
+    events.seek(0)
+    envelopes = []
+    while events.tell() < len(events.getvalue()):
+        envelopes.append(read_stream_envelope(events, max_binary_bytes=prepared_capture.MAX_PNG_BYTES))
+    assert len(workers) == 1 and not workers[0].thread.is_alive()
+    fatal = envelopes[-1].metadata
+    assert fatal["type"] == "fatal"
+    assert fatal["payload"]["message"] == "prepared capture analysis is already running"

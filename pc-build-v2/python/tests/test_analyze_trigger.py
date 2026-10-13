@@ -96,6 +96,34 @@ def test_manual_vs_is_recognized_only_inside_marked_area() -> None:
     assert legacy is not None
 
 
+
+@pytest.mark.parametrize("height", [65, 89, 125], ids=["widest", "portrait", "narrowest"])
+def test_auto_badge_crop_at_smallest_supported_game_width_builds_both_profiles(height):
+    from analyze_trigger import analyze_result
+    from geometry.zones import regions
+    from synthetic_frames import arena, framed
+
+    # §3.1 permits width >= 50; these heights span its supported aspect range.
+    image, badge = arena(50, height)
+    frame, game = framed(image)
+    trigger = regions(badge, 50 / height)["trigger"]
+    left = round(trigger.x * 50)
+    top = round(trigger.y * height)
+    right = round((trigger.x + trigger.width) * 50)
+    bottom = round((trigger.y + trigger.height) * height)
+    outer = {"x": game[0] + left, "y": game[1] + top,
+             "width": right - left, "height": bottom - top}
+    assert 0 < outer["width"] <= 16 and 0 < outer["height"] <= 20
+    profile, legacy = analyze_result(encode(frame), outer)
+    assert profile["schemaVersion"] == 3
+    assert profile["quality"]["edgePixelCount"] >= 80
+    assert profile["quality"]["edgeCoverage"] >= .125
+    assert decode_map(profile["structureTemplateBase64"]).shape == (128, 128)
+    assert decode_map(profile["edgeTemplateBase64"]).shape == (128, 128)
+    assert legacy["normalizedTemplateSize"] == {"width": 128, "height": 128}
+    assert np.std(decode_map(legacy["templateGrayBase64"])) >= 4
+
+
 def test_analyzer_protocol_two_returns_new_nullable_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     import io
     import analyze_trigger

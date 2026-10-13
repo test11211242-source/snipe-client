@@ -113,7 +113,12 @@ def run_prepared(mode: str) -> None:
     if mode != "prepared-real-clock" and not mode.startswith("prepared-auto-"):
         prepared_capture.LatestFrameStore.publish = sampled_publish
     prepared_capture.WindowsMonitorBackend = SyntheticBackend
-    prepared_capture.main()
+    original_iconic_probe = prepared_capture.window_iconic_probe
+    prepared_capture.window_iconic_probe = lambda selector: (lambda: False) if selector["kind"] == "window" else None
+    try:
+        prepared_capture.main()
+    finally:
+        prepared_capture.window_iconic_probe = original_iconic_probe
 
 
 if __name__ == "__main__":

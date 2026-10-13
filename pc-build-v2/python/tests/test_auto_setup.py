@@ -154,6 +154,65 @@ def test_source_lost_returns_named_result_without_stopping_store():
     assert events == [("analysis_result", {"ok": False, "code": "AUTO_SOURCE_LOST"}, b"")]
 
 
+
+def test_transient_minimizes_reset_the_iconic_grace_period():
+    ticks = iter([0, *[index / 8 for index in range(24)], 60])
+    now = [0.0]
+    polls, events = [], []
+
+    def clock():
+        now[0] = next(ticks, 60)
+        return now[0]
+
+    def is_iconic():
+        polls.append(now[0])
+        return now[0] < .75 or 1 <= now[0] < 1.75
+
+    worker = LiveAnalysis(LatestFrameStore(), lambda *event: events.append(event),
+                          clock=clock, is_iconic=is_iconic)
+    worker.start()
+    worker.thread.join(timeout=1)
+    assert not worker.thread.is_alive()
+    assert events[-1] == ("analysis_result", {"ok": False, "code": "AUTO_GAME_NOT_FOUND"}, b"")
+    assert polls[:8] == [index / 4 for index in range(8)]
+    assert all(b - a >= .25 for a, b in zip(polls, polls[1:]))
+
+
+def test_persistent_minimize_reports_source_lost_after_one_second_without_frames():
+    ticks = iter([0, *[index / 8 for index in range(16)]])
+    now = [0.0]
+    polls, events = [], []
+
+    def clock():
+        now[0] = next(ticks, 2)
+        return now[0]
+
+    def is_iconic():
+        polls.append(now[0])
+        return True
+
+    worker = LiveAnalysis(LatestFrameStore(), lambda *event: events.append(event),
+                          clock=clock, is_iconic=is_iconic)
+    worker.start()
+    worker.thread.join(timeout=1)
+    assert not worker.thread.is_alive()
+    assert polls == [0, .25, .5, .75, 1]
+    assert events[-1] == ("analysis_result", {"ok": False, "code": "AUTO_SOURCE_LOST"}, b"")
+    assert worker.store.snapshot()[2] is False
+
+
+@pytest.mark.parametrize("is_iconic", [None, lambda: False], ids=["display", "restored-window"])
+def test_static_capture_without_new_frames_is_not_source_loss(is_iconic):
+    ticks = iter((0, 0, .5, 1, 1.5, 60))
+    events = []
+    worker = LiveAnalysis(LatestFrameStore(), lambda *event: events.append(event),
+                          clock=lambda: next(ticks, 60), is_iconic=is_iconic)
+    worker.start()
+    worker.thread.join(timeout=1)
+    assert not worker.thread.is_alive()
+    assert events[-1] == ("analysis_result", {"ok": False, "code": "AUTO_GAME_NOT_FOUND"}, b"")
+
+
 def test_cancel_then_retry_leaves_capture_live():
     store = LatestFrameStore()
     image = np.zeros((32, 32, 3), np.uint8)

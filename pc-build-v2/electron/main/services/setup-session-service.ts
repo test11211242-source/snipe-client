@@ -65,9 +65,15 @@ import {
   type LegacyTriggerAnalysis,
 } from './capture-service'
 import type { LivePreparedCapture } from './capture-preparation-service'
+import type { StructuredLogger } from '../infrastructure/structured-logger'
+
+export interface SetupNameCheckResult extends SetupNameCheck {
+  httpStatus?: number
+  reason?: string
+}
 
 export interface SetupNameChecker {
-  checkSetupName(png: Buffer, signal?: AbortSignal): Promise<SetupNameCheck>
+  checkSetupName(png: Buffer, signal?: AbortSignal): Promise<SetupNameCheckResult>
 }
 
 type PixelRect = z.infer<typeof PixelRectSchema>
@@ -223,6 +229,7 @@ export class SetupSessionService {
     private readonly authenticatedApi?: AuthenticatedApiClient,
     private readonly targetResolver?: CaptureTargetResolver,
     private readonly nameChecker?: SetupNameChecker,
+    private readonly logger?: Pick<StructuredLogger, 'info' | 'warn'>,
   ) {}
 
   configureCaptureProfileLifecycle(
@@ -331,7 +338,13 @@ export class SetupSessionService {
       throw this.detectionStateInvalid()
     }
     if (!session.live?.isAlive()) {
-      throw new ApplicationError('SETUP_SOURCE_LOST', 'Окно игры закрыто или свёрнуто')
+      const sourceLost = session.view.detection.failure?.code === 'AUTO_SOURCE_LOST'
+      throw new ApplicationError(
+        sourceLost ? 'SETUP_SOURCE_LOST' : 'SETUP_CAPTURE_UNAVAILABLE',
+        sourceLost
+          ? 'Окно игры закрыто или свёрнуто'
+          : 'Не получилось настроить автоматически',
+      )
     }
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
@@ -377,9 +390,7 @@ export class SetupSessionService {
       }
       const retainedFrame = session.frame
       const retained = retainedFrame?.game?.rect != null
-      const frame = retained
-        ? retainedFrame
-        : await session.live?.freeze(session.controller.signal)
+      const frame = retained ? retainedFrame : await this.freezeDetectionSource(session)
       if (!this.currentDetectionOperation(session, operationGeneration, 'CAPTURING')) {
         return session.view
       }
@@ -420,6 +431,22 @@ export class SetupSessionService {
     }
     await this.stopLive(session)
     return session.view
+  }
+
+  private async freezeDetectionSource(
+    session: InternalSession,
+  ): Promise<CapturedFrame | undefined> {
+    try {
+      return await session.live?.freeze(session.controller.signal)
+    } catch (error) {
+      if (
+        !session.live?.isAlive() ||
+        (error instanceof ApplicationError && error.code === 'CAPTURE_PREPARATION_STALE')
+      ) {
+        throw new ApplicationError('SETUP_SOURCE_LOST', 'Окно игры закрыто или свёрнуто')
+      }
+      throw error
+    }
   }
 
   private detectionStateInvalid(): ApplicationError {
@@ -588,9 +615,13 @@ export class SetupSessionService {
         triggerKind: 'vs_edge_orientation',
         detection: { ...session.view.detection, status: 'succeeded', failure: null },
       })
+      void this.stopLive(session)
       void this.checkDetectionName(session, controller)
     } catch (error) {
       if (!current()) return
+      this.logger?.warn('setup.auto_analysis_failed', {
+        code: error instanceof ApplicationError ? error.code : 'SETUP_FAILED',
+      })
       const code = AutoSetupCodeSchema.safeParse(
         error instanceof ApplicationError ? error.code : null,
       )
@@ -679,7 +710,11 @@ export class SetupSessionService {
     session: InternalSession,
     controller: AbortController,
   ): Promise<void> {
-    let nameCheck: SetupNameCheck = { status: 'skipped', text: null }
+    let nameCheck: SetupNameCheckResult = {
+      status: 'skipped',
+      text: null,
+      reason: 'not_attempted',
+    }
     try {
       if (this.nameChecker !== undefined) {
         const frame = session.frame
@@ -700,11 +735,15 @@ export class SetupSessionService {
         }
         nameCheck =
           crop.byteLength === 0
-            ? { status: 'unavailable', text: null }
+            ? { status: 'unavailable', text: null, reason: 'empty_crop' }
             : await this.nameChecker.checkSetupName(crop, controller.signal)
       }
-    } catch {
-      nameCheck = { status: 'unavailable', text: null }
+    } catch (error) {
+      nameCheck = {
+        status: 'unavailable',
+        text: null,
+        reason: error instanceof ApplicationError ? error.code : 'crop_failed',
+      }
     }
     if (
       this.#session !== session ||
@@ -717,9 +756,18 @@ export class SetupSessionService {
       this.cancelForAuthTransition()
       return
     }
+    this.logger?.info('setup.name_check', {
+      status: nameCheck.status,
+      ...(nameCheck.httpStatus !== undefined
+        ? { httpStatus: nameCheck.httpStatus }
+        : { reason: nameCheck.reason ?? 'completed' }),
+    })
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
-      detection: { ...session.view.detection, nameCheck },
+      detection: {
+        ...session.view.detection,
+        nameCheck: { status: nameCheck.status, text: nameCheck.text },
+      },
     })
   }
 
@@ -1144,6 +1192,7 @@ export class SetupSessionService {
       state: 'SAVING',
       error: null,
     })
+    session.detectionController?.abort()
     void this.stopLive(session)
     const token = await this.auth.getAccessToken()
     if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view

@@ -149,6 +149,10 @@ export const SetRegionPayloadSchema = SetupCommandSchema.extend({
   rect: NormalizedRectSchema,
 }).strict()
 export const SetupSessionResultSchema = SetupSessionViewSchema
+export const RetryDetectionResponseSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), session: SetupSessionResultSchema }).strict(),
+  z.object({ ok: z.literal(false), error: PublicErrorSchema }).strict(),
+])
 export const SetupFrameResultSchema = SetupFrameSchema
 export const DetectionPreviewPayloadSchema = z.object({ sessionId: z.uuid() }).strict()
 export const DetectionPreviewResultSchema = DetectionPreviewSchema.nullable()

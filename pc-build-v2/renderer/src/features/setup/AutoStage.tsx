@@ -1,6 +1,6 @@
 import type { SetupSessionView } from '../../../../shared/models/setup'
 import { Banner, Button, Icon, Spinner, cx } from '../../ui'
-import { SOURCE_LOST_TEXT, autoFailureText, isSourceLostCode } from './errors'
+import { autoFailureText, isSourceLostCode } from './errors'
 import { Badge } from './ResultViews'
 import styles from './Setup.module.css'
 import { useDetectionPreview, useRemainingMs } from './useDetectionPreview'
@@ -177,6 +177,7 @@ export function AutoStage({
   session,
   view,
   sourceLost,
+  captureUnavailable,
   exiting,
   onManual,
   onChooseWindow,
@@ -184,6 +185,7 @@ export function AutoStage({
   session: SetupSession
   view: SetupSessionView
   sourceLost: boolean
+  captureUnavailable: boolean
   exiting: boolean
   onManual: () => void
   onChooseWindow: () => void
@@ -202,14 +204,20 @@ export function AutoStage({
   }
   const code = detection.failure?.code ?? null
   const lost = sourceLost || isSourceLostCode(code)
+  const unavailable =
+    captureUnavailable || session.errorCode === 'SETUP_CAPTURE_UNAVAILABLE'
   return (
     <AutoFailure
       busy={busy}
-      error={lost && session.error === SOURCE_LOST_TEXT ? null : session.error}
-      message={autoFailureText(lost ? 'AUTO_SOURCE_LOST' : code)}
-      onChooseWindow={lost ? onChooseWindow : null}
-      onManual={onManual}
-      onRetry={lost ? null : () => void session.retryDetection()}
+      error={
+        (lost && isSourceLostCode(session.errorCode)) || unavailable
+          ? null
+          : session.error
+      }
+      message={autoFailureText(lost ? 'AUTO_SOURCE_LOST' : unavailable ? null : code)}
+      onChooseWindow={lost || unavailable ? onChooseWindow : null}
+      onManual={unavailable ? null : onManual}
+      onRetry={lost || unavailable ? null : () => void session.retryDetection()}
     />
   )
 }

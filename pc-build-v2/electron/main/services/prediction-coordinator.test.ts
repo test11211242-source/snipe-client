@@ -107,6 +107,7 @@ function harness(
       return dispose
     }),
   }
+  const logger = { info: vi.fn() }
   const coordinator = new PredictionCoordinator(
     authSession as never,
     { request } as never,
@@ -114,12 +115,14 @@ function harness(
     monitor as never,
     captureRepository as never,
     runLifecycle,
+    logger,
   )
   coordinator.startLifecycle()
   return {
     coordinator,
     request,
     monitor,
+    logger,
     disposers,
     battle: () => battleListener,
     result: () => resultListener,
@@ -149,9 +152,7 @@ describe('PredictionCoordinator', () => {
     test.states()?.('aspect_mismatch')
     expect(test.coordinator.suspended).toBe(false)
     await test.coordinator.start(settings)
-    test.states()?.('aspect_mismatch')
     expect(test.coordinator.suspended).toBe(true)
-    // Battle starts keep flowing: the prediction mechanism itself is unchanged.
     test.states()?.('active')
     expect(test.coordinator.suspended).toBe(false)
     test.states()?.('aspect_mismatch')
@@ -162,6 +163,81 @@ describe('PredictionCoordinator', () => {
     test.states()?.('aspect_mismatch')
     await test.coordinator.stop()
     expect(test.coordinator.suspended).toBe(false)
+  })
+
+  it('drops battles received while suspended instead of replaying them after resume', async () => {
+    const test = harness()
+    test.states()?.('aspect_mismatch')
+    await test.coordinator.start(settings)
+    expect(test.coordinator.suspended).toBe(true)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    test.battle()?.('2026-10-13T12:00:01.000Z')
+    test.states()?.('active')
+    await Promise.resolve()
+    expect(
+      test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+    ).toHaveLength(0)
+    expect(test.logger.info).toHaveBeenCalledTimes(2)
+    expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start_skipped', {
+      reason: 'aspect_mismatch',
+    })
+    test.battle()?.('2026-10-13T12:00:02.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+      ).toHaveLength(1),
+    )
+  })
+
+  it('still resolves an already-open prediction through suspension and resume', async () => {
+    const test = harness()
+    await test.coordinator.start(settings)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+      ).toHaveLength(1),
+    )
+    test.states()?.('aspect_mismatch')
+    test.result()?.({
+      timestamp: '2026-10-13T12:01:00.000Z',
+      width: 1,
+      height: 1,
+      image: Buffer.from('result-in-flight'),
+    })
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) =>
+          value.path.endsWith('/battle-result'),
+        ),
+      ).toHaveLength(1),
+    )
+    test.states()?.('active')
+    test.result()?.({
+      timestamp: '2026-10-13T12:02:00.000Z',
+      width: 1,
+      height: 1,
+      image: Buffer.from('result-after-resume'),
+    })
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) =>
+          value.path.endsWith('/battle-result'),
+        ),
+      ).toHaveLength(2),
+    )
+  })
+
+  it('does not forward a queued battle if suspension begins before its request', async () => {
+    const test = harness()
+    await test.coordinator.start(settings)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    test.states()?.('aspect_mismatch')
+    await Promise.resolve()
+    expect(
+      test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+    ).toHaveLength(0)
+    expect(test.logger.info).toHaveBeenCalledOnce()
   })
 
   it('stops observing the monitor on shutdown', async () => {

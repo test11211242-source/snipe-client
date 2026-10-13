@@ -214,13 +214,21 @@ with the confirmation PNG, frame-normalized zones, automatic provenance, orienta
 trigger and structural/legacy compatibility analysis. No timeout or weak detection is
 treated as success. Failed analysis can retry the same live source or switch to the manual
 editor using the candidate frame, otherwise a fresh freeze. Source/session/auth generation
-checks fence asynchronous results; closing or saving releases the live process.
+checks fence asynchronous results; success, closing or saving releases the live process.
+Window minimization lasting at least one second returns `AUTO_SOURCE_LOST`; a static
+screen alone does not. An internal worker death stays a generic automatic failure,
+not a claim that the game window was closed. Choose the window again to re-prepare it.
 The optional `/api/ocr/setup-name-check` request uses only an in-memory nickname PNG from
 that same confirmation frame, once per successful detection. Its ten-second deadline,
 offline/provider errors and every non-200 response (including old-server 404) produce only
 unavailable diagnostics; saving never waits for it. Detection codes, phases, confidence
-and name-check results are diagnostic-only. The later renderer must follow the minimal
-user-facing wording in M9 specification §1.3.
+and name-check results are diagnostic-only. One `setup.name_check` main-log record carries
+only status and HTTP status or reason, never nickname text or pixels; saving aborts pending
+checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
+The renderer follows the minimal user-facing wording in M9 specification §1.3.
+While the prediction-result trigger has an aspect mismatch, new battle starts are not
+enqueued or sent; already-open predictions retain their existing result-resolution path.
+The suspension state also covers a mismatch that began before predictions were enabled.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 

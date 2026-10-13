@@ -21,6 +21,8 @@ GEOMETRY_FRAMES = 8
 GEOMETRY_INTERVAL = 0.3
 PROGRESS_INTERVAL = 0.5
 PREVIEW_INTERVAL = 1.0
+ICONIC_POLL_INTERVAL = 0.25
+ICONIC_LOSS_SECONDS = 1.0
 PREVIEW_MAX_SIDE = 640
 PREVIEW_JPEG_QUALITY = 70
 MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -173,9 +175,12 @@ def encode_preview(frame: Any) -> tuple[dict[str, Any], bytes]:
 class LiveAnalysis:
     """One cancellable worker over a latest-frame store; capture never blocks on analysis."""
 
-    def __init__(self, store: Any, emit: Callable, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, store: Any, emit: Callable, *, clock: Callable[[], float] = time.monotonic,
+                 is_iconic: Callable[[], bool] | None = None) -> None:
         self.store, self.emit, self.clock = store, emit, clock
+        self.is_iconic = is_iconic
         self.cancelled = threading.Event()
+        self.finishing = threading.Event()
         self.engine = AutoSetupEngine(clock())
         self.thread = threading.Thread(target=self._run, name="auto-setup", daemon=True)
 
@@ -193,11 +198,22 @@ class LiveAnalysis:
     def _run(self) -> None:
         last_sequence = 0
         last_frame = last_progress = last_preview = -float("inf")
+        last_iconic_poll = -float("inf")
+        iconic_since = None
         try:
             while not self.cancelled.is_set():
                 now = self.clock()
                 frame, sequence, closed = self.store.snapshot()
-                if closed:
+                iconic_lost = False
+                if self.is_iconic is not None and now - last_iconic_poll >= ICONIC_POLL_INTERVAL:
+                    last_iconic_poll = now
+                    if self.is_iconic():
+                        if iconic_since is None:
+                            iconic_since = now
+                        iconic_lost = now - iconic_since >= ICONIC_LOSS_SECONDS
+                    else:
+                        iconic_since = None
+                if closed or iconic_lost:
                     outcome = self.engine.fail("AUTO_SOURCE_LOST")
                 elif now - self.engine.started_at >= DEADLINE_MS / 1000:
                     outcome = self.engine.deadline()
@@ -222,6 +238,8 @@ class LiveAnalysis:
                         self.engine.outcome = None
                         outcome = self.engine.fail("AUTO_SOURCE_LOST")
                     binary = encode_png(outcome.frame) if outcome.frame is not None else b""
+                    # The result is ready; a retry may safely join this worker's exit.
+                    self.finishing.set()
                     self._send("analysis_result", outcome.result, binary)
                     return
                 self.cancelled.wait(0.01)
@@ -231,4 +249,5 @@ class LiveAnalysis:
                 binary = encode_png(outcome.frame) if outcome.frame is not None else b""
             except Exception:
                 outcome, binary = AnalysisOutcome({"ok": False, "code": "AUTO_INTERNAL_ERROR"}), b""
+            self.finishing.set()
             self._send("analysis_result", outcome.result, binary)

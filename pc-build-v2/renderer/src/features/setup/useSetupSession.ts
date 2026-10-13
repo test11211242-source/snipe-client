@@ -3,7 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SetupCommand } from '../../../../shared/contracts/capture-ipc'
 import type { NormalizedRect, RegionKind } from '../../../../shared/models/capture'
 import type { SetupSessionView } from '../../../../shared/models/setup'
-import { commandErrorMessage, isStaleCause, viewErrorMessage } from './errors'
+import {
+  commandErrorCode,
+  commandErrorMessage,
+  isStaleCause,
+  viewErrorMessage,
+} from './errors'
 
 const FINAL = ['COMMITTED', 'CANCELLED', 'FAILED'] as const
 const TRANSIENT = ['CREATED', 'CAPTURING', 'SAVING'] as const
@@ -30,6 +35,8 @@ export interface SetupSession {
   busy: boolean
   /** Renderer-side failure text, or the text of main's error on the view. */
   error: string | null
+  /** Machine-readable code of the same command or view failure. */
+  errorCode: string | null
   /** Latest accepted view; valid right after an awaited command. */
   latest: () => SetupSessionView | null
   /** Takes over a session main already has (new start or resumed) and loads its frame. */
@@ -67,6 +74,7 @@ export function useSetupSession(): SetupSession {
   const [frameFailed, setFrameFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [commandError, setCommandError] = useState<string | null>(null)
+  const [commandCode, setCommandCode] = useState<string | null>(null)
   // What to say when main reports an error code the UI has no wording for.
   const [stepFallback, setStepFallback] = useState(STEP_FAILED)
   const viewRef = useRef<SetupSessionView | null>(null)
@@ -134,6 +142,7 @@ export function useSetupSession(): SetupSession {
   const adopt = useCallback(
     async (next: SetupSessionView): Promise<void> => {
       setCommandError(null)
+      setCommandCode(null)
       await accept(next)
     },
     [accept],
@@ -177,6 +186,7 @@ export function useSetupSession(): SetupSession {
       busyRef.current = true
       setBusy(true)
       setCommandError(null)
+      setCommandCode(null)
       setStepFallback(viewFailure)
       const request = command(current)
       try {
@@ -191,6 +201,7 @@ export function useSetupSession(): SetupSession {
         ) {
           if (alive.current) {
             setCommandError(STALE_TEXT)
+            setCommandCode(null)
             void refresh()
           }
           return null
@@ -200,6 +211,7 @@ export function useSetupSession(): SetupSession {
       } catch (cause) {
         if (alive.current) {
           setCommandError(commandErrorMessage(cause, failure))
+          setCommandCode(commandErrorCode(cause))
           if (isStaleCause(cause)) void refresh()
         }
         return null
@@ -276,6 +288,7 @@ export function useSetupSession(): SetupSession {
     busyRef.current = true
     setBusy(true)
     setCommandError(null)
+    setCommandCode(null)
     try {
       const request = command(current)
       if (isFinalState(current.state)) await window.crTools.setup.close(request)
@@ -290,10 +303,12 @@ export function useSetupSession(): SetupSession {
       } catch {
         return true
       }
-      if (alive.current)
+      if (alive.current) {
         setCommandError(
           commandErrorMessage(cause, 'Не удалось закрыть настройку. Повторите попытку.'),
         )
+        setCommandCode(commandErrorCode(cause))
+      }
       return false
     } finally {
       busyRef.current = false
@@ -316,10 +331,14 @@ export function useSetupSession(): SetupSession {
   }, [transient, refresh])
 
   const latest = useCallback(() => viewRef.current, [])
-  const clearError = useCallback(() => setCommandError(null), [])
+  const clearError = useCallback(() => {
+    setCommandError(null)
+    setCommandCode(null)
+  }, [])
   const error =
     commandError ??
     (view?.error == null ? null : (viewErrorMessage(view.error) ?? stepFallback))
+  const errorCode = commandError !== null ? commandCode : (view?.error?.code ?? null)
 
   return useMemo(
     () => ({
@@ -328,6 +347,7 @@ export function useSetupSession(): SetupSession {
       frameFailed,
       busy,
       error,
+      errorCode,
       latest,
       adopt,
       resume,
@@ -349,6 +369,7 @@ export function useSetupSession(): SetupSession {
       frameFailed,
       busy,
       error,
+      errorCode,
       latest,
       adopt,
       resume,

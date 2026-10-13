@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { z } from 'zod'
-import type { SetupNameCheck } from '../../../shared/models/setup'
+import type { SetupNameCheckResult } from './setup-session-service'
 import {
   MonitorResultSchema,
   type DeckMode,
@@ -220,8 +220,17 @@ export class OcrApiClient {
     private readonly logger: OcrLogger,
   ) {}
 
-  async checkSetupName(image: Buffer, signal?: AbortSignal): Promise<SetupNameCheck> {
-    const unavailable: SetupNameCheck = { status: 'unavailable', text: null }
+  async checkSetupName(
+    image: Buffer,
+    signal?: AbortSignal,
+  ): Promise<SetupNameCheckResult> {
+    const unavailable = (reason: string, httpStatus?: number): SetupNameCheckResult => ({
+      status: 'unavailable',
+      text: null,
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      reason,
+    })
+    if (signal?.aborted) return unavailable('aborted')
     const dimensions = pngDimensions(image)
     if (
       dimensions === null ||
@@ -230,23 +239,29 @@ export class OcrApiClient {
       dimensions.width > 8192 ||
       dimensions.height > 8192 ||
       dimensions.width * dimensions.height > MAX_IMAGE_PIXELS ||
-      image.byteLength > MAX_IMAGE_BYTES ||
-      signal?.aborted
+      image.byteLength > MAX_IMAGE_BYTES
     ) {
-      return unavailable
+      return unavailable('invalid_image')
     }
     const controller = new AbortController()
+    let abortReason = 'aborted'
     const cancel = (): void => controller.abort()
     signal?.addEventListener('abort', cancel, { once: true })
-    const timer = setTimeout(cancel, SETUP_NAME_TIMEOUT_MS)
+    const timer = setTimeout(() => {
+      abortReason = 'timeout'
+      cancel()
+    }, SETUP_NAME_TIMEOUT_MS)
     const { promise: aborted, resolve: resolveAborted } =
-      Promise.withResolvers<SetupNameCheck>()
-    const abortListener = (): void => resolveAborted(unavailable)
+      Promise.withResolvers<SetupNameCheckResult>()
+    const abortListener = (): void => resolveAborted(unavailable(abortReason))
     controller.signal.addEventListener('abort', abortListener, { once: true })
-    const request = async (): Promise<SetupNameCheck> => {
+    const request = async (): Promise<SetupNameCheckResult> => {
+      let httpStatus: number | undefined
+      let readingResponse = false
       try {
         const token = await this.auth.getAccessToken()
-        if (token === null || controller.signal.aborted) return unavailable
+        if (controller.signal.aborted) return unavailable(abortReason)
+        if (token === null) return unavailable('auth_unavailable')
         const form = new FormData()
         form.append(
           'image',
@@ -266,26 +281,36 @@ export class OcrApiClient {
             signal: controller.signal,
           },
         )
-        if (response.status !== 200) {
+        httpStatus = response.status
+        if (httpStatus !== 200) {
           await response.body?.cancel().catch(() => undefined)
-          return unavailable
+          return unavailable('http_error', httpStatus)
         }
+        readingResponse = true
         const text = await boundedText(response)
         controller.signal.throwIfAborted()
-        if (text === null) return unavailable
+        if (text === null) return unavailable('invalid_response', httpStatus)
         const parsed = SetupNameResponseSchema.safeParse(JSON.parse(text) as unknown)
-        if (!parsed.success) return unavailable
+        if (!parsed.success) return unavailable('invalid_response', httpStatus)
         return {
           status:
             parsed.data.isTrainer === null
-              ? 'skipped'
+              ? 'unavailable'
               : parsed.data.isTrainer
                 ? 'trainer'
                 : 'not_trainer',
           text: safeText(parsed.data.text, 1000),
+          httpStatus,
         }
       } catch {
-        return unavailable
+        return unavailable(
+          controller.signal.aborted
+            ? abortReason
+            : readingResponse
+              ? 'invalid_response'
+              : 'request_failed',
+          httpStatus,
+        )
       }
     }
     try {
