@@ -131,6 +131,9 @@ export interface Bridge {
       | 'review'
       | 'commit'
       | 'retrySync'
+      | 'retryDetection'
+      | 'switchToManual'
+      | 'getDetectionPreview'
       | 'cancel'
       | 'close',
       AsyncMock

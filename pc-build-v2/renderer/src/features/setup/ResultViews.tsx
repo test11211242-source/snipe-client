@@ -15,7 +15,7 @@ const TONE_ICON: Record<'ok' | 'warn' | 'danger' | 'neutral' | 'info', IconName>
   info: 'info',
 }
 
-function Badge({
+export function Badge({
   tone,
   icon,
 }: {
@@ -38,18 +38,22 @@ function Badge({
 
 /**
  * The last look before saving: the frame with the drawn zones (and the game outline when
- * main found the game) and the buttons. Analyzer details stay out of the interface.
+ * main found the game) and the buttons. Analyzer details stay out of the interface. With
+ * `auto` this is the success screen of automatic setup: «Готово» above the frame and
+ * «Поправить вручную» instead of going back to a step the user never visited.
  */
 export function CheckStep({
   session,
   view,
   frameUrl,
   onBack,
+  auto = false,
 }: {
   session: SetupSession
   view: SetupSessionView
   frameUrl: string | null
   onBack: () => void
+  auto?: boolean
 }): React.JSX.Element {
   const defs = regionsOf(view.kind)
   const result = view.kind === 'predictionResult'
@@ -74,38 +78,41 @@ export function CheckStep({
   return (
     <>
       <div className={cx(styles['split'], styles['splitSingle'])}>
-        <section aria-label="Проверка" className={styles['bezel']}>
-          <h1 className="sr-only">Проверьте области</h1>
-          <div className={styles['bezelBar']}>
-            <i className={styles['bezelDot']} />
-            <i className={styles['bezelDot']} />
-            <i className={styles['bezelDot']} />
-            <span className={styles['bezelTitle']}>{view.source.label}</span>
-          </div>
-          {frameUrl !== null && frameSize !== null ? (
-            <FrameStage
-              boxes={boxes}
-              draft={null}
-              editable={false}
-              frameSize={frameSize}
-              frameUrl={frameUrl}
-              gameViewport={view.game?.viewport ?? null}
-              inset={24}
-              onDraft={() => undefined}
-            />
-          ) : null}
-          {session.error === null ? null : (
-            <div className={cx(styles['alert'], styles['bezelAlert'])}>
-              <Banner icon="alert" live title="Не получилось" tone="danger">
-                {session.error}
-              </Banner>
+        <div className={styles['checkWrap']}>
+          {auto ? <h1 className={styles['doneTitle']}>Готово</h1> : null}
+          <section aria-label="Проверка" className={styles['bezel']}>
+            {auto ? null : <h1 className="sr-only">Проверьте области</h1>}
+            <div className={styles['bezelBar']}>
+              <i className={styles['bezelDot']} />
+              <i className={styles['bezelDot']} />
+              <i className={styles['bezelDot']} />
+              <span className={styles['bezelTitle']}>{view.source.label}</span>
             </div>
-          )}
-        </section>
+            {frameUrl !== null && frameSize !== null ? (
+              <FrameStage
+                boxes={boxes}
+                draft={null}
+                editable={false}
+                frameSize={frameSize}
+                frameUrl={frameUrl}
+                gameViewport={view.game?.viewport ?? null}
+                inset={24}
+                onDraft={() => undefined}
+              />
+            ) : null}
+            {session.error === null ? null : (
+              <div className={cx(styles['alert'], styles['bezelAlert'])}>
+                <Banner icon="alert" live title="Не получилось" tone="danger">
+                  {session.error}
+                </Banner>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
       <div className={styles['foot']}>
         <Button disabled={busy || inReview} onClick={onBack} variant="ghost">
-          Поправить области
+          {auto ? 'Поправить вручную' : 'Поправить области'}
         </Button>
         <div className={styles['footRight']}>
           {inReview && !retryable ? null : (
@@ -118,9 +125,11 @@ export function CheckStep({
             >
               {inReview
                 ? 'Повторить сохранение'
-                : result
-                  ? 'Сохранить зоны'
-                  : 'Сохранить профиль'}
+                : auto
+                  ? 'Сохранить'
+                  : result
+                    ? 'Сохранить зоны'
+                    : 'Сохранить профиль'}
             </Button>
           )}
         </div>

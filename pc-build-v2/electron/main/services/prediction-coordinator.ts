@@ -37,6 +37,9 @@ export class PredictionCoordinator {
   #stopPromise: Promise<void> | null = null
   #disposeBattle: (() => void) | null = null
   #disposeResult: (() => void) | null = null
+  #disposeState: (() => void) | null = null
+  #disposeViews: (() => void) | null = null
+  #suspended = false
 
   constructor(
     private readonly auth: AuthSession,
@@ -55,6 +58,11 @@ export class PredictionCoordinator {
 
   get observationGeneration(): number {
     return this.#observationGeneration
+  }
+
+  /** Predictions are active but the result trigger waits for the configured aspect ratio. */
+  get suspended(): boolean {
+    return this.#suspended
   }
 
   observeServerState(
@@ -83,6 +91,15 @@ export class PredictionCoordinator {
     this.#disposeResult = this.monitor.subscribePredictionResults((action) =>
       this.enqueueResult(action),
     )
+    // The result trigger pauses (without ending monitoring) while the game window has
+    // another aspect ratio than the configured result frame; surface that, never hide it.
+    this.#disposeState = this.monitor.subscribePredictionStates((state) => {
+      this.#suspended = state === 'aspect_mismatch' && this.#state === 'active'
+    })
+    // A new monitor process starts its result trigger active again, without an event.
+    this.#disposeViews = this.monitor.subscribeViews((view) => {
+      if (view.state !== 'READY') this.#suspended = false
+    })
   }
 
   start(settings: PredictionPreferences): Promise<void> {
@@ -103,6 +120,7 @@ export class PredictionCoordinator {
     settings: PredictionPreferences,
     generation: number,
   ): Promise<void> {
+    this.#suspended = false
     this.#eventController.abort()
     this.#eventController = new AbortController()
     const view = this.auth.getView()
@@ -274,6 +292,7 @@ export class PredictionCoordinator {
 
   private async performStop(bestEffort: boolean): Promise<void> {
     ++this.#generation
+    this.#suspended = false
     this.#eventController.abort()
     const locallyStopped = this.#state === 'stopped' && !this.#monitorOwned
     const serverStopped = await this.stopServer().catch(() => false)
@@ -320,8 +339,12 @@ export class PredictionCoordinator {
   async shutdown(): Promise<void> {
     this.#disposeBattle?.()
     this.#disposeResult?.()
+    this.#disposeState?.()
+    this.#disposeViews?.()
     this.#disposeBattle = null
     this.#disposeResult = null
+    this.#disposeState = null
+    this.#disposeViews = null
     await Promise.race([
       this.stop(true),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000)),

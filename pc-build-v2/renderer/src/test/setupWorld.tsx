@@ -7,6 +7,7 @@ import type { AppRoute } from '../app/router'
 import { installBridge, type Bridge, type BridgeOptions } from './bridge'
 import {
   createSetupFake,
+  detectingView,
   PROFILE_ID,
   sessionView,
   sourcesFixture,
@@ -45,8 +46,9 @@ export function mountSetup(
       }),
   )
   bridge.crTools.startCaptureSetup.mockImplementation((rawPayload: unknown) => {
-    const { profileId, profileName } = StartSetupPayloadSchema.parse(rawPayload)
-    fake.replace(sessionView({ profileId: profileId ?? PROFILE_ID, profileName }))
+    const { mode, profileId, profileName } = StartSetupPayloadSchema.parse(rawPayload)
+    const target = { profileId: profileId ?? PROFILE_ID, profileName }
+    fake.replace(mode === 'auto' ? detectingView(target) : sessionView(target))
     return Promise.resolve(fake.current())
   })
   render(<AppRoot initialRoute={route} />)

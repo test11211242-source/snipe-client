@@ -25,10 +25,12 @@ const RUNTIME: Record<PredictionRuntime, { tone: Tone; label: string }> = {
   stopped: { tone: 'neutral', label: 'Выключены' },
   starting: { tone: 'neutral', label: 'Запускаются…' },
   active: { tone: 'ok', label: 'Включены, идут сами' },
+  suspended: { tone: 'warn', label: 'Приостановлены' },
   failed: { tone: 'danger', label: 'Ошибка запуска' },
   unknown: { tone: 'neutral', label: 'Нет данных' },
 }
-type PredictionRuntime = 'stopped' | 'starting' | 'active' | 'failed' | 'unknown'
+type PredictionRuntime =
+  'stopped' | 'starting' | 'active' | 'suspended' | 'failed' | 'unknown'
 
 /** Prediction preferences are only editable while predictions are off. */
 export function PredictionsPage(): React.JSX.Element {
@@ -60,6 +62,7 @@ function Predictions(): React.JSX.Element {
   const change = (patch: Partial<PredictionPreferences>): void =>
     setDraft({ ...settings, ...patch })
   const runtime = RUNTIME[predictions.runtimeState]
+  const suspended = predictions.runtimeState === 'suspended'
 
   const toggle = (): void => {
     clearError()
@@ -75,12 +78,19 @@ function Predictions(): React.JSX.Element {
   return (
     <div className={styles['page']}>
       <Banner
-        icon="wand"
-        title={active ? 'Прогнозы идут сами' : 'Прогнозы работают сами'}
-        tone={active ? 'ok' : 'neutral'}
+        icon={suspended ? 'alert' : 'wand'}
+        title={
+          suspended
+            ? 'Прогнозы приостановлены'
+            : active
+              ? 'Прогнозы идут сами'
+              : 'Прогнозы работают сами'
+        }
+        tone={suspended ? 'warn' : active ? 'ok' : 'neutral'}
       >
-        Прогноз открывается, когда начинается бой, и закрывается по итогу боя. Включите
-        один раз — во время эфира ничего нажимать не нужно.
+        {suspended
+          ? 'Окно игры другого формата. Прогнозы продолжатся, когда формат вернётся.'
+          : 'Прогноз открывается, когда начинается бой, и закрывается по итогу боя. Включите один раз — во время эфира ничего нажимать не нужно.'}
       </Banner>
       <Requirements items={requirements} />
       <Group

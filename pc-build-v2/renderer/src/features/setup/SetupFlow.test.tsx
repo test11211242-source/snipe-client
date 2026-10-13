@@ -93,7 +93,7 @@ describe('setup flow: new profile', () => {
     // 2. real sources; an unavailable one cannot be picked.
     await screen.findByRole('heading', { name: 'Откуда берём картинку?' })
     expect(await screen.findByRole('button', { name: /Диспетчер задач/ })).toBeDisabled()
-    const freeze = screen.getByRole('button', { name: /Заморозить кадр/ })
+    const freeze = screen.getByRole('button', { name: /Настроить вручную/ })
     expect(freeze).toBeDisabled()
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() => expect(freeze).toBeEnabled())
@@ -187,7 +187,7 @@ describe('setup flow: new profile', () => {
     fireEvent.click(screen.getByRole('button', { name: /Дальше/ }))
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
     fireEvent.click(screen.getByRole('button', { name: /Назад/ }))
     expect(await screen.findByRole('textbox', { name: 'Название профиля' })).toHaveValue(
@@ -208,16 +208,16 @@ describe('setup flow: new profile', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Дальше/ }))
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
-    fireEvent.click(screen.getByRole('button', { name: /Заморозить кадр/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Настроить вручную/ }))
     expect(
       await screen.findByText(
         'Список профилей изменился, пока шла настройка. Начните заново.',
       ),
     ).toBeVisible()
     // The preparation was consumed: it has to be picked again.
-    expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeDisabled()
   })
 
   it('shows a failed capture session with a way back to the source', async () => {
@@ -235,9 +235,9 @@ describe('setup flow: new profile', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Дальше/ }))
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
-    fireEvent.click(screen.getByRole('button', { name: /Заморозить кадр/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Настроить вручную/ }))
     expect(
       await screen.findByRole('heading', { name: 'Настройка не завершена' }),
     ).toBeVisible()
@@ -283,7 +283,7 @@ describe('setup flow: new profile', () => {
       return Promise.resolve(world.fake.current())
     })
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
-    const freeze = screen.getByRole('button', { name: /Заморозить кадр/ })
+    const freeze = screen.getByRole('button', { name: /Настроить вручную/ })
     await waitFor(() => expect(freeze).toBeEnabled())
     fireEvent.click(freeze)
     await screen.findByRole('heading', {
@@ -1073,7 +1073,7 @@ describe('setup flow: source step', () => {
         'Источник изменился. Список обновлён, выберите нужный источник ещё раз.',
       ),
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeDisabled()
   })
 
   it('ignores a stale failure of a source superseded by a newer pick', async () => {
@@ -1106,7 +1106,7 @@ describe('setup flow: source step', () => {
       await Promise.resolve()
     })
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
     expect(world.bridge.crTools.listCaptureSources).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Источник изменился/)).not.toBeInTheDocument()
@@ -1147,10 +1147,10 @@ describe('setup flow: source step', () => {
     const world = mountSetup({ name: 'setup' })
     await toSource(world, /BlueStacks App Player/)
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
     fireEvent.click(screen.getByRole('button', { name: /Экраны · 1/ }))
-    expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeDisabled()
     expect(world.bridge.crTools.releaseCaptureSource).toHaveBeenCalledWith({
       sourceKey: 'a'.repeat(32),
       revision: 'c'.repeat(32),
@@ -1235,9 +1235,9 @@ describe('setup flow: existing profile intents', () => {
     ).toBeVisible()
     fireEvent.click(await screen.findByRole('button', { name: /BlueStacks App Player/ }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Заморозить кадр/ })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: /Настроить вручную/ })).toBeEnabled(),
     )
-    fireEvent.click(screen.getByRole('button', { name: /Заморозить кадр/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Настроить вручную/ }))
     await findEditor()
     expect(world.bridge.crTools.startCaptureSetup).toHaveBeenCalledWith({
       mode: 'manual',

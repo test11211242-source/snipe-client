@@ -46,6 +46,10 @@ export interface SetupSession {
   review: () => Promise<SetupSessionView | null>
   commit: () => Promise<SetupSessionView | null>
   retrySync: () => Promise<SetupSessionView | null>
+  /** Starts the automatic wait again after a failed attempt (`DETECTING` + `failed`). */
+  retryDetection: () => Promise<SetupSessionView | null>
+  /** Leaves automatic setup for the manual editor; main freezes or reuses a frame. */
+  switchToManual: () => Promise<SetupSessionView | null>
   /** Cancels or closes the session. `true` when it is over (or already gone). */
   end: () => Promise<boolean>
   clearError: () => void
@@ -248,6 +252,22 @@ export function useSetupSession(): SetupSession {
       ),
     [run],
   )
+  const retryDetection = useCallback(
+    () =>
+      run(
+        (request) => window.crTools.setup.retryDetection(request),
+        'Не удалось начать заново. Повторите.',
+      ),
+    [run],
+  )
+  const switchToManual = useCallback(
+    () =>
+      run(
+        (request) => window.crTools.setup.switchToManual(request),
+        'Не удалось открыть ручную настройку. Повторите.',
+      ),
+    [run],
+  )
 
   const end = useCallback(async (): Promise<boolean> => {
     const current = viewRef.current
@@ -281,8 +301,12 @@ export function useSetupSession(): SetupSession {
     }
   }, [])
 
-  // States main moves out of on its own (frame capture, saving): follow them.
-  const transient = view !== null && (TRANSIENT as readonly string[]).includes(view.state)
+  // States main moves out of on its own (frame capture, saving, the automatic wait): follow
+  // them. A failed wait is final until the user retries, so it needs no polling.
+  const transient =
+    view !== null &&
+    ((TRANSIENT as readonly string[]).includes(view.state) ||
+      (view.state === 'DETECTING' && view.detection?.status !== 'failed'))
   useEffect(() => {
     if (!transient) return undefined
     const timer = setInterval(() => {
@@ -314,6 +338,8 @@ export function useSetupSession(): SetupSession {
       review,
       commit,
       retrySync,
+      retryDetection,
+      switchToManual,
       end,
       clearError,
     }),
@@ -333,6 +359,8 @@ export function useSetupSession(): SetupSession {
       review,
       commit,
       retrySync,
+      retryDetection,
+      switchToManual,
       end,
       clearError,
     ],

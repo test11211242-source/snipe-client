@@ -16,6 +16,8 @@ export function SourceStage({
   backLabel,
   onBack,
   onConfirm,
+  manualLabel,
+  onManual,
 }: {
   position: string
   title: string
@@ -25,33 +27,48 @@ export function SourceStage({
   onBack: () => void
   /** Uses the prepared source; resolves with a failure text, or `null` when it worked. */
   onConfirm: (preparation: CapturePreparationResult) => Promise<string | null>
+  /** Optional second way on with the same prepared source. */
+  manualLabel?: string
+  onManual?: (preparation: CapturePreparationResult) => Promise<string | null>
 }): React.JSX.Element {
   const picker = useSourcePicker()
   const { take, fail } = picker
-  const [acting, setActing] = useState(false)
+  const [acting, setActing] = useState<'primary' | 'secondary' | null>(null)
 
-  const confirm = async (): Promise<void> => {
+  const confirm = async (
+    kind: 'primary' | 'secondary',
+    proceed: (preparation: CapturePreparationResult) => Promise<string | null>,
+  ): Promise<void> => {
     const preparation = take()
     if (preparation === null) return
-    setActing(true)
-    const failure = await onConfirm(preparation)
+    setActing(kind)
+    const failure = await proceed(preparation)
     if (failure !== null) {
       // The preparation is consumed either way; the source has to be picked again.
       fail(failure)
-      setActing(false)
+      setActing(null)
     }
   }
 
   return (
     <SourceStep
-      acting={acting}
+      acting={acting !== null}
       actionLabel={actionLabel}
       backLabel={backLabel}
       lead={lead}
-      onAction={() => void confirm()}
+      onAction={() => void confirm('primary', onConfirm)}
       onBack={onBack}
       picker={picker}
       position={position}
+      secondary={
+        manualLabel === undefined || onManual === undefined
+          ? undefined
+          : {
+              label: manualLabel,
+              loading: acting === 'secondary',
+              onAction: () => void confirm('secondary', onManual),
+            }
+      }
       title={title}
     />
   )

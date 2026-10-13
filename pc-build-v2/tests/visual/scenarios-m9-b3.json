@@ -1,0 +1,212 @@
+[
+  {
+    "name": "setup-auto-waiting-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-waiting-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detecting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-success-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detected",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-success-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detected",
+        "game": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-timeout-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_VS_TIMEOUT"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-timeout-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_VS_TIMEOUT"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-lost-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_SOURCE_LOST"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-lost-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_SOURCE_LOST"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-spectate-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_SPECTATE_LIKE"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-spectate-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_SPECTATE_LIKE"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-generic-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_TRIGGER_WEAK"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-fail-generic-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {
+        "session": "detectFailed",
+        "autoCode": "AUTO_TRIGGER_WEAK"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(1800); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-source-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "setup": {}
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks App Player'); await h.sleep(900); })()"
+    ]
+  },
+  {
+    "name": "setup-auto-source-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "setup": {}
+    },
+    "steps": [
+      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks App Player'); await h.sleep(900); })()"
+    ]
+  },
+  {
+    "name": "stream-predictions-suspended-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "suspended"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  },
+  {
+    "name": "stream-predictions-suspended-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "suspended"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
+  }
+]

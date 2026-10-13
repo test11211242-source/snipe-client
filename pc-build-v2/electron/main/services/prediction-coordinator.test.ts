@@ -51,6 +51,9 @@ function harness(
   }
   let battleListener: ((timestamp: string) => void) | undefined
   let resultListener: ((action: MonitorAction) => void) | undefined
+  let stateListener: ((state: 'active' | 'aspect_mismatch') => void) | undefined
+  let viewListener: ((view: { state: string }) => void) | undefined
+  const disposers: ReturnType<typeof vi.fn>[] = []
   let currentUserId = '42'
   let authGeneration = 1
   const authSession = {
@@ -79,11 +82,29 @@ function harness(
     stop: vi.fn().mockResolvedValue({ state: 'STOPPED' }),
     subscribeBattleStarts: vi.fn((listener: (timestamp: string) => void) => {
       battleListener = listener
-      return vi.fn()
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
     }),
     subscribePredictionResults: vi.fn((listener: (action: MonitorAction) => void) => {
       resultListener = listener
-      return vi.fn()
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
+    }),
+    subscribePredictionStates: vi.fn(
+      (listener: (state: 'active' | 'aspect_mismatch') => void) => {
+        stateListener = listener
+        const dispose = vi.fn()
+        disposers.push(dispose)
+        return dispose
+      },
+    ),
+    subscribeViews: vi.fn((listener: (view: { state: string }) => void) => {
+      viewListener = listener
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
     }),
   }
   const coordinator = new PredictionCoordinator(
@@ -99,8 +120,11 @@ function harness(
     coordinator,
     request,
     monitor,
+    disposers,
     battle: () => battleListener,
     result: () => resultListener,
+    states: () => stateListener,
+    views: () => viewListener,
     changeAuthContext: (userId: string) => {
       currentUserId = userId
       authGeneration += 1
@@ -118,6 +142,33 @@ describe('PredictionCoordinator', () => {
       '/api/streamer/bot/stop',
     )
     expect(test.coordinator.state).toBe('failed')
+  })
+
+  it('reports suspension only while active and clears it on resume, stop and monitor restart', async () => {
+    const test = harness()
+    test.states()?.('aspect_mismatch')
+    expect(test.coordinator.suspended).toBe(false)
+    await test.coordinator.start(settings)
+    test.states()?.('aspect_mismatch')
+    expect(test.coordinator.suspended).toBe(true)
+    // Battle starts keep flowing: the prediction mechanism itself is unchanged.
+    test.states()?.('active')
+    expect(test.coordinator.suspended).toBe(false)
+    test.states()?.('aspect_mismatch')
+    test.views()?.({ state: 'READY' })
+    expect(test.coordinator.suspended).toBe(true)
+    test.views()?.({ state: 'STARTING' })
+    expect(test.coordinator.suspended).toBe(false)
+    test.states()?.('aspect_mismatch')
+    await test.coordinator.stop()
+    expect(test.coordinator.suspended).toBe(false)
+  })
+
+  it('stops observing the monitor on shutdown', async () => {
+    const test = harness()
+    await test.coordinator.shutdown()
+    expect(test.disposers).toHaveLength(4)
+    for (const dispose of test.disposers) expect(dispose).toHaveBeenCalledOnce()
   })
 
   it('serializes bounded battle and private result events through main only', async () => {

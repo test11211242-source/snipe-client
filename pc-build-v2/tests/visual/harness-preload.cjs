@@ -618,6 +618,25 @@ const gameFx = () => ({
   aspect: 0.5625,
   source: 'freeze',
 })
+const runningDetectionFx = (startedAgoMs) => ({
+  status: 'running',
+  phase: 'waiting_vs',
+  startedAt: new Date(Date.now() - startedAgoMs).toISOString(),
+  deadlineAt: new Date(Date.now() - startedAgoMs + 60_000).toISOString(),
+  game: null,
+  failure: null,
+  frameAvailable: false,
+  nameCheck: { status: 'pending', text: null },
+})
+const detectingSession = (name, patch) =>
+  makeSession('capture', name, {
+    generation: 0,
+    state: 'DETECTING',
+    frameSize: null,
+    game: null,
+    detection: runningDetectionFx(13_000),
+    ...patch,
+  })
 const makeSession = (kind, name, patch = {}) => ({
   kind,
   sessionId: uuid(901),
@@ -663,6 +682,33 @@ const initialSession = () => {
         ...emptyRegions,
         resultTrigger: REGIONS.resultTrigger,
         resultData: REGIONS.resultData,
+      },
+    })
+  if (mode === 'detecting') return detectingSession('Ноутбук', {})
+  if (mode === 'detectFailed')
+    return detectingSession('Ноутбук', {
+      generation: 1,
+      detection: {
+        ...runningDetectionFx(60_000),
+        status: 'failed',
+        failure: { code: setupFx.autoCode ?? 'AUTO_VS_TIMEOUT' },
+      },
+    })
+  if (mode === 'detected')
+    return makeSession('capture', 'Ноутбук', {
+      generation: 2,
+      game: { ...gameFx(), source: 'auto' },
+      regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
+      triggerKind: 'vs_edge_orientation',
+      regions: { ...emptyRegions, ...capture },
+      triggerProfile: triggerProfileFx('high'),
+      detection: {
+        ...runningDetectionFx(5_000),
+        status: 'succeeded',
+        phase: null,
+        game: { viewport: gameFx().viewport, aspect: 0.5625 },
+        frameAvailable: true,
+        nameCheck: { status: 'trainer', text: 'Тренер Чеддер' },
       },
     })
   if (mode === 'failed')
@@ -760,6 +806,39 @@ const setupApi = {
     requireSession(payload) ?? Promise.resolve(bump({ state: 'CANCELLED' })),
   close: (payload) => requireSession(payload) ?? Promise.resolve(session),
   finish: fail,
+  // Automatic setup (M9 B3): the stand-in window picture, a retry and the manual switch.
+  getDetectionPreview: async (payload) => {
+    const refused = requireSession({ ...payload, generation: session?.generation })
+    if (refused !== null) return refused
+    const blob = await new Promise((resolve) =>
+      sceneFrame('menu', 640, 360).toBlob(resolve, 'image/jpeg', 0.7),
+    )
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    return {
+      width: 640,
+      height: 360,
+      mimeType: 'image/jpeg',
+      byteLength: bytes.byteLength,
+      bytes,
+    }
+  },
+  retryDetection: (payload) =>
+    requireSession(payload) ??
+    Promise.resolve(bump({ detection: runningDetectionFx(0) })),
+  switchToManual: (payload) =>
+    requireSession(payload) ??
+    Promise.resolve(
+      bump({
+        state: 'SELECTING',
+        frameSize: { width: 1280, height: 720 },
+        game: gameFx(),
+        regionOrigins: {
+          trigger: 'manual',
+          nickname: 'manual',
+          topLeftEvidence: 'manual',
+        },
+      }),
+    ),
   startResult: () => {
     session = makeSession('predictionResult', 'Основной')
     return Promise.resolve(session)
@@ -832,14 +911,19 @@ const sview = {
     polling: sx.twitch === 'pending',
   },
   predictions: {
-    active: sx.predictions === 'active',
-    state: sx.predictions === 'active' ? 'active' : 'stopped',
+    active: sx.predictions === 'active' || sx.predictions === 'suspended',
+    state:
+      sx.predictions === 'active' || sx.predictions === 'suspended'
+        ? 'active'
+        : 'stopped',
     runtimeState:
       sx.predictions === 'active'
         ? 'active'
-        : sx.predictions === 'failed'
-          ? 'failed'
-          : 'stopped',
+        : sx.predictions === 'suspended'
+          ? 'suspended'
+          : sx.predictions === 'failed'
+            ? 'failed'
+            : 'stopped',
     settings: {
       predictionType: 'win_lose',
       predictionWindow: 120,
@@ -1139,7 +1223,11 @@ contextBridge.exposeInMainWorld('crTools', {
     ),
   releaseCaptureSource: ok({ released: true }),
   startCaptureSetup: ({ mode, profileId, profileName }) => {
-    if (mode !== 'manual') return Promise.reject(new Error('Manual setup mode required'))
+    if (mode === 'auto') {
+      session = detectingSession(profileName, { profileId: profileId ?? uuid(7) })
+      return Promise.resolve(session)
+    }
+    if (mode !== 'manual') return Promise.reject(new Error('Unknown setup mode'))
     // `start: 'failed-once'`: only the first frozen frame fails (a retake then works).
     const failing =
       setupFx.start === 'failed' || (setupFx.start === 'failed-once' && !startedOnce)

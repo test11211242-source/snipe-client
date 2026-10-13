@@ -824,3 +824,76 @@
 .sumNeutral .sumIcon {
   color: var(--color-text-3);
 }
+
+/* ── automatic setup ───────────────────────────── */
+
+.checkWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.checkWrap > .bezel {
+  flex: 1;
+}
+
+.doneTitle {
+  margin: 0;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+.livePicture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.waitPanel {
+  justify-items: start;
+  gap: var(--space-6);
+}
+
+.ask {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+.ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+}
+
+.ringNum {
+  position: absolute;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semi);
+  font-variant-numeric: tabular-nums;
+}
+
+@container app (max-width: 719px) {
+  .checkWrap {
+    min-height: auto;
+  }
+
+  .checkWrap > .bezel {
+    flex: none;
+  }
+
+  .ask {
+    font-size: var(--fs-xl);
+  }
+}

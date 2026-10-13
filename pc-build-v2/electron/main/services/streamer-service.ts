@@ -828,7 +828,7 @@ export class StreamerService {
       access: { allowed: true, reason: null },
       predictions: {
         ...next.predictions,
-        runtimeState: this.predictions.state,
+        runtimeState: this.predictions.suspended ? 'suspended' : this.predictions.state,
         requirements: {
           twitchConnected: next.twitch.connected,
           mainMonitorConfigured: captureConfig !== null,
