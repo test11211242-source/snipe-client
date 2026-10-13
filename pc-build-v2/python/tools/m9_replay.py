@@ -348,10 +348,22 @@ _RUNTIME_VARIANTS = {
 }
 
 
+def fixed_titlebar(titlebar: np.ndarray, width: int) -> np.ndarray:
+    """A real title bar keeps pixel-sized tabs/icons at its ends while resized."""
+    height, source_width = titlebar.shape[:2]
+    strip = np.empty((height, width, 3), np.uint8)
+    strip[:] = np.median(titlebar[:, source_width // 2 - 2:source_width // 2 + 2].reshape(-1, 3), axis=0).astype(np.uint8)
+    left = min(width // 2, source_width // 2)
+    right = min(width - left, source_width - source_width // 2)
+    strip[:, :left] = titlebar[:, :left]
+    strip[:, width - right:] = titlebar[:, source_width - right:]
+    return strip
+
+
 def _runtime_variant(frame: np.ndarray, rect: PixelRect, scale: float = 1.0,
                      pad: tuple[int, int, int, int] = (0, 0, 0, 0),
                      colour: tuple[int, int, int] = (0, 0, 0),
-                     titlebar: np.ndarray | None = None) -> np.ndarray:
+                     titlebar: np.ndarray | None = None, fixed_titlebar_strip: bool = False) -> np.ndarray:
     """REPORT's capture transforms, performed in memory on the detected game."""
     x, y, width, height = rect
     game = cv2.resize(frame[y:y + height, x:x + width],
@@ -362,7 +374,8 @@ def _runtime_variant(frame: np.ndarray, rect: PixelRect, scale: float = 1.0,
     output[:] = colour
     output[top:top + game.shape[0], left:left + game.shape[1]] = game
     if titlebar is not None:
-        strip = cv2.resize(titlebar, (output.shape[1], titlebar.shape[0]), interpolation=cv2.INTER_AREA)
+        strip = (fixed_titlebar(titlebar, output.shape[1]) if fixed_titlebar_strip else
+                 cv2.resize(titlebar, (output.shape[1], titlebar.shape[0]), interpolation=cv2.INTER_AREA))
         output = np.vstack((strip, output))
     return output
 
@@ -511,15 +524,21 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
         and any(event["type"] == "learning" and event.get("status") == "rejected"
                 and event.get("reason") == "LEARN_SPECTATE_LIKE" for event in cell["events"])
         for cell in rejections)
-    setup_ok = len(result["setups"]) == 6 and all(
+    resize = list(result["windowResize"].values())
+    resize_ok = len(resize) == 16 and all(
+        cell["vsFireCounts"] and all(count == 1 for count in cell["vsFireCounts"])
+        and cell["falseFires"] == 0 and not cell["blockedFires"]
+        and [action["frame"] for action in cell["actions"]] == cell["fires"] for cell in resize)
+    setup_ok = len(result["setups"]) == 8 and all(
         setup.get("code") is None for setup in result["setups"].values())
     checks = {"setupAccepted": setup_ok, "runtime22OneFirePerVs": positive_ok,
               "crossSpectateZeroOf6": cross_ok, "aspectBlocked4Within2S": blocked_ok,
               "secondRecordingLearned4WithSameVsFire": learning_ok,
-              "crossAspectSpectateRejected3": rejection_ok}
+              "crossAspectSpectateRejected3": rejection_ok,
+              "windowResize16OneFirePerVs": resize_ok}
     return {"passed": all(checks.values()), "checks": checks, "positiveRequired": 22,
             "crossRequired": 6, "aspectRequired": 4, "learningRequired": 4,
-            "learningSpectateRequired": 3, "maxPositiveDelayS": 0.2,
+            "learningSpectateRequired": 3, "windowResizeRequired": 16, "maxPositiveDelayS": 0.2,
             "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20}
 
 
@@ -553,6 +572,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result: dict[str, Any] = {
         "mode": "runtime", "sampling": "prototype-jpeg92" if prototype_jpeg92 else "direct-video",
         "setups": {}, "positive": {}, "cross": {}, "aspectBlocked": {}, "learning": {}, "learningSpectate": {},
+        "windowResize": {},
     }
     profiles: dict[str, dict[str, Any]] = {}
     rects: dict[str, PixelRect] = {}
@@ -633,6 +653,35 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
             run("positive", "titlebar_profile_without_titlebar", "titlebar_setup",
                 (_runtime_variant(frame, rect, .6) for frame in frames), _runtime_windows(records[source]))
         del frames
+    # Field test 1: a real title bar keeps its pixel thickness and icon sizes
+    # when the emulator window is resized or leaves fullscreen.
+    for source in ("windowed_1080x1920", "obs_1536x2048"):
+        if source not in profiles:
+            continue
+        frames = load(source)
+        rect = rects[source]
+        windows = _runtime_windows(records[source])
+        for scale in (.4, .6, .8):
+            run("windowResize", source + "_fullscreen_profile_titlebar_x" + str(scale), source,
+                (_runtime_variant(frame, rect, scale, titlebar=titlebar, fixed_titlebar_strip=True) for frame in frames),
+                windows)
+        small = source + "_small_window_setup"
+        titled = [_runtime_variant(frame, rect, .4, titlebar=titlebar, fixed_titlebar_strip=True) for frame in frames]
+        profile, setup = _runtime_profile(titled, {**records[source], "key": small})
+        result["setups"][small] = setup
+        del titled
+        if profile is not None:
+            profiles[small] = profile
+            for scale in (.6, .8, 1.0):
+                run("windowResize", small + "_titlebar_x" + str(scale), small,
+                    (_runtime_variant(frame, rect, scale, titlebar=titlebar, fixed_titlebar_strip=True)
+                     for frame in frames), windows)
+            run("windowResize", small + "_fullscreen_x0.6", small,
+                (_runtime_variant(frame, rect, .6) for frame in frames), windows)
+            run("windowResize", small + "_midstream_drag", small,
+                (_runtime_variant(frame, rect, .4 if index < 30 else .8, titlebar=titlebar, fixed_titlebar_strip=True)
+                 for index, frame in enumerate(frames)), windows)
+        del frames
     pairs = [("windowed_1080x1920", target) for target in _RUNTIME_NORMAL[2:]]
     pairs.append(("obs_1536x2048", "windowed_1080x1920"))
     for source, target in pairs:
@@ -659,7 +708,8 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     positive, cross = list(result["positive"].values()), list(result["cross"].values())
     result["totals"] = {
         "positiveCases": len(positive), "positiveFires": sum(len(cell["fires"]) for cell in positive),
-        "falseFires": sum(cell["falseFires"] for group in ("positive", "cross", "aspectBlocked", "learning", "learningSpectate")
+        "falseFires": sum(cell["falseFires"] for group in ("positive", "cross", "aspectBlocked", "learning",
+                                                           "learningSpectate", "windowResize")
                           for cell in result[group].values()),
         "crossCases": len(cross), "crossFires": sum(len(cell["fires"]) for cell in cross),
         "aspectBlockedCases": len(result["aspectBlocked"]), "learningCases": len(result["learning"]),

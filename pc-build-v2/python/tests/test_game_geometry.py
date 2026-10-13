@@ -83,18 +83,27 @@ def test_obs_shrink_without_frame_resize_starts_new_union():
     assert geometry.frames == 1
 
 
-def test_saved_chrome_is_subtracted_only_for_matching_edge_directions():
+def test_saved_chrome_is_subtracted_by_template_or_by_thickness_restoring_the_game_aspect():
     frames = [framed(np.random.default_rng(i).integers(0, 256, (640, 360, 3), dtype=np.uint8), toolbar=32)[0] for i in range(8)]
     calibration = detect(frames)
     assert calibration.chrome["top"] == 32
     geometry = GameGeometry([game_layout(chrome=calibration.chrome)])
     geometry.process(frames[-1], 0)
     assert geometry.rect == (40, 56, 360, 640)
+    # Tab titles and icons change; the saved thickness that restores the game
+    # aspect at a full-width line step still identifies the chrome.
     modified = frames[-1].copy()
-    modified[24:56, 40:400] = np.random.default_rng(73).integers(0, 255, (32, 360, 3), dtype=np.uint8)
+    modified[24:56, 40:400] = (70, 74, 78)
+    modified[28:52, 60:200] = np.random.default_rng(73).integers(150, 255, (24, 140, 3), dtype=np.uint8)
     other = GameGeometry([game_layout(chrome=calibration.chrome)])
     other.process(modified, 0)
-    assert other.rect == (40, 24, 360, 672)
+    assert other.rect == (40, 56, 360, 640)
+    # A band of a different thickness is not the saved chrome.
+    taller = np.zeros((736, 440, 3), np.uint8)
+    taller[24:712, 40:400] = np.random.default_rng(74).integers(0, 255, (688, 360, 3), dtype=np.uint8)
+    third = GameGeometry([game_layout(chrome=calibration.chrome)])
+    third.process(taller, 0)
+    assert third.rect == (40, 24, 360, 688)
 
 
 def test_geometry_events_are_change_driven_and_limited_to_two_per_second():
@@ -258,3 +267,61 @@ def test_black_periodic_recheck_keeps_established_rect_and_detection_budget(monk
         assert geometry.frames == 20
     assert len(calls) == 2
     assert geometry._missing_checks == 0
+
+
+def moving_game(index: int) -> np.ndarray:
+    noise = np.random.default_rng(index).integers(0, 256, (640, 360, 3), dtype=np.uint8)
+    return cv2.GaussianBlur(noise, (3, 3), 0)
+
+
+def emulator_window(game: np.ndarray, width: int, toolbar: int = 32) -> np.ndarray:
+    """An emulator window: four uniform border rows, then a title bar of fixed
+    pixel height whose icons keep their pixel size at the ends, above the game
+    scaled to the window width."""
+    height = round(game.shape[0] * width / game.shape[1])
+    frame = np.empty((toolbar + height, width, 3), np.uint8)
+    frame[:toolbar] = (92, 88, 84)
+    icons = np.random.default_rng(4242).integers(140, 255, (toolbar - 8, 96, 3), dtype=np.uint8)
+    frame[4:toolbar - 4, 6:102] = icons
+    frame[4:toolbar - 4, width - 102:width - 6] = icons[:, ::-1]
+    frame[toolbar:] = cv2.resize(game, (width, height), interpolation=cv2.INTER_AREA)
+    return frame
+
+
+def test_fullscreen_profile_finds_the_game_below_a_title_bar_after_leaving_fullscreen():
+    # Field test 1: a profile set up in fullscreen saved no chrome. In a window
+    # the title bar used to stay inside the game rect, so the badge crop moved
+    # off the shield (or the aspect no longer matched) and nothing ever fired.
+    geometry = GameGeometry([game_layout()])
+    for index in range(12):
+        geometry.process(emulator_window(moving_game(index), 270), index / 10)
+    assert geometry.rect == (0, 32, 270, 480)
+    assert geometry.state == "armed_provisional"
+    assert geometry.chrome["top"] == 28
+
+
+@pytest.mark.parametrize("width", [240, 540, 720])
+def test_saved_title_bar_thickness_survives_window_resize(width):
+    # Field test 1: the saved length-normalized title-bar template no longer
+    # matches once the window width changes, because the icons do not stretch.
+    setup = [emulator_window(moving_game(index), 360) for index in range(8)]
+    chrome = detect(setup).chrome
+    assert chrome["top"] == 28
+    geometry = GameGeometry([game_layout(chrome=chrome)])
+    frame = emulator_window(moving_game(99), width)
+    geometry.process(frame, 0)
+    assert geometry.rect == (0, 32, width, frame.shape[0] - 32)
+    assert geometry.state == "armed_provisional"
+
+
+def test_saved_title_bar_is_not_invented_in_fullscreen_or_on_a_static_screen():
+    setup = [emulator_window(moving_game(index), 360) for index in range(8)]
+    fullscreen = GameGeometry([game_layout(chrome=detect(setup).chrome)])
+    fullscreen.process(cv2.resize(moving_game(5), (540, 960)), 0)
+    assert fullscreen.rect == (0, 0, 540, 960)
+    # Without saved chrome a band needs a moving game below a static band.
+    static = GameGeometry([game_layout()])
+    frame = emulator_window(moving_game(5), 270)
+    for index in range(12):
+        static.process(frame, index / 10)
+    assert static.rect == (0, 4, 270, 508)
