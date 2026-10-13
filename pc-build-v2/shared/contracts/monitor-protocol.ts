@@ -10,6 +10,7 @@ import {
   GameTriggerSchema,
 } from '../models/capture'
 import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
+import { GameAspectSchema, gameAspectsOverlap } from './game-aspect'
 export {
   WindowChromeSchema as MonitorWindowChromeSchema,
   VsBadgeSchema as MonitorVsBadgeSchema,
@@ -65,8 +66,6 @@ const MonitorRegionsSchema = z
   })
   .strict()
 
-const GameAspectSchema = z.number().min(0.397).max(0.773)
-
 export const MonitorCommandLayoutSchema = z
   .object({
     layoutId: z.uuid(),
@@ -120,7 +119,7 @@ const GameLayoutsSchema = z
         if (layout === undefined || other === undefined) continue
         if (
           layout.layoutId === other.layoutId ||
-          Math.abs(other.gameAspect / layout.gameAspect - 1) <= 0.03
+          gameAspectsOverlap(other.gameAspect, layout.gameAspect)
         ) {
           context.addIssue({
             code: 'custom',

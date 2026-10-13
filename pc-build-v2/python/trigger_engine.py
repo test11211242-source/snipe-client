@@ -466,6 +466,9 @@ class TriggerEngine:
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
+        # Game-relative ticks also feed the 5-Hz evidence/finder clock. Accept
+        # exact 10-Hz timestamps despite binary-float subtraction roundoff;
+        # leave the legacy full-frame scheduling contract unchanged.
         interval = self.frame_interval - (1e-9 if self.kind == "game_relative" else 0)
         if now - self.last_frame_time < interval:
             return None
@@ -505,8 +508,7 @@ class TriggerEngine:
         layout, rect = self.geometry.layout, self.geometry.rect
         if layout is None or rect is None:
             self.gate.observe(False, now)
-            self.learner.buffer(bgr, now, self.geometry)
-            if self.geometry.state == "aspect_unknown" or self.geometry.mismatch_frames >= 20:
+            if self.geometry.state == "aspect_unknown":
                 learned = self.learner.process(bgr, now, self.geometry)
                 self.events.extend(self.learner.take_events())
                 if learned is not None:
@@ -527,6 +529,8 @@ class TriggerEngine:
                         self.triggered = True
                         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
                         return encode_action_png(crop(confirmation, data_rect), self.limits)
+            elif self.geometry.state == "aspect_mismatch":
+                self.learner.buffer(bgr, now, self.geometry)
             return None
         if self.learner.active:
             self.learner.reset()

@@ -10,6 +10,8 @@ import {
   type CaptureProfileCollection,
 } from '../../../shared/models/capture'
 import { ApplicationError } from '../../../shared/errors/application-error'
+import { GAME_ASPECT_MIN, GAME_ASPECT_MAX } from '../../../shared/contracts/game-aspect'
+import { MonitorPrimarySchema } from '../../../shared/contracts/monitor-protocol'
 import {
   PredictionResultConfigurationRepository,
   predictionResultFingerprint,
@@ -986,6 +988,93 @@ function gameConfiguration(aspects = [0.42]): CaptureConfiguration {
 }
 
 describe('game-relative storage mutations', () => {
+  it.each([0.5625 * 1.0305, GAME_ASPECT_MIN, GAME_ASPECT_MAX])(
+    'round-trips learned aspect %s and validates its monitor restart layouts',
+    async (gameAspect) => {
+      const { fs } = memoryFileSystem()
+      const target = repository('/v5', fs)
+      const config = gameConfiguration([0.5625])
+      if (config.calibration.coordinateSpace !== 'game_relative')
+        throw new Error('Expected game-relative fixture')
+      await target.save(config)
+      const status = required(await target.list('user'))
+      const learned = {
+        ...required(config.calibration.layouts[0]),
+        layoutSource: 'learned' as const,
+        layoutId: '00000000-0000-4000-8000-000000000099',
+        gameAspect,
+      }
+      await target.appendLearnedLayout(
+        'user',
+        status.activeProfileId,
+        config.calibration.calibrationId,
+        learned,
+      )
+      const reopened = repository('/v5', fs)
+      const calibration = required(await reopened.get('user', status.activeProfileId))
+        .configuration.calibration
+      if (calibration.coordinateSpace !== 'game_relative')
+        throw new Error('Expected persisted game-relative calibration')
+      expect(calibration.layouts.map((layout) => layout.gameAspect)).toEqual([
+        0.5625,
+        gameAspect,
+      ])
+      const primary = MonitorPrimarySchema.parse({
+        kind: 'game_relative',
+        profileCalibrationId: calibration.calibrationId,
+        layouts: calibration.layouts.map((layout) => ({
+          layoutId: layout.layoutId,
+          layoutSource: layout.layoutSource,
+          calibratedAt: layout.calibratedAt,
+          gameAspect: layout.gameAspect,
+          windowChrome: layout.windowChrome,
+          regions: {
+            trigger: layout.triggerRegion,
+            nicknameRegion: layout.nicknameRegion,
+            topLeftEvidenceRegion: layout.topLeftEvidenceRegion,
+          },
+          trigger: layout.trigger,
+          badge:
+            layout.trigger.kind === 'vs_edge_orientation' ? layout.trigger.badge : null,
+          zonesOrigin: {
+            nickname: layout.provenance.nickname.origin,
+            topLeftEvidence: layout.provenance.topLeftEvidence.origin,
+          },
+        })),
+        learning: { enabled: true, maxLayouts: 4 },
+      })
+      expect(primary.kind).toBe('game_relative')
+    },
+  )
+
+  it.each([0.5625 * 1.0299, 0.5625 / 1.0299])(
+    'rejects symmetrically overlapping learned aspect %s without a write',
+    async (gameAspect) => {
+      const { fs, files } = memoryFileSystem()
+      const target = repository('/v5', fs)
+      const config = gameConfiguration([0.5625])
+      if (config.calibration.coordinateSpace !== 'game_relative')
+        throw new Error('Expected game-relative fixture')
+      await target.save(config)
+      const status = required(await target.list('user'))
+      const bytes = files.get(profilePath('/v5', 'user'))
+      await expect(
+        target.appendLearnedLayout(
+          'user',
+          status.activeProfileId,
+          config.calibration.calibrationId,
+          {
+            ...required(config.calibration.layouts[0]),
+            layoutSource: 'learned',
+            layoutId: '00000000-0000-4000-8000-000000000099',
+            gameAspect,
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'LAYOUT_STALE' })
+      expect(files.get(profilePath('/v5', 'user'))).toBe(bytes)
+    },
+  )
+
   it('rebinds without creating a full-frame size field or changing layout references', async () => {
     const { fs, files } = memoryFileSystem()
     const target = repository('/v5', fs)

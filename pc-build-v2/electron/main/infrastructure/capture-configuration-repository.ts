@@ -20,6 +20,7 @@ import {
   type CaptureProfileCollectionStatus,
 } from '../../../shared/models/capture'
 import { ApplicationError } from '../../../shared/errors/application-error'
+import { gameAspectsOverlap } from '../../../shared/contracts/game-aspect'
 import {
   assertLegacyFingerprint,
   createLayoutCalibration,
@@ -612,7 +613,7 @@ export class CaptureConfigurationRepository {
         calibration.layouts.some(
           (existing) =>
             existing.layoutId === validatedLayout.layoutId ||
-            Math.abs(existing.gameAspect / validatedLayout.gameAspect - 1) <= 0.03,
+            gameAspectsOverlap(existing.gameAspect, validatedLayout.gameAspect),
         )
       ) {
         throw new ApplicationError(

@@ -34,12 +34,12 @@ class LatestFrameStore:
         height, width, channels = (int(value) for value in frame.shape)
         if width <= 0 or height <= 0 or channels not in (3, 4) or width * height > MAX_PIXELS:
             raise CaptureBackendError("FRAME_SIZE_INVALID", "Captured frame size is invalid")
-        copied = frame.copy()
+        copied = frame[:, :, :3].copy()
         with self._lock:
             if self._frozen:
                 return False, self._sequence, width, height
             first = self._latest is None
-            if self._latest is not None and self._latest.shape != frame.shape:
+            if self._latest is not None and self._latest.shape[:2] != frame.shape[:2]:
                 self._history.clear()
                 self._last_sample = float("-inf")
             self._sequence += 1
@@ -70,8 +70,14 @@ class LatestFrameStore:
         result = detect([frame for _, frame in samples])
         if result.reason != "ok" or result.rect is None:
             return {"rect": None, "reason": result.reason}
-        last = detect([frozen_frame])
-        if last.rect is None or abs(last.aspect / result.aspect - 1) > 0.01:
+        last = detect([frozen_frame], trim_chrome=False)
+        if last.rect is None:
+            return {"rect": None, "reason": "unstable"}
+        # The single-frame probe cannot discover static chrome. Subtract the
+        # temporal result's same strips before comparing game aspects.
+        width = last.rect[2] - result.chrome["left"] - result.chrome["right"]
+        height = last.rect[3] - result.chrome["top"] - result.chrome["bottom"]
+        if width <= 0 or height <= 0 or abs((width / height) / result.aspect - 1) > 0.01:
             return {"rect": None, "reason": "unstable"}
         return {"rect": pixel_rect(result.rect), "aspect": result.aspect,
                 "chrome": result.chrome, "frames": len(samples)}

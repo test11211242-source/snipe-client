@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 import uuid
 
 from geometry.acceptance import accept
+from geometry.aspect import ASPECT_MAX, ASPECT_MIN, aspects_overlap
 from geometry.game_rect import RectResult, pixel_rect
 from geometry.vs_finder import MATCH_T, VSConfirmer, normalize_game, search
 from geometry.vs_orient_trigger import OrientationTrigger
-from geometry.zones import Badge, layout_rejection, regions
+from geometry.zones import Badge, _clip, layout_rejection, regions
 
 LEARNING_HISTORY = 15
 
@@ -54,12 +55,15 @@ class LayoutLearning:
 
     def reset(self):
         self.active = False
+        self.rejected_count = 0
+        self.failed = False
         self._history.clear()
         self._confirmer = VSConfirmer(history_frames=LEARNING_HISTORY)
         self._pending = None
         self._latched = False
         self._onset = None
         self._shape = None
+        self._last_sample = -float("inf")
         self._last_history_sample = -float("inf")
 
     def buffer(self, frame, now, geometry):
@@ -78,6 +82,9 @@ class LayoutLearning:
         if now - self._last_history_sample >= 0.2 - 1e-9:
             self._history.append((now, normalize_game(frame, geometry.rect)))
             self._last_history_sample = now
+        if abs(now - self._last_history_sample) < 1e-9:
+            return self._history[-1][1]
+        return None
 
     def process(self, frame, now, geometry):
         if not self.enabled:
@@ -101,7 +108,9 @@ class LayoutLearning:
         if now - self._last_sample < 0.2 - 1e-9:
             return None
         self._last_sample = now
-        self.buffer(frame, now, geometry)
+        game = self.buffer(frame, now, geometry)
+        if game is None:
+            game = normalize_game(frame, geometry.rect)
         if self._pending is not None:
             pending = self._pending
             self._pending = None
@@ -123,9 +132,22 @@ class LayoutLearning:
                     new_regions[name] = transfer_zone(source["regions"][name], Badge(**source["badge"]), candidate.badge,
                                                      source["gameAspect"], geometry.aspect)
                     zone = new_regions[name]
-                    if zone["x"] < 0 or zone["y"] < 0 or zone["x"] + zone["width"] > 1 or zone["y"] + zone["height"] > 1:
-                        self._reject("LEARN_NICKNAME_ZONE_CLIPPED" if name == "nicknameRegion" else "LEARN_LAYOUT_UNEXPECTED")
+                    if name == "topLeftEvidenceRegion":
+                        clipped = _clip(zone["x"], zone["y"], zone["x"] + zone["width"], zone["y"] + zone["height"])
+                        if clipped.width <= 0 or clipped.height <= 0:
+                            self._reject("LEARN_LAYOUT_UNEXPECTED")
+                            return None
+                        new_regions[name] = clipped.to_dict()
+                    elif zone["x"] < 0 or zone["y"] < 0 or zone["x"] + zone["width"] > 1 or zone["y"] + zone["height"] > 1:
+                        self._reject("LEARN_NICKNAME_ZONE_CLIPPED")
                         return None
+            aspect = confirmation_rect[2] / confirmation_rect[3]
+            if not ASPECT_MIN <= aspect <= ASPECT_MAX:
+                self._reject("LEARN_ASPECT_UNSUPPORTED")
+                return None
+            if any(aspects_overlap(layout["gameAspect"], aspect) for layout in self.layouts):
+                self._reject("LEARN_LAYOUT_UNEXPECTED")
+                return None
             if len(self.layouts) >= 4:
                 learned = [layout for layout in self.layouts if layout["layoutSource"] == "learned"]
                 if not learned:
@@ -134,7 +156,7 @@ class LayoutLearning:
                 self.layouts.remove(min(learned, key=lambda layout: datetime.fromisoformat(layout["calibratedAt"].replace("Z", "+00:00"))))
             calibrated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             layout = {"layoutId": str(uuid.uuid4()), "layoutSource": "learned", "calibratedAt": calibrated_at,
-                      "gameAspect": confirmation_rect[2] / confirmation_rect[3],
+                      "gameAspect": aspect,
                       "windowChrome": geometry.chrome, "regions": new_regions, "trigger": trigger.to_dict(),
                       "badge": candidate.badge.to_dict(), "zonesOrigin": dict(origins)}
             self.layouts.append(layout)
@@ -146,13 +168,15 @@ class LayoutLearning:
                     "trigger": layout["trigger"], "zonesOrigin": dict(origins), "confidence": check.confidence}
             self.rejected_count, self.failed, self._latched = 0, False, True
             return layout, wire, confirmation, confirmation_rect
-        candidate = search(frame, geometry.rect)
+        candidate = search(frame, geometry.rect, game=game)
         if candidate is None or candidate.score < MATCH_T:
             self._latched = False
             self._onset = None
         elif self._onset is None:
             self._onset = now
-        confirmed = self._confirmer.update(frame, geometry.rect, candidate)
+        before_games = (previous for timestamp, previous in self._history
+                        if self._onset is not None and timestamp < self._onset)
+        confirmed = self._confirmer.update(frame, geometry.rect, candidate, game=game, before_games=before_games)
         if confirmed and not self._latched and candidate is not None:
             rejection = layout_rejection(candidate.badge, geometry.aspect)
             sources = [layout for layout in self.layouts if layout["badge"] is not None and

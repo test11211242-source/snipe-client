@@ -13,6 +13,7 @@ import {
   monitorGamePrimaryFixture,
   monitorLearnedLayoutFixture,
 } from '../../tests/monitor-fixtures'
+import { GAME_ASPECT_MIN, GAME_ASPECT_MAX, gameAspectsOverlap } from './game-aspect'
 
 const sessionId = '00000000-0000-4000-8000-000000000020'
 
@@ -21,6 +22,11 @@ function event(type: string, payload: unknown) {
 }
 
 describe('monitor protocol v4', () => {
+  it('preserves the exact detector algorithm bounds', () => {
+    expect(GAME_ASPECT_MIN).toBe((9 / 22) * 0.97)
+    expect(GAME_ASPECT_MAX).toBe((3 / 4) * 1.03)
+  })
+
   it('accepts game-relative commands and rejects old versions and old top-level fields', () => {
     const command = {
       protocolVersion: 4,
@@ -140,6 +146,71 @@ describe('monitor protocol v4', () => {
       }).success,
     ).toBe(false)
   })
+
+  it.each([GAME_ASPECT_MIN, GAME_ASPECT_MAX, (GAME_ASPECT_MIN + 0.397) / 2])(
+    'accepts exact detector-range aspect %s in commands and learned events',
+    (gameAspect) => {
+      const layout = monitorGamePrimaryFixture().layouts[0]
+      if (layout === undefined) throw new Error('Missing game layout fixture')
+      expect(MonitorCommandLayoutSchema.parse({ ...layout, gameAspect }).gameAspect).toBe(
+        gameAspect,
+      )
+      const learned = { ...monitorLearnedLayoutFixture(), gameAspect }
+      expect(
+        MonitorProcessEventSchema.parse(
+          event('layout_learned', {
+            calibrationId: sessionId,
+            layout: learned,
+            triggerId: null,
+          }),
+        ),
+      ).toMatchObject({ payload: { layout: { gameAspect } } })
+    },
+  )
+
+  it.each([GAME_ASPECT_MIN - Number.EPSILON, GAME_ASPECT_MAX + Number.EPSILON])(
+    'rejects aspect %s outside the exact detector range',
+    (gameAspect) => {
+      const layout = monitorGamePrimaryFixture().layouts[0]
+      if (layout === undefined) throw new Error('Missing game layout fixture')
+      expect(
+        MonitorCommandLayoutSchema.safeParse({ ...layout, gameAspect }).success,
+      ).toBe(false)
+      expect(
+        GameLayoutWireSchema.safeParse({ ...monitorLearnedLayoutFixture(), gameAspect })
+          .success,
+      ).toBe(false)
+    },
+  )
+
+  it.each([false, true])(
+    'keeps +3.05%% learned aspects distinct in either layout order (reverse=%s)',
+    (reverse) => {
+      const primary = monitorGamePrimaryFixture()
+      const setup = primary.layouts[0]
+      if (setup === undefined) throw new Error('Missing game layout fixture')
+      const learned = {
+        ...setup,
+        layoutId: sessionId,
+        layoutSource: 'learned' as const,
+        gameAspect: setup.gameAspect * 1.0305,
+      }
+      const layouts = reverse ? [learned, setup] : [setup, learned]
+      expect(gameAspectsOverlap(setup.gameAspect, learned.gameAspect)).toBe(false)
+      expect(gameAspectsOverlap(learned.gameAspect, setup.gameAspect)).toBe(false)
+      const parsed = MonitorPrimarySchema.parse({ ...primary, layouts })
+      if (parsed.kind !== 'game_relative')
+        throw new Error('Expected game-relative primary')
+      expect(parsed.layouts).toEqual(layouts)
+      const overlapping = { ...learned, gameAspect: setup.gameAspect * 1.0299 }
+      expect(
+        MonitorPrimarySchema.safeParse({
+          ...primary,
+          layouts: reverse ? [overlapping, setup] : [setup, overlapping],
+        }).success,
+      ).toBe(false)
+    },
+  )
 
   it('validates orientation template byte counts, canonical base64 and algorithm constants', () => {
     const layout = monitorGamePrimaryFixture().layouts[0]

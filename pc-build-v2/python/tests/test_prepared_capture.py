@@ -1,30 +1,27 @@
 from __future__ import annotations
 
 import pytest
+import numpy as np
 
 from prepared_capture import LatestFrameStore, validate_command
 from protocol.framing import ProtocolError
 
 
-class FakeFrame:
-    shape = (720, 1280, 4)
-
-    def __init__(self, token: str) -> None:
-        self.token = token
-
-    def copy(self) -> "FakeFrame":
-        return FakeFrame(f"copy:{self.token}")
 
 
 def test_latest_frame_store_freezes_the_last_published_copy() -> None:
     store = LatestFrameStore()
-    assert store.publish(FakeFrame("first")) == (True, 1, 1280, 720)
-    assert store.publish(FakeFrame("second")) == (False, 2, 1280, 720)
+    first = np.full((720, 1280, 4), 1, np.uint8)
+    second = np.full((720, 1280, 4), 2, np.uint8)
+    assert store.publish(first) == (True, 1, 1280, 720)
+    assert store.publish(second) == (False, 2, 1280, 720)
+    second[:] = 9
 
     frozen, sequence = store.freeze()
     assert sequence == 2
-    assert frozen.token == "copy:second"
-    assert store.publish(FakeFrame("late"))[0] is False
+    assert frozen.shape == (720, 1280, 3)
+    assert np.all(frozen == 2)
+    assert store.publish(first)[0] is False
 
 
 def test_prepared_capture_commands_are_strict() -> None:
@@ -96,3 +93,37 @@ def test_freeze_rejects_unstable_geometry() -> None:
     store.publish(changed, timestamp=2.3)
     frozen, _ = store.freeze()
     assert store.game(frozen) == {"rect": None, "reason": "unstable"}
+
+
+def test_freeze_compares_like_geometry_with_trimmed_chrome() -> None:
+    from synthetic_frames import arena, framed
+    from geometry.game_rect import detect, pixel_rect
+
+    store = LatestFrameStore()
+    frames = []
+    for index in range(9):
+        image, _ = arena(seed=index, badge=False)
+        # Ensure temporal motion reaches the documented chrome threshold.
+        image = np.clip(image.astype(np.int16) + (index % 2) * 80, 0, 255).astype(np.uint8)
+        frame, expected = framed(image, toolbar=24)
+        frames.append(frame)
+        store.publish(frame, timestamp=index * .31)
+    frozen, _ = store.freeze()
+    game = store.game(frozen)
+    assert expected == (40, 48, 360, 640)
+    assert game["rect"] == pixel_rect(expected)
+    reference = detect(frames[-8:])
+    assert game["aspect"] == reference.aspect
+    assert game["chrome"] == reference.chrome
+
+
+def test_history_drops_alpha_without_losing_temporal_geometry() -> None:
+    store = LatestFrameStore()
+    frame = np.zeros((2160, 3840, 4), np.uint8)
+    for index in range(9):
+        store.publish(frame, timestamp=index * .31)
+    assert store._latest.shape == (2160, 3840, 3)
+    assert len(store._history) == 8
+    assert all(sample.shape == (2160, 3840, 3) for _, sample in store._history)
+    assert sum(sample.nbytes for _, sample in store._history) == 8 * 2160 * 3840 * 3
+    assert store._history[-1][1] is store._latest

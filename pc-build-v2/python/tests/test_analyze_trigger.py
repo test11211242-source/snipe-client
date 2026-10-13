@@ -119,3 +119,46 @@ def test_analyzer_protocol_two_returns_new_nullable_fields(monkeypatch: pytest.M
     assert response.metadata["vsBadge"] is None
     assert response.metadata["profile"]["schemaVersion"] == 3
     assert response.metadata["legacyProfile"] is not None
+
+
+@pytest.mark.parametrize("stage", ["search", "build"])
+def test_optional_vs_geometry_failure_preserves_structural_profiles(monkeypatch, stage) -> None:
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+    from synthetic_frames import arena
+
+    image, _ = arena()
+    outer = {"x": 120, "y": 215, "width": 120, "height": 120}
+    game = {"x": 0, "y": 0, "width": 360, "height": 640}
+
+    def fail(*args, **kwargs):
+        raise ValueError("Orientation crop height outside 64..160")
+
+    if stage == "search":
+        monkeypatch.setattr(analyze_trigger, "search", fail)
+    else:
+        monkeypatch.setattr(analyze_trigger.OrientationTrigger, "build", fail)
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    write_envelope(incoming, {"protocolVersion": 2, "requestId": "unit", "operation": "analyze_trigger",
+                              "outerRect": outer, "gameRect": game}, encode(image))
+    incoming.seek(0)
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "unit")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=0).metadata
+    assert response["ok"]
+    assert response["profile"]["schemaVersion"] == 3
+    assert response["legacyProfile"] is not None
+    assert response["vsOrientation"] is None
+    assert response["vsBadge"] is None
+
+
+def test_optional_vs_classification_does_not_hide_protocol_errors() -> None:
+    from analyze_trigger import analyze_vs
+
+    image, outer = coarse_selection()
+    with pytest.raises(ProtocolError):
+        analyze_vs(encode(image), outer, {"x": -1, "y": 0, "width": 100, "height": 100})

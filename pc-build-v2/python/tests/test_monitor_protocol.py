@@ -1,9 +1,11 @@
 import io
 import json
+import math
 import uuid
 
 import pytest
 
+from geometry.aspect import ASPECT_MIN, ASPECT_MAX, aspects_overlap
 from monitor_protocol import MonitorProtocolError, encode_event, read_command
 
 
@@ -129,6 +131,60 @@ def test_game_relative_strict_roundtrip_and_amended_metadata():
     assert layout["layoutSource"] == "setup"
     assert layout["calibratedAt"].endswith("Z")
     assert parsed["payload"]["primary"]["learning"] == {"enabled": True, "maxLayouts": 4}
+
+
+def test_game_aspect_bounds_preserve_detector_algorithm_constants():
+    from geometry.game_rect import ASPECT_MIN as DETECTOR_ASPECT_MIN, ASPECT_MAX as DETECTOR_ASPECT_MAX
+
+    assert ASPECT_MIN == DETECTOR_ASPECT_MIN == 9 / 22 * 0.97
+    assert ASPECT_MAX == DETECTOR_ASPECT_MAX == 3 / 4 * 1.03
+
+
+@pytest.mark.parametrize("aspect", [ASPECT_MIN, ASPECT_MAX, (ASPECT_MIN + 0.397) / 2])
+def test_game_aspect_exact_detector_bounds_roundtrip(aspect):
+    from test_game_geometry import game_payload
+
+    value = game_payload()
+    value["primary"]["layouts"][0]["gameAspect"] = aspect
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": value}
+    assert read_command(line(command))["payload"]["primary"]["layouts"][0]["gameAspect"] == aspect
+
+
+@pytest.mark.parametrize("aspect", [
+    math.nextafter(ASPECT_MIN, -math.inf),
+    math.nextafter(ASPECT_MAX, math.inf),
+])
+def test_game_aspect_rejects_values_outside_exact_detector_bounds(aspect):
+    from test_game_geometry import game_payload
+
+    value = game_payload()
+    value["primary"]["layouts"][0]["gameAspect"] = aspect
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": value}
+    with pytest.raises(MonitorProtocolError, match="game aspect"):
+        read_command(line(command))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("factor, overlaps", [(1.0305, False), (1.0299, True)])
+def test_game_aspect_overlap_is_symmetric_on_restart(reverse, factor, overlaps):
+    from copy import deepcopy
+    from test_game_geometry import game_payload
+
+    value = game_payload()
+    setup = value["primary"]["layouts"][0]
+    setup["gameAspect"] = 0.5625
+    learned = deepcopy(setup)
+    learned.update(layoutId=str(uuid.uuid4()), layoutSource="learned", gameAspect=0.5625 * factor)
+    layouts = [setup, learned]
+    value["primary"]["layouts"] = layouts[::-1] if reverse else layouts
+    assert aspects_overlap(setup["gameAspect"], learned["gameAspect"]) is overlaps
+    assert aspects_overlap(learned["gameAspect"], setup["gameAspect"]) is overlaps
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": value}
+    if overlaps:
+        with pytest.raises(MonitorProtocolError, match="overlap"):
+            read_command(line(command))
+    else:
+        assert read_command(line(command))["payload"]["primary"]["layouts"] == value["primary"]["layouts"]
 
 
 @pytest.mark.parametrize("change", [

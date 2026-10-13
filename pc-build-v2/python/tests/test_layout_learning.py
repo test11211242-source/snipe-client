@@ -1,8 +1,10 @@
 import cv2
+from types import SimpleNamespace
 import numpy as np
 import pytest
 
 from game_geometry import GameGeometry
+from geometry.vs_finder import Candidate, NORM_C, NORM_W
 from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import Badge
 from layout_learning import LayoutLearning, transfer_zone
@@ -70,15 +72,33 @@ def test_structural_profile_unknown_format_reports_honest_failure():
     assert [(kind, value["reason"]) for _, kind, value in events if kind == "learning"] == [("learning", "LEARN_STRUCTURAL_TRIGGER")]
 
 
-@pytest.mark.parametrize("shape,reason", [((640, 480), "LEARN_GAME_NOT_FOUND"), ((300, 500), "LEARN_ASPECT_UNSUPPORTED")])
-def test_no_game_or_unsupported_format_fails_without_null_reason(shape, reason):
+def test_no_game_waits_without_entering_learning_or_counting_mismatch():
+    engine = TriggerEngine(game_payload())
+    events = []
+    for index in range(30):
+        assert engine.process(np.zeros((640, 480, 3), np.uint8), index * 0.1) is None
+        events.extend(engine.take_events())
+    assert engine.geometry.state == "no_game"
+    assert engine.geometry.mismatch_frames == 0
+    assert not engine.learner.active
+    assert engine.learner.rejected_count == 0
+    assert not any(kind in ("learning", "layout_learned") for kind, _ in events)
+    # Empty source frames do not count toward the 20-frame aspect mismatch.
+    for index in range(19):
+        frame = arena(480, 640, seed=index, badge=False)[0]
+        assert engine.process(frame, 3 + index * 0.1) is None
+        assert engine.geometry.state == "aspect_mismatch"
+        assert not engine.learner.active
+
+
+def test_unsupported_format_fails_without_null_reason():
     engine = TriggerEngine(game_payload())
     events = []
     for index in range(25):
-        frame = np.zeros((*shape, 3), np.uint8) if reason == "LEARN_GAME_NOT_FOUND" else np.random.default_rng(index).integers(0, 256, (*shape, 3), np.uint8)
+        frame = np.random.default_rng(index).integers(0, 256, (300, 500, 3), np.uint8)
         assert engine.process(frame, index * 0.1) is None
         events.extend(engine.take_events())
-    assert ("learning", {"status": "failed", "reason": reason, "rejectedCount": 0}) in events
+    assert ("learning", {"status": "failed", "reason": "LEARN_ASPECT_UNSUPPORTED", "rejectedCount": 0}) in events
 
 
 def test_menu_without_vs_never_counts_as_rejection():
@@ -198,3 +218,120 @@ def test_same_canvas_late_unknown_keeps_pre_vs_history_and_learns_first_battle()
     assert len(engine.geometry.layouts) == 2
     assert sum(kind == "layout_learned" for kind, _ in events) == 1
     assert not any(kind == "learning" and value["status"] == "rejected" for kind, value in events)
+
+
+@pytest.mark.parametrize("onset", [21, 23])
+def test_vs_soon_after_aspect_unknown_learns_and_fires_first_battle(onset):
+    engine = TriggerEngine(game_payload())
+    output, events = run_new_format(engine, count=45, onset=onset)
+    unknown = next(index for index, kind, value in events
+                   if kind == "geometry" and value["state"] == "aspect_unknown")
+    assert (onset - unknown) / 10 == pytest.approx(0.2 if onset == 21 else 0.4)
+    assert len(output) == 1
+    assert onset <= output[0][0] <= onset + 8
+    assert sum(kind == "layout_learned" for _, kind, _ in events) == 1
+    assert not any(kind == "learning" and value["status"] in ("rejected", "failed") for _, kind, value in events)
+
+
+def test_saved_layout_rearm_resets_consecutive_rejections_and_failed_state():
+    engine = TriggerEngine(game_payload())
+    _, first_events = run_new_format(engine, cy=0.523)
+    _, second_events = run_new_format(engine, cy=0.523, begin=7)
+    assert engine.learner.rejected_count == 2
+    assert engine.learner.failed
+    assert any(kind == "learning" and value["status"] == "failed" for _, kind, value in second_events)
+    # Return to a saved format, then encounter another unsupported battle format.
+    engine.process(arena(badge=False)[0], 14)
+    engine.take_events()
+    assert not engine.learner.active
+    assert engine.learner.rejected_count == 0
+    assert not engine.learner.failed
+    assert engine.learner._last_sample == -float("inf")
+    _, third_events = run_new_format(engine, cy=0.523, begin=14.1)
+    rejected = [value for _, kind, value in third_events if kind == "learning" and value["status"] == "rejected"]
+    assert [value["rejectedCount"] for value in rejected] == [1]
+    assert not any(kind == "learning" and value["status"] == "failed" for _, kind, value in third_events)
+    _, fourth_events = run_new_format(engine, cy=0.523, begin=21.1)
+    assert any(kind == "learning" and value["status"] == "failed" and value["rejectedCount"] == 2
+               for _, kind, value in fourth_events)
+    assert any(kind == "learning" and value["status"] == "rejected" for _, kind, value in first_events)
+
+
+def test_transferred_manual_evidence_is_clipped_but_nickname_is_not():
+    layout = game_layout()
+    layout["regions"]["topLeftEvidenceRegion"] = {"x": 0.05, "y": 0, "width": 0.3, "height": 0.3}
+    layout["zonesOrigin"]["topLeftEvidence"] = "manual"
+    engine = TriggerEngine(game_payload([layout]))
+    output, events = run_new_format(engine)
+    assert len(output) == 1
+    learned = engine.geometry.layouts[-1]
+    transferred = transfer_zone(layout["regions"]["topLeftEvidenceRegion"], Badge(**layout["badge"]),
+                                Badge(**learned["badge"]), layout["gameAspect"], learned["gameAspect"])
+    assert transferred["y"] < 0
+    evidence = learned["regions"]["topLeftEvidenceRegion"]
+    assert evidence["y"] == 0
+    assert evidence["height"] == pytest.approx(transferred["y"] + transferred["height"])
+    assert evidence["x"] == pytest.approx(transferred["x"])
+    wire = next(value["layout"] for _, kind, value in events if kind == "layout_learned")
+    assert wire["topLeftEvidenceRegion"] == evidence
+    assert wire["zonesOrigin"]["topLeftEvidence"] == "manual"
+
+    layout = game_layout()
+    layout["regions"]["nicknameRegion"] = {"x": 0.2, "y": 0, "width": 0.6, "height": 0.3}
+    layout["zonesOrigin"]["nickname"] = "manual"
+    engine = TriggerEngine(game_payload([layout]))
+    output, events = run_new_format(engine)
+    assert output == []
+    assert len(engine.geometry.layouts) == 1
+    assert any(kind == "learning" and value["reason"] == "LEARN_NICKNAME_ZONE_CLIPPED" for _, kind, value in events)
+
+
+@pytest.mark.parametrize("source_ratio,accepted", [(1.0305, True), (1.0299, False)])
+def test_learning_acceptance_uses_symmetric_wire_aspect_overlap(monkeypatch, source_ratio, accepted):
+    import layout_learning
+
+    frame, badge = arena(480, 640)
+    rect = (0, 0, 480, 640)
+    source = game_layout()
+    source["gameAspect"] = (480 / 640) / source_ratio
+    layouts = [source]
+    learner = LayoutLearning(layouts, True)
+    trigger = OrientationTrigger.build(frame, rect, badge)
+    candidate = Candidate(0.9, badge.width, badge)
+    geometry = SimpleNamespace(rect=rect, aspect=480 / 640, reason="ok", frames=20, chrome=source["windowChrome"])
+    learner.buffer(frame, 0, geometry)
+    learner._pending = (trigger, candidate, frame.copy(), rect, source, 1.0)
+    # This test isolates the post-self-check layout contract admission.
+    monkeypatch.setattr(layout_learning, "accept", lambda *_args, **_kwargs: SimpleNamespace(ok=True, confidence=0.9))
+    learned = learner.process(frame, 2, geometry)
+    assert (learned is not None) == accepted
+    assert len(layouts) == (2 if accepted else 1)
+    if accepted:
+        assert learned[1]["gameAspect"] == 480 / 640
+    else:
+        assert ("learning", {"status": "rejected", "reason": "LEARN_LAYOUT_UNEXPECTED", "rejectedCount": 1}) in learner.take_events()
+
+
+def test_learning_sample_shares_normalized_game_between_buffer_search_and_confirmer(monkeypatch):
+    import geometry.vs_finder as finder
+    import layout_learning
+
+    layouts = [game_layout()]
+    learner = LayoutLearning(layouts, True)
+    frame = arena(480, 640, badge=False)[0]
+    geometry = GameGeometry(layouts)
+    geometry.process(frame, 0)
+    geometry.frames = 20
+    original_normalize = finder.normalize_game
+    widths = []
+
+    def counted_normalize(image, rect, width=NORM_W):
+        widths.append(width)
+        return original_normalize(image, rect, width)
+
+    monkeypatch.setattr(finder, "normalize_game", counted_normalize)
+    monkeypatch.setattr(layout_learning, "normalize_game", counted_normalize)
+    learner.buffer(frame, 0, geometry)
+    learner.process(frame, 0, geometry)
+    assert widths == [NORM_W, NORM_C]
+    assert len(learner._history) == 1

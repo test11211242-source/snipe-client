@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { GameAspectSchema, gameAspectsOverlap } from '../contracts/game-aspect'
+
 export const PixelSizeSchema = z
   .object({
     width: z.number().int().positive().max(16_384),
@@ -305,7 +307,7 @@ export const GameLayoutSchema = z
   .object({
     layoutId: z.uuid(),
     layoutSource: z.enum(['setup', 'learned']),
-    gameAspect: z.number().min(0.397).max(0.773),
+    gameAspect: GameAspectSchema,
     referenceFrameSize: PixelSizeSchema,
     referenceGameRect: PixelRectSchema,
     windowChrome: WindowChromeSchema,
@@ -344,7 +346,7 @@ export const GameRelativeCalibrationSchema = z
         if (other === undefined) continue
         if (
           layout.layoutId === other.layoutId ||
-          Math.abs(other.gameAspect / layout.gameAspect - 1) <= 0.03
+          gameAspectsOverlap(other.gameAspect, layout.gameAspect)
         ) {
           context.addIssue({
             code: 'custom',

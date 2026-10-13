@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -106,7 +107,8 @@ def _peak(fc: np.ndarray, fs: np.ndarray, template: _Template, x0: int, y0: int,
     return float(score), location
 
 
-def search(frame: np.ndarray, rect: PixelRect, *, region: PixelRect | None = None) -> Candidate | None:
+def search(frame: np.ndarray, rect: PixelRect, *, region: PixelRect | None = None,
+           game: np.ndarray | None = None) -> Candidate | None:
     small = normalize_game(frame, rect, NORM_C)
     nh_c = small.shape[0]
     bx0, bx1 = (int(v * NORM_C) for v in BAND_X)
@@ -128,7 +130,8 @@ def search(frame: np.ndarray, rect: PixelRect, *, region: PixelRect | None = Non
             break
     if not chosen:
         return None
-    game = normalize_game(frame, rect)
+    if game is None:
+        game = normalize_game(frame, rect)
     nh = game.shape[0]
     best = None
     for _, k0, cx, cy in chosen:
@@ -169,12 +172,18 @@ class VSConfirmer:
         self._sequence = 0
         self._shape: tuple[int, ...] | None = None
 
-    def update(self, frame: np.ndarray, rect: PixelRect, candidate: Candidate | None) -> bool:
-        game = normalize_game(frame, rect)
-        if self._shape != game.shape:
+    def update(self, frame: np.ndarray, rect: PixelRect, candidate: Candidate | None, *,
+               game: np.ndarray | None = None, before_games: Iterable[np.ndarray] | None = None) -> bool:
+        # Learning supplies source-shape-stable pre-finder evidence; normalized
+        # game height may drift by one pixel while its rectangle is aggregated.
+        shape = frame.shape if before_games is not None else (game.shape if game is not None else None)
+        if before_games is None and game is None:
+            game = normalize_game(frame, rect)
+            shape = game.shape
+        if self._shape != shape:
             self._history.clear()
             self._run.clear()
-            self._shape = game.shape
+            self._shape = shape
         self._sequence += 1
         if candidate is None or candidate.score < MATCH_T:
             self._run.clear()
@@ -188,9 +197,12 @@ class VSConfirmer:
         confirmed = False
         if len(self._run) >= CONFIRM_N and candidate is not None:
             start = self._run[0][0]
+            previous_games = (before_games if before_games is not None else
+                              (previous for sequence, previous in self._history if sequence < start))
             confirmed = EXPECTED_K[0] <= candidate.k <= EXPECTED_K[1] and any(
-                score_at_game(previous, candidate) < EMPTY_T for sequence, previous in self._history if sequence < start)
+                score_at_game(previous, candidate) < EMPTY_T for previous in previous_games)
             if not confirmed:
                 self._run.pop(0)
-        self._history.append((self._sequence, game))
+        if before_games is None:
+            self._history.append((self._sequence, game))
         return confirmed

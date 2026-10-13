@@ -8,6 +8,7 @@ import {
 import { predictionResultMatchesCapture } from '../models/prediction-result'
 import { monitorLearnedLayoutFixture } from '../../tests/monitor-fixtures'
 import { GameLayoutWireSchema } from './monitor-protocol'
+import { GAME_ASPECT_MIN, GAME_ASPECT_MAX } from './game-aspect'
 import {
   CapturePreparationResponseSchema,
   SetRegionPayloadSchema,
@@ -125,6 +126,50 @@ describe('M9 calibration and result binding', () => {
       ).toBe(false)
     }
   })
+
+  it.each([GAME_ASPECT_MIN, GAME_ASPECT_MAX, (GAME_ASPECT_MIN + 0.397) / 2])(
+    'persists exact detector-range aspect %s',
+    (gameAspect) => {
+      expect(GameLayoutSchema.parse({ ...setup, gameAspect }).gameAspect).toBe(gameAspect)
+      expect(
+        GameRelativeCalibrationSchema.parse({
+          ...calibration,
+          layouts: [{ ...setup, gameAspect }],
+        }).layouts[0]?.gameAspect,
+      ).toBe(gameAspect)
+    },
+  )
+
+  it.each([GAME_ASPECT_MIN - Number.EPSILON, GAME_ASPECT_MAX + Number.EPSILON])(
+    'rejects persisted aspect %s outside the exact detector range',
+    (gameAspect) => {
+      expect(GameLayoutSchema.safeParse({ ...setup, gameAspect }).success).toBe(false)
+    },
+  )
+
+  it.each([false, true])(
+    'accepts +3.05%% learned layouts but rejects symmetric overlap (reverse=%s)',
+    (reverse) => {
+      const original = { ...setup, gameAspect: 0.5625 }
+      const learned = {
+        ...setup,
+        layoutId: '00000000-0000-4000-8000-000000000020',
+        layoutSource: 'learned' as const,
+        gameAspect: original.gameAspect * 1.0305,
+      }
+      const layouts = reverse ? [learned, original] : [original, learned]
+      expect(
+        GameRelativeCalibrationSchema.parse({ ...calibration, layouts }).layouts,
+      ).toEqual(layouts)
+      const overlapping = { ...learned, gameAspect: original.gameAspect * 1.0299 }
+      expect(
+        GameRelativeCalibrationSchema.safeParse({
+          ...calibration,
+          layouts: reverse ? [overlapping, original] : [original, overlapping],
+        }).success,
+      ).toBe(false)
+    },
+  )
 
   it('requires canonical exact-length orientation and strip templates', () => {
     if (setup.trigger.kind !== 'vs_edge_orientation')

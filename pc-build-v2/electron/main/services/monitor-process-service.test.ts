@@ -629,6 +629,20 @@ describe('MonitorProcessService', () => {
     expect(child.written.trim().split('\n')).toHaveLength(2)
   })
 
+  it('includes the JSONL newline in the 1MiB command limit', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const byteLength = vi.spyOn(Buffer, 'byteLength').mockReturnValue(1024 * 1024)
+    try {
+      await expect(monitored.value.start(payload(), listener())).rejects.toMatchObject({
+        code: 'MONITOR_PROTOCOL_OVERSIZED',
+      })
+      expect(child.written).toBe('')
+    } finally {
+      byteLength.mockRestore()
+    }
+  })
+
   it('rejects malformed new events and events before ready without invoking their callbacks', async () => {
     const earlyChild = new FakeChild()
     const early = service(earlyChild)

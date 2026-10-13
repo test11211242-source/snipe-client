@@ -7,14 +7,13 @@ from typing import Any, Literal, Sequence
 
 import cv2
 import numpy as np
+from .aspect import ASPECT_MIN, ASPECT_MAX
 
 PixelRect = tuple[int, int, int, int]
 TOL = 12
 UNIFORM_FRAC = 0.93
 COLOUR_DRIFT = 10
 COARSE = 480
-ASPECT_MIN = 9 / 22 * 0.97
-ASPECT_MAX = 3 / 4 * 1.03
 STATIC_TOL = 6
 MAX_TOOLBAR = 0.10
 MIN_TOOLBAR = 0.015

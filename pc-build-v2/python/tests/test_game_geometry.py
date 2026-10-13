@@ -60,11 +60,14 @@ def test_aspect_unknown_after_twenty_mismatches_and_no_game():
     geometry.process(frame, 1.9)
     assert geometry.state == "aspect_unknown"
     geometry.process(np.zeros_like(frame), 2)
-    # Recheck at the next scheduled tick recognizes a vanished game.
-    for index in range(21, 30):
+    # One dark recheck is harmless; two consecutive missing rechecks drop it.
+    for index in range(21, 40):
         geometry.process(np.zeros_like(frame), index * 0.1)
-    assert geometry.state == "no_game"
+        if index == 29:
+            assert geometry.rect is not None
     assert geometry.rect is None
+    assert geometry.state == "no_game"
+    assert geometry.mismatch_frames == 0
 
 
 def test_obs_shrink_without_frame_resize_starts_new_union():
@@ -204,3 +207,54 @@ def test_same_canvas_aspect_rechecks_must_be_consecutive():
         for index in range(10):
             geometry.process(frame, 2 + block + index / 10)
         assert geometry.rect == ((36, 0, 288, 640) if block == 3 else (0, 0, 360, 640))
+
+
+@pytest.mark.parametrize("ticks", [60, 80])
+def test_saved_toolbar_stays_armed_with_only_periodic_full_frame_detection(monkeypatch, ticks):
+    import game_geometry
+
+    frames = [framed(np.random.default_rng(i).integers(0, 256, (640, 360, 3), dtype=np.uint8), toolbar=24)[0]
+              for i in range(8)]
+    chrome = detect(frames).chrome
+    assert chrome["top"] == 24
+    geometry = GameGeometry([game_layout(chrome=chrome)])
+    original_detect = game_geometry.detect
+    calls = []
+
+    def counted_detect(*args, **kwargs):
+        calls.append(1)
+        return original_detect(*args, **kwargs)
+
+    monkeypatch.setattr(game_geometry, "detect", counted_detect)
+    for index in range(ticks):
+        geometry.process(frames[index % len(frames)], index / 10)
+        assert geometry.rect == (40, 48, 360, 640)
+        assert geometry.raw_rect == (40, 24, 360, 664)
+        if index >= 19:
+            assert geometry.state == "armed"
+            assert geometry.frames == 20
+    assert len(calls) == 20 + (ticks - 20) // 10
+
+
+def test_black_periodic_recheck_keeps_established_rect_and_detection_budget(monkeypatch):
+    import game_geometry
+
+    geometry = GameGeometry([game_layout()])
+    frame, _ = framed(arena(badge=False)[0])
+    for index in range(20):
+        geometry.process(frame, index / 10)
+    original_detect = game_geometry.detect
+    calls = []
+
+    def counted_detect(*args, **kwargs):
+        calls.append(1)
+        return original_detect(*args, **kwargs)
+
+    monkeypatch.setattr(game_geometry, "detect", counted_detect)
+    for index in range(20, 40):
+        geometry.process(np.zeros_like(frame) if index == 29 else frame, index / 10)
+        assert geometry.state == "armed"
+        assert geometry.rect == (40, 24, 360, 640)
+        assert geometry.frames == 20
+    assert len(calls) == 2
+    assert geometry._missing_checks == 0

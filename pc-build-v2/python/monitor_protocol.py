@@ -10,6 +10,8 @@ import math
 import uuid
 from typing import Any, BinaryIO
 
+from geometry.aspect import ASPECT_MIN, ASPECT_MAX, aspects_overlap
+
 PROTOCOL_VERSION = 4
 MAX_COMMAND_BYTES = 1024 * 1024
 
@@ -164,8 +166,8 @@ def _primary(value):
             datetime.fromisoformat(date.replace("Z", "+00:00"))
         except ValueError as error:
             raise MonitorProtocolError("layout calibratedAt is invalid") from error
-        aspect = _number(layout["gameAspect"], 0.397, 0.773, "game aspect")
-        if any(abs(other / aspect - 1) <= 0.03 for other in aspects):
+        aspect = _number(layout["gameAspect"], ASPECT_MIN, ASPECT_MAX, "game aspect")
+        if any(aspects_overlap(other, aspect) for other in aspects):
             raise MonitorProtocolError("layout aspects overlap")
         aspects.append(aspect)
         _chrome(layout["windowChrome"])

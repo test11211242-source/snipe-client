@@ -7,10 +7,10 @@ from typing import Any
 import cv2
 import numpy as np
 
-from geometry.game_rect import ASPECT_MAX, ASPECT_MIN, RectResult, detect, pixel_rect, _uniform
+from geometry.aspect import ASPECT_MAX, ASPECT_MIN, ASPECT_TOL
+from geometry.game_rect import RectResult, detect, pixel_rect, _uniform
 from geometry.vs_orient_trigger import MAX_SHIFT, orientation_field
 
-ASPECT_TOL = 0.03
 DETECT_FRAMES = 20
 RECHECK_EVERY = 10
 NEEDS_RECAL_FRAMES = 20
@@ -52,6 +52,8 @@ class GameGeometry:
         self.layouts = layouts
         self.shape = None
         self.rect = None
+        self.raw_rect = None
+        self._detected_raw_rect = None
         self.aspect = None
         self.layout = None
         self.state = "locating"
@@ -61,14 +63,15 @@ class GameGeometry:
         self.chrome = None
         self.tick = 0
         self._aspect_change_checks = 0
+        self._missing_checks = 0
         self._last_event = None
         self._last_event_time = -float("inf")
 
     def _detect(self, frame):
         result = detect([frame], trim_chrome=False)
+        self._detected_raw_rect = result.rect
         if result.rect is None:
             return result
-        best = result
         for layout in self.layouts:
             chrome = layout["windowChrome"]
             x, y, w, h = result.rect
@@ -85,24 +88,32 @@ class GameGeometry:
             aspect = nw / nh
             if any(matched.values()) and abs(aspect / layout["gameAspect"] - 1) <= ASPECT_TOL:
                 return RectResult((x + matched["left"], y + matched["top"], nw, nh), aspect, "ok", chrome)
-        return best
+        return result
 
     def process(self, frame, now):
         shape = frame.shape[:2]
         self.tick += 1
         if self.shape != shape:
-            self.shape, self.rect, self.aspect, self.layout = shape, None, None, None
+            self.shape, self.rect, self.raw_rect, self.aspect, self.layout = shape, None, None, None, None
             self.frames, self.mismatch_frames = 0, 0
             self._aspect_change_checks = 0
+            self._missing_checks = 0
             self.state = "locating"
         if self.frames < DETECT_FRAMES or self.tick % RECHECK_EVERY == 0:
             result = self._detect(frame)
-            self.reason, self.chrome = result.reason, result.chrome
             if result.rect is None:
-                self.rect = None
-                self.frames = 0
+                self._aspect_change_checks = 0
+                self._missing_checks += 1
+                # One dark/loading recheck must not discard established geometry.
+                # A second consecutive missing recheck recognizes a vanished game.
+                if self.frames < DETECT_FRAMES or self._missing_checks >= 2:
+                    self.reason, self.chrome = result.reason, result.chrome
+                    self.rect, self.raw_rect, self.frames = None, None, 0
             else:
+                self.reason, self.chrome = result.reason, result.chrome
+                self._missing_checks = 0
                 found = result.rect
+                raw_found = self._detected_raw_rect
                 restart = self.rect is None
                 if self.rect is not None and self.frames >= DETECT_FRAMES:
                     old = self.rect
@@ -112,16 +123,18 @@ class GameGeometry:
                             found[0] + found[2] > old[0] + old[2] + 3 or found[1] + found[3] > old[1] + old[3] + 3)
                     shrank = (abs((found[2] / found[3]) / (old[2] / old[3]) - 1) < 0.01 and
                               found[2] < old[2] * 0.97 and found[3] < old[3] * 0.97)
-                    restart = grew or shrank or not outside_uniform(frame, old) or self._aspect_change_checks >= 2
+                    # Saved chrome is inside the peeled bounds, not outside the game.
+                    restart = grew or shrank or not outside_uniform(frame, self.raw_rect) or self._aspect_change_checks >= 2
                 if restart:
-                    self.rect, self.frames = found, 1
+                    self.rect, self.raw_rect, self.frames = found, raw_found, 1
                     self._aspect_change_checks = 0
                 elif self.frames < DETECT_FRAMES:
                     self.rect = union(self.rect, found)
+                    self.raw_rect = union(self.raw_rect, raw_found)
                     self.frames += 1
         if self.rect is None:
             self.aspect, self.layout, self.state = None, None, "no_game"
-            self.mismatch_frames += 1
+            self.mismatch_frames = 0
             return
         self.aspect = self.rect[2] / self.rect[3]
         self.reason = "ok" if ASPECT_MIN <= self.aspect <= ASPECT_MAX else "aspect_out_of_range"

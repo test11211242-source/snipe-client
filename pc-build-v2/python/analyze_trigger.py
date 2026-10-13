@@ -354,6 +354,16 @@ def analyze_vs(png: bytes, outer_rect: Any, game_rect: Any) -> tuple[dict[str, A
     height, width = image.shape[:2]
     rect = validate_pixel_rect(game_rect, width, height)
     outer = validate_pixel_rect(outer_rect, width, height)
+    try:
+        return _classify_vs(image, rect, outer)
+    except (ValueError, cv2.error):
+        # Optional VS geometry must not discard the mandatory structural result.
+        # Invalid protocol rectangles have already been rejected above.
+        return None, None
+
+
+def _classify_vs(image: np.ndarray, rect: tuple[int, int, int, int],
+                 outer: tuple[int, int, int, int]) -> tuple[dict[str, Any] | None, dict[str, float] | None]:
     candidate = search(image, rect, region=outer)
     if candidate is None or candidate.score < MATCH_T:
         return None, None

@@ -16,9 +16,9 @@ Only --overlays writes annotated frames, and only into the external output dir.
 Runtime reproduces REPORT §8.5's 22 positive, six spectate and four blocked
 aspect cases, then concatenates four source/target recordings with learning
 enabled and checks cross-aspect spectate rejection. It requires the eight
-REPORT recording keys and --titlebar-image <external-1.jpg>; only the strip
-[701, 0, 574, 39] is used. Alternatively the manifest can contain
-"runtime": {"titlebarImage": "1.jpg", "titlebarRect": [701,0,574,39]}.
+REPORT recording keys and an external titlebar image. Pass --titlebar-image and
+--titlebar-rect X Y WIDTH HEIGHT, or supply manifest runtime.titlebarImage and
+runtime.titlebarRect. Titlebar crop coordinates are caller-owned evidence.
 Runtime does not run the 17 fixed-badge distortions; it uses the REPORT resize,
 border, same-canvas shrink and titlebar matrix instead. Autosetup belongs to B2.
 """
@@ -523,7 +523,8 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
-                   prototype_jpeg92: bool = False, titlebar_image: Path | None = None) -> dict[str, Any]:
+                   prototype_jpeg92: bool = False, titlebar_image: Path | None = None,
+                   titlebar_rect: list[int] | None = None) -> dict[str, Any]:
     output = output.resolve()
     if any((parent / ".git").exists() for parent in (output, *output.parents)):
         raise ValueError("Replay output must be outside a Git repository")
@@ -539,7 +540,10 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     title = cv2.imdecode(np.fromfile(str(titlebar_image), np.uint8), cv2.IMREAD_COLOR)
     if title is None:
         raise ValueError("Titlebar reference cannot be decoded")
-    tx, ty, tw, th = runtime_options.get("titlebarRect", [701, 0, 574, 39])
+    strip_rect = titlebar_rect if titlebar_rect is not None else runtime_options.get("titlebarRect")
+    if not isinstance(strip_rect, list) or len(strip_rect) != 4 or any(type(value) is not int for value in strip_rect):
+        raise ValueError("Runtime requires --titlebar-rect X Y WIDTH HEIGHT or manifest runtime.titlebarRect")
+    tx, ty, tw, th = strip_rect
     if min(tx, ty) < 0 or min(tw, th) <= 0 or tx + tw > title.shape[1] or ty + th > title.shape[0]:
         raise ValueError("Titlebar reference rectangle is invalid")
     titlebar = title[ty:ty + th, tx:tx + tw].copy()
@@ -680,10 +684,12 @@ if __name__ == "__main__":
     parser.add_argument("--overlays", action="store_true")
     parser.add_argument("--prototype-jpeg92", action="store_true")
     parser.add_argument("--titlebar-image", type=Path)
+    parser.add_argument("--titlebar-rect", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     args = parser.parse_args()
     if args.mode == "runtime":
         result = runtime_replay(args.manifest, args.out, overlays=args.overlays,
-                                prototype_jpeg92=args.prototype_jpeg92, titlebar_image=args.titlebar_image)
+                                prototype_jpeg92=args.prototype_jpeg92, titlebar_image=args.titlebar_image,
+                                titlebar_rect=args.titlebar_rect)
     else:
         result = replay(args.mode, args.manifest, args.out, all_distortions=args.distortions == "all",
                         overlays=args.overlays, prototype_jpeg92=args.prototype_jpeg92)

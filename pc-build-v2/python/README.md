@@ -76,15 +76,15 @@ minimum is not a production threshold: `ORIENT_T=0.50` and setup self-check boun
 From `pc-build-v2`, using the portable Windows runtime interpreter:
 
 ```powershell
-<runtime-python> python/tools/m9_replay.py runtime --manifest C:/Dev/Snipe/_m9-data/manifest-a1.json --titlebar-image C:/Dev/Snipe/screnshotds/1.jpg --out C:/Dev/Snipe/_m9-data/a2-runtime
+<runtime-python> python/tools/m9_replay.py runtime --manifest <external-manifest.json> --titlebar-image <external-titlebar.png> --titlebar-rect <x> <y> <width> <height> --out <external-output-directory>
 ```
 
 Add `--prototype-jpeg92` and choose a separate external output directory to match
 the prototype codec. The titlebar is read from the external image only; no input
 frames, templates or owner paths are copied into the repository or `results.json`.
-Alternatively, provide `runtime.titlebarImage` (relative to the manifest) and an
-optional pixel `[x,y,width,height]` `runtime.titlebarRect` in the external manifest.
-The default strip is the prototype's `[701,0,574,39]`.
+Alternatively, provide `runtime.titlebarImage` (relative to the manifest) and a
+pixel `[x,y,width,height]` `runtime.titlebarRect` in the external manifest.
+There is no owner-specific default image or crop.
 
 This mode invokes the actual `TriggerEngine` with a validated v4 game-relative
 payload and learning limited to four layouts. It reproduces the REPORT §4.4/§8.5
@@ -114,3 +114,27 @@ target-relative delays and frame bounds exclude the gap. Missing cases, rejected
 normal layouts, missing learning events/actions, or unexpected spectate acceptance
 fail the command with a nonzero exit. The 17 A1 distortion flags do not change this
 runtime matrix.
+
+### Review fixes
+
+Prepared capture retains eight exact full-resolution BGR samples, dropping alpha
+and sharing the latest sample with the last frame when possible. A coarse-only
+history was rejected because exact geometry/chrome matched only 7/16 recording
+and sampling comparisons. The owner accepted the setup-session-only BGR history
+budget: 47.46 MiB at 1080p, 189.84 MiB at 4K, 457.76 MiB at the 20-million-pixel
+limit (eight samples; an unsampled latest frame adds one more). Stability subtracts
+the temporal chrome from the single-frame probe before comparing game aspects,
+so saved titlebars do not masquerade as changing game geometry.
+
+Runtime rechecks probe the aggregated pre-chrome border, not the toolbar next to
+the subtracted game rectangle. One missing periodic result leaves established
+geometry intact; two consecutive missing rechecks clear it. Learning's five-Hz
+history supplies both pre-VS confirmation and self-check evidence, and source-size
+changes (not normalized one-pixel height drift) reset that history. Re-arming a
+saved layout resets consecutive rejection/failure state; `no_game` alone never
+starts learning. Aspect bounds use the exact detector constants, and retained
+layout overlap is symmetric across learning, wire validation and persistence.
+
+The command's 1 MiB budget includes the JSONL newline. Optional manual VS
+classification geometry errors yield null VS fields without discarding structural
+profiles; malformed protocol rectangles remain fatal.

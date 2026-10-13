@@ -255,7 +255,7 @@ export class MonitorProcessService {
           payload,
         }),
       )
-      if (Buffer.byteLength(commandLine, 'utf8') > MONITOR_MAX_COMMAND_LINE_BYTES) {
+      if (Buffer.byteLength(commandLine, 'utf8') + 1 > MONITOR_MAX_COMMAND_LINE_BYTES) {
         throw new ApplicationError(
           'MONITOR_PROTOCOL_OVERSIZED',
           'Monitor command line exceeded its limit',
