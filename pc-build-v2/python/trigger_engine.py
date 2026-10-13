@@ -13,6 +13,9 @@ import numpy as np
 
 from analyze_trigger import ANALYZER_VERSION, structural_maps
 from monitor_protocol import MonitorProtocolError, validate_ratio
+from game_geometry import GameGeometry
+from layout_learning import LayoutLearning
+from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
 from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
@@ -247,11 +250,12 @@ class TriggerProfile:
 class MatchResult:
     matched: bool
     score: float
-    support: float
-    orientation: float
-    correlation: float
-    orb_inliers: int
+    support: float | None
+    orientation: float | None
+    correlation: float | None
+    orb_inliers: int | None
     reason: str
+    matcher: str = "structural"
 
 
 def _decode_template(encoded: Any, name: str) -> np.ndarray:
@@ -431,9 +435,22 @@ def encode_action_png(image: np.ndarray, limits: dict[str, Any]) -> tuple[bytes,
 
 class TriggerEngine:
     def __init__(self, payload: dict[str, Any]):
-        self.profile = TriggerProfile(payload["triggerProfile"])
-        self.trigger_ratio = payload["regions"]["trigger"]
-        self.data_ratio = payload["regions"]["nicknameRegion"]
+        self.primary = payload["primary"]
+        self.kind = self.primary["kind"]
+        self.events = []
+        self.geometry = None
+        self.learner = None
+        self.matchers = {}
+        if self.kind == "full_frame":
+            self.profile = TriggerProfile(self.primary["triggerProfile"])
+            self.trigger_ratio = self.primary["regions"]["trigger"]
+            self.data_ratio = self.primary["regions"]["nicknameRegion"]
+        else:
+            layouts = list(self.primary["layouts"])
+            self.geometry = GameGeometry(layouts)
+            self.learner = LayoutLearning(layouts, self.primary["learning"]["enabled"])
+            for layout in layouts:
+                self._matcher(layout)
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
@@ -443,19 +460,22 @@ class TriggerEngine:
         self.triggered = False
         self.last_match: MatchResult | None = None
         self.configured_aspect = (
-            payload["configuredFrameSize"]["width"]
-            / payload["configuredFrameSize"]["height"]
+            self.primary["configuredFrameSize"]["width"] / self.primary["configuredFrameSize"]["height"]
+            if self.kind == "full_frame" else None
         )
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
-        if now - self.last_frame_time < self.frame_interval:
+        interval = self.frame_interval - (1e-9 if self.kind == "game_relative" else 0)
+        if now - self.last_frame_time < interval:
             return None
         self.last_frame_time = now
         bgr = ensure_bgr(frame)
         frame_height, frame_width = bgr.shape[:2]
         if frame_width <= 0 or frame_height <= 0 or frame_width * frame_height > 20_000_000:
             raise InvalidFrameError("capture frame dimensions are invalid")
+        if self.kind == "game_relative":
+            return self._process_game(bgr, now)
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
             raise GeometryChangedError("capture source aspect ratio changed")
@@ -467,6 +487,67 @@ class TriggerEngine:
         self.triggered = True
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def _matcher(self, layout):
+        layout_id = layout["layoutId"]
+        if layout_id not in self.matchers:
+            trigger = layout["trigger"]
+            self.matchers[layout_id] = (OrientationTrigger.from_dict(trigger) if trigger["kind"] == "vs_edge_orientation"
+                                        else TriggerProfile(trigger["profile"]))
+        return self.matchers[layout_id]
+
+    def _process_game(self, bgr, now):
+        self.last_match = None
+        self.geometry.process(bgr, now)
+        event = self.geometry.event(now)
+        if event is not None:
+            self.events.append(("geometry", event))
+        layout, rect = self.geometry.layout, self.geometry.rect
+        if layout is None or rect is None:
+            self.gate.observe(False, now)
+            self.learner.buffer(bgr, now, self.geometry)
+            if self.geometry.state == "aspect_unknown" or self.geometry.mismatch_frames >= 20:
+                learned = self.learner.process(bgr, now, self.geometry)
+                self.events.extend(self.learner.take_events())
+                if learned is not None:
+                    layout, wire, confirmation, confirmation_rect = learned
+                    self._matcher(layout)
+                    self.geometry.layout = layout
+                    self.geometry.state = "armed" if self.geometry.frames >= 20 else "armed_provisional"
+                    self.geometry.mismatch_frames = 0
+                    # Finder confirmation is three consecutive frames, stricter than the gate.
+                    self.gate.observe(True, now)
+                    fired = self.gate.observe(True, now)
+                    self.events.append(("layout_learned", {"calibrationId": self.primary["profileCalibrationId"],
+                                                          "layout": wire, "triggerId": None}))
+                    self.learner.reset()
+                    self.matchers = {item["layoutId"]: self.matchers[item["layoutId"]] for item in self.geometry.layouts
+                                     if item["layoutId"] in self.matchers}
+                    if fired:
+                        self.triggered = True
+                        data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
+                        return encode_action_png(crop(confirmation, data_rect), self.limits)
+            return None
+        if self.learner.active:
+            self.learner.reset()
+        matcher = self._matcher(layout)
+        if layout["trigger"]["kind"] == "vs_edge_orientation":
+            score = matcher.score(bgr, rect)
+            self.last_match = MatchResult(score >= ORIENT_T, score, None, None, None, None,
+                                          "pass" if score >= ORIENT_T else "structure_below_threshold", "vs_orientation")
+        else:
+            outer = ratio_rect(layout["regions"]["trigger"], bgr.shape[1], bgr.shape[0], rect)
+            inner = ratio_rect(matcher.inner_ratio, bgr.shape[1], bgr.shape[0], outer)
+            self.last_match = matcher.evaluate(crop(bgr, inner))
+        if not self.gate.observe(self.last_match.matched, now):
+            return None
+        self.triggered = True
+        data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
+        return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def take_events(self):
+        events, self.events = self.events, []
+        return events
 
     def take_triggered(self) -> bool:
         triggered = self.triggered
@@ -487,6 +568,8 @@ class PredictionTriggerEngine:
         self.gate = TemporalGate(2, 60.0)
         self.last_match: MatchResult | None = None
         self.configured_aspect = value["configuredFrameSize"]["width"] / value["configuredFrameSize"]["height"]
+        self.state = "active"
+        self.events = []
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         if now - self.last_frame_time < self.frame_interval:
@@ -496,7 +579,15 @@ class PredictionTriggerEngine:
         frame_height, frame_width = bgr.shape[:2]
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            raise GeometryChangedError("prediction capture aspect ratio changed")
+            if self.state != "aspect_mismatch":
+                self.state = "aspect_mismatch"
+                self.events.append(("prediction_state", {"state": self.state}))
+            self.last_match = None
+            self.gate.confirmations = 0
+            return None
+        if self.state != "active":
+            self.state = "active"
+            self.events.append(("prediction_state", {"state": self.state}))
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
         self.last_match = self.profile.evaluate(crop(bgr, inner))
@@ -504,3 +595,7 @@ class PredictionTriggerEngine:
             return None
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def take_events(self):
+        events, self.events = self.events, []
+        return events

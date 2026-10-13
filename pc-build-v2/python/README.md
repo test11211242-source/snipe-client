@@ -18,22 +18,38 @@ and `legacyProfile`; `vsOrientation`/`vsBadge` are populated only when the marke
 contains the VS badge and its silhouette passes M9 acceptance. No temporary image
 files are created. Main-process protocol 2 consumption is part of M9 A4.
 
-`monitor_engine.py` is the M4 persistent worker. It reads bounded protocol-version-1
-JSON-lines from stdin and emits session-bound monotonic JSON-lines on stdout. The only event
-that may contain base64 is the private `action` event. Diagnostics never include selectors,
-window titles, configuration, or images. The worker validates the complete profile, ratios,
+`monitor_engine.py` is the persistent worker. It reads bounded protocol-version-4
+JSON-lines (1 MiB maximum) from stdin and emits session-bound monotonic JSON-lines
+on stdout. `start.primary` selects unchanged legacy `full_frame` matching or the
+M9 `game_relative` runtime. Diagnostics never include selectors, window titles,
+configuration, or images; image-bearing `action` and private learned-layout
+templates are forwarded only to main. The worker validates profiles, ratios,
 fixed trigger thresholds, and image limits before constructing the isolated Windows backend,
 uses `start_free_threaded`, and emits `ready` only after its first valid frame.
 
-## M9 A1 geometry and offline replay
+## M9 geometry, runtime and offline replay
 
 `geometry/` implements game-border peeling, temporally static chrome trimming,
 colour-free coarse/fine VS edge-orientation search, three-frame confirmation,
 game-relative zones, the silhouette orientation trigger (rule c), Q8 templates and
-shared acceptance/self-checks. It does not change the monitoring engine.
+shared acceptance/self-checks.
 `prepared_capture.py` retains eight samples at least 300 ms apart and adds a `game`
 result to `frozen`; insufficient, unsupported or unstable geometry is explicit.
 Prepared capture remains protocol 1 until the live-analysis commands in M9 B2.
+
+`game_geometry.py` tracks the game rectangle across window resizing and OBS
+same-canvas scaling, subtracts matching saved chrome, and selects a saved layout
+within 3% aspect tolerance. Unknown aspects block primary firing after detection
+and enter `aspect_unknown` after 20 mismatching frames. `layout_learning.py` searches
+at 5 Hz, reuses setup acceptance and self-checks, rejects spectate, and immediately
+activates an accepted layout while retaining the nickname from its confirmation
+frame. The engine exposes geometry/learning/learned-layout events; monitor assigns
+the shared trigger UUID. Layout learning is unavailable to legacy full-frame
+profiles. Prediction aspect mismatch pauses prediction rather than killing the
+monitor; legacy primary aspect-change behavior remains unchanged.
+Runtime layout records include `layoutSource` and `calibratedAt`; the fifth layout
+evicts the oldest learned layout, never a setup layout. Four setup layouts instead
+produce `LAYOUT_LIMIT`.
 
 `assets/vs_badge_v1*.png` contain only the approved badge and silhouette, with no
 player names. `tools/make_vs_badge_asset.py <external-3.png>` is the one-time offline
@@ -54,3 +70,47 @@ minimum stable rule-(c) VS score ≥0.70 under the worst distortion, non-VS maxi
 ≤0.30, and spectate rejection by the layout check. The prototype's measured 0.74
 minimum is not a production threshold: `ORIENT_T=0.50` and setup self-check bounds
 (VS ≥0.50, pre-VS <0.30) remain unchanged.
+
+### Actual runtime replay (A2)
+
+From `pc-build-v2`, using the portable Windows runtime interpreter:
+
+```powershell
+<runtime-python> python/tools/m9_replay.py runtime --manifest C:/Dev/Snipe/_m9-data/manifest-a1.json --titlebar-image C:/Dev/Snipe/screnshotds/1.jpg --out C:/Dev/Snipe/_m9-data/a2-runtime
+```
+
+Add `--prototype-jpeg92` and choose a separate external output directory to match
+the prototype codec. The titlebar is read from the external image only; no input
+frames, templates or owner paths are copied into the repository or `results.json`.
+Alternatively, provide `runtime.titlebarImage` (relative to the manifest) and an
+optional pixel `[x,y,width,height]` `runtime.titlebarRect` in the external manifest.
+The default strip is the prototype's `[701,0,574,39]`.
+
+This mode invokes the actual `TriggerEngine` with a validated v4 game-relative
+payload and learning limited to four layouts. It reproduces the REPORT §4.4/§8.5
+matrix: five own profiles, two same-aspect cross captures, eight resize/border
+cases, two mid-stream frame resizes, two same-canvas game shrinks, and three
+titlebar cases (22 positives); six ordinary-profile/spectate negatives; four
+unknown-aspect recordings with learning disabled. It then feeds four complete
+source/target recording pairs into one engine with learning enabled, requiring
+the second recording to learn and fire on the same VS, and checks three
+cross-aspect spectate pairs for explicit rejection.
+
+Numeric output reports firing frames, per-VS counts/delays, false/blocked fires,
+geometry states, learning codes/confidence, action sizes and process timings.
+Score extrema omit transition frames, but every sampled frame reaches the engine.
+An auxiliary zero-cooldown gate counts episodes from actual runtime match results;
+the engine itself always uses the production 15-second cooldown.
+Acceptance requires the complete matrix, exactly one fire per ordinary positive VS
+within 0.2 seconds, no false fires or spectate fires, and standalone/new-frame-size
+blocked aspects reaching `aspect_unknown` within 20 frames. Same-canvas aspect
+changes require two consecutive periodic rechecks before restarting aggregation;
+their bound is 45 frames (4.5 seconds). The learning evidence ring already samples
+at 5 Hz during mismatch, and only a source-frame shape change resets it.
+All four second recordings must learn and emit an action on that same VS. Paired
+independent recordings use an explicitly reported simulated 16-second timestamp
+gap without inserted frames, preserving the production 15-second cooldown;
+target-relative delays and frame bounds exclude the gap. Missing cases, rejected
+normal layouts, missing learning events/actions, or unexpected spectate acceptance
+fail the command with a nonzero exit. The 17 A1 distortion flags do not change this
+runtime matrix.

@@ -573,13 +573,17 @@ export class MonitorSupervisor {
       this.transition('STARTING')
       const payload = MonitorStartPayloadSchema.parse({
         selector: resolved.selector,
-        configuredFrameSize: resolved.configuration.calibration.referenceFrameSize,
-        regions: {
-          trigger: resolved.configuration.calibration.triggerRegion,
-          nicknameRegion: resolved.configuration.calibration.nicknameRegion,
-          topLeftEvidenceRegion: resolved.configuration.calibration.topLeftEvidenceRegion,
+        primary: {
+          kind: 'full_frame',
+          configuredFrameSize: resolved.configuration.calibration.referenceFrameSize,
+          regions: {
+            trigger: resolved.configuration.calibration.triggerRegion,
+            nicknameRegion: resolved.configuration.calibration.nicknameRegion,
+            topLeftEvidenceRegion:
+              resolved.configuration.calibration.topLeftEvidenceRegion,
+          },
+          triggerProfile: resolved.configuration.calibration.triggerProfile,
         },
-        triggerProfile: resolved.configuration.calibration.triggerProfile,
         capturePolicy: 'immediate_nickname',
         limits: {
           fps: 10,

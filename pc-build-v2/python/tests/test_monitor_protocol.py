@@ -10,13 +10,16 @@ from monitor_protocol import MonitorProtocolError, encode_event, read_command
 def payload():
     return {
         "selector": {"kind": "window", "windowHwnd": "123"},
-        "configuredFrameSize": {"width": 1920, "height": 1080},
-        "regions": {
-            "trigger": {"x": 0, "y": 0, "width": 0.2, "height": 0.2},
-            "nicknameRegion": {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
-            "topLeftEvidenceRegion": {"x": 0, "y": 0, "width": 1, "height": 1},
+        "primary": {
+            "kind": "full_frame",
+            "configuredFrameSize": {"width": 1920, "height": 1080},
+            "regions": {
+                "trigger": {"x": 0, "y": 0, "width": 0.2, "height": 0.2},
+                "nicknameRegion": {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
+                "topLeftEvidenceRegion": {"x": 0, "y": 0, "width": 1, "height": 1},
+            },
+            "triggerProfile": {},
         },
-        "triggerProfile": {},
         "capturePolicy": "immediate_nickname",
         "limits": {
             "fps": 10,
@@ -39,7 +42,7 @@ def line(command):
 def test_strict_versioned_start_and_stop() -> None:
     session_id = str(uuid.uuid4())
     start = {
-        "protocolVersion": 3,
+        "protocolVersion": 4,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
@@ -47,7 +50,7 @@ def test_strict_versioned_start_and_stop() -> None:
     }
     assert read_command(line(start))["payload"]["capturePolicy"] == "immediate_nickname"
     stop = {
-        "protocolVersion": 3,
+        "protocolVersion": 4,
         "sessionId": session_id,
         "sequence": 3,
         "type": "stop",
@@ -62,14 +65,14 @@ def test_strict_versioned_start_and_stop() -> None:
             {"timestamp": "2026-07-12T12:00:00.000Z", "triggerId": str(uuid.uuid4())},
         )
     )
-    assert triggered["protocolVersion"] == 3
+    assert triggered["protocolVersion"] == 4
     assert triggered["type"] == "triggered"
 
 
 def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
     session_id = str(uuid.uuid4())
     command = {
-        "protocolVersion": 3,
+        "protocolVersion": 4,
         "sessionId": session_id,
         "sequence": 0,
         "type": "start",
@@ -82,12 +85,12 @@ def test_rejects_unknown_fields_stale_session_and_oversized_line() -> None:
     with pytest.raises(MonitorProtocolError, match="stale"):
         read_command(line(command), expected_session_id=str(uuid.uuid4()))
     with pytest.raises(MonitorProtocolError, match="oversized"):
-        read_command(io.BytesIO(b"x" * (256 * 1024 + 1)))
+        read_command(io.BytesIO(b"x" * (1024 * 1024 + 1)))
 
 
 def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     command = {
-        "protocolVersion": 3,
+        "protocolVersion": 4,
         "sessionId": str(uuid.uuid4()),
         "sequence": 0,
         "type": "start",
@@ -97,14 +100,14 @@ def test_rejects_non_exact_limits_and_invalid_ratios() -> None:
     with pytest.raises(MonitorProtocolError, match="limits"):
         read_command(line(command))
     command["payload"] = payload()
-    command["payload"]["regions"]["nicknameRegion"]["x"] = 0.8
+    command["payload"]["primary"]["regions"]["nicknameRegion"]["x"] = 0.8
     with pytest.raises(MonitorProtocolError, match="bounds"):
         read_command(line(command))
 
 
 def test_rejects_obsolete_capture_delay_and_search_mode() -> None:
     command = {
-        "protocolVersion": 3,
+        "protocolVersion": 4,
         "sessionId": str(uuid.uuid4()),
         "sequence": 0,
         "type": "start",
@@ -115,3 +118,63 @@ def test_rejects_obsolete_capture_delay_and_search_mode() -> None:
         command["payload"] = {**payload(), **obsolete}
         with pytest.raises(MonitorProtocolError, match="fields"):
             read_command(line(command))
+
+
+def test_game_relative_strict_roundtrip_and_amended_metadata():
+    from test_game_geometry import game_payload
+
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": game_payload()}
+    parsed = read_command(line(command))
+    layout = parsed["payload"]["primary"]["layouts"][0]
+    assert layout["layoutSource"] == "setup"
+    assert layout["calibratedAt"].endswith("Z")
+    assert parsed["payload"]["primary"]["learning"] == {"enabled": True, "maxLayouts": 4}
+
+
+@pytest.mark.parametrize("change", [
+    "extra_primary", "missing_source", "missing_date", "bad_date", "extra_layout", "bad_kind", "bad_base64",
+    "short_base64", "bad_constant", "bad_chrome", "bad_origin", "duplicate_layout", "no_setup",
+])
+def test_rejects_malformed_game_relative_wire(change):
+    from copy import deepcopy
+    from test_game_geometry import game_payload
+
+    value = game_payload()
+    primary = value["primary"]
+    layout = primary["layouts"][0]
+    if change == "extra_primary":
+        primary["obsolete"] = True
+    elif change == "missing_source":
+        del layout["layoutSource"]
+    elif change == "missing_date":
+        del layout["calibratedAt"]
+    elif change == "bad_date":
+        layout["calibratedAt"] = "yesterday"
+    elif change == "extra_layout":
+        layout["obsolete"] = True
+    elif change == "bad_kind":
+        layout["trigger"]["kind"] = "other"
+    elif change == "bad_base64":
+        layout["trigger"]["angleQ8Base64"] = "!" * len(layout["trigger"]["angleQ8Base64"])
+    elif change == "short_base64":
+        layout["trigger"]["angleQ8Base64"] = "AAAA"
+    elif change == "bad_constant":
+        layout["trigger"]["threshold"] = 0.3
+    elif change == "bad_chrome":
+        layout["windowChrome"]["top"] = -1
+    elif change == "bad_origin":
+        layout["zonesOrigin"]["nickname"] = "learned"
+    elif change == "duplicate_layout":
+        primary["layouts"].append(deepcopy(layout))
+    elif change == "no_setup":
+        layout["layoutSource"] = "learned"
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": value}
+    with pytest.raises(MonitorProtocolError):
+        read_command(line(command))
+
+
+def test_command_limit_accepts_more_than_old_256_kib():
+    command = {"protocolVersion": 4, "sessionId": str(uuid.uuid4()), "sequence": 0, "type": "start", "payload": payload()}
+    # Legal JSON whitespace consumes bounded wire bytes without changing the payload.
+    encoded = (" " * (256 * 1024) + json.dumps(command) + "\n").encode()
+    assert read_command(io.BytesIO(encoded))["protocolVersion"] == 4

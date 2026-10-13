@@ -67,11 +67,12 @@ def run(start: dict[str, Any]) -> int:
             "diagnostic",
             {
                 "profile": profile,
+                "matcher": match.matcher,
                 "matched": match.matched,
-                "score": round(match.score, 4),
-                "support": round(match.support, 4),
-                "orientation": round(match.orientation, 4),
-                "correlation": round(match.correlation, 4),
+                "score": round(max(0.0, match.score), 4),
+                "support": round(match.support, 4) if match.support is not None else None,
+                "orientation": round(match.orientation, 4) if match.orientation is not None else None,
+                "correlation": round(match.correlation, 4) if match.correlation is not None else None,
                 "orbInliers": match.orb_inliers,
                 "reason": match.reason,
             },
@@ -93,7 +94,12 @@ def run(start: dict[str, Any]) -> int:
             emit_diagnostic("primary", engine.last_match, now)
             trigger_id = str(uuid.uuid4())
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            if engine.take_triggered():
+            triggered = engine.take_triggered()
+            for event_type, event_payload in engine.take_events():
+                if event_type == "layout_learned" and triggered:
+                    event_payload["triggerId"] = trigger_id
+                writer.emit(event_type, event_payload)
+            if triggered:
                 writer.emit(
                     "triggered",
                     {
@@ -117,6 +123,8 @@ def run(start: dict[str, Any]) -> int:
             prediction_result = prediction_engine.process(bgr, now) if prediction_engine else None
             if prediction_engine is not None:
                 emit_diagnostic("prediction", prediction_engine.last_match, now)
+                for event_type, event_payload in prediction_engine.take_events():
+                    writer.emit(event_type, event_payload)
             if prediction_result is not None:
                 image, image_width, image_height = prediction_result
                 writer.emit(

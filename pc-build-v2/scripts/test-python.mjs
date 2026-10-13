@@ -34,9 +34,13 @@ if (dependencies.status !== 0) {
   )
   if (install.status !== 0) process.exit(install.status ?? 1)
 }
-const result = spawnSync(python, ['-m', 'pytest', 'tests', '-m', 'not replay', ...process.argv.slice(2)], {
-  cwd: join(root, 'python'),
-  stdio: 'inherit',
-})
+const result = spawnSync(
+  python,
+  ['-m', 'pytest', 'tests', '-m', 'not replay', ...process.argv.slice(2)],
+  {
+    cwd: join(root, 'python'),
+    stdio: 'inherit',
+  },
+)
 if (result.error) console.error('The isolated Python test interpreter could not start.')
 process.exit(result.status ?? 1)

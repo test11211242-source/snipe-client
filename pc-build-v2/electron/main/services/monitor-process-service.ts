@@ -3,11 +3,17 @@ import { randomUUID } from 'node:crypto'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
+  MONITOR_MAX_COMMAND_LINE_BYTES,
+  MONITOR_PROTOCOL_VERSION,
   MonitorProcessEventSchema,
   MonitorStartCommandSchema,
   MonitorStopCommandSchema,
   type MonitorProcessEvent,
   type MonitorStartPayload,
+  type MonitorGeometryEvent,
+  type MonitorLearningEvent,
+  type MonitorLayoutLearnedEvent,
+  type MonitorPredictionStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
 
 // Python owns its 7-second no-frame deadline; allow 8 seconds for cold startup.
@@ -86,6 +92,10 @@ export interface MonitorProcessListener {
   onTriggered: (timestamp: string, triggerId?: string) => void
   onAction: (action: MonitorAction) => void
   onPredictionResult: (action: MonitorAction) => void
+  onGeometry?: (payload: MonitorGeometryEvent['payload']) => void
+  onLearning?: (payload: MonitorLearningEvent['payload']) => void
+  onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
+  onPredictionState?: (payload: MonitorPredictionStateEvent['payload']) => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
 }
@@ -234,6 +244,27 @@ export class MonitorProcessService {
       throw new ApplicationError('MONITOR_START_CANCELLED', 'Monitor start was cancelled')
     }
     const sessionId = randomUUID()
+    let commandLine: string
+    try {
+      commandLine = JSON.stringify(
+        MonitorStartCommandSchema.parse({
+          protocolVersion: MONITOR_PROTOCOL_VERSION,
+          sessionId,
+          sequence: 0,
+          type: 'start',
+          payload,
+        }),
+      )
+      if (Buffer.byteLength(commandLine, 'utf8') > MONITOR_MAX_COMMAND_LINE_BYTES) {
+        throw new ApplicationError(
+          'MONITOR_PROTOCOL_OVERSIZED',
+          'Monitor command line exceeded its limit',
+        )
+      }
+    } catch (error) {
+      if (this.#starting === starting) this.#starting = null
+      throw error
+    }
     let child: MonitorChild
     try {
       child = this.spawn(this.pythonExecutable, ['-B', this.scriptPath], {
@@ -305,14 +336,7 @@ export class MonitorProcessService {
     child.on('close', owned.handlers.close)
 
     try {
-      const command = MonitorStartCommandSchema.parse({
-        protocolVersion: 3,
-        sessionId,
-        sequence: 0,
-        type: 'start',
-        payload,
-      })
-      child.stdin.write(`${JSON.stringify(command)}\n`)
+      child.stdin.write(`${commandLine}\n`)
       await readyPromise
       return sessionId
     } catch (error) {
@@ -355,7 +379,7 @@ export class MonitorProcessService {
     })
     try {
       const command = MonitorStopCommandSchema.parse({
-        protocolVersion: 3,
+        protocolVersion: MONITOR_PROTOCOL_VERSION,
         sessionId: owned.sessionId,
         sequence: owned.lastSequence + 1,
         type: 'stop',
@@ -461,6 +485,14 @@ export class MonitorProcessService {
       owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
+    } else if (event.type === 'geometry') {
+      owned.listener.onGeometry?.(event.payload)
+    } else if (event.type === 'learning') {
+      owned.listener.onLearning?.(event.payload)
+    } else if (event.type === 'layout_learned') {
+      owned.listener.onLayoutLearned?.(event.payload)
+    } else if (event.type === 'prediction_state') {
+      owned.listener.onPredictionState?.(event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)

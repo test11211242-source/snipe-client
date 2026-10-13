@@ -72,8 +72,9 @@ def crop_geometry(badge: Badge, rect: PixelRect) -> tuple[tuple[float, float, fl
     return (cx - bw / 2 - padding, cy - bh / 2 - padding, bw + 2 * padding, bh + 2 * padding), (NW, height)
 
 
-def extract(frame: np.ndarray, badge: Badge, rect: PixelRect) -> np.ndarray:
-    (x, y, width, height), (nw, nh) = crop_geometry(badge, rect)
+def extract(frame: np.ndarray, badge: Badge, rect: PixelRect, *, normalized_size: tuple[int, int] | None = None) -> np.ndarray:
+    (x, y, width, height), size = crop_geometry(badge, rect)
+    nw, nh = normalized_size or size
     x0, y0, x1, y1 = round(x), round(y), round(x + width), round(y + height)
     ih, iw = frame.shape[:2]
     sub = frame[max(0, y0):min(ih, y1), max(0, x0):min(iw, x1), :3]
@@ -129,7 +130,8 @@ class OrientationTrigger:
         return float(np.clip(scores[P - MAX_SHIFT:P + MAX_SHIFT + 1, P - MAX_SHIFT:P + MAX_SHIFT + 1].max() / total, -1, 1))
 
     def score(self, frame: np.ndarray, rect: PixelRect) -> float:
-        return self.score_patch(extract(frame, self.badge, rect))
+        height, width = self.weight.shape
+        return self.score_patch(extract(frame, self.badge, rect, normalized_size=(width, height)))
 
     def to_dict(self) -> dict[str, Any]:
         angle = np.arctan2(self.sin2, self.cos2)

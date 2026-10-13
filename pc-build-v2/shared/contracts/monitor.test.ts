@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { MonitorPreferencesPayloadSchema, MonitorViewResultSchema } from './monitor-ipc'
 import { MonitorProcessEventSchema, MonitorStartPayloadSchema } from './monitor-protocol'
+import { monitorGamePrimaryFixture } from '../../tests/monitor-fixtures'
 
 describe('monitor renderer contracts', () => {
   it('accepts only deck mode, rejecting obsolete search policy preferences', () => {
@@ -58,31 +59,34 @@ describe('monitor renderer contracts', () => {
   it('requires immediate nickname capture with both semantic regions', () => {
     const base = {
       selector: { kind: 'window' as const, windowHwnd: '123' },
-      configuredFrameSize: { width: 1920, height: 1080 },
-      regions: {
-        trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
-        nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
-        topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
-      },
-      triggerProfile: {
-        schemaVersion: 3,
-        analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
-        innerRect: { x: 0, y: 0, width: 1, height: 1 },
-        structureAlgorithm: 'max-channel-scharr-v1',
-        structureHash64: '0123456789abcdef',
-        matcherMode: 'edge',
-        normalizedTemplateSize: { width: 128, height: 128 },
-        structureTemplateBase64: 'AAAA',
-        edgeTemplateBase64: 'AAAA',
-        orientationTemplateBase64: 'AAAA',
-        quality: {
-          grade: 'medium',
-          score: 0.65,
-          edgePixelCount: 120,
-          edgeCoverage: 0.5,
-          keypointsCount: 0,
-          cropConfidence: 0,
-          cropAreaRatio: 1,
+      primary: {
+        kind: 'full_frame',
+        configuredFrameSize: { width: 1920, height: 1080 },
+        regions: {
+          trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
+          nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+          topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
+        },
+        triggerProfile: {
+          schemaVersion: 3,
+          analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
+          innerRect: { x: 0, y: 0, width: 1, height: 1 },
+          structureAlgorithm: 'max-channel-scharr-v1',
+          structureHash64: '0123456789abcdef',
+          matcherMode: 'edge',
+          normalizedTemplateSize: { width: 128, height: 128 },
+          structureTemplateBase64: 'AAAA',
+          edgeTemplateBase64: 'AAAA',
+          orientationTemplateBase64: 'AAAA',
+          quality: {
+            grade: 'medium',
+            score: 0.65,
+            edgePixelCount: 120,
+            edgeCoverage: 0.5,
+            keypointsCount: 0,
+            cropConfidence: 0,
+            cropAreaRatio: 1,
+          },
         },
       },
       capturePolicy: 'immediate_nickname',
@@ -99,6 +103,25 @@ describe('monitor renderer contracts', () => {
       prediction: null,
     }
     expect(MonitorStartPayloadSchema.parse(base).capturePolicy).toBe('immediate_nickname')
+    const gamePrimary = monitorGamePrimaryFixture()
+    const layout = gamePrimary.layouts[0]
+    if (layout === undefined) throw new Error('Missing game layout fixture')
+    expect(
+      MonitorStartPayloadSchema.safeParse({
+        ...base,
+        primary: {
+          ...gamePrimary,
+          layouts: [
+            {
+              ...layout,
+              trigger: { kind: 'structural', profile: base.primary.triggerProfile },
+              badge: null,
+              zonesOrigin: { nickname: 'manual', topLeftEvidence: 'manual' },
+            },
+          ],
+        },
+      }).success,
+    ).toBe(true)
     for (const extra of [
       { searchMode: 'precise' },
       { captureDelaySeconds: 2.2 },
@@ -110,9 +133,9 @@ describe('monitor renderer contracts', () => {
     }
   })
 
-  it('accepts only protocol v3 triggered events with correlation identity', () => {
+  it('accepts only protocol v4 triggered events with correlation identity', () => {
     const event = {
-      protocolVersion: 3,
+      protocolVersion: 4,
       sessionId: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
       sequence: 2,
       type: 'triggered',

@@ -179,6 +179,23 @@ describe('MonitorSupervisor concurrency', () => {
       expect.objectContaining({ capturePolicy: 'immediate_nickname' }),
       expect.anything(),
     )
+    expect(test.process.start.mock.calls[0]?.[0]).toMatchObject({
+      primary: {
+        kind: 'full_frame',
+        configuredFrameSize: configuration.calibration.referenceFrameSize,
+        regions: {
+          trigger: configuration.calibration.triggerRegion,
+          nicknameRegion: configuration.calibration.nicknameRegion,
+          topLeftEvidenceRegion: configuration.calibration.topLeftEvidenceRegion,
+        },
+        triggerProfile: configuration.calibration.triggerProfile,
+      },
+    })
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty('regions')
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty(
+      'configuredFrameSize',
+    )
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty('triggerProfile')
   })
 
   it('cancels a start during preflight without spawning a stale child', async () => {
