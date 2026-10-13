@@ -16,6 +16,9 @@ extraResources:
       - '*.py'
       - 'capture/**/*.py'
       - 'protocol/**/*.py'
+      - 'geometry/**/*.py'
+      - 'assets/vs_badge_v1.png'
+      - 'assets/vs_badge_v1_mask.png'
       - '!**/__pycache__/**'
       - '!**/tests/**'
   - from: resources/python-runtime

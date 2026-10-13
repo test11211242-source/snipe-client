@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import deque
+import time
 import sys
 import threading
 from typing import Any
@@ -9,10 +11,13 @@ from typing import Any
 from capture.backend import CaptureBackendError
 from capture.monitor_backend import WindowsMonitorBackend
 from protocol.framing import ProtocolError, read_stream_envelope, write_envelope
+from geometry.game_rect import detect, pixel_rect
 
 MAX_PIXELS = 20_000_000
 MAX_PNG_BYTES = 32 * 1024 * 1024
 
+HISTORY_FRAMES = 8
+HISTORY_INTERVAL = 0.3
 
 class LatestFrameStore:
     def __init__(self) -> None:
@@ -20,8 +25,10 @@ class LatestFrameStore:
         self._latest = None
         self._sequence = 0
         self._frozen = False
+        self._history: deque[tuple[int, Any]] = deque(maxlen=HISTORY_FRAMES)
+        self._last_sample = float("-inf")
 
-    def publish(self, frame: Any) -> tuple[bool, int, int, int]:
+    def publish(self, frame: Any, *, timestamp: float | None = None) -> tuple[bool, int, int, int]:
         if not hasattr(frame, "shape") or len(frame.shape) != 3:
             raise CaptureBackendError("FRAME_SIZE_INVALID", "Captured frame shape is invalid")
         height, width, channels = (int(value) for value in frame.shape)
@@ -32,8 +39,15 @@ class LatestFrameStore:
             if self._frozen:
                 return False, self._sequence, width, height
             first = self._latest is None
+            if self._latest is not None and self._latest.shape != frame.shape:
+                self._history.clear()
+                self._last_sample = float("-inf")
             self._sequence += 1
             self._latest = copied
+            now = time.monotonic() if timestamp is None else timestamp
+            if now - self._last_sample >= HISTORY_INTERVAL:
+                self._history.append((self._sequence, copied))
+                self._last_sample = now
             return first, self._sequence, width, height
 
     def freeze(self) -> tuple[Any, int]:
@@ -44,6 +58,23 @@ class LatestFrameStore:
             frame = self._latest
             self._latest = None
             return frame, self._sequence
+
+    def game(self, frozen_frame: Any) -> dict[str, Any]:
+        """Called only after freeze, once publication has stopped."""
+        with self._lock:
+            samples = list(self._history)
+            if not samples or samples[-1][0] != self._sequence:
+                samples.append((self._sequence, frozen_frame))
+        if len(samples) < HISTORY_FRAMES:
+            return {"rect": None, "reason": "insufficient_frames"}
+        result = detect([frame for _, frame in samples])
+        if result.reason != "ok" or result.rect is None:
+            return {"rect": None, "reason": result.reason}
+        last = detect([frozen_frame])
+        if last.rect is None or abs(last.aspect / result.aspect - 1) > 0.01:
+            return {"rect": None, "reason": "unstable"}
+        return {"rect": pixel_rect(result.rect), "aspect": result.aspect,
+                "chrome": result.chrome, "frames": len(samples)}
 
 
 def validate_command(metadata: dict[str, Any], expected_type: str | None = None) -> tuple[str, str]:
@@ -159,6 +190,7 @@ def main() -> None:
                 "height": int(height),
                 "mimeType": "image/png",
                 "byteLength": len(png_bytes),
+                "game": store.game(frame),
             },
             png_bytes,
         )

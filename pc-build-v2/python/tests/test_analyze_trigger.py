@@ -74,3 +74,48 @@ def test_rejects_flat_regions_that_cannot_be_identified_without_color() -> None:
 def test_rect_must_be_inside_actual_frame() -> None:
     with pytest.raises(ProtocolError, match="exceeds"):
         validate_pixel_rect({"x": 190, "y": 0, "width": 20, "height": 20}, 200, 120)
+
+
+def test_manual_vs_is_recognized_only_inside_marked_area() -> None:
+    from analyze_trigger import analyze_vs
+    from synthetic_frames import arena
+
+    image, badge = arena()
+    game = {"x": 0, "y": 0, "width": 360, "height": 640}
+    outer = {"x": 120, "y": 215, "width": 120, "height": 120}
+    trigger, found = analyze_vs(encode(image), outer, game)
+    assert trigger is not None
+    assert trigger["algorithm"] == "vs-orient-1"
+    assert found["cx"] == pytest.approx(badge.cx, abs=.006)
+    assert analyze_vs(encode(image), {"x": 5, "y": 5, "width": 80, "height": 80}, game) == (None, None)
+    assert analyze_vs(encode(image), outer, None) == (None, None)
+    # The structural and legacy profiles remain built even for a recognized VS.
+    from analyze_trigger import analyze_result
+    profile, legacy = analyze_result(encode(image), outer)
+    assert profile["schemaVersion"] == 3
+    assert legacy is not None
+
+
+def test_analyzer_protocol_two_returns_new_nullable_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+
+    image, outer = coarse_selection()
+    incoming = io.BytesIO()
+    write_envelope(incoming, {"protocolVersion": 2, "requestId": "unit", "operation": "analyze_trigger",
+                              "outerRect": outer, "gameRect": None}, encode(image))
+    incoming.seek(0)
+    outgoing = io.BytesIO()
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "unit")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=0)
+    assert response.metadata["protocolVersion"] == 2
+    assert response.metadata["ok"]
+    assert response.metadata["vsOrientation"] is None
+    assert response.metadata["vsBadge"] is None
+    assert response.metadata["profile"]["schemaVersion"] == 3
+    assert response.metadata["legacyProfile"] is not None

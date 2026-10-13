@@ -12,6 +12,8 @@ import numpy as np
 
 from protocol.framing import ProtocolError, read_envelope, write_envelope
 from trigger_matching import create_orb, score_orb_alignment
+from geometry.vs_finder import MATCH_T, search
+from geometry.vs_orient_trigger import OrientationTrigger
 
 ANALYZER_VERSION = "2.1.0"
 MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -342,36 +344,67 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
     profile, _ = analyze_result(png, outer_rect)
     return profile
 
+def analyze_vs(png: bytes, outer_rect: Any, game_rect: Any) -> tuple[dict[str, Any] | None, dict[str, float] | None]:
+    """Only classify VS inside the user's marked area; keep structural profiles always."""
+    if game_rect is None:
+        return None, None
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ProtocolError("trigger PNG is invalid")
+    height, width = image.shape[:2]
+    rect = validate_pixel_rect(game_rect, width, height)
+    outer = validate_pixel_rect(outer_rect, width, height)
+    candidate = search(image, rect, region=outer)
+    if candidate is None or candidate.score < MATCH_T:
+        return None, None
+    gx, gy, gw, gh = rect
+    badge = candidate.badge
+    bx0, by0 = gx + (badge.cx - badge.width / 2) * gw, gy + (badge.cy - badge.height / 2) * gh
+    bx1, by1 = bx0 + badge.width * gw, by0 + badge.height * gh
+    ox, oy, ow, oh = outer
+    intersection = max(0, min(bx1, ox + 1.1 * ow) - max(bx0, ox - 0.1 * ow)) * max(
+        0, min(by1, oy + 1.1 * oh) - max(by0, oy - 0.1 * oh))
+    if intersection < 0.70 * badge.width * gw * badge.height * gh:
+        return None, None
+    trigger = OrientationTrigger.build(image, rect, badge)
+    if not 0.45 <= trigger.mask_area_ratio <= 0.70 or not trigger.contains_center:
+        return None, None
+    return trigger.to_dict(), badge.to_dict()
+
+
 
 def main() -> None:
     request_id = os.environ.get("CR_TOOLS_REQUEST_ID", "unknown")
     try:
         envelope = read_envelope(sys.stdin.buffer, max_binary_bytes=MAX_PNG_BYTES)
         metadata = envelope.metadata
-        if set(metadata) != {"protocolVersion", "requestId", "operation", "outerRect"}:
+        if set(metadata) != {"protocolVersion", "requestId", "operation", "outerRect", "gameRect"}:
             raise ProtocolError("analyzer request fields are invalid")
-        if metadata["protocolVersion"] != 1 or metadata["operation"] != "analyze_trigger":
+        if metadata["protocolVersion"] != 2 or metadata["operation"] != "analyze_trigger":
             raise ProtocolError("analyzer request version or operation is invalid")
         if metadata["requestId"] != request_id:
             raise ProtocolError("analyzer request id is invalid")
         profile, legacy_profile = analyze_result(
             envelope.binary, metadata["outerRect"]
         )
+        vs_orientation, vs_badge = analyze_vs(envelope.binary, metadata["outerRect"], metadata["gameRect"])
         write_envelope(
             sys.stdout.buffer,
             {
-                "protocolVersion": 1,
+                "protocolVersion": 2,
                 "requestId": request_id,
                 "ok": True,
                 "profile": profile,
                 "legacyProfile": legacy_profile,
+                "vsOrientation": vs_orientation,
+                "vsBadge": vs_badge,
             },
         )
     except Exception as error:
         write_envelope(
             sys.stdout.buffer,
             {
-                "protocolVersion": 1,
+                "protocolVersion": 2,
                 "requestId": request_id,
                 "ok": False,
                 "error": {"code": "ANALYSIS_FAILED", "message": str(error)[:300]},

@@ -34,7 +34,7 @@ if (dependencies.status !== 0) {
   )
   if (install.status !== 0) process.exit(install.status ?? 1)
 }
-const result = spawnSync(python, ['-m', 'pytest', 'tests', ...process.argv.slice(2)], {
+const result = spawnSync(python, ['-m', 'pytest', 'tests', '-m', 'not replay', ...process.argv.slice(2)], {
   cwd: join(root, 'python'),
   stdio: 'inherit',
 })
