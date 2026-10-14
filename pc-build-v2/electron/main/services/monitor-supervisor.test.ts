@@ -1037,7 +1037,7 @@ describe('MonitorSupervisor concurrency', () => {
     events.onFatal(new ApplicationError(code, 'private arbitrary diagnostic'))
     const view = await test.supervisor.getView()
     expect(view.state).toBe(
-      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME'].includes(code)
+      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME', 'MONITOR_INTERNAL_FAILED'].includes(code)
         ? 'WAITING_SOURCE'
         : 'FAILED',
     )
@@ -1228,18 +1228,45 @@ describe('MonitorSupervisor concurrency', () => {
     expect((await test.supervisor.getView()).results).toHaveLength(1)
   })
 
-  it('fails on unexpected child exit and ignores the old listener after restart', async () => {
+  it('restarts an exited worker and ignores the old listener after the restart', async () => {
+    vi.useFakeTimers()
     const test = harness()
     await test.supervisor.start()
     const oldListener = test.listener()
     oldListener?.onExit(
       Object.assign(new Error('closed'), { code: 'MONITOR_PROCESS_EXITED' }) as never,
     )
-    expect((await test.supervisor.getView()).state).toBe('FAILED')
-    await test.supervisor.restart()
+    expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+    await vi.advanceTimersByTimeAsync(1_000)
     oldListener?.onFatal(Object.assign(new Error('stale'), { code: 'STALE' }) as never)
-    expect((await test.supervisor.getView()).state).toBe('READY')
+    expect(test.supervisor.getCurrentView().state).toBe('READY')
     expect(test.process.start).toHaveBeenCalledTimes(2)
+  })
+
+  it('caps worker restarts at three per ten minutes, then fails as before', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-14T12:00:00.000Z'))
+    const test = harness(undefined, () => new Date())
+    await test.supervisor.start()
+    for (const attempt of [1, 2, 3]) {
+      test.listener()?.onFatal(new ApplicationError('MONITOR_INTERNAL_FAILED', 'crash'))
+      expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(test.process.start).toHaveBeenCalledTimes(attempt + 1)
+      expect(test.supervisor.getCurrentView().state).toBe('READY')
+    }
+    test.listener()?.onExit(new ApplicationError('MONITOR_PROCESS_EXITED', 'exited'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'FAILED',
+      runIntent: false,
+      error: { code: 'MONITOR_PROCESS_EXITED' },
+    })
+    // A restart outside the window is allowed again.
+    await test.supervisor.restart()
+    vi.setSystemTime(new Date('2026-10-14T12:11:00.000Z'))
+    test.listener()?.onFatal(new ApplicationError('MONITOR_INTERNAL_FAILED', 'crash'))
+    expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+    await test.supervisor.stop()
   })
 
   it('notifies isolated result listeners and exposes only currently retained results', async () => {

@@ -64,6 +64,16 @@ const RECOVERABLE_SOURCE_CODES: Readonly<Record<string, true>> = {
   CAPTURE_NO_FRAME: true,
 }
 const SOURCE_RECOVERY_DELAYS = [1_000, 2_000, 5_000, 10_000] as const
+/**
+ * A crashed or internally failed worker is restarted on the same backoff ladder, at most
+ * WORKER_RESTART_LIMIT times per WORKER_RESTART_WINDOW_MS; beyond that the run fails.
+ */
+const WORKER_RESTART_CODES: Readonly<Record<string, true>> = {
+  MONITOR_PROCESS_EXITED: true,
+  MONITOR_INTERNAL_FAILED: true,
+}
+const WORKER_RESTART_LIMIT = 3
+const WORKER_RESTART_WINDOW_MS = 10 * 60_000
 
 const EMPTY_STATS: MonitorSessionStats = Object.freeze({
   triggers: 0,
@@ -132,6 +142,8 @@ export class MonitorSupervisor {
   readonly #viewListeners = new Set<(view: MonitorView) => void>()
   #recoveryTimer: ReturnType<typeof setTimeout> | null = null
   #recoveryAttempt = 0
+  /** Times (ms) of automatic worker restarts inside the current restart window. */
+  #workerRestarts: number[] = []
   #bindingFingerprint: string | null = null
   #profileId: string | null = null
   #calibrationRevision: number | null = null
@@ -476,6 +488,7 @@ export class MonitorSupervisor {
     this.cancelRecovery()
     this.clearRetry()
     this.patch({ runIntent: false, search: null, geometry: null })
+    this.#workerRestarts = []
     if (reason !== null) this.finalizeSession(reason)
     if (this.#stopPromise !== null) return this.#stopPromise
     if (this.#view.state === 'STOPPED') {
@@ -1182,7 +1195,10 @@ export class MonitorSupervisor {
     ) {
       return
     }
-    if (RECOVERABLE_SOURCE_CODES[error.code] && this.#view.runIntent) {
+    if (
+      this.#view.runIntent &&
+      (RECOVERABLE_SOURCE_CODES[error.code] || this.takeWorkerRestart(error.code))
+    ) {
       ++this.#generation
       this.#runController.abort()
       this.#ocrController?.abort()
@@ -1201,6 +1217,21 @@ export class MonitorSupervisor {
     this.clearRetry()
     this.finalizeSession('failed')
     void this.process.stop()
+  }
+
+  private takeWorkerRestart(code: string): boolean {
+    if (!WORKER_RESTART_CODES[code]) return false
+    const now = this.now().getTime()
+    this.#workerRestarts = this.#workerRestarts.filter(
+      (at) => now - at < WORKER_RESTART_WINDOW_MS,
+    )
+    if (this.#workerRestarts.length >= WORKER_RESTART_LIMIT) return false
+    this.#workerRestarts.push(now)
+    this.logger?.warn('Monitor worker restarted', {
+      code,
+      restarts: this.#workerRestarts.length,
+    })
+    return true
   }
 
   private assertCurrent(
