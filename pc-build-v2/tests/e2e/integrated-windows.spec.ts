@@ -6,6 +6,9 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 
+import { CaptureConfigurationRepository } from '../../electron/main/infrastructure/capture-configuration-repository'
+import { v4CaptureFixture } from '../capture-fixtures'
+
 test.skip(process.platform !== 'win32', 'Native integration smoke runs on Windows only')
 
 // Only this external test launcher replaces network transports. The app, native
@@ -507,6 +510,300 @@ for ($step = 1; $step -le 12; $step++) {
             ?.isVisible(),
         ),
       ).toBe(false)
+    }
+  } finally {
+    await application.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/** Native mouse drag by (+72, +48) physical px from a point given as a client-area fraction. */
+function nativeDrag(handle: string, fx: number, fy: number): void {
+  execFileSync(
+    'pwsh.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      `
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class WidgetMove {
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+}
+'@
+$rect = New-Object WidgetMove+Rect
+[void][WidgetMove]::GetWindowRect([IntPtr]::new([long]${handle}), [ref]$rect)
+$x = [int]($rect.Left + ($rect.Right - $rect.Left) * ${fx})
+$y = [int]($rect.Top + ($rect.Bottom - $rect.Top) * ${fy})
+[void][WidgetMove]::SetCursorPos($x, $y)
+Start-Sleep -Milliseconds 150
+[WidgetMove]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+for ($step = 1; $step -le 12; $step++) {
+  [void][WidgetMove]::SetCursorPos($x + $step * 6, $y + $step * 4)
+  Start-Sleep -Milliseconds 20
+}
+[WidgetMove]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+`,
+    ],
+    { timeout: 15_000, stdio: 'pipe' },
+  )
+}
+
+test('waiting overlay stays stable through source retries and drags in both modes', async () => {
+  test.setTimeout(180_000)
+  const directory = await mkdtemp(join(tmpdir(), 'cr-tools-widget-waiting-'))
+  // A saved profile whose window does not exist: auto-start enters WAITING_SOURCE and
+  // retries PREFLIGHT on the real backoff ladder, as after closing the emulator.
+  await new CaptureConfigurationRepository(join(directory, 'capture-profiles.v5')).save(
+    v4CaptureFixture({
+      schemaVersion: 1,
+      userId: '900001',
+      revision: 1,
+      fingerprint: 'a'.repeat(64),
+      committedAt: '2026-07-12T12:00:00.000Z',
+      source: {
+        kind: 'window',
+        label: 'Closed emulator fixture',
+        titleHint: 'CR Tools closed emulator fixture',
+        executableLabel: 'closed-emulator-fixture.exe',
+      },
+      frameSize: { width: 1920, height: 1080 },
+      regions: {
+        trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
+        normal: { x: 0, y: 0, width: 0.5, height: 0.5 },
+        precise: { x: 0, y: 0, width: 1, height: 1 },
+      },
+      triggerProfile: {
+        schemaVersion: 3,
+        analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
+        innerRect: { x: 0, y: 0, width: 1, height: 1 },
+        structureAlgorithm: 'max-channel-scharr-v1',
+        structureHash64: '0123456789abcdef',
+        matcherMode: 'edge',
+        normalizedTemplateSize: { width: 128, height: 128 },
+        structureTemplateBase64: 'AAAA',
+        edgeTemplateBase64: 'AAAA',
+        orientationTemplateBase64: 'AAAA',
+        quality: {
+          grade: 'medium',
+          score: 0.65,
+          edgePixelCount: 120,
+          edgeCoverage: 0.5,
+          keypointsCount: 0,
+          cropConfidence: 0,
+          cropAreaRatio: 1,
+        },
+      },
+    }),
+  )
+  const launcher = join(directory, 'launch.mjs')
+  await writeFile(launcher, launcherSource(true))
+  const environment: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') environment[key] = value
+  }
+  const application = await electron.launch({
+    executablePath: join(process.cwd(), 'node_modules/electron/dist/electron.exe'),
+    args: [launcher, `--user-data-dir=${directory}`],
+    env: environment,
+  })
+  try {
+    const auth = await application.firstWindow({ timeout: 20_000 })
+    await auth.getByLabel('Почта').fill('fixture@example.invalid')
+    await auth.getByLabel('Пароль', { exact: true }).fill('synthetic-only-password')
+    await auth.getByRole('button', { name: 'Войти', exact: true }).click()
+    const main = await mainPage(application)
+    await expect
+      .poll(
+        async () => {
+          const view = await main.evaluate(() => window.crTools.getMonitorView())
+          return `${view.state} ${view.error?.code ?? ''}`.trim()
+        },
+        { timeout: 30_000 },
+      )
+      .toMatch(/^WAITING_SOURCE/)
+    await expect
+      .poll(
+        async () => (await main.evaluate(() => window.crTools.getRealtimeStatus())).state,
+      )
+      .toBe('READY')
+    // The deck found before the game closed.
+    await application.evaluate(() => {
+      const probe = (
+        globalThis as typeof globalThis & {
+          __desktopSmoke: { sockets: { emit(event: string, message: string): void }[] }
+        }
+      ).__desktopSmoke
+      probe.sockets.at(-1)?.emit(
+        'message',
+        JSON.stringify({
+          type: 'ocr_reprocessed',
+          data: {
+            success: true,
+            searched_nickname: 'Voron_17',
+            player: {
+              name: 'Voron_17',
+              tag: '#P0Y',
+              rating: 2487,
+              clan: 'Северный ветер',
+            },
+            decks: [
+              {
+                name: 'PoL',
+                cards: Array.from({ length: 8 }, (_, index) => ({
+                  name: `Card ${index + 1}`,
+                  level: 14,
+                })),
+              },
+            ],
+          },
+        }),
+      )
+    })
+    await expect
+      .poll(
+        async () =>
+          (await main.evaluate(() => window.crTools.getWidgetStatus())).hasResult,
+      )
+      .toBe(true)
+    await main.evaluate(() =>
+      window.crTools.updateWidgetSettings({
+        alwaysOnTop: true,
+        locked: false,
+        compactMode: false,
+      }),
+    )
+    await main.evaluate(() => window.crTools.showWidget())
+    await expect
+      .poll(() =>
+        application.windows().some((page) => page.url().endsWith('/widget.html')),
+      )
+      .toBe(true)
+    const widget = application
+      .windows()
+      .find((page) => page.url().endsWith('/widget.html'))
+    if (widget === undefined) throw new Error('Missing widget renderer')
+    await expect(widget.getByRole('heading', { name: 'Ждём окно игры' })).toBeVisible()
+
+    // Bug 1: every retry used to insert the retained deck for the PREFLIGHT attempt.
+    await main.evaluate(() => {
+      const probe = window as typeof window & { __states?: string[] }
+      probe.__states = []
+      window.crTools.onMonitorViewChanged((view) => probe.__states?.push(view.state))
+    })
+    await widget.evaluate(() => {
+      const probe = window as typeof window & {
+        __deckFlashes?: number
+        __cropped?: number
+      }
+      let shown = false
+      probe.__deckFlashes = 0
+      probe.__cropped = 0
+      new MutationObserver(() => {
+        const next = document.querySelector('[aria-label^="Карты колоды"]') !== null
+        if (next && !shown) {
+          probe.__deckFlashes = (probe.__deckFlashes ?? 0) + 1
+          const content =
+            document.querySelector('main')?.getBoundingClientRect().height ?? 0
+          // The native height still fits the waiting message: the deck is cut off.
+          if (content > window.innerHeight + 1)
+            probe.__cropped = (probe.__cropped ?? 0) + 1
+        }
+        shown = next
+      }).observe(document.body, { childList: true, subtree: true })
+    })
+    await expect
+      .poll(
+        async () =>
+          (
+            await main.evaluate(
+              () => (window as typeof window & { __states?: string[] }).__states ?? [],
+            )
+          ).filter((state) => state === 'PREFLIGHT').length,
+        { timeout: 60_000, intervals: [500] },
+      )
+      .toBeGreaterThanOrEqual(2)
+    // Soft: one run reports the retry flashes and every drag case together.
+    const soft = expect.configure({ soft: true })
+    const flashes = await widget.evaluate(() => {
+      const probe = window as typeof window & {
+        __deckFlashes?: number
+        __cropped?: number
+      }
+      return { flashes: probe.__deckFlashes, cropped: probe.__cropped }
+    })
+    console.log(`waiting retries: ${JSON.stringify(flashes)}`)
+    soft(flashes, 'retained deck flashes during PREFLIGHT retries').toEqual({
+      flashes: 0,
+      cropped: 0,
+    })
+    await expect(widget.getByRole('heading', { name: 'Ждём окно игры' })).toBeVisible()
+
+    // Bug 2: the waiting overlay must move after every mode switch, pinned or not.
+    for (const alwaysOnTop of [true, false]) {
+      await main.evaluate(
+        (pinned) => window.crTools.updateWidgetSettings({ alwaysOnTop: pinned }),
+        alwaysOnTop,
+      )
+      for (const compact of [false, true, false]) {
+        const current = await widget
+          .locator('main')
+          .evaluate((element) => element.getAttribute('data-compact'))
+        if (current !== String(compact)) {
+          await widget.locator('main').hover()
+          await widget
+            .getByRole('button', { name: compact ? 'Компактный вид' : 'Полный вид' })
+            .click()
+        }
+        await expect(widget.locator('main')).toHaveAttribute(
+          'data-compact',
+          String(compact),
+        )
+        await expect
+          .poll(async () => (await nativeBounds(application, '/widget.html')).height)
+          .toBe(
+            await widget
+              .locator('main')
+              .evaluate((element) =>
+                Math.max(80, Math.ceil(element.getBoundingClientRect().height)),
+              ),
+          )
+        const handle = await application.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()
+            .find((window) => window.webContents.getURL().endsWith('/widget.html'))
+            ?.getNativeWindowHandle()
+            .readBigUInt64LE()
+            .toString(),
+        )
+        if (handle === undefined) throw new Error('Missing widget')
+        // Full mode keeps its status strip; compact hides it, leaving the waiting body.
+        const point = await (
+          compact
+            ? widget.getByRole('heading', { name: 'Ждём окно игры' })
+            : widget.getByText('Ждём окно игры…')
+        ).evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            fx: (rect.left + rect.width / 2) / window.innerWidth,
+            fy: (rect.top + rect.height / 2) / window.innerHeight,
+          }
+        })
+        const before = await nativeBounds(application, '/widget.html')
+        nativeDrag(handle, point.fx, point.fy)
+        await soft
+          .poll(
+            async () => {
+              const after = await nativeBounds(application, '/widget.html')
+              return { dx: after.x - before.x > 20, dy: after.y - before.y > 10 }
+            },
+            { message: `drag pinned=${alwaysOnTop} compact=${compact}` },
+          )
+          .toEqual({ dx: true, dy: true })
+      }
     }
   } finally {
     await application.close()

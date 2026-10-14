@@ -1,0 +1,104 @@
+[
+  {
+    "name": "waiting-full",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "monitorState": "WAITING_SOURCE",
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "waiting-compact",
+    "width": 300,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 300,
+        "compact": true,
+        "monitorState": "WAITING_SOURCE",
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "waiting-full-drag-regions",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "steps": [
+      "for (const element of document.querySelectorAll('main, main *')) if (getComputedStyle(element).getPropertyValue('-webkit-app-region') === 'drag') { element.style.outline = '2px dashed #ff3bd4'; element.style.outlineOffset = '-2px' }"
+    ],
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "monitorState": "WAITING_SOURCE",
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "waiting-compact-drag-regions",
+    "width": 300,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "steps": [
+      "for (const element of document.querySelectorAll('main, main *')) if (getComputedStyle(element).getPropertyValue('-webkit-app-region') === 'drag') { element.style.outline = '2px dashed #ff3bd4'; element.style.outlineOffset = '-2px' }"
+    ],
+    "fixture": {
+      "widget": {
+        "width": 300,
+        "compact": true,
+        "monitorState": "WAITING_SOURCE",
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "retry-preflight-in-waiting-height",
+    "width": 360,
+    "height": 121,
+    "page": "widget.html",
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "monitorState": "PREFLIGHT",
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
+  }
+]

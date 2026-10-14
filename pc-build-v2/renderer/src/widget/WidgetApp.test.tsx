@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -533,6 +536,66 @@ describe('WidgetApp', () => {
       expect(
         screen.getByText('Мониторинг остановлен', { selector: 'span' }),
       ).toBeVisible()
+    })
+  })
+
+  describe('native drag', () => {
+    // Compact collapses the header strip to zero height, so there it is no handle.
+    const sizedHandles = (): Element[] => {
+      const shell = screen.getByRole('main')
+      const compact = shell.getAttribute('data-compact') === 'true'
+      return [...shell.querySelectorAll('[data-drag-handle]')].filter(
+        (handle) => !(compact && handle.tagName === 'HEADER'),
+      )
+    }
+
+    it.each<[string, WidgetView]>([
+      ['found', widgetView],
+      ['waiting for the game window', { ...widgetView, monitorState: 'WAITING_SOURCE' }],
+      ['reading a nickname', { ...widgetView, search: search('capturing', null) }],
+      [
+        'searching a nickname',
+        { ...widgetView, search: search('requesting', 'Voron_17') },
+      ],
+      [
+        'stopped',
+        { ...widgetView, result: null, monitorState: 'STOPPED', runIntent: false },
+      ],
+    ])('%s stays draggable across every mode switch', async (_state, view) => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue(view)
+      render(<WidgetApp />)
+      await screen.findByRole('button', { name: 'Компактный вид' })
+      expect(sizedHandles()).not.toHaveLength(0)
+      for (const compact of [true, false, true]) {
+        fireEvent.click(
+          screen.getByRole('button', { name: compact ? 'Компактный вид' : 'Полный вид' }),
+        )
+        await waitFor(() =>
+          expect(screen.getByRole('main')).toHaveAttribute(
+            'data-compact',
+            String(compact),
+          ),
+        )
+        expect(sizedHandles()).not.toHaveLength(0)
+      }
+    })
+
+    it('declares native drag once, on the handles, and never for a locked overlay', () => {
+      const overlayCss = readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), 'Overlay.module.css'),
+        'utf8',
+      )
+      const dragSelectors = [
+        ...overlayCss.matchAll(/([^{}]+)\{[^}]*-webkit-app-region:\s*drag;/g),
+      ].map((match) => (match[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '').trim())
+      expect(dragSelectors).toEqual(['.shell [data-drag-handle]'])
+      expect(overlayCss).toMatch(
+        /\.shell\[data-locked='true'\] \[data-drag-handle\] \{[^}]*-webkit-app-region: no-drag;/,
+      )
+      // The premise of `sizedHandles`: compact hides the header strip.
+      expect(overlayCss).toMatch(
+        /\.shell\[data-compact='true'\] \.top \{[^}]*\bheight: 0;/,
+      )
     })
   })
 

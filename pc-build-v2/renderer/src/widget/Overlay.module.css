@@ -32,10 +32,17 @@
   gap: calc(var(--space-2) * var(--k));
   min-width: 0;
   min-height: calc(var(--control-sm) * var(--k));
+}
+/*
+ * Native window drag. The one rule for every state and mode: full mode drags by the top
+ * strip, compact (whose strip has zero height) by the name row or the message body.
+ * A locked overlay has no drag region at all.
+ */
+.shell [data-drag-handle] {
   cursor: grab;
   -webkit-app-region: drag;
 }
-.shell[data-locked='true'] .top {
+.shell[data-locked='true'] [data-drag-handle] {
   cursor: default;
   -webkit-app-region: no-drag;
 }
@@ -141,12 +148,6 @@
 .shell[data-compact='true'] .who {
   align-items: center;
   gap: var(--space-1);
-  cursor: grab;
-  -webkit-app-region: drag;
-}
-.shell[data-locked='true'] .who {
-  cursor: default;
-  -webkit-app-region: no-drag;
 }
 .shell[data-compact='true'] .name {
   flex: 1;
@@ -201,6 +202,8 @@
   margin: 0;
   color: var(--color-text-2);
   font-size: calc(var(--fs-sm) * var(--k));
+  /* Drag regions swallow hover on Windows; the line stays a hover target for compact controls. */
+  -webkit-app-region: no-drag;
 }
 .notice {
   margin: 0;

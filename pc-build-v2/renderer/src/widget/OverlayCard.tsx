@@ -113,7 +113,8 @@ export function OverlayCard({
       ref={shellRef}
       style={style}
     >
-      <header className={styles['top']}>
+      {/* Compact collapses this strip to zero height, so each body marks its own handle. */}
+      <header className={styles['top']} data-drag-handle={compact ? undefined : true}>
         {compact ? null : (
           <span className={styles['status']} data-tone={model.tone}>
             {model.busy ? (
@@ -167,7 +168,7 @@ export function OverlayCard({
 
       {body.kind === 'found' ? (
         <>
-          <div className={styles['who']}>
+          <div className={styles['who']} data-drag-handle={compact ? true : undefined}>
             <h1 className={styles['name']} title={body.result.player.name}>
               {body.result.player.name}
             </h1>
@@ -216,7 +217,7 @@ export function OverlayCard({
           )}
         </>
       ) : body.kind === 'searching' ? (
-        <div aria-busy="true" className={styles['message']}>
+        <div aria-busy="true" className={styles['message']} data-drag-handle>
           {body.nickname === null ? null : (
             <h1 className={styles['name']}>{body.nickname}</h1>
           )}
@@ -225,7 +226,7 @@ export function OverlayCard({
           </p>
         </div>
       ) : (
-        <div className={styles['message']}>
+        <div className={styles['message']} data-drag-handle>
           <h1 className={cx(styles['name'], styles['messageTitle'])}>{body.title}</h1>
           <p className={styles['text']}>{body.text}</p>
         </div>
