@@ -406,8 +406,10 @@ def encode_action_png(image: np.ndarray, limits: dict[str, Any]) -> tuple[bytes,
                 interpolation=cv2.INTER_AREA,
             )
         )
+        # Level 1: this runs before `triggered` is sent; level 9 cost 77–304 ms for ~20%
+        # smaller files, far below the byte cap that the scale search still enforces.
         ok, encoded = cv2.imencode(
-            ".png", candidate, [cv2.IMWRITE_PNG_COMPRESSION, 9]
+            ".png", candidate, [cv2.IMWRITE_PNG_COMPRESSION, 1]
         )
         if not ok:
             raise RuntimeError("action image could not be encoded")
