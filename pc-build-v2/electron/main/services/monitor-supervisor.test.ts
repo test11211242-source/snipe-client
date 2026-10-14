@@ -1037,7 +1037,9 @@ describe('MonitorSupervisor concurrency', () => {
     events.onFatal(new ApplicationError(code, 'private arbitrary diagnostic'))
     const view = await test.supervisor.getView()
     expect(view.state).toBe(
-      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME', 'MONITOR_INTERNAL_FAILED'].includes(code)
+      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME', 'MONITOR_INTERNAL_FAILED'].includes(
+        code,
+      )
         ? 'WAITING_SOURCE'
         : 'FAILED',
     )

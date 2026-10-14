@@ -449,9 +449,11 @@ describe('CaptureSourceRegistry', () => {
   })
 
   it('binds a live saved HWND of the same executable without listing windows', async () => {
-    const enumerate = vi.fn().mockResolvedValue([
-      { ...source('window:77:0', 'Clash Royale'), executableLabel: 'Game.exe' },
-    ])
+    const enumerate = vi
+      .fn()
+      .mockResolvedValue([
+        { ...source('window:77:0', 'Clash Royale'), executableLabel: 'Game.exe' },
+      ])
     const checkWindow = vi
       .fn<NonNullable<CaptureSourceProvider['checkWindow']>>()
       .mockResolvedValue({ ownerProcessId: 20, executableLabel: 'Game.exe' })

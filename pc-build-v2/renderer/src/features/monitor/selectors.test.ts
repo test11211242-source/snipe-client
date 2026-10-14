@@ -13,7 +13,11 @@ describe('monitor selectors', () => {
   })
 
   it('says only that the game window is closed or minimised while the source is minimised', () => {
-    const view = monitorViewFixture({ state: 'READY', runIntent: true, sourceMinimized: true })
+    const view = monitorViewFixture({
+      state: 'READY',
+      runIntent: true,
+      sourceMinimized: true,
+    })
     expect(selectRunPhase(view, true)).toBe('running')
     expect(selectStatus(view, true, null)).toMatchObject({
       text: 'Окно игры закрыто или свёрнуто',

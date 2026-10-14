@@ -237,7 +237,10 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     ).find((entry) => entry.windowHwnd === windowHwnd)
     return details === undefined
       ? undefined
-      : { ownerProcessId: details.ownerProcessId, executableLabel: details.executableLabel }
+      : {
+          ownerProcessId: details.ownerProcessId,
+          executableLabel: details.executableLabel,
+        }
   }
 
   /**
