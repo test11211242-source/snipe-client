@@ -2,6 +2,8 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import type { EventEmitter } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 
+import { pythonWorkerEnvironment } from './python-environment'
+
 /**
  * Source-picker metadata and window previews from `python/capture_sources.py`: plain ctypes
  * calls in one short-lived process per request (no PowerShell, no compiled helper), JSON
@@ -89,6 +91,7 @@ const defaultSpawn: HelperSpawn = (executable, args) =>
     shell: false,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'ignore'],
+    env: pythonWorkerEnvironment(),
   })
 
 function validInteger(value: unknown): value is number {

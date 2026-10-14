@@ -15,6 +15,7 @@ import {
   type MonitorLayoutLearnedEvent,
   type MonitorPredictionStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
+import { pythonWorkerEnvironment } from './python-environment'
 
 // Python owns its 7-second no-frame deadline; allow 8 seconds for cold startup.
 const READY_TIMEOUT_MS = 15_000
@@ -271,7 +272,7 @@ export class MonitorProcessService {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        env: pythonWorkerEnvironment({ PYTHONUNBUFFERED: '1' }),
       })
     } catch (cause) {
       if (this.#starting === starting) this.#starting = null

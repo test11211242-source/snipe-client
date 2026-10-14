@@ -27,6 +27,7 @@ import {
   createDefaultProcessTreeKill,
   type ProcessTreeKill,
 } from './monitor-process-service'
+import { pythonWorkerEnvironment } from './python-environment'
 
 const READY_TIMEOUT_MS = 8_000
 const FREEZE_TIMEOUT_MS = 15_000
@@ -255,7 +256,7 @@ export class PreparedCaptureProcessService {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        env: pythonWorkerEnvironment({ PYTHONUNBUFFERED: '1' }),
       })
     } catch (cause) {
       this.#starting = false
