@@ -1319,6 +1319,7 @@ export class MonitorSupervisor {
       error,
       search: null,
       readiness: { ...this.#view.readiness, sourceAvailable: false },
+      sourceMinimized: false,
       recovery,
     })
     const generation = this.#generation

@@ -1275,7 +1275,7 @@ describe('MonitorSupervisor concurrency', () => {
     await test.supervisor.stop()
   })
 
-  it('projects a minimised window source while running and clears it on restore and stop', async () => {
+  it('projects a minimised window source while running and clears it on restore, loss and stop', async () => {
     const test = harness()
     await test.supervisor.start()
     test.listener()?.onSourceState?.({ minimized: true })
@@ -1285,7 +1285,13 @@ describe('MonitorSupervisor concurrency', () => {
     })
     test.listener()?.onSourceState?.({ minimized: false })
     expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
+    // A minimised window that then closes: the lost source is no longer minimised.
     test.listener()?.onSourceState?.({ minimized: true })
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      sourceMinimized: false,
+    })
     await test.supervisor.stop()
     expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
   })
