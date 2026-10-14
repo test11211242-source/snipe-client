@@ -29,15 +29,17 @@ const fetchWidgetAsset = (request: CardAssetRequest): Promise<CardAssetResult> =
 function OverlayDeck({
   result,
   deckIndex,
+  art,
 }: {
   result: Found
   deckIndex: number
+  art: boolean
 }): React.JSX.Element {
   const cards = result.decks[deckIndex]?.cards ?? []
   const images = useCardImages(
     result.id,
     deckIndex,
-    cards.map((card) => card.hasImage),
+    cards.map((card) => art && card.hasImage),
     fetchWidgetAsset,
   )
   const slots: (DeckCardData | null)[] = Array.from({ length: 8 }, (_, index) => {
@@ -90,6 +92,7 @@ export function OverlayCard({
   controls,
   notice,
   shellRef,
+  measuring = false,
 }: {
   view: WidgetView
   model: OverlayModel
@@ -100,6 +103,8 @@ export function OverlayCard({
   /** Calm one-line notice (reprocessed entry, save error). */
   notice: string | null
   shellRef: React.Ref<HTMLElement>
+  /** Hidden copy measured before a mode switch: no card art requests (tiles keep size). */
+  measuring?: boolean
 }): React.JSX.Element {
   const { settings } = view
   const body = model.body
@@ -200,6 +205,7 @@ export function OverlayCard({
           ) : (
             <>
               <OverlayDeck
+                art={!measuring}
                 deckIndex={deckIndex}
                 key={`${body.result.id}:${deckIndex}`}
                 result={body.result}

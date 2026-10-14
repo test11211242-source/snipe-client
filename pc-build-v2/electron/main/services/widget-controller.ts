@@ -9,6 +9,7 @@ import {
   WidgetSettingsSchema,
   WidgetStatusSchema,
   WidgetViewSchema,
+  widgetScale,
   type WidgetBounds,
   type WidgetResult,
   type WidgetSettings,
@@ -135,7 +136,7 @@ export class WidgetController {
       runIntent: monitor.runIntent,
       search: monitor.search,
       sourceMinimized: monitor.sourceMinimized,
-      scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
+      scale: widgetScale(settings.bounds.width),
     })
   }
 

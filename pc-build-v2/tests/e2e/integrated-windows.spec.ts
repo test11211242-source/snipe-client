@@ -480,6 +480,58 @@ for ($step = 1; $step -le 12; $step++) {
         expect((await nativeBounds(application, '/widget.html')).height).toBeGreaterThan(
           contentHeight,
         )
+
+        // A full↔compact switch changes width and layout at once; no painted frame may
+        // cut the card off (it did for ~120 ms until the content-height report).
+        await widget.evaluate(() => {
+          const probe = globalThis as typeof globalThis & { __switchCrops?: string[] }
+          const crops: string[] = []
+          probe.__switchCrops = crops
+          const sample = (): void => {
+            const shell = document.querySelector('main')
+            const bottom = shell?.getBoundingClientRect().bottom ?? 0
+            if (bottom > window.innerHeight + 1)
+              crops.push(
+                `${shell?.getAttribute('data-compact') === 'true' ? 'compact' : 'full'} ` +
+                  `${String(window.innerWidth)}x${String(window.innerHeight)} ` +
+                  `bottom ${String(Math.round(bottom))} at ${String(Math.round(performance.now()))}`,
+              )
+            requestAnimationFrame(sample)
+          }
+          requestAnimationFrame(sample)
+        })
+        for (const name of [
+          'Компактный вид',
+          'Полный вид',
+          'Компактный вид',
+          'Полный вид',
+        ]) {
+          await widget.locator('main').hover()
+          await widget.getByRole('button', { name }).click()
+          await expect(widget.locator('main')).toHaveAttribute(
+            'data-compact',
+            String(name === 'Компактный вид'),
+          )
+          await expect
+            .poll(
+              async () =>
+                (await nativeBounds(application, '/widget.html')).height ===
+                (await widget
+                  .locator('main')
+                  .evaluate((element) =>
+                    Math.ceil(element.getBoundingClientRect().height),
+                  )),
+            )
+            .toBe(true)
+          await widget.waitForTimeout(300)
+        }
+        const crops = await widget.evaluate(
+          () =>
+            (globalThis as typeof globalThis & { __switchCrops?: string[] })
+              .__switchCrops,
+        )
+        console.log(`mode switch crops: ${JSON.stringify(crops)}`)
+        expect(crops).toEqual([])
       }
       await widget.locator('main').hover()
       await widget.getByRole('button', { name: 'Скрыть оверлей' }).click()

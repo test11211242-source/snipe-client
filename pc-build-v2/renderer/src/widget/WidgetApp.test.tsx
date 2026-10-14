@@ -8,7 +8,11 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/widget-settings-repository'
-import { WidgetSettingsSchema, type WidgetView } from '../../../shared/models/widget'
+import {
+  WidgetSettingsSchema,
+  type WidgetSettingsPatch,
+  type WidgetView,
+} from '../../../shared/models/widget'
 import { WidgetApp } from './WidgetApp'
 
 const card = (name: string, hasImage = true) => ({
@@ -81,6 +85,15 @@ function push(view: WidgetView): void {
   act(() => pushedView?.(view))
 }
 
+/** The native window's client size as the renderer sees it, announced like Chromium. */
+function viewport(width: number, height: number): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
+  act(() => {
+    window.dispatchEvent(new Event('resize'))
+  })
+}
+
 describe('WidgetApp', () => {
   it.each([
     { alwaysOnTop: true, locked: false, compactMode: false },
@@ -142,6 +155,7 @@ describe('WidgetApp', () => {
     pushedView = null
     resizeCallback = null
     contentHeight = 240
+    viewport(1024, 768)
     vi.stubGlobal('ResizeObserver', FakeResizeObserver)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
       () => ({ height: contentHeight, width: 360 }) as DOMRect,
@@ -158,11 +172,19 @@ describe('WidgetApp', () => {
           }
         }),
         getCardAsset: vi.fn().mockResolvedValue({ kind: 'unavailable' }),
-        updateSettings: vi
-          .fn()
-          .mockImplementation((patch) =>
-            Promise.resolve({ ...widgetView.settings, ...patch }),
-          ),
+        updateSettings: vi.fn().mockImplementation((patch: WidgetSettingsPatch) => {
+          // Main resizes for a mode switch; the renderer sees it after the IPC reply.
+          if (patch.compactMode !== undefined)
+            setTimeout(() =>
+              viewport(
+                patch.compactMode === true
+                  ? widgetView.settings.compactWidth
+                  : widgetView.settings.normalWidth,
+                patch.contentHeight ?? 240,
+              ),
+            )
+          return Promise.resolve({ ...widgetView.settings, ...patch })
+        }),
         hide: vi.fn(),
       }),
     })
@@ -260,6 +282,7 @@ describe('WidgetApp', () => {
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
         compactMode: true,
+        contentHeight: 240,
       }),
     )
     await waitFor(() =>
@@ -337,6 +360,51 @@ describe('WidgetApp', () => {
     expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
       contentHeight: 720,
     })
+  })
+
+  it('sizes the window for both layouts in the mode switch itself, never after it', async () => {
+    // Full is taller than compact; the measuring copies render at the target width.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const height = this.getAttribute('data-compact') === 'true' ? 196.4 : 331.2
+      return { height, width: 360 } as DOMRect
+    })
+    const { container } = render(<WidgetApp />)
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
+    // Main replies before the renderer sees its native resize.
+    vi.mocked(window.crToolsWidget.updateSettings).mockImplementationOnce((patch) =>
+      Promise.resolve({
+        ...widgetView.settings,
+        compactMode: patch.compactMode ?? widgetView.settings.compactMode,
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
+    // The measuring copies never outlive the layout pass.
+    expect(container.querySelectorAll('main')).toHaveLength(1)
+    // Tall enough for the new layout and for the old one at the new width.
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        compactMode: true,
+        contentHeight: 332,
+      }),
+    )
+    const settled = Promise.withResolvers<undefined>()
+    setTimeout(() => settled.resolve(undefined), 50)
+    await act(() => settled.promise)
+    expect(container.querySelector('main')).toHaveAttribute('data-compact', 'false')
+    viewport(300, 332)
+    expect(container.querySelector('main')).toHaveAttribute('data-compact', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Полный вид' }))
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        compactMode: false,
+        contentHeight: 332,
+      }),
+    )
+    expect(container.querySelectorAll('main')).toHaveLength(1)
   })
 
   it('switches decks with the tabs and labels them «Колода N из M»', async () => {
