@@ -448,6 +448,59 @@ describe('CaptureSourceRegistry', () => {
     ).resolves.toEqual({ kind: 'window', windowHwnd: '13' })
   })
 
+  it('binds a live saved HWND of the same executable without listing windows', async () => {
+    const enumerate = vi.fn().mockResolvedValue([
+      { ...source('window:77:0', 'Clash Royale'), executableLabel: 'Game.exe' },
+    ])
+    const checkWindow = vi
+      .fn<NonNullable<CaptureSourceProvider['checkWindow']>>()
+      .mockResolvedValue({ ownerProcessId: 20, executableLabel: 'Game.exe' })
+    const ownHandles = new Set<string>()
+    const registry = new CaptureSourceRegistry({
+      currentProcessId: 1,
+      enumerate,
+      checkWindow,
+      ownWindowHandles: () => ownHandles,
+      displays: () => Promise.resolve([]),
+    })
+    const preference = {
+      kind: 'window' as const,
+      label: 'Clash Royale',
+      titleHint: 'Clash Royale',
+      executableLabel: 'Game.exe',
+      windowHwnd: '12',
+    }
+    await expect(registry.resolvePreference(preference)).resolves.toEqual({
+      kind: 'window',
+      windowHwnd: '12',
+    })
+    expect(checkWindow).toHaveBeenCalledWith('12')
+    expect(enumerate).not.toHaveBeenCalled()
+
+    // Closed, reused by another executable, our own window, or a failed check: the full
+    // list decides and can rebind the reopened game by its exact title.
+    for (const outcome of [
+      Promise.resolve(undefined),
+      Promise.resolve({ ownerProcessId: 30, executableLabel: 'Other.exe' }),
+      Promise.resolve({ ownerProcessId: 1, executableLabel: 'Game.exe' }),
+      Promise.reject(new Error('helper failed')),
+    ]) {
+      outcome.catch(() => undefined)
+      checkWindow.mockReturnValueOnce(outcome)
+      await expect(registry.resolvePreference(preference)).resolves.toEqual({
+        kind: 'window',
+        windowHwnd: '77',
+      })
+    }
+    ownHandles.add('12')
+    await expect(registry.resolvePreference(preference)).resolves.toEqual({
+      kind: 'window',
+      windowHwnd: '77',
+    })
+    expect(checkWindow).toHaveBeenCalledTimes(5)
+    expect(enumerate).toHaveBeenCalledTimes(5)
+  })
+
   it('fails closed for stale or unmapped durable displays', async () => {
     let displays: ElectronDisplayInfo[] = [
       {

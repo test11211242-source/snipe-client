@@ -63,6 +63,13 @@ export interface CaptureSourceProvider {
     onPreview: (image: SourcePreviewImage) => void,
   ) => Promise<void>
   resolveWindow?: (windowHwnd: string) => Promise<ElectronCaptureSource | undefined>
+  /**
+   * Owner process and executable of one live window (no owner = closed handle), without
+   * listing any other window; undefined when the handle is not a window.
+   */
+  checkWindow?: (
+    windowHwnd: string,
+  ) => Promise<{ ownerProcessId: number; executableLabel: string | null } | undefined>
   displays: (options?: { waitMs?: number }) => Promise<ElectronDisplayInfo[]>
   ownWindowHandles: () => ReadonlySet<string>
   currentProcessId: number
@@ -422,6 +429,9 @@ export class CaptureSourceRegistry {
         'SOURCE_REBIND_REQUIRED',
         'Choose the window again to save its executable identity',
       )
+    const liveHwnd =
+      preference.kind === 'window' ? await this.liveSavedWindow(preference) : null
+    if (liveHwnd !== null) return { kind: 'window', windowHwnd: liveHwnd }
     const [sources, displays] = await Promise.all([
       this.provider.enumerate(),
       preference.kind === 'display' ? this.provider.displays() : Promise.resolve([]),
@@ -433,6 +443,26 @@ export class CaptureSourceRegistry {
       this.provider.ownWindowHandles(),
       true,
     )
+  }
+
+  /**
+   * Start and recovery: the saved HWND still being a window of the same executable binds
+   * directly, with no window list. Anything else (closed, reused handle, failed check)
+   * falls back to the full list, which can also rebind a reopened game by its title.
+   */
+  private async liveSavedWindow(
+    preference: Extract<CapturePreference, { kind: 'window' }>,
+  ): Promise<string | null> {
+    const hwnd = preference.windowHwnd
+    if (hwnd === undefined || this.provider.checkWindow === undefined) return null
+    if (this.provider.ownWindowHandles().has(hwnd)) return null
+    const live = await this.provider.checkWindow(hwnd).catch(() => undefined)
+    return live !== undefined &&
+      live.ownerProcessId !== this.provider.currentProcessId &&
+      live.executableLabel !== null &&
+      safeExecutableLabel(live.executableLabel) === preference.executableLabel
+      ? hwnd
+      : null
   }
 
   async resolvePreferences(

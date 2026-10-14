@@ -406,6 +406,22 @@ describe('ElectronCaptureSourceProvider window metadata', () => {
     await subject.resolveWindow('1')
     expect(metadata).toHaveBeenCalledTimes(2)
   })
+
+  it('checks one saved handle with the helper only, never the Electron source list', async () => {
+    electron.sources = []
+    const listed = electron.getSources.mock.calls.length
+    const metadata = vi.fn<WindowMetadataResolver>((handles) =>
+      Promise.resolve(handles[0] === '7' ? metadataFor(handles) : []),
+    )
+    const subject = provider({ windowMetadata: metadata })
+    await expect(subject.checkWindow('7')).resolves.toEqual({
+      ownerProcessId: expect.any(Number) as number,
+      executableLabel: 'App7.exe',
+    })
+    await expect(subject.checkWindow('8')).resolves.toBeUndefined()
+    expect(metadata.mock.calls).toEqual([[['7']], [['8']]])
+    expect(electron.getSources.mock.calls.length).toBe(listed)
+  })
 })
 
 describe('ElectronCaptureSourceProvider previews', () => {

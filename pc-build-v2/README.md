@@ -127,7 +127,11 @@ helper never fails the list. Previews stream window by window (DWM `PrintWindow`
 windows the helper cannot draw fall back to one Electron thumbnail batch.
 Individual unidentifiable windows remain disabled; a bound window that closes during
 metadata lookup is not-found. A display-helper failure leaves windows in the picker
-and disables unverifiable displays. Recovery never relaxes exact title/executable
+and disables unverifiable displays. Monitor start and recovery first check the saved
+HWND alone (its owner process via `GetWindowThreadProcessId`, which is 0 for a closed
+handle, and that process's executable; one helper call) and
+bind it without listing windows; only a closed, reused or unverifiable handle falls back
+to the full list. Recovery never relaxes exact title/executable
 identity or calibrated fixed-ROI matching.
 
 Sanitized asynchronous diagnostics rotate under `userData/logs` (five files of at

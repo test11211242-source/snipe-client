@@ -224,6 +224,22 @@ export class ElectronCaptureSourceProvider implements CaptureSourceProvider {
     }
   }
 
+  /** One helper call for one handle (owner process + executable); no Electron source list. */
+  async checkWindow(
+    windowHwnd: string,
+  ): Promise<{ ownerProcessId: number; executableLabel: string | null } | undefined> {
+    const startedAt = Date.now()
+    const details = (
+      await this.dependencies.windowMetadata([windowHwnd]).catch((cause: unknown) => {
+        this.logUnavailable('saved-window-check', startedAt, cause)
+        throw cause
+      })
+    ).find((entry) => entry.windowHwnd === windowHwnd)
+    return details === undefined
+      ? undefined
+      : { ownerProcessId: details.ownerProcessId, executableLabel: details.executableLabel }
+  }
+
   /**
    * Window previews stream from the helper one by one; windows it could not draw (and every
    * window when the helper fails) fall back to one Electron thumbnail batch. Screens use
