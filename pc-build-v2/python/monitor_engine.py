@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import cv2
+
 from capture.monitor_backend import WindowsMonitorBackend
 from capture.backend import CaptureBackendError
 from monitor_protocol import MonitorProtocolError, encode_event, read_command
@@ -205,6 +207,8 @@ def run(start: dict[str, Any]) -> int:
 
 
 def main() -> int:
+    # Frames are small: OpenCV's default pool (one thread per core) only burns CPU.
+    cv2.setNumThreads(1)
     try:
         command = read_command(sys.stdin.buffer)
         if command["type"] != "start":

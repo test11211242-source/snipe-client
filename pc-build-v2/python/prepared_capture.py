@@ -15,6 +15,7 @@ from capture.monitor_backend import WindowsMonitorBackend
 from protocol.framing import ProtocolError, read_stream_envelope, write_envelope
 from geometry.game_rect import detect, pixel_rect
 from auto_setup import DEADLINE_MS, TARGET_FPS, LiveAnalysis, encode_png
+import cv2
 
 MAX_PIXELS = 20_000_000
 MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -157,6 +158,8 @@ def window_iconic_probe(selector: dict[str, Any]) -> Callable[[], bool] | None:
 
 
 def main() -> None:
+    # Setup (live auto setup included) analyses small frames: one OpenCV thread is enough.
+    cv2.setNumThreads(1)
     output_lock = threading.Lock()
     backend: WindowsMonitorBackend | None = None
     session_id = "unknown"

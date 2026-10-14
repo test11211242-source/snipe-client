@@ -402,6 +402,7 @@ def crop_region(png: bytes, outer_rect: Any) -> tuple[bytes, int, int]:
 
 
 def main() -> None:
+    cv2.setNumThreads(1)
     request_id = os.environ.get("CR_TOOLS_REQUEST_ID", "unknown")
     try:
         envelope = read_envelope(sys.stdin.buffer, max_binary_bytes=MAX_PNG_BYTES)
