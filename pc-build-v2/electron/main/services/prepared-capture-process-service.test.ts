@@ -115,6 +115,11 @@ const success = {
     templateHash64: 'a'.repeat(16),
     maskAreaRatio: 0.6,
   },
+  outline: [
+    [0.45, 0.4],
+    [0.55, 0.4],
+    [0.5, 0.5],
+  ],
   confidence: 0.9,
   selfCheck: { minVs: 0.8, maxBefore: 0.1, frames: 12 },
   timings: { onsetMs: 2500, confirmMs: 2700 },

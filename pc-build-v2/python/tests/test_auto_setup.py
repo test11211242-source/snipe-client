@@ -51,6 +51,11 @@ def test_actual_finder_acceptance_success_keeps_confirmation_not_following_frame
     assert result["selfCheck"]["frames"] >= 3
     assert 0 <= result["confidence"] <= 1
     assert set(result["regions"]) == {"trigger", "nickname", "topLeftEvidence"}
+    # Display outline of the compared silhouette, inside the trigger search area.
+    outline, area = result["outline"], result["regions"]["trigger"]
+    assert 3 <= len(outline) <= 64
+    assert all(area["x"] <= x <= area["x"] + area["width"] and area["y"] <= y <= area["y"] + area["height"]
+               for x, y in outline)
     # Nickname bytes are extracted only from this retained confirmation frame.
     zone, rect = result["regions"]["nickname"], result["game"]["rect"]
     x, y = rect["x"] + round(zone["x"] * rect["width"]), rect["y"] + round(zone["y"] * rect["height"])

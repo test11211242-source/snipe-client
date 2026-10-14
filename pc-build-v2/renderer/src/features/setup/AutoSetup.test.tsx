@@ -393,6 +393,13 @@ describe('automatic setup: success', () => {
     await within(frame).findByRole('img')
     for (const label of ['Триггер', 'Ник соперника', 'Левая верхняя область'])
       expect(within(frame).getByText(label)).toBeVisible()
+    // The trigger is drawn as the compared VS silhouette; its label sits on the outline.
+    const shape = within(frame).getByTestId('outline-trigger')
+    expect(
+      shape.querySelector('polygon')?.getAttribute('points')?.split(' '),
+    ).toHaveLength(detectedView().triggerOutline?.length ?? 0)
+    const trigger = frame.querySelector<HTMLElement>('[data-region="trigger"]')
+    expect(trigger?.style.left).toBe('48%')
     expect(button('Сохранить')).toBeEnabled()
     expect(button('Поправить вручную')).toBeEnabled()
     expect(document.body.textContent).not.toMatch(FORBIDDEN)

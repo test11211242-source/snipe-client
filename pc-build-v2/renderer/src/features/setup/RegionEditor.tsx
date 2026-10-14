@@ -78,6 +78,9 @@ export function RegionEditor({
     rect: view.regions[def.id],
     active: def.id === active,
     labelBelow: def.labelBelow,
+    // A moved trigger draft no longer matches the analyzed silhouette until re-analysis.
+    outline:
+      def.id === 'trigger' && !(def.id === active && dirty) ? view.triggerOutline : null,
   }))
 
   return (

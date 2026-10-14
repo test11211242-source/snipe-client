@@ -73,6 +73,7 @@ export function CheckStep({
     rect: view.regions[def.id],
     active: false,
     labelBelow: def.labelBelow,
+    outline: def.id === 'trigger' ? view.triggerOutline : null,
   }))
 
   return (

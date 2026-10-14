@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import cv2
@@ -18,6 +18,35 @@ P = 4
 CROP_MARGIN = 0.08
 MAX_SHIFT = 3
 ORIENT_T = 0.50
+MAX_OUTLINE_POINTS = 64
+
+
+def outline_points(mask: np.ndarray, badge: Badge, rect: PixelRect) -> list[list[float]]:
+    """Outer contour of the silhouette mask in game fractions, for display only.
+
+    The template weights live on this silhouette (dilated by two pixels); the outline shows
+    where the comparison happens. It is never part of the saved trigger.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    epsilon = 0.6
+    polygon = cv2.approxPolyDP(contour, epsilon, True)
+    while len(polygon) > MAX_OUTLINE_POINTS:
+        epsilon *= 1.5
+        polygon = cv2.approxPolyDP(contour, epsilon, True)
+    if len(polygon) < 3:
+        return []
+    (x, y, width, height), (nw, nh) = crop_geometry(badge, rect)
+    gx, gy, gw, gh = rect
+    sx, sy = width / (nw + 2 * P), height / (nh + 2 * P)
+    points = []
+    for u, v in polygon.reshape(-1, 2):
+        fx = x + (float(u) + P + 0.5) * sx
+        fy = y + (float(v) + P + 0.5) * sy
+        points.append([round(min(1.0, max(0.0, (fx - gx) / gw)), 5), round(min(1.0, max(0.0, (fy - gy) / gh)), 5)])
+    return points
 
 
 def gradient(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -103,6 +132,8 @@ class OrientationTrigger:
     weight: np.ndarray
     mask_area_ratio: float
     contains_center: bool
+    # Display-only silhouette outline (game fractions); not saved, not compared.
+    outline: list[list[float]] = field(default_factory=list)
 
     @classmethod
     def build(cls, frame: np.ndarray, rect: PixelRect, badge: Badge) -> "OrientationTrigger":
@@ -114,7 +145,7 @@ class OrientationTrigger:
         selected = expanded & (mag >= np.percentile(mag[expanded], 60)) if expanded.any() else expanded
         angle = 2 * np.arctan2(gy, gx)
         return cls(badge, np.cos(angle), np.sin(angle), (mag * selected).astype(np.float32),
-                   float((mask > 0).mean()), contains_center)
+                   float((mask > 0).mean()), contains_center, outline_points(mask, badge, rect))
 
     def score_patch(self, patch: np.ndarray) -> float:
         height, width = self.weight.shape

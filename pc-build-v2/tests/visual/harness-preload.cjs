@@ -700,6 +700,14 @@ const initialSession = () => {
       game: { ...gameFx(), source: 'auto' },
       regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
       triggerKind: 'vs_edge_orientation',
+      triggerOutline: [
+        [gameX(0.36), 0.425],
+        [gameX(0.5), 0.415],
+        [gameX(0.64), 0.425],
+        [gameX(0.62), 0.5],
+        [gameX(0.5), 0.565],
+        [gameX(0.38), 0.5],
+      ],
       regions: { ...emptyRegions, ...capture },
       triggerProfile: triggerProfileFx('high'),
       detection: {

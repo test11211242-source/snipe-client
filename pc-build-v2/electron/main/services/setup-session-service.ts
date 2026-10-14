@@ -19,6 +19,8 @@ import {
   NormalizedRectSchema,
   NormalizedRegionsSchema,
   GameRelativeCalibrationSchema,
+  ShieldOutlineSchema,
+  type ShieldOutline,
   type GameLayout,
   type PixelRectSchema,
   type VsOrientationTriggerSchema,
@@ -473,6 +475,7 @@ export class SetupSessionService {
       game: null,
       regionOrigins: null,
       triggerKind: null,
+      triggerOutline: null,
       triggerProfile: null,
       regions: {
         ...session.view.regions,
@@ -526,6 +529,22 @@ export class SetupSessionService {
       width: rect.width / frame.size.width,
       height: rect.height / frame.size.height,
     })
+  }
+
+  /** Game-fraction silhouette outline → frame fractions of the retained frame. */
+  private frameOutline(
+    frame: CapturedFrame,
+    outline: ShieldOutline | null,
+  ): ShieldOutline | null {
+    if (outline === null) return null
+    const viewport = this.gameViewport(frame)
+    const clamp = (value: number): number => Math.min(1, Math.max(0, value))
+    return ShieldOutlineSchema.parse(
+      outline.map(([x, y]) => [
+        clamp(viewport.x + x * viewport.width),
+        clamp(viewport.y + y * viewport.height),
+      ]),
+    )
   }
 
   private async runDetection(
@@ -613,6 +632,7 @@ export class SetupSessionService {
         regions: { ...session.view.regions, trigger: canonicalTrigger },
         triggerProfile: analysis.profile,
         triggerKind: 'vs_edge_orientation',
+        triggerOutline: this.frameOutline(session.frame, analyzed.result.outline),
         detection: { ...session.view.detection, status: 'succeeded', failure: null },
       })
       void this.stopLive(session)
@@ -1021,7 +1041,7 @@ export class SetupSessionService {
           ? null
           : { ...session.view.regionOrigins, [region]: 'manual' },
       ...(region === 'trigger' || region === 'resultTrigger'
-        ? { triggerProfile: null, triggerKind: null }
+        ? { triggerProfile: null, triggerKind: null, triggerOutline: null }
         : {}),
       error: null,
     })
@@ -1065,7 +1085,11 @@ export class SetupSessionService {
         'SETUP_REGION_MISSING',
         'Select the trigger region first',
       )
-    session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'ANALYZING' })
+    session.view = SetupSessionViewSchema.parse({
+      ...session.view,
+      state: 'ANALYZING',
+      triggerOutline: null,
+    })
     session.legacyTriggerProfile = null
     session.vsOrientation = null
     const operationGeneration = generation
@@ -1091,6 +1115,10 @@ export class SetupSessionService {
         triggerProfile: analysis.profile,
         triggerKind:
           session.vsOrientation === null ? 'structural' : 'vs_edge_orientation',
+        triggerOutline:
+          session.vsOrientation === null
+            ? null
+            : this.frameOutline(session.frame, analysis.vsOutline),
         error: null,
       })
     } catch (error) {

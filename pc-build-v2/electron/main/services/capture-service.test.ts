@@ -66,6 +66,7 @@ function analyzerService(fields: Record<string, unknown> = {}) {
         legacyProfile,
         vsOrientation: null,
         vsBadge: null,
+        vsOutline: null,
         ...fields,
       }),
     }),
@@ -109,6 +110,7 @@ describe('CaptureService trigger analyzer protocol', () => {
             legacyProfile,
             vsOrientation: null,
             vsBadge: null,
+            vsOutline: null,
           }),
         })
       }),
@@ -125,17 +127,33 @@ describe('CaptureService trigger analyzer protocol', () => {
         { size: { width: 1000, height: 500 }, png: Buffer.from('frame') },
         { x: 0.0505, y: 0.101, width: 0.2005, height: 0.201 },
       ),
-    ).resolves.toEqual({ profile, legacyProfile, vsOrientation: null, vsBadge: null })
+    ).resolves.toEqual({
+      profile,
+      legacyProfile,
+      vsOrientation: null,
+      vsBadge: null,
+      vsOutline: null,
+    })
   })
 
   it('forwards the prepared game rectangle in protocol 2 and preserves VS and both projections', async () => {
-    const { service, execute } = analyzerService({ vsOrientation, vsBadge: badge })
+    const outline = [
+      [0.4, 0.4],
+      [0.6, 0.4],
+      [0.5, 0.6],
+    ]
+    const { service, execute } = analyzerService({
+      vsOrientation,
+      vsBadge: badge,
+      vsOutline: outline,
+    })
     const gameRect = { x: 50, y: 0, width: 250, height: 450 }
     await expect(service.analyze(frame, region, undefined, gameRect)).resolves.toEqual({
       profile,
       legacyProfile,
       vsOrientation,
       vsBadge: badge,
+      vsOutline: outline,
     })
     const request = execute.mock.calls[0]?.[0]
     if (request === undefined) throw new Error('Analyzer request was not sent')
@@ -152,6 +170,8 @@ describe('CaptureService trigger analyzer protocol', () => {
     ['unknown output field', { extra: true }],
     ['missing orientation', { vsOrientation: undefined }],
     ['missing badge', { vsBadge: undefined }],
+    ['missing outline', { vsOutline: undefined }],
+    ['short outline', { vsOutline: [[0.1, 0.1]] }],
     ['unknown orientation field', { vsOrientation: { ...vsOrientation, extra: true } }],
     [
       'short orientation array',
@@ -180,6 +200,7 @@ describe('CaptureService trigger analyzer protocol', () => {
       legacyProfile: undefined,
       vsOrientation: undefined,
       vsBadge: undefined,
+      vsOutline: undefined,
       error: { code: 'ANALYSIS_FAILED', message: 'Selected trigger is too flat' },
     })
     await expect(service.analyze(frame, region)).rejects.toMatchObject({

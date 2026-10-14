@@ -11,6 +11,7 @@ import {
   NormalizedRectSchema,
   PixelRectSchema,
   PixelSizeSchema,
+  ShieldOutlineSchema,
   TriggerProfileSchema,
   VsBadgeSchema,
   VsOrientationTriggerSchema,
@@ -53,6 +54,8 @@ export interface TriggerAnalysis {
   legacyProfile: LegacyTriggerAnalysis
   vsOrientation: z.infer<typeof VsOrientationTriggerSchema> | null
   vsBadge: z.infer<typeof VsBadgeSchema> | null
+  /** Display-only silhouette outline in game fractions; present with `vsOrientation`. */
+  vsOutline: z.infer<typeof ShieldOutlineSchema> | null
 }
 
 const CropResultSchema = z.discriminatedUnion('ok', [
@@ -146,6 +149,7 @@ const AnalysisResultSchema = z.discriminatedUnion('ok', [
       legacyProfile: LegacyTriggerAnalysisSchema,
       vsOrientation: VsOrientationTriggerSchema.nullable(),
       vsBadge: VsBadgeSchema.nullable(),
+      vsOutline: ShieldOutlineSchema.nullable(),
     })
     .strict(),
   z
@@ -300,6 +304,7 @@ export class CaptureService {
       legacyProfile: metadata.legacyProfile,
       vsOrientation: metadata.vsOrientation,
       vsBadge: metadata.vsBadge,
+      vsOutline: metadata.vsOrientation === null ? null : metadata.vsOutline,
     }
   }
 

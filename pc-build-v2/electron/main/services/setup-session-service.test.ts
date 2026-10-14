@@ -44,7 +44,13 @@ const legacyProfile = {
   nccThreshold: 0.72 as const,
   analyzerVersion: 'trigger-profile-v2' as const,
 }
-const analysis = { profile, legacyProfile, vsOrientation: null, vsBadge: null }
+const analysis = {
+  profile,
+  legacyProfile,
+  vsOrientation: null,
+  vsBadge: null,
+  vsOutline: null,
+}
 const chrome = {
   top: 0,
   bottom: 0,
@@ -334,6 +340,11 @@ describe('SetupSessionService', () => {
       ...analysis,
       vsOrientation,
       vsBadge: badge,
+      vsOutline: [
+        [0.4, 0.4],
+        [0.6, 0.4],
+        [0.5, 0.6],
+      ],
     })
     const ready = await readyForCommit(test.service)
     expect(ready.triggerKind).toBe('vs_edge_orientation')

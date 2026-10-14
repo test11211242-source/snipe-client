@@ -116,7 +116,7 @@ class AutoSetupEngine:
             result = {"ok": True, "frameWidth": int(confirmation.shape[1]), "frameHeight": int(confirmation.shape[0]),
                       "game": {"rect": pixel_rect(confirmed_game.rect), "aspect": confirmed_game.aspect, "chrome": confirmed_game.chrome},
                       "badge": badge.to_dict(), "regions": {key: zone.to_dict() for key, zone in regions(badge, confirmed_game.aspect).items()},
-                      "trigger": trigger.to_dict(), "confidence": checked.confidence,
+                      "trigger": trigger.to_dict(), "outline": trigger.outline or None, "confidence": checked.confidence,
                       "selfCheck": {"minVs": checked.self_check.min_vs, "maxBefore": checked.self_check.max_before,
                                     "frames": checked.self_check.frames},
                       "timings": {"onsetMs": round((onset - self.started_at) * 1000), "confirmMs": round((confirm - self.started_at) * 1000)}}

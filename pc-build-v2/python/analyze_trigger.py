@@ -344,10 +344,10 @@ def analyze(png: bytes, outer_rect: Any) -> dict[str, Any]:
     profile, _ = analyze_result(png, outer_rect)
     return profile
 
-def analyze_vs(png: bytes, outer_rect: Any, game_rect: Any) -> tuple[dict[str, Any] | None, dict[str, float] | None]:
+def analyze_vs(png: bytes, outer_rect: Any, game_rect: Any) -> tuple[dict[str, Any] | None, dict[str, float] | None, list[list[float]] | None]:
     """Only classify VS inside the user's marked area; keep structural profiles always."""
     if game_rect is None:
-        return None, None
+        return None, None, None
     image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ProtocolError("trigger PNG is invalid")
@@ -359,14 +359,14 @@ def analyze_vs(png: bytes, outer_rect: Any, game_rect: Any) -> tuple[dict[str, A
     except (ValueError, cv2.error):
         # Optional VS geometry must not discard the mandatory structural result.
         # Invalid protocol rectangles have already been rejected above.
-        return None, None
+        return None, None, None
 
 
-def _classify_vs(image: np.ndarray, rect: tuple[int, int, int, int],
-                 outer: tuple[int, int, int, int]) -> tuple[dict[str, Any] | None, dict[str, float] | None]:
+def _classify_vs(image: np.ndarray, rect: tuple[int, int, int, int], outer: tuple[int, int, int, int]
+                 ) -> tuple[dict[str, Any] | None, dict[str, float] | None, list[list[float]] | None]:
     candidate = search(image, rect, region=outer)
     if candidate is None or candidate.score < MATCH_T:
-        return None, None
+        return None, None, None
     gx, gy, gw, gh = rect
     badge = candidate.badge
     bx0, by0 = gx + (badge.cx - badge.width / 2) * gw, gy + (badge.cy - badge.height / 2) * gh
@@ -375,11 +375,11 @@ def _classify_vs(image: np.ndarray, rect: tuple[int, int, int, int],
     intersection = max(0, min(bx1, ox + 1.1 * ow) - max(bx0, ox - 0.1 * ow)) * max(
         0, min(by1, oy + 1.1 * oh) - max(by0, oy - 0.1 * oh))
     if intersection < 0.70 * badge.width * gw * badge.height * gh:
-        return None, None
+        return None, None, None
     trigger = OrientationTrigger.build(image, rect, badge)
     if not 0.45 <= trigger.mask_area_ratio <= 0.70 or not trigger.contains_center:
-        return None, None
-    return trigger.to_dict(), badge.to_dict()
+        return None, None, None
+    return trigger.to_dict(), badge.to_dict(), trigger.outline or None
 
 
 
@@ -425,7 +425,7 @@ def main() -> None:
         profile, legacy_profile = analyze_result(
             envelope.binary, metadata["outerRect"]
         )
-        vs_orientation, vs_badge = analyze_vs(envelope.binary, metadata["outerRect"], metadata["gameRect"])
+        vs_orientation, vs_badge, vs_outline = analyze_vs(envelope.binary, metadata["outerRect"], metadata["gameRect"])
         write_envelope(
             sys.stdout.buffer,
             {
@@ -436,6 +436,7 @@ def main() -> None:
                 "legacyProfile": legacy_profile,
                 "vsOrientation": vs_orientation,
                 "vsBadge": vs_badge,
+                "vsOutline": vs_outline,
             },
         )
     except Exception as error:

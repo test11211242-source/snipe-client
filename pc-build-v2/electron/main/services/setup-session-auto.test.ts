@@ -95,6 +95,12 @@ const regions = {
   nickname: { x: 0.1, y: 0.2, width: 0.7, height: 0.1 },
   topLeftEvidence: { x: 0.1, y: 0.05, width: 0.3, height: 0.1 },
 }
+const shieldOutline: [number, number][] = [
+  [0.4, 0.4],
+  [0.5, 0.38],
+  [0.6, 0.4],
+  [0.5, 0.52],
+]
 const success: AnalysisResult = {
   ok: true,
   frameWidth: frame.size.width,
@@ -103,6 +109,7 @@ const success: AnalysisResult = {
   badge,
   regions,
   trigger: orientation,
+  outline: shieldOutline,
   confidence: 0.9,
   selfCheck: { minVs: 0.9, maxBefore: 0.2, frames: 3 },
   timings: { onsetMs: 1000, confirmMs: 1200 },
@@ -163,9 +170,13 @@ function harness(nameChecker?: SetupNameChecker) {
   } satisfies LivePreparedCapture
   const capture = {
     capture: vi.fn().mockResolvedValue(frame),
-    analyze: vi
-      .fn()
-      .mockResolvedValue({ profile, legacyProfile, vsOrientation: null, vsBadge: null }),
+    analyze: vi.fn().mockResolvedValue({
+      profile,
+      legacyProfile,
+      vsOrientation: null,
+      vsBadge: null,
+      vsOutline: null,
+    }),
     crop: vi.fn().mockResolvedValue(Buffer.from('nickname PNG')),
   }
   const repository = {
@@ -561,13 +572,20 @@ describe('automatic setup session lifecycle', () => {
       legacyProfile: typeof legacyProfile
       vsOrientation: null
       vsBadge: null
+      vsOutline: null
     }>()
     test.capture.analyze.mockReturnValueOnce(ancillary.promise)
     await test.service.startAuto(selector, preference, test.live)
     requiredFixture(test.operations[0]).resolve({ result: success, frame })
     await settle()
     test.changeAuth()
-    ancillary.resolve({ profile, legacyProfile, vsOrientation: null, vsBadge: null })
+    ancillary.resolve({
+      profile,
+      legacyProfile,
+      vsOrientation: null,
+      vsBadge: null,
+      vsOutline: null,
+    })
     await settle()
     expect(test.live.stop).toHaveBeenCalledOnce()
     expect(test.repository.save).not.toHaveBeenCalled()
@@ -585,6 +603,13 @@ describe('automatic setup session lifecycle', () => {
       detection: { status: 'succeeded' },
       regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
     })
+    // The success screen draws the compared silhouette: game fractions → frame fractions.
+    expect(selected.triggerOutline).toEqual(
+      shieldOutline.map(([x, y]) => [
+        game.rect.x / frame.size.width + x * (game.rect.width / frame.size.width),
+        game.rect.y / frame.size.height + y * (game.rect.height / frame.size.height),
+      ]),
+    )
     expect(test.live.stop).toHaveBeenCalledOnce()
     expect(test.capture.analyze).toHaveBeenCalledWith(
       expect.objectContaining({ png: frame.png }),

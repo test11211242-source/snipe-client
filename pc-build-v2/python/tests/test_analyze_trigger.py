@@ -83,12 +83,22 @@ def test_manual_vs_is_recognized_only_inside_marked_area() -> None:
     image, badge = arena()
     game = {"x": 0, "y": 0, "width": 360, "height": 640}
     outer = {"x": 120, "y": 215, "width": 120, "height": 120}
-    trigger, found = analyze_vs(encode(image), outer, game)
+    trigger, found, outline = analyze_vs(encode(image), outer, game)
     assert trigger is not None
     assert trigger["algorithm"] == "vs-orient-1"
+    assert "outline" not in trigger
     assert found["cx"] == pytest.approx(badge.cx, abs=.006)
-    assert analyze_vs(encode(image), {"x": 5, "y": 5, "width": 80, "height": 80}, game) == (None, None)
-    assert analyze_vs(encode(image), outer, None) == (None, None)
+    # The display outline hugs the badge: every point near its box, its bounds close to it.
+    assert outline is not None and 3 <= len(outline) <= 64
+    xs, ys = [point[0] for point in outline], [point[1] for point in outline]
+    left, right = badge.cx - badge.width / 2, badge.cx + badge.width / 2
+    top, bottom = badge.cy - badge.height / 2, badge.cy + badge.height / 2
+    margin = 0.1 * badge.width
+    assert left - margin <= min(xs) and max(xs) <= right + margin
+    assert top - margin <= min(ys) and max(ys) <= bottom + margin
+    assert max(xs) - min(xs) >= 0.8 * badge.width
+    assert analyze_vs(encode(image), {"x": 5, "y": 5, "width": 80, "height": 80}, game) == (None, None, None)
+    assert analyze_vs(encode(image), outer, None) == (None, None, None)
     # The structural and legacy profiles remain built even for a recognized VS.
     from analyze_trigger import analyze_result
     profile, legacy = analyze_result(encode(image), outer)

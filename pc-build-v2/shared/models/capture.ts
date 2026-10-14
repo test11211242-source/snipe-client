@@ -239,6 +239,16 @@ export const VsBadgeSchema = z
   })
   .strict()
 
+/**
+ * Display-only outline of the compared VS silhouette: polygon points as [x, y] fractions
+ * of the game (analysis results) or of the frame (setup view). Never persisted.
+ */
+export const ShieldOutlineSchema = z
+  .array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]))
+  .min(3)
+  .max(64)
+export type ShieldOutline = z.infer<typeof ShieldOutlineSchema>
+
 export const VsOrientationTriggerSchema = z
   .object({
     kind: z.literal('vs_edge_orientation'),

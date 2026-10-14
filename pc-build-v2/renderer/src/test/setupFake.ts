@@ -56,6 +56,7 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
     detection: null,
     game: null,
     triggerKind: null,
+    triggerOutline: null,
     regionOrigins: null,
     regions: {
       trigger: null,
@@ -146,6 +147,14 @@ export function detectedView(
     game: { viewport: GAME_VIEWPORT, aspect: GAME_ASPECT, source: 'auto' },
     regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
     triggerKind: 'vs_edge_orientation',
+    triggerOutline: [
+      [0.48, 0.42],
+      [0.5, 0.41],
+      [0.52, 0.42],
+      [0.515, 0.5],
+      [0.5, 0.51],
+      [0.485, 0.5],
+    ],
     regions: {
       trigger: { x: 0.47, y: 0.4, width: 0.06, height: 0.12 },
       nickname: { x: 0.38, y: 0.3, width: 0.24, height: 0.08 },

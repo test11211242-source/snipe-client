@@ -4,6 +4,7 @@ import {
   NormalizedRegionsSchema,
   PixelRectSchema,
   PixelSizeSchema,
+  ShieldOutlineSchema,
   VsBadgeSchema,
   VsOrientationTriggerSchema,
   WindowChromeSchema,
@@ -70,6 +71,7 @@ export const AnalysisResultSchema = z
         badge: VsBadgeSchema,
         regions: NormalizedRegionsSchema,
         trigger: VsOrientationTriggerSchema,
+        outline: ShieldOutlineSchema.nullable(),
         confidence: z.number().min(0).max(1),
         selfCheck: z
           .object({

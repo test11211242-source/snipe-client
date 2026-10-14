@@ -11,6 +11,7 @@ import {
   NormalizedRegionsSchema,
   PixelSizeSchema,
   RegionKindSchema,
+  ShieldOutlineSchema,
   TriggerProfileSchema,
 } from './capture'
 
@@ -88,6 +89,11 @@ export const SetupSessionViewSchema = z
       .strict()
       .nullable(),
     triggerKind: z.enum(['vs_edge_orientation', 'structural']).nullable(),
+    /**
+     * Outline of the VS silhouette the runtime compares, as frame fractions. Present only
+     * with `vs_edge_orientation`; display-only and never saved.
+     */
+    triggerOutline: ShieldOutlineSchema.nullable().default(null),
     regions: z
       .object({
         trigger: NormalizedRectSchema.nullable(),

@@ -1,6 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
-import type { NormalizedRect, PixelSize } from '../../../../shared/models/capture'
+import type {
+  NormalizedRect,
+  PixelSize,
+  ShieldOutline,
+} from '../../../../shared/models/capture'
 import { cx } from '../../ui'
 import {
   containTransform,
@@ -23,6 +27,12 @@ export interface StageBox {
   active: boolean
   /** Label under the box instead of above (keeps neighbours readable). */
   labelBelow?: boolean | undefined
+  /**
+   * Outline of what is actually compared (the VS silhouette), in frame fractions. A
+   * passive box is drawn as this outline instead of its rectangle; an active box keeps
+   * its editable rectangle with the outline inside.
+   */
+  outline?: ShieldOutline | null | undefined
 }
 
 type Drag =
@@ -57,6 +67,14 @@ function boxStyle(rect: NormalizedRect): React.CSSProperties {
     width: `${rect.width * 100}%`,
     height: `${rect.height * 100}%`,
   }
+}
+
+function outlineBounds(outline: ShieldOutline): NormalizedRect {
+  const xs = outline.map(([x]) => x)
+  const ys = outline.map(([, y]) => y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
 }
 
 /**
@@ -258,7 +276,13 @@ export function FrameStage({
             src={frameUrl}
           />
           {boxes.map((box) => {
-            const rect = box.active ? activeRect : box.rect
+            const outline = box.outline ?? null
+            const shaped = outline !== null && !box.active
+            const rect = shaped
+              ? outlineBounds(outline)
+              : box.active
+                ? activeRect
+                : box.rect
             if (rect === null) return null
             return (
               <div
@@ -267,7 +291,11 @@ export function FrameStage({
                     ? `Область «${activeName ?? box.label}». Стрелки — сдвинуть, Shift — крупнее, Alt+стрелки — изменить размер.`
                     : undefined
                 }
-                className={cx(styles['box'], box.active && styles['boxActive'])}
+                className={cx(
+                  styles['box'],
+                  box.active && styles['boxActive'],
+                  shaped && styles['boxShape'],
+                )}
                 data-region={box.id}
                 key={box.id}
                 onKeyDown={(event) => {
@@ -314,6 +342,23 @@ export function FrameStage({
               </div>
             )
           })}
+          {boxes.map((box) =>
+            box.outline == null ? null : (
+              <svg
+                aria-hidden="true"
+                className={styles['shapeLayer']}
+                data-testid={`outline-${box.id}`}
+                key={box.id}
+                preserveAspectRatio="none"
+                viewBox="0 0 1 1"
+              >
+                <polygon
+                  className={styles['shapeLine']}
+                  points={box.outline.map(([x, y]) => `${x},${y}`).join(' ')}
+                />
+              </svg>
+            ),
+          )}
           {gameViewport === null ? null : (
             <div
               aria-hidden="true"
