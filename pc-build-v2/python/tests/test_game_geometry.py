@@ -325,3 +325,47 @@ def test_saved_title_bar_is_not_invented_in_fullscreen_or_on_a_static_screen():
     for index in range(12):
         static.process(frame, index / 10)
     assert static.rect == (0, 4, 270, 508)
+
+
+STATIC_COLUMN = np.random.default_rng(77).integers(20, 50, (621, 12, 3), dtype=np.uint8)
+
+
+def stretched_fullscreen(index: int) -> np.ndarray:
+    """Owner F11 portrait (MuMu): the game is stretched to 0.579 between black
+    top/bottom bars, and a menu keeps its right-hand column still while the
+    middle animates."""
+    game = cv2.resize(moving_game(index), (360, 621), interpolation=cv2.INTER_AREA)
+    game[:, -12:] = STATIC_COLUMN
+    frame = np.zeros((641, 360, 3), np.uint8)
+    frame[10:631] = game
+    return frame
+
+
+def test_static_game_column_inside_letterbox_is_not_trimmed_as_a_toolbar():
+    # Intermittent miss (owner, F11 portrait): the windowed profile was armed on
+    # a game rect cut by a phantom right "toolbar", so VS scores fell to the
+    # 0.5 threshold and learning never started.
+    geometry = GameGeometry([game_layout()])
+    for index in range(40):
+        geometry.process(stretched_fullscreen(index), index / 10)
+        assert geometry._band is None
+        assert geometry.layout is None
+    assert geometry.rect == (0, 10, 360, 621)
+    assert geometry.state == "aspect_unknown"
+
+
+def test_side_toolbar_spanning_the_letterboxed_window_is_still_trimmed():
+    def window(index):
+        game = cv2.resize(moving_game(index), (348, 619), interpolation=cv2.INTER_AREA)
+        frame = np.zeros((639, 360, 3), np.uint8)
+        frame[:, -12:] = (92, 88, 84)
+        frame[20:120, -12:] = 220
+        frame[10:629, :348] = game
+        return frame
+
+    geometry = GameGeometry([game_layout()])
+    for index in range(12):
+        geometry.process(window(index), index / 10)
+    assert geometry._band == ("right", 348)
+    assert geometry.rect == (0, 10, 348, 619)
+    assert geometry.state == "armed_provisional"

@@ -380,6 +380,35 @@ def _runtime_variant(frame: np.ndarray, rect: PixelRect, scale: float = 1.0,
     return output
 
 
+# Owner MuMu F11 portrait (14.10.2026, live 1080×1920 window): the game is
+# stretched to 1864 rows between 28-row black bars (aspect 0.5794).
+F11_BAR, F11_GAME = 28 / 1920, 1864 / 1920
+# The owner's menu kept its right-hand 39 of 1080 columns still.
+F11_STILL_COLUMN = 40 / 1080
+
+
+def _fullscreen_variant(frame: np.ndarray, rect: PixelRect) -> np.ndarray:
+    x, y, width, height = rect
+    bar, game_height = round(height * F11_BAR), round(height * F11_GAME)
+    output = np.zeros((game_height + 2 * bar, width, 3), np.uint8)
+    output[bar:bar + game_height] = cv2.resize(frame[y:y + height, x:x + width], (width, game_height),
+                                               interpolation=cv2.INTER_AREA)
+    return output
+
+
+def _still_column_menu(frames: list[np.ndarray], count: int = 40) -> list[np.ndarray]:
+    """Pre-VS frames whose middle moves while a side column stays still, as in
+    the owner's main menu; they are what invented a phantom side toolbar."""
+    still = round(frames[0].shape[1] * F11_STILL_COLUMN)
+    menu = []
+    for index in range(count):
+        frame = frames[index % len(frames)].copy()
+        frame[:, -still:] = frames[0][:, -still:]
+        menu.append(frame)
+    return menu
+
+
+
 def _runtime_profile(frames: list[np.ndarray], record: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     game, geometry = _geometry(frames)
     if game.reason != "ok" or game.rect is None:
@@ -458,6 +487,9 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
             elif event_type == "layout_learned":
                 learned = payload["layout"]
                 event.update({"gameAspect": learned["gameAspect"], "confidence": learned["confidence"]})
+            elif event_type == "vs_candidate":
+                event.update({key: payload[key] for key in ("reason", "state", "score", "kind", "learnedLayout",
+                                                            "code", "sinceFireS", "gameRect")})
             events.append(event)
         if fired:
             fires.append(index)
@@ -484,7 +516,7 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
         "delayS": [round((index - onset) / 10, 1) for onset, end in windows
                    for index in fires if onset <= index < end],
         "falseFires": len(false), "blockedFires": blocked_fires, "actions": actions,
-        "episodes": episodes, "states": states, "events": events,
+        "episodes": episodes, "states": states, "events": events, "chromeBand": engine.geometry._band,
         "firstMismatchFrame": mismatch_at, "firstUnknownFrame": unknown_at,
         "nonMax": max((scores[index] for index in non), default=None),
         "stableVsMin": min((scores[index] for index in stable if index in scores), default=None),
@@ -537,16 +569,46 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
         and [action["frame"] for action in cell["actions"]] == cell["fires"] for cell in resize)
     setup_ok = len(result["setups"]) == 9 and all(
         setup.get("code") is None for setup in result["setups"].values())
+    fullscreen_ok = _fullscreen_ok(list(result["fullscreenLetterbox"].values()))
     checks = {"setupAccepted": setup_ok, "runtime22OneFirePerVs": positive_ok,
               "crossSpectateZeroOf6": cross_ok, "aspectBlocked4Within2S": blocked_ok,
               "secondRecordingLearned4WithSameVsFire": learning_ok,
               "crossAspectSpectateIgnored3": rejection_ok,
               "spectateProfile3FireOwnBattles0": spectate_ok,
-              "windowResize16OneFirePerVs": resize_ok}
+              "windowResize16OneFirePerVs": resize_ok,
+              "fullscreenLetterbox6": fullscreen_ok}
     return {"passed": all(checks.values()), "checks": checks, "positiveRequired": 22,
             "crossRequired": 6, "aspectRequired": 4, "learningRequired": 4,
-            "learningSpectateRequired": 3, "windowResizeRequired": 16, "maxPositiveDelayS": 0.2,
-            "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20}
+            "learningSpectateRequired": 3, "windowResizeRequired": 16, "fullscreenLetterboxRequired": 6,
+            "maxPositiveDelayS": 0.2, "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20}
+
+
+def _fullscreen_ok(cells: list[dict[str, Any]]) -> bool:
+    """F11 portrait: no phantom band; the first battle learns and fires, the
+    second fires on the learned layout with the profile's kind; a battle
+    within the cooldown is recorded as such; own battles never fire a
+    spectate profile."""
+    def records(cell):
+        return [event for event in cell["events"] if event["type"] == "vs_candidate"]
+
+    def learned(cell):
+        return [event["frame"] for event in cell["events"] if event["type"] == "layout_learned"]
+
+    battles = [cell for cell in cells if "expectKind" in cell]
+    battles_ok = len(battles) == 4 and all(
+        cell["vsFireCounts"] == [1, 1] and cell["falseFires"] == 0 and not cell["blockedFires"]
+        and cell["chromeBand"] is None and learned(cell) == cell["fires"][:1]
+        and [action["frame"] for action in cell["actions"]] == cell["fires"]
+        and [(record["reason"], record["code"]) for record in records(cell)] == [("fired", "LAYOUT_LEARNED"), ("fired", None)]
+        and records(cell)[-1]["learnedLayout"] and records(cell)[-1]["kind"] == cell["expectKind"]
+        for cell in battles)
+    back = [cell for cell in cells if cell.get("expectCooldown")]
+    back_ok = len(back) == 1 and all(
+        cell["vsFireCounts"] == [1, 0] and cell["falseFires"] == 0 and cell["chromeBand"] is None
+        and [record["reason"] for record in records(cell)] == ["fired", "cooldown"] for cell in back)
+    own = [cell for cell in cells if "expectKind" not in cell and not cell.get("expectCooldown")]
+    own_ok = len(own) == 1 and all(not cell["fires"] and not cell["actions"] and not learned(cell) for cell in own)
+    return battles_ok and back_ok and own_ok
 
 
 def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
@@ -579,7 +641,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result: dict[str, Any] = {
         "mode": "runtime", "sampling": "prototype-jpeg92" if prototype_jpeg92 else "direct-video",
         "setups": {}, "positive": {}, "cross": {}, "aspectBlocked": {}, "learning": {}, "learningSpectate": {},
-        "windowResize": {}, "spectateProfile": {},
+        "windowResize": {}, "spectateProfile": {}, "fullscreenLetterbox": {},
     }
     profiles: dict[str, dict[str, Any]] = {}
     rects: dict[str, PixelRect] = {}
@@ -704,6 +766,44 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
                 (_runtime_variant(frame, rect, .4 if index < 30 else .8, titlebar=titlebar, fixed_titlebar_strip=True)
                  for index, frame in enumerate(frames)), windows)
         del frames
+    # Intermittent miss (owner, 14.10.2026): MuMu F11 portrait. A menu with a
+    # still side column used to be trimmed as a toolbar, so the windowed
+    # profile was armed on a cut game rect and never learned the F11 layout.
+    # Each case: menu, battle, 16 s, battle again (learned, then armed).
+    f11_cases = [("windowed_1080x1920", "windowed_1080x1920", "battle")]
+    f11_cases += [("spectate_profile", target, "spectate") for target in _RUNTIME_SPECTATE]
+    for source, target, kind in f11_cases:
+        if source not in profiles:
+            continue
+        frames = load(target)
+        fullscreen = [_fullscreen_variant(frame, _geometry(frames)[0].rect) for frame in frames]
+        menu = _still_column_menu(fullscreen[:max(1, min(20, _runtime_windows(records[target])[0][0] - 5))])
+        offset = len(menu) + len(fullscreen)
+        cell = run("fullscreenLetterbox", source + "_f11_on_" + target, source, menu + fullscreen + fullscreen,
+                   _runtime_windows(records[target], len(menu)) + _runtime_windows(records[target], offset),
+                   learn=True, gap_at=offset)
+        if cell:
+            cell["expectKind"] = kind
+        del frames, fullscreen, menu
+    if "spectate_profile" in profiles:
+        first, second = load(_RUNTIME_SPECTATE[0]), load(_RUNTIME_SPECTATE[1])
+        first = [_fullscreen_variant(frame, _geometry(first)[0].rect) for frame in first]
+        second = [_fullscreen_variant(frame, _geometry(second)[0].rect) for frame in second]
+        menu = _still_column_menu(first[:20])
+        # Owner decision: the 15 s cooldown stays; a battle switched to within
+        # it is skipped and recorded as "cooldown".
+        cell = run("fullscreenLetterbox", "spectate_profile_f11_back_to_back", "spectate_profile",
+                   menu + first + second,
+                   _runtime_windows(records[_RUNTIME_SPECTATE[0]], len(menu))
+                   + _runtime_windows(records[_RUNTIME_SPECTATE[1]], len(menu) + len(first)), learn=True)
+        if cell:
+            cell["expectCooldown"] = True
+        own = load("windowed_1080x1920")
+        own = [_fullscreen_variant(frame, rects["windowed_1080x1920"]) for frame in own] if "windowed_1080x1920" in rects else []
+        if own:
+            run("fullscreenLetterbox", "spectate_profile_f11_on_own_battle", "spectate_profile",
+                _still_column_menu(own[:20]) + own, [], learn=True)
+        del first, second, menu, own
     pairs = [("windowed_1080x1920", target) for target in _RUNTIME_NORMAL[2:]]
     pairs.append(("obs_1536x2048", "windowed_1080x1920"))
     for source, target in pairs:
@@ -731,13 +831,16 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result["totals"] = {
         "positiveCases": len(positive), "positiveFires": sum(len(cell["fires"]) for cell in positive),
         "falseFires": sum(cell["falseFires"] for group in ("positive", "cross", "aspectBlocked", "learning",
-                                                           "learningSpectate", "windowResize", "spectateProfile")
+                                                           "learningSpectate", "windowResize", "spectateProfile",
+                                                           "fullscreenLetterbox")
                           for cell in result[group].values()),
         "crossCases": len(cross), "crossFires": sum(len(cell["fires"]) for cell in cross),
         "aspectBlockedCases": len(result["aspectBlocked"]), "learningCases": len(result["learning"]),
         "learnedLayouts": sum(event["type"] == "layout_learned" for cell in result["learning"].values()
                               for event in cell["events"]),
         "learningSpectateCases": len(result["learningSpectate"]),
+        "fullscreenLetterboxCases": len(result["fullscreenLetterbox"]),
+        "fullscreenLetterboxFires": [cell["vsFireCounts"] for cell in result["fullscreenLetterbox"].values()],
         "delayS": sorted({delay for cell in positive for delay in cell["delayS"]}),
         "nonMax": max((cell["nonMax"] for cell in positive if cell["nonMax"] is not None), default=None),
         "stableVsMin": min((cell["stableVsMin"] for cell in positive if cell["stableVsMin"] is not None), default=None),

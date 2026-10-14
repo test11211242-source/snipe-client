@@ -50,7 +50,10 @@ same-canvas scaling, subtracts matching saved chrome, and selects a saved layout
 within 3% aspect tolerance. Chrome whose saved template no longer matches after a
 window resize (fixed-size title-bar icons), or that a fullscreen profile never
 saved, is inferred from the layout aspect, snapped to its full-width edge and
-confirmed by the saved thickness or by a static band above a moving game.
+confirmed by the saved thickness or by a static band above a moving game. A band
+on the frame's own edge must also continue through uniform letterbox bars peeled
+off the perpendicular sides (window chrome spans the whole window): a still menu
+column inside an emulator's fullscreen bars is game content, not a toolbar.
 Unknown aspects block primary firing after detection
 and enter `aspect_unknown` after 20 mismatching frames. `layout_learning.py` searches
 at 5 Hz, reuses setup acceptance and self-checks, learns only from the profile's
@@ -111,7 +114,12 @@ cross-aspect spectate pairs are ignored without learning or failing. A profile
 set up on `spectate_1` must fire once per VS on all three spectate recordings and
 never on the five own-battle recordings, and sixteen `windowResize` cells (a
 non-stretching title bar from the external titlebar crop) must fire once per VS
-for fullscreen profiles in a window and small-window profiles resized.
+for fullscreen profiles in a window and small-window profiles resized. Six
+`fullscreenLetterbox` cells replay MuMu F11 portrait (game stretched to 1864/1920
+rows between black bars, after a menu whose side column stays still): with no
+phantom band, the windowed/spectate profile learns and fires on the first battle and
+fires on the learned layout on the second; a battle within the 15-second cooldown is
+recorded as `cooldown`; own battles never fire the spectate profile.
 
 Numeric output reports firing frames, per-VS counts/delays, false/blocked fires,
 geometry states, learning codes/confidence, action sizes and process timings.

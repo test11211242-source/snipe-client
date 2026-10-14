@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 
 from geometry.aspect import ASPECT_MAX, ASPECT_MIN, ASPECT_TOL
-from geometry.game_rect import COARSE, MAX_TOOLBAR, MIN_TOOLBAR, STATIC_TOL, RectResult, _uniform, detect, pixel_rect
+from geometry.game_rect import (COARSE, MAX_TOOLBAR, MIN_TOOLBAR, STATIC_TOL, TOL, UNIFORM_FRAC, RectResult, _uniform,
+                                detect, pixel_rect)
 from geometry.vs_orient_trigger import MAX_SHIFT, orientation_field
 
 DETECT_FRAMES = 20
@@ -25,6 +26,10 @@ CHROME_SPACING = 0.4
 CHROME_MOTION = 0.03
 CHROME_STATIC = 0.97
 CHROME_EDGE = 8
+# Letterbox bars thinner than this are window borders and prove nothing; at
+# most LETTERBOX_LINES bar lines next to the game are compared with a band.
+LETTERBOX_MIN = 8
+LETTERBOX_LINES = 64
 
 
 def union(left, right):
@@ -56,6 +61,35 @@ def chrome_score(strip: np.ndarray, template: dict[str, Any], vertical: bool) ->
         return -1.0
     scores = cv2.matchTemplate(fc, weight * np.cos(angle), cv2.TM_CCORR) + cv2.matchTemplate(fs, weight * np.sin(angle), cv2.TM_CCORR)
     return float(scores.max() / total)
+
+
+def crosses_letterbox(frame: np.ndarray, raw, side: str, size: int) -> bool:
+    """A band on the window's own edge is chrome only if it continues through
+    the uniform letterbox bars peeled off the perpendicular sides: the window
+    frame spans its whole height (width). A band that takes the bars' colour
+    there is game content (owner F11 portrait: a static menu column inside
+    MuMu's black top/bottom bars was trimmed as a right-hand toolbar). A band
+    inset from the frame edge is a window on a uniform desktop, whose title
+    bar never reaches the desktop beside it, so it is not checked."""
+    x, y, w, h = raw
+    height, width = frame.shape[:2]
+    if {"left": x, "right": width - x - w, "top": y, "bottom": height - y - h}[side] > 0:
+        return True
+    if side in ("left", "right"):
+        margins = (frame[max(0, y - LETTERBOX_LINES):y, x:x + w], frame[y + h:y + h + LETTERBOX_LINES, x:x + w])
+    else:
+        margins = (frame[y:y + h, max(0, x - LETTERBOX_LINES):x].transpose(1, 0, 2),
+                   frame[y:y + h, x + w:x + w + LETTERBOX_LINES].transpose(1, 0, 2))
+    for margin in margins:
+        if margin.shape[0] < LETTERBOX_MIN:
+            continue
+        lines = margin[:, :, :3].astype(np.int16)
+        band, rest = ((lines[:, :size], lines[:, size:]) if side in ("left", "top")
+                      else (lines[:, -size:], lines[:, :-size]))
+        median = np.median(rest, axis=1)
+        if float((np.abs(band - median[:, None, :]).max(axis=2) <= TOL).mean()) >= UNIFORM_FRAC:
+            return False
+    return True
 
 
 class GameGeometry:
@@ -144,7 +178,8 @@ class GameGeometry:
             size = first + index
             if steps[index + 1] < CHROME_EDGE or contrast[index] <= 0:
                 continue
-            if (saved.get(side) and abs(saved[side] - size) <= delta) or self._band_static(raw, side, size):
+            if (((saved.get(side) and abs(saved[side] - size) <= delta) or self._band_static(raw, side, size))
+                    and crosses_letterbox(frame, raw, side, size)):
                 edge = {"top": y + size, "bottom": y + h - size, "left": x + size, "right": x + w - size}[side]
                 return side, edge
         return None
