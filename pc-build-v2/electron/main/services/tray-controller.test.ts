@@ -142,6 +142,16 @@ describe('native tray lifecycle', () => {
     test.controller.stop()
   })
 
+  it('keeps one label through source retries', () => {
+    const test = harness()
+    test.controller.start()
+    for (const state of ['WAITING_SOURCE', 'PREFLIGHT', 'STARTING'] as const) {
+      test.push(monitorViewFixture({ state, runIntent: true, recovery: 'source' }))
+      expect(test.menu()[0]?.label).toBe('Ждём окно игры…')
+    }
+    test.controller.stop()
+  })
+
   it('switches profiles using the current main revision rather than stale menu data', async () => {
     const test = harness()
     test.controller.start()

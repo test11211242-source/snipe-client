@@ -1,3 +1,4 @@
+import { presentedMonitorState } from '../../../../shared/models/monitor'
 import { useMonitorView } from '../../features/monitor'
 import { profileHealth, useProfiles } from '../../features/profiles'
 import { Button, Icon, Menu, MenuItem, MenuSeparator, Skeleton, cx } from '../../ui'
@@ -57,7 +58,8 @@ export function ProfileSwitcher({
       </div>
     )
 
-  const waiting = monitor.value?.state === 'WAITING_SOURCE'
+  const waiting =
+    monitor.value !== null && presentedMonitorState(monitor.value) === 'WAITING_SOURCE'
   const active = value.profiles.find((profile) => profile.isActive) ?? value.profiles[0]
   if (active === undefined) return <div className={wrapClass} />
   const activeHealth = profileHealth(active, waiting)

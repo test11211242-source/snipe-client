@@ -185,6 +185,12 @@ export const MonitorViewSchema = z
     geometry: MonitorGeometrySchema.nullable().default(null),
     /** The running window source is minimised: analysis is paused until it is restored. */
     sourceMinimized: z.boolean().default(false),
+    /**
+     * Automatic recovery in flight: `source` waits for a lost game window. Set on
+     * WAITING_SOURCE and kept through the attempt's PREFLIGHT/STARTING; any other state
+     * clears it.
+     */
+    recovery: z.enum(['source']).nullable().default(null),
   })
   .strict()
 
@@ -196,3 +202,18 @@ export type MonitorSessionStats = z.infer<typeof MonitorSessionStatsSchema>
 export type MonitorView = z.infer<typeof MonitorViewSchema>
 export type MonitorSession = z.infer<typeof MonitorSessionSchema>
 export type MonitorSearch = z.infer<typeof MonitorSearchSchema>
+
+/**
+ * The state every surface (main window, tray, overlay) presents. Recovery never flaps:
+ * a source retry stays «waiting for the game window» through its PREFLIGHT/STARTING.
+ */
+export function presentedMonitorState(
+  view: Pick<MonitorView, 'state' | 'recovery'>,
+): MonitorState {
+  if (
+    view.recovery === 'source' &&
+    (view.state === 'PREFLIGHT' || view.state === 'STARTING')
+  )
+    return 'WAITING_SOURCE'
+  return view.state
+}

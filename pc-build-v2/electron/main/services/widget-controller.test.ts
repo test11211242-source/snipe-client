@@ -433,7 +433,7 @@ describe('approved review projection followup', () => {
 })
 
 describe('source-loss retries', () => {
-  it('keeps one stable waiting state through PREFLIGHT/STARTING retries, never the old deck', async () => {
+  it('keeps one waiting state through source retries, never the old deck', async () => {
     const test = harness(false)
     await test.controller.start('user')
     test.result(found('7f0b31d6-3c8f-4e4b-9e57-5f5bb6f3b4a1'))
@@ -450,20 +450,17 @@ describe('source-loss retries', () => {
     }
 
     expect(selectOverlayModel(drive({ state: 'READY' })).body.kind).toBe('found')
-    // The game closes; the supervisor retries on its backoff ladder (and after a
-    // worker auto-restart, which also enters WAITING_SOURCE).
+    // The game closes; the supervisor retries on its backoff ladder.
     const cycle: Partial<MonitorView>[] = [
       { state: 'WAITING_SOURCE', error: lost },
       { state: 'PREFLIGHT', error: null },
       { state: 'WAITING_SOURCE', error: lost },
       { state: 'PREFLIGHT', error: null },
       { state: 'STARTING', error: null },
-      { state: 'WAITING_SOURCE', error: lost },
-      { state: 'PREFLIGHT', error: null },
     ]
     for (const patch of cycle) {
-      const view = drive(patch)
-      expect(view).toMatchObject({ monitorState: 'WAITING_SOURCE', monitorError: lost })
+      const view = drive({ ...patch, recovery: 'source' })
+      expect(view.monitorState).toBe('WAITING_SOURCE')
       expect(selectOverlayModel(view).body).toMatchObject({
         kind: 'message',
         title: 'Ждём окно игры',
@@ -474,9 +471,6 @@ describe('source-loss retries', () => {
     // A user Start is not a recovery attempt: it projects as itself.
     drive({ state: 'STOPPING', runIntent: false })
     expect(drive({ state: 'PREFLIGHT' }).monitorState).toBe('PREFLIGHT')
-    // Stop while waiting ends the latch.
-    drive({ state: 'WAITING_SOURCE', error: lost })
-    expect(drive({ state: 'STOPPING', runIntent: false }).monitorState).toBe('STOPPING')
     await test.controller.stop()
   })
 })

@@ -12,6 +12,14 @@ describe('monitor selectors', () => {
     expect(status.tone).toBe('warn')
   })
 
+  it('keeps one status through automatic recovery attempts', () => {
+    for (const state of ['WAITING_SOURCE', 'PREFLIGHT', 'STARTING'] as const) {
+      const retry = monitorViewFixture({ state, runIntent: true, recovery: 'source' })
+      expect(selectRunPhase(retry, true)).toBe('waiting-source')
+      expect(selectStatus(retry, true, null).text).toBe('Ждём окно игры…')
+    }
+  })
+
   it('says only that the game window is closed or minimised while the source is minimised', () => {
     const view = monitorViewFixture({
       state: 'READY',

@@ -1313,6 +1313,7 @@ export class MonitorSupervisor {
       error,
       search: null,
       readiness: { ...this.#view.readiness, sourceAvailable: false },
+      recovery: 'source',
     })
     const generation = this.#generation
     const delay = SOURCE_RECOVERY_DELAYS[this.#recoveryAttempt++] ?? 15_000
@@ -1460,7 +1461,10 @@ export class MonitorSupervisor {
     if (!TRANSITIONS[this.#view.state].includes(state)) {
       throw new Error(`Invalid monitor transition: ${this.#view.state} -> ${state}`)
     }
-    this.patch({ ...patch, state })
+    // A recovery lasts only through its own attempt (see MonitorView.recovery).
+    const attempt =
+      state === 'WAITING_SOURCE' || state === 'PREFLIGHT' || state === 'STARTING'
+    this.patch({ ...(attempt ? {} : { recovery: null }), ...patch, state })
   }
 
   private patch(patch: Partial<MonitorView>): void {

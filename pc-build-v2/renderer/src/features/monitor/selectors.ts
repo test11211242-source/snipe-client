@@ -1,4 +1,7 @@
-import type { MonitorView } from '../../../../shared/models/monitor'
+import {
+  presentedMonitorState,
+  type MonitorView,
+} from '../../../../shared/models/monitor'
 import type { RealtimeStatus } from '../../../../shared/models/network'
 import type { Tone } from '../../ui'
 import { SOURCE_LOST_TEXT } from '../setup/errors'
@@ -14,12 +17,13 @@ export type RunPhase =
 
 /**
  * Presentation phase of the Start/Stop control, derived from the main-owned view.
- * `runIntent` and `state` are separate: WAITING_SOURCE is still "running" with Stop.
+ * `runIntent` and `state` are separate: WAITING_SOURCE is still "running" with Stop. The
+ * presented state keeps automatic recovery from flapping (see `presentedMonitorState`).
  */
 export function selectRunPhase(view: MonitorView | null, hasProfiles: boolean): RunPhase {
   if (!hasProfiles) return 'no-profile'
   if (view === null) return 'stopped'
-  switch (view.state) {
+  switch (presentedMonitorState(view)) {
     case 'PREFLIGHT':
     case 'STARTING':
       return 'starting'

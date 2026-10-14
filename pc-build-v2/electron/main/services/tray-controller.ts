@@ -6,6 +6,7 @@ import type { CaptureProfilesView } from '../../../shared/models/capture'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { WidgetStatus } from '../../../shared/models/widget'
 import { MONITOR_ERROR_MESSAGES } from '../../../shared/errors/monitor-error-messages'
+import { presentedMonitorState } from '../../../shared/models/monitor'
 
 const TRAY_ICON =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOElEQVR4nGNIvrSSgRKMS+I/DkzQAFwacRpEjmYUQ6hmAKma4YaMGkDFMBj4dMBAjaRMlcxEMgYAxzCBezbAVQ4AAAAASUVORK5CYII='
@@ -74,7 +75,7 @@ export class TrayController {
     const label =
       view.error?.code === 'SOURCE_REBIND_REQUIRED'
         ? (MONITOR_ERROR_MESSAGES['SOURCE_REBIND_REQUIRED'] ?? view.error.message)
-        : view.state === 'WAITING_SOURCE'
+        : presentedMonitorState(view) === 'WAITING_SOURCE'
           ? 'Ждём окно игры…'
           : view.runIntent
             ? 'Мониторинг включён'

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { MonitorResultSchema } from '../../../shared/models/monitor'
+import {
+  MonitorResultSchema,
+  presentedMonitorState,
+  type MonitorState,
+} from '../../../shared/models/monitor'
 import type { MonitorJournalRepository } from '../infrastructure/monitor-journal-repository'
 
 import {
@@ -1543,6 +1547,46 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       state: 'STOPPED',
       runIntent: false,
     })
+  })
+
+  it('presents source retries as one waiting state until monitoring resumes', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    const raw: MonitorState[] = []
+    const presented: MonitorState[] = []
+    test.supervisor.subscribeViews((view) => {
+      raw.push(view.state)
+      presented.push(presentedMonitorState(view))
+    })
+
+    // The game window closes and stays away for two retries.
+    test.targetResolver.resolve
+      .mockRejectedValueOnce(new ApplicationError('SOURCE_NOT_FOUND', 'missing'))
+      .mockRejectedValueOnce(new ApplicationError('SOURCE_NOT_FOUND', 'missing'))
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      recovery: 'source',
+    })
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 5_000)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      recovery: null,
+    })
+    expect(raw).toContain('PREFLIGHT')
+    const recovered = presented.indexOf('READY')
+    expect(
+      presented.slice(0, recovered).filter((state) => state !== 'WAITING_SOURCE'),
+    ).toEqual([])
+
+    // A user Start after a stop is no recovery.
+    await test.supervisor.stop()
+    presented.length = 0
+    await test.supervisor.start()
+    expect(presented).toContain('PREFLIGHT')
+    expect(presented.at(-1)).toBe('READY')
+    await test.supervisor.stop()
   })
 
   it('does not resume a changed calibration or binding during recovery', async () => {
