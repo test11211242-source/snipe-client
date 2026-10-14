@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import numpy as np
 
+import capture.backend as capture_backend
 from capture.backend import CaptureBackendError
 import prepared_capture
 from prepared_capture import LatestFrameStore, validate_command
@@ -254,21 +255,21 @@ def test_window_iconic_probe_uses_pointer_sized_hwnd(monkeypatch):
         assert name == "user32" and use_last_error
         return SimpleNamespace(IsIconic=is_iconic)
 
-    monkeypatch.setattr(prepared_capture.ctypes, "WinDLL", win_dll, raising=False)
-    probe = prepared_capture.window_iconic_probe({"kind": "window", "windowHwnd": "4294967419"})
+    monkeypatch.setattr(capture_backend.ctypes, "WinDLL", win_dll, raising=False)
+    probe = capture_backend.window_iconic_probe({"kind": "window", "windowHwnd": "4294967419"})
     assert probe() is True
     assert calls == [4294967419]
-    assert is_iconic.argtypes == [prepared_capture.wintypes.HWND]
-    assert is_iconic.restype == prepared_capture.wintypes.BOOL
+    assert is_iconic.argtypes == [capture_backend.wintypes.HWND]
+    assert is_iconic.restype == capture_backend.wintypes.BOOL
 
 
 def test_display_selector_never_calls_is_iconic(monkeypatch):
     def forbidden(*_args, **_kwargs):
         pytest.fail("Display capture must not load or query user32.IsIconic")
 
-    monkeypatch.setattr(prepared_capture.ctypes, "WinDLL", forbidden, raising=False)
+    monkeypatch.setattr(capture_backend.ctypes, "WinDLL", forbidden, raising=False)
     selector = {"kind": "display", "displayDeviceName": r"\\.\DISPLAY1", "electronDisplayId": "1"}
-    assert prepared_capture.window_iconic_probe(selector) is None
+    assert capture_backend.window_iconic_probe(selector) is None
 
 
 def test_retry_after_result_joins_finishing_worker_before_starting_another(monkeypatch):

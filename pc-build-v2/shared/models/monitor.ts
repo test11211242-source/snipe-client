@@ -183,6 +183,8 @@ export const MonitorViewSchema = z
     summary: MonitorSessionSchema.nullable().default(null),
     historyError: MonitorPublicErrorSchema.nullable().default(null),
     geometry: MonitorGeometrySchema.nullable().default(null),
+    /** The running window source is minimised: analysis is paused until it is restored. */
+    sourceMinimized: z.boolean().default(false),
   })
   .strict()
 

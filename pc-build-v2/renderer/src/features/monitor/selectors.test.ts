@@ -12,6 +12,18 @@ describe('monitor selectors', () => {
     expect(status.tone).toBe('warn')
   })
 
+  it('says only that the game window is closed or minimised while the source is minimised', () => {
+    const view = monitorViewFixture({ state: 'READY', runIntent: true, sourceMinimized: true })
+    expect(selectRunPhase(view, true)).toBe('running')
+    expect(selectStatus(view, true, null)).toMatchObject({
+      text: 'Окно игры закрыто или свёрнуто',
+      tone: 'warn',
+      live: false,
+    })
+    const restored = monitorViewFixture({ state: 'READY', runIntent: true })
+    expect(selectStatus(restored, true, null).text).toBe('Ждём бой')
+  })
+
   it('maps start, failure, first run and stop', () => {
     expect(selectRunPhase(monitorViewFixture({ state: 'STARTING' }), true)).toBe(
       'starting',

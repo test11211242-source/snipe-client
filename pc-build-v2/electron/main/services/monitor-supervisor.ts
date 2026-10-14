@@ -487,7 +487,7 @@ export class MonitorSupervisor {
     ++this.#stopIntentGeneration
     this.cancelRecovery()
     this.clearRetry()
-    this.patch({ runIntent: false, search: null, geometry: null })
+    this.patch({ runIntent: false, search: null, geometry: null, sourceMinimized: false })
     this.#workerRestarts = []
     if (reason !== null) this.finalizeSession(reason)
     if (this.#stopPromise !== null) return this.#stopPromise
@@ -680,6 +680,7 @@ export class MonitorSupervisor {
           primary.kind === 'game_relative'
             ? { state: 'locating', aspectLabel: null, learningFailure: null }
             : null,
+        sourceMinimized: false,
       })
       const payload = MonitorStartPayloadSchema.parse({
         selector: resolved.selector,
@@ -748,6 +749,10 @@ export class MonitorSupervisor {
               // One-way prediction notifications cannot stop opponent monitoring.
             }
           }
+        },
+        onSourceState: ({ minimized }) => {
+          if (this.isRuntimeCurrent(generation, userId, contextGeneration))
+            this.patch({ sourceMinimized: minimized })
         },
         onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
         onExit: (error) => {

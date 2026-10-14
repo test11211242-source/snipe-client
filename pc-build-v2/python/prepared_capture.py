@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
-import ctypes
-from ctypes import wintypes
 import time
 import sys
 import threading
-from typing import Any, Callable
+from typing import Any
 
-from capture.backend import CaptureBackendError
+from capture.backend import CaptureBackendError, window_iconic_probe
 from capture.monitor_backend import WindowsMonitorBackend
 from protocol.framing import ProtocolError, read_stream_envelope, write_envelope
 from geometry.game_rect import detect, pixel_rect
@@ -143,18 +141,6 @@ def validate_command(metadata: dict[str, Any], expected_type: str | None = None)
     if expected_type is not None and command_type != expected_type:
         raise ProtocolError("prepared capture command order is invalid")
     return session_id, command_type
-
-
-def window_iconic_probe(selector: dict[str, Any]) -> Callable[[], bool] | None:
-    if selector["kind"] != "window":
-        return None
-    from capture.backend import parse_window_hwnd
-
-    hwnd = parse_window_hwnd(selector["windowHwnd"])
-    is_iconic = ctypes.WinDLL("user32", use_last_error=True).IsIconic
-    is_iconic.argtypes = [wintypes.HWND]
-    is_iconic.restype = wintypes.BOOL
-    return lambda: bool(is_iconic(hwnd))
 
 
 def main() -> None:

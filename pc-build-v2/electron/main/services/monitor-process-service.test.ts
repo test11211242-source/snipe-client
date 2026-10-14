@@ -709,4 +709,23 @@ describe('MonitorProcessService', () => {
     child.emit('close', 0, null)
     await stopped
   })
+
+  it('forwards window minimise and restore notifications to the listener', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = { ...listener(), onSourceState: vi.fn() }
+    const started = monitored.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    child.event(2, 'source_state', { minimized: true })
+    child.event(3, 'source_state', { minimized: false })
+    expect(events.onSourceState.mock.calls).toEqual([
+      [{ minimized: true }],
+      [{ minimized: false }],
+    ])
+    expect(events.onFatal).not.toHaveBeenCalled()
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
 })

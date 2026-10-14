@@ -289,13 +289,21 @@ source images or raw OCR/model responses.
 
 The private monitor protocol is JSON-lines version 3. Main sends one validated start
 command and an eventual stop command. Python emits monotonic, session-bound `ready`,
-`triggered`, `action`, prediction, diagnostic, `fatal` and `stopped` events with trigger IDs.
+`triggered`, `action`, prediction, diagnostic, `source_state`, `fatal` and `stopped` events
+with trigger IDs. Diagnostics are sent only when a profile's match state (matcher, matched,
+reason) changes. For a window source the worker polls `IsIconic` every 0.5 s after
+readiness: while the window is minimised it skips analysis and reports
+`source_state {minimized}` on each change; the command bar then says «Окно игры закрыто
+или свёрнуто» until the window is restored.
 Action PNG base64 exists only on the private pipe and is decoded immediately in main,
 never logged or sent to a renderer. Worker readiness
 has a 15-second deadline, allowing the worker's 7-second no-frame deadline plus
 an 8-second cold-start margin; stop is graceful first and then uses Windows process-tree
 termination. Stdout lines, stderr diagnostics, image dimensions/bytes, event ordering, and
-session generations are bounded and validated.
+session generations are bounded and validated. `MONITOR_PROCESS_EXITED` and
+`MONITOR_INTERNAL_FAILED` restart the worker on the source-recovery ladder, at most three
+times per ten minutes; beyond that the run fails. Every Python worker runs with one
+OpenCV thread and `OPENBLAS_NUM_THREADS`/`OMP_NUM_THREADS`/`MKL_NUM_THREADS` = 1.
 
 The local Trigger V3 engine checks color-independent structural maps at 10 FPS and uses
 bounded edge/orientation correlation with ORB alignment only when the analyzed template

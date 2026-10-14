@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from typing import Any
+from typing import Any, Callable
 
 MAX_PIXELS = 20_000_000
 
@@ -25,6 +25,17 @@ def parse_window_hwnd(value: Any) -> int:
     if hwnd <= 0 or hwnd > 0x7FFFFFFFFFFFFFFF:
         raise CaptureBackendError("INVALID_WINDOW_HANDLE", "Window handle is out of range")
     return hwnd
+
+
+def window_iconic_probe(selector: dict[str, Any]) -> Callable[[], bool] | None:
+    """`IsIconic` for a window selector (WGC sends no frames while minimised); None for displays."""
+    if selector.get("kind") != "window":
+        return None
+    hwnd = parse_window_hwnd(selector["windowHwnd"])
+    is_iconic = ctypes.WinDLL("user32", use_last_error=True).IsIconic
+    is_iconic.argtypes = [wintypes.HWND]
+    is_iconic.restype = wintypes.BOOL
+    return lambda: bool(is_iconic(hwnd))
 
 
 def monitor_index_for_device(device_name: str) -> int:

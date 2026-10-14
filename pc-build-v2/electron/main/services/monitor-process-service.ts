@@ -14,6 +14,7 @@ import {
   type MonitorLearningEvent,
   type MonitorLayoutLearnedEvent,
   type MonitorPredictionStateEvent,
+  type MonitorSourceStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
 import { pythonWorkerEnvironment } from './python-environment'
 
@@ -97,6 +98,7 @@ export interface MonitorProcessListener {
   onLearning?: (payload: MonitorLearningEvent['payload']) => void
   onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
   onPredictionState?: (payload: MonitorPredictionStateEvent['payload']) => void
+  onSourceState?: (payload: MonitorSourceStateEvent['payload']) => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
 }
@@ -494,6 +496,8 @@ export class MonitorProcessService {
       owned.listener.onLayoutLearned?.(event.payload)
     } else if (event.type === 'prediction_state') {
       owned.listener.onPredictionState?.(event.payload)
+    } else if (event.type === 'source_state') {
+      owned.listener.onSourceState?.(event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)

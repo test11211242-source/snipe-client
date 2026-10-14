@@ -42,6 +42,7 @@ describe('monitor renderer contracts', () => {
       summary: null,
       historyError: null,
       geometry: null,
+      sourceMinimized: false,
     }
     expect(MonitorViewResultSchema.parse(base)).toEqual(base)
     for (const field of [

@@ -1,6 +1,7 @@
 import type { MonitorView } from '../../../../shared/models/monitor'
 import type { RealtimeStatus } from '../../../../shared/models/network'
 import type { Tone } from '../../ui'
+import { SOURCE_LOST_TEXT } from '../setup/errors'
 
 export type RunPhase =
   | 'no-profile'
@@ -84,6 +85,8 @@ export function selectStatus(
     case 'waiting-source':
       return status('Ждём окно игры…', 'warn')
     case 'running': {
+      // Same wording as setup's lost source (§1.3): analysis is paused, not failed.
+      if (view?.sourceMinimized === true) return status(SOURCE_LOST_TEXT, 'warn')
       if (offline) return status('Нет связи с сервером', 'warn')
       const latest = view?.results[0] ?? null
       if (view?.search != null && ['capturing', 'requesting'].includes(view.search.phase))

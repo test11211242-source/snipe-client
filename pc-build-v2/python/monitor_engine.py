@@ -14,9 +14,12 @@ from typing import Any
 import cv2
 
 from capture.monitor_backend import WindowsMonitorBackend
-from capture.backend import CaptureBackendError
+from capture.backend import CaptureBackendError, window_iconic_probe
 from monitor_protocol import MonitorProtocolError, encode_event, read_command
 from trigger_engine import GeometryChangedError, InvalidFrameError, PredictionTriggerEngine, TriggerEngine, ensure_bgr
+
+# WGC sends no frames for a minimised window; poll IsIconic so the UI can say so.
+ICONIC_POLL_SECONDS = 0.5
 
 
 class EventWriter:
@@ -43,6 +46,8 @@ def run(start: dict[str, Any]) -> int:
     engine = None
     prediction_engine = None
     backend = None
+    minimized = threading.Event()
+    iconic = None
     # Last reported (matcher, matched, reason) per profile: a diagnostic line is written
     # only when it changes, not every second (it was ~96% of the owner's log).
     diagnostic_states: dict[str, tuple[Any, ...]] = {}
@@ -86,7 +91,7 @@ def run(start: dict[str, Any]) -> int:
         )
 
     def on_frame(frame) -> None:
-        if terminal.is_set() or stopping.is_set():
+        if terminal.is_set() or stopping.is_set() or minimized.is_set():
             return
         try:
             bgr = ensure_bgr(frame)
@@ -177,13 +182,26 @@ def run(start: dict[str, Any]) -> int:
             prediction_engine = PredictionTriggerEngine(payload["prediction"], payload["limits"])
         if not terminal.is_set():
             stage = "start"
+            iconic = window_iconic_probe(payload["selector"])
             backend = WindowsMonitorBackend(payload["selector"])
             if not terminal.is_set():
                 backend.start(on_frame, on_closed)
         deadline = time.monotonic() + 7.0
+        next_iconic_poll = -float("inf")
         while not terminal.wait(0.05):
-            if not ready.is_set() and time.monotonic() >= deadline:
-                fail("CAPTURE_NO_FRAME", "The capture source did not provide a frame", "start")
+            if not ready.is_set():
+                if time.monotonic() >= deadline:
+                    fail("CAPTURE_NO_FRAME", "The capture source did not provide a frame", "start")
+            elif iconic is not None and time.monotonic() >= next_iconic_poll:
+                next_iconic_poll = time.monotonic() + ICONIC_POLL_SECONDS
+                state = iconic()
+                if state != minimized.is_set():
+                    # Analysis pauses while minimised and resumes on the first restored frame.
+                    if state:
+                        minimized.set()
+                    else:
+                        minimized.clear()
+                    writer.emit("source_state", {"minimized": state})
     except CaptureBackendError as error:
         fail(
             "CAPTURE_SOURCE_CLOSED" if error.code == "CAPTURE_SOURCE_STALE" else "CAPTURE_START_FAILED",

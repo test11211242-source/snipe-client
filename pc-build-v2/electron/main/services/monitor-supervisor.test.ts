@@ -1269,6 +1269,21 @@ describe('MonitorSupervisor concurrency', () => {
     await test.supervisor.stop()
   })
 
+  it('projects a minimised window source while running and clears it on restore and stop', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    test.listener()?.onSourceState?.({ minimized: true })
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      sourceMinimized: true,
+    })
+    test.listener()?.onSourceState?.({ minimized: false })
+    expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
+    test.listener()?.onSourceState?.({ minimized: true })
+    await test.supervisor.stop()
+    expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
+  })
+
   it('notifies isolated result listeners and exposes only currently retained results', async () => {
     const test = harness()
     await test.supervisor.start()

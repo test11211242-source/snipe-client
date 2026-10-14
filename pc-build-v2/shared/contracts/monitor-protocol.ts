@@ -311,6 +311,12 @@ export const MonitorPredictionStateEventSchema = ProtocolBaseSchema.extend({
   payload: z.object({ state: z.enum(['active', 'aspect_mismatch']) }).strict(),
 }).strict()
 
+/** Window source minimised (analysis paused) or restored; sent only on change. */
+export const MonitorSourceStateEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('source_state'),
+  payload: z.object({ minimized: z.boolean() }).strict(),
+}).strict()
+
 export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorReadyEventSchema,
   MonitorDiagnosticEventSchema,
@@ -321,6 +327,7 @@ export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorLearningEventSchema,
   MonitorLayoutLearnedEventSchema,
   MonitorPredictionStateEventSchema,
+  MonitorSourceStateEventSchema,
   MonitorFatalEventSchema,
   MonitorStoppedEventSchema,
 ])
@@ -335,3 +342,4 @@ export type MonitorLayoutLearnedEvent = z.infer<typeof MonitorLayoutLearnedEvent
 export type MonitorPredictionStateEvent = z.infer<
   typeof MonitorPredictionStateEventSchema
 >
+export type MonitorSourceStateEvent = z.infer<typeof MonitorSourceStateEventSchema>
