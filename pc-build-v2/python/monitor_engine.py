@@ -43,7 +43,9 @@ def run(start: dict[str, Any]) -> int:
     engine = None
     prediction_engine = None
     backend = None
-    diagnostic_times = {"primary": -float("inf"), "prediction": -float("inf")}
+    # Last reported (matcher, matched, reason) per profile: a diagnostic line is written
+    # only when it changes, not every second (it was ~96% of the owner's log).
+    diagnostic_states: dict[str, tuple[Any, ...]] = {}
     writer_failed = False
 
     def fail(code: str, message: str, stage: str = "initialize", error: Exception | None = None) -> None:
@@ -61,10 +63,13 @@ def run(start: dict[str, Any]) -> int:
             except Exception:
                 writer_failed = True
 
-    def emit_diagnostic(profile: str, match, now: float) -> None:
-        if match is None or now - diagnostic_times[profile] < 1.0:
+    def emit_diagnostic(profile: str, match) -> None:
+        if match is None:
             return
-        diagnostic_times[profile] = now
+        state = (match.matcher, match.matched, match.reason)
+        if diagnostic_states.get(profile) == state:
+            return
+        diagnostic_states[profile] = state
         writer.emit(
             "diagnostic",
             {
@@ -93,7 +98,7 @@ def run(start: dict[str, Any]) -> int:
                 ready.set()
             now = time.monotonic()
             action = engine.process(bgr, now)
-            emit_diagnostic("primary", engine.last_match, now)
+            emit_diagnostic("primary", engine.last_match)
             trigger_id = str(uuid.uuid4())
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             triggered = engine.take_triggered()
@@ -124,7 +129,7 @@ def run(start: dict[str, Any]) -> int:
                 )
             prediction_result = prediction_engine.process(bgr, now) if prediction_engine else None
             if prediction_engine is not None:
-                emit_diagnostic("prediction", prediction_engine.last_match, now)
+                emit_diagnostic("prediction", prediction_engine.last_match)
                 for event_type, event_payload in prediction_engine.take_events():
                     writer.emit(event_type, event_payload)
             if prediction_result is not None:

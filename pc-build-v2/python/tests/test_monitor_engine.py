@@ -102,3 +102,60 @@ def test_guarded_lifecycle(monkeypatch, stage, code):
     assert 'private' not in repr(events)
     assert len(stopped) == (0 if stage in ('trigger', 'prediction', 'backend', 'stop-constructor') else 1)
     assert result == (2 if stage == 'writer' else 0)
+
+
+def test_diagnostics_are_written_only_when_the_match_state_changes(monkeypatch):
+    events = []
+    states = iter([(False, 'no_candidate'), (False, 'no_candidate'), (True, 'pass'), (True, 'pass'),
+                   (False, 'structure_below_threshold'), (False, 'structure_below_threshold')])
+
+    class Writer:
+        sequence = 0
+        def __init__(self, _session):
+            pass
+        def emit(self, event_type, payload):
+            self.sequence += 1
+            events.append((event_type, payload))
+
+    def engine(_payload):
+        state = SimpleNamespace(last_match=None)
+        def process(_frame, _now):
+            matched, reason = next(states)
+            state.last_match = SimpleNamespace(matcher='vs_orientation', matched=matched, score=0.4 + matched * 0.5,
+                                               support=None, orientation=0.4, correlation=None,
+                                               orb_inliers=None, reason=reason)
+            return None
+        state.process = process
+        state.take_triggered = lambda: False
+        state.take_events = lambda: []
+        return state
+
+    class Backend:
+        def __init__(self, _selector):
+            pass
+        def start(self, frame, _closed):
+            for _ in range(6):
+                frame(np.zeros((2, 2, 3), dtype=np.uint8))
+            readers[0]()
+        def stop(self):
+            pass
+
+    readers = []
+
+    class Reader:
+        def __init__(self, target, **_kwargs):
+            readers.append(target)
+        def start(self):
+            pass
+
+    monkeypatch.setattr(monitor, 'EventWriter', Writer)
+    monkeypatch.setattr(monitor, 'TriggerEngine', engine)
+    monkeypatch.setattr(monitor, 'WindowsMonitorBackend', Backend)
+    monkeypatch.setattr(monitor.threading, 'Thread', Reader)
+    monkeypatch.setattr(monitor, 'read_command', lambda *_args, **_kwargs: {'type': 'stop'})
+    assert monitor.run({'sessionId': 'test', 'payload': {
+        'selector': {}, 'prediction': None, 'limits': {'maxImagePixels': 20_000_000},
+    }}) == 0
+    diagnostics = [payload for event_type, payload in events if event_type == 'diagnostic']
+    assert [(item['matched'], item['reason']) for item in diagnostics] == [
+        (False, 'no_candidate'), (True, 'pass'), (False, 'structure_below_threshold')]
