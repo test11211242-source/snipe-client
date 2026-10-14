@@ -577,6 +577,81 @@ describe('MonitorProcessService', () => {
     await stopped
   })
 
+  it('logs one compact line per VS candidate and per geometry state change', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = listener()
+    const primary = monitorGamePrimaryFixture()
+    const started = monitored.value.start({ ...payload(), primary }, events)
+    child.event(1, 'ready', { frameWidth: 1080, frameHeight: 1920 })
+    await started
+    const candidate = {
+      reason: 'cooldown',
+      state: 'armed',
+      score: 0.9812,
+      frames: 18,
+      matchedFrames: 17,
+      sinceFireS: 11.4,
+      frameWidth: 1080,
+      frameHeight: 1920,
+      gameRect: { x: 0, y: 28, width: 1080, height: 1864 },
+      gameAspect: 0.5794,
+      layoutAspect: 0.5794,
+      kind: 'spectate',
+      learnedLayout: true,
+      code: null,
+      suppressed: 0,
+    }
+    child.event(2, 'vs_candidate', candidate)
+    const geometry = {
+      state: 'aspect_mismatch',
+      frameWidth: 1080,
+      frameHeight: 1920,
+      gameRect: { x: 0, y: 45, width: 1080, height: 1847 },
+      gameAspect: 0.584732,
+      layoutId: null,
+    }
+    child.event(3, 'geometry', geometry)
+    child.event(4, 'geometry', {
+      ...geometry,
+      gameRect: { x: 0, y: 28, width: 1080, height: 1864 },
+    })
+    child.event(5, 'learning', {
+      status: 'rejected',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 1,
+    })
+    child.event(6, 'source_state', { minimized: true })
+    const info = monitored.logger.info.mock.calls
+    expect(info).toContainEqual(['VS candidate', candidate])
+    expect(info.filter(([message]) => message === 'Monitor geometry')).toEqual([
+      [
+        'Monitor geometry',
+        {
+          state: 'aspect_mismatch',
+          frameWidth: 1080,
+          frameHeight: 1920,
+          gameRect: geometry.gameRect,
+          gameAspect: 0.5847,
+          hasLayout: false,
+        },
+      ],
+    ])
+    expect(info).toContainEqual([
+      'Monitor learning',
+      { status: 'rejected', code: 'LEARN_TRIGGER_WEAK', rejectedCount: 1 },
+    ])
+    expect(info).toContainEqual(['Monitor source state', { minimized: true }])
+    expect(events.onGeometry).toHaveBeenCalledTimes(2)
+    child.event(7, 'vs_candidate', { ...candidate, reason: 'late' })
+    expect(events.onFatal).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'MONITOR_PROTOCOL_INVALID' }),
+    )
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
+
   it('accepts commands above the obsolete 256KiB cap and rejects above 1MiB before spawning', async () => {
     const child = new FakeChild()
     const spawn = vi.fn(() => child)

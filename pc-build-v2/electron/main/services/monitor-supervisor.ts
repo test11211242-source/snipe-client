@@ -171,7 +171,10 @@ export class MonitorSupervisor {
     private readonly ocr: OcrApiClient,
     private readonly now: () => Date = () => new Date(),
     private readonly journalRepository?: MonitorJournalRepository,
-    private readonly logger?: { warn: (message: string, context?: unknown) => void },
+    private readonly logger?: {
+      info: (message: string, context?: unknown) => void
+      warn: (message: string, context?: unknown) => void
+    },
   ) {
     this.#userContextId = this.auth.getView().user?.id ?? null
   }
@@ -1315,6 +1318,12 @@ export class MonitorSupervisor {
     recovery: 'source' | 'worker' = 'source',
   ): void {
     this.cancelRecovery()
+    // One line per recovery episode; the retries that follow are not logged.
+    if (this.#recoveryAttempt === 0)
+      this.logger?.info('Monitor waiting for source', {
+        code: error?.code ?? null,
+        kind: recovery,
+      })
     this.transition('WAITING_SOURCE', {
       error,
       search: null,

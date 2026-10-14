@@ -49,6 +49,8 @@ class LayoutLearning:
         self._last_sample = -float("inf")
         self._last_history_sample = -float("inf")
         self._shape = None
+        # True for the call that silently ignored a VS of the other layout kind.
+        self.ignored_kind = False
 
     def _event(self, status, reason=None):
         self.events.append(("learning", {"status": status, "reason": reason, "rejectedCount": self.rejected_count}))
@@ -101,6 +103,7 @@ class LayoutLearning:
         return None
 
     def process(self, frame, now, geometry):
+        self.ignored_kind = False
         if not self.enabled or geometry.rect is None:
             return None
         if not self.active:
@@ -202,6 +205,7 @@ class LayoutLearning:
                 # A profile learns only from its own VS layout: own-battle
                 # profiles ignore spectating and vice versa, without failing.
                 self._latched = True
+                self.ignored_kind = True
             elif rejection or not sources:
                 self._reject("LEARN_" + (rejection or "LAYOUT_UNEXPECTED"))
             else:

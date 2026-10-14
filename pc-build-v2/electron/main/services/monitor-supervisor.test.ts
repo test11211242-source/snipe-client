@@ -100,7 +100,7 @@ function harness(
     stop: vi.fn().mockResolvedValue(undefined),
   }
   const ocr = { process: vi.fn() }
-  const logger = { warn: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn() }
   const supervisor = new MonitorSupervisor(
     {
       getView: () => ({
@@ -1581,6 +1581,14 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       recovery: null,
     })
     expect(raw).toContain('PREFLIGHT')
+    // Three attempts, one diagnostics line.
+    expect(
+      test.logger.info.mock.calls.filter(
+        ([message]) => message === 'Monitor waiting for source',
+      ),
+    ).toEqual([
+      ['Monitor waiting for source', { code: 'CAPTURE_SOURCE_CLOSED', kind: 'source' }],
+    ])
     const recovered = presented.indexOf('READY')
     expect(
       presented.slice(0, recovered).filter((state) => state !== 'WAITING_SOURCE'),

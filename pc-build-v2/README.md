@@ -295,7 +295,16 @@ The private monitor protocol is JSON-lines version 3. Main sends one validated s
 command and an eventual stop command. Python emits monotonic, session-bound `ready`,
 `triggered`, `action`, prediction, diagnostic, `source_state`, `fatal` and `stopped` events
 with trigger IDs. Diagnostics are sent only when a profile's match state (matcher, matched,
-reason) changes. For a window source the worker polls `IsIconic` every 0.5 s after
+reason) changes. Game-relative profiles also send one `vs_candidate` record per VS
+candidate or near miss (orientation score ≥ 0.30, or a learning decision), logged as
+`VS candidate`: the best score, state, game rectangle, game/layout aspects, layout kind,
+frames, seconds since the last fire, and why it did not fire (`fired`, `cooldown`,
+`rearm`, `confirm`, `kind`, `learning`, `aspect`, `score`); a mismatched game is scored
+with its closest layout for this record only. The worker writes at most one per episode,
+one per second and 20 per minute, counting dropped ones in the next. Main also logs
+geometry state changes (`Monitor geometry`, not rectangle jitter), learning events,
+learned layouts, `source_state` changes and the start of each source/worker recovery.
+For a window source the worker polls `IsIconic` every 0.5 s after
 readiness: while the window is minimised it skips analysis and reports
 `source_state {minimized}` on each change; the command bar then says «Окно игры закрыто
 или свёрнуто» until the window is restored.

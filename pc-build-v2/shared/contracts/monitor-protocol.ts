@@ -317,6 +317,49 @@ export const MonitorSourceStateEventSchema = ProtocolBaseSchema.extend({
   payload: z.object({ minimized: z.boolean() }).strict(),
 }).strict()
 
+/**
+ * One compact record per VS candidate or near miss (≥0.30 or a learning
+ * decision): why it fired or not, and the geometry it was evaluated on.
+ * The worker bounds it to one per episode, one per second and 20 per minute.
+ */
+export const MonitorVsCandidateEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('vs_candidate'),
+  payload: z
+    .object({
+      reason: z.enum([
+        'fired',
+        'cooldown',
+        'rearm',
+        'confirm',
+        'kind',
+        'learning',
+        'aspect',
+        'score',
+      ]),
+      state: z.enum([
+        'armed',
+        'locating',
+        'no_game',
+        'aspect_mismatch',
+        'aspect_unknown',
+      ]),
+      score: z.number().min(-1).max(1).nullable(),
+      frames: z.number().int().positive().max(1_000),
+      matchedFrames: z.number().int().nonnegative().max(1_000),
+      sinceFireS: z.number().nonnegative().nullable(),
+      frameWidth: PixelSizeSchema.shape.width,
+      frameHeight: PixelSizeSchema.shape.height,
+      gameRect: PixelRectSchema.nullable(),
+      gameAspect: z.number().positive().nullable(),
+      layoutAspect: z.number().positive().nullable(),
+      kind: z.enum(['battle', 'spectate']).nullable(),
+      learnedLayout: z.boolean(),
+      code: z.union([MonitorLearningCodeSchema, z.literal('LAYOUT_LEARNED')]).nullable(),
+      suppressed: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+}).strict()
+
 export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorReadyEventSchema,
   MonitorDiagnosticEventSchema,
@@ -328,6 +371,7 @@ export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorLayoutLearnedEventSchema,
   MonitorPredictionStateEventSchema,
   MonitorSourceStateEventSchema,
+  MonitorVsCandidateEventSchema,
   MonitorFatalEventSchema,
   MonitorStoppedEventSchema,
 ])
@@ -343,3 +387,4 @@ export type MonitorPredictionStateEvent = z.infer<
   typeof MonitorPredictionStateEventSchema
 >
 export type MonitorSourceStateEvent = z.infer<typeof MonitorSourceStateEventSchema>
+export type MonitorVsCandidateEvent = z.infer<typeof MonitorVsCandidateEventSchema>
