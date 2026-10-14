@@ -480,3 +480,41 @@ describe('source-loss retries', () => {
     await test.controller.stop()
   })
 })
+
+describe('widget audit followups', () => {
+  it('fits the native height to new content before the disk write completes', async () => {
+    const test = harness(false)
+    await test.controller.start('user')
+    const write = deferred()
+    test.repository.save.mockImplementationOnce(
+      async (_userId: string, settings: WidgetSettings) => {
+        await write.promise
+        return settings
+      },
+    )
+    const update = test.controller.updateSettings({ contentHeight: 420 })
+    await vi.waitFor(() => {
+      const applied = test.windows.applyWidgetSettings.mock.lastCall as
+        [WidgetSettings] | undefined
+      expect(applied?.[0].bounds.height).toBe(420)
+    })
+    expect(test.controller.getView().settings.bounds.height).not.toBe(420)
+    write.resolve()
+    expect((await update).bounds.height).toBe(420)
+    await test.controller.stop()
+  })
+
+  it('projects a minimised game window to the overlay', async () => {
+    const test = harness(false)
+    await test.controller.start('user')
+    test.view(
+      monitorViewFixture({ state: 'READY', runIntent: true, sourceMinimized: true }),
+    )
+    expect(test.windows.sendToRenderer).toHaveBeenLastCalledWith(
+      'widget',
+      'widget:view-changed',
+      expect.objectContaining({ sourceMinimized: true }),
+    )
+    await test.controller.stop()
+  })
+})

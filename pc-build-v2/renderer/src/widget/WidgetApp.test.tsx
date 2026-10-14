@@ -32,6 +32,7 @@ const widgetView: WidgetView = {
   monitorError: null,
   runIntent: true,
   search: null,
+  sourceMinimized: false,
   scale: 1,
   result: {
     id: resultId,
@@ -536,6 +537,21 @@ describe('WidgetApp', () => {
       expect(
         screen.getByText('Мониторинг остановлен', { selector: 'span' }),
       ).toBeVisible()
+    })
+
+    it('says the game window is minimised, keeping a found deck', async () => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        sourceMinimized: true,
+      })
+      render(<WidgetApp />)
+      expect(await screen.findByText('Окно игры свёрнуто')).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
+
+      push({ ...widgetView, result: null, sourceMinimized: true })
+      expect(screen.getByRole('heading', { name: 'Окно игры свёрнуто' })).toBeVisible()
+      push({ ...widgetView, result: null })
+      expect(screen.getByText('Ждём бой')).toBeVisible()
     })
   })
 

@@ -26,7 +26,7 @@ const SOURCE_REBIND_CODE = 'SOURCE_REBIND_REQUIRED'
  * selection never reaches this window.
  */
 export function selectOverlayModel(view: WidgetView): OverlayModel {
-  const { monitorState, runIntent, monitorError, search, result } = view
+  const { monitorState, runIntent, monitorError, search, result, sourceMinimized } = view
   if (monitorError?.code === SOURCE_REBIND_CODE)
     return {
       status: 'Нужна перенастройка',
@@ -55,6 +55,22 @@ export function selectOverlayModel(view: WidgetView): OverlayModel {
         title: 'Мониторинг не запустился',
         text: monitorError?.message ?? 'Проверьте профиль в главном окне.',
       },
+    }
+  // Analysis is paused (main says «Окно игры закрыто или свёрнуто», too long for this
+  // strip); a found deck stays useful.
+  if (monitorState === 'READY' && sourceMinimized)
+    return {
+      status: 'Окно игры свёрнуто',
+      tone: 'warn',
+      busy: false,
+      body:
+        result?.kind === 'player_found'
+          ? { kind: 'found', result }
+          : {
+              kind: 'message',
+              title: 'Окно игры свёрнуто',
+              text: 'Разверните его — поиск продолжится сам.',
+            },
     }
   if (search?.phase === 'capturing' || search?.phase === 'requesting')
     return {

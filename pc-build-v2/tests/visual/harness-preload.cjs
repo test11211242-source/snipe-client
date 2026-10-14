@@ -259,6 +259,7 @@ const widgetView = (spec) => {
     monitorError: spec.monitorError ?? null,
     runIntent: spec.runIntent ?? true,
     search: spec.search ? expandSearch(spec.search) : null,
+    sourceMinimized: spec.sourceMinimized === true,
     scale: Math.max(0.86, Math.min(1.5, width / 360)),
   }
 }

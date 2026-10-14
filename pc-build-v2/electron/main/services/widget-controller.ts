@@ -139,6 +139,7 @@ export class WidgetController {
       monitorError: waiting === null ? monitor.error : waiting.error,
       runIntent: monitor.runIntent,
       search: monitor.search,
+      sourceMinimized: monitor.sourceMinimized,
       scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
     })
   }
@@ -214,6 +215,10 @@ export class WidgetController {
             }
           : current.bounds,
       })
+      // Content height is window geometry, not a user choice: fit the window now, so new
+      // content (a found deck after waiting) is not cut off for the length of the disk write.
+      if (Object.keys(settingsPatch).length === 0)
+        this.windows.applyWidgetSettings(settings)
       const saved = await this.repository.save(userId, settings)
       this.assertSession(userId, generation)
 

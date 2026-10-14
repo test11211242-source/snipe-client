@@ -132,6 +132,8 @@ export const WidgetViewSchema = z
     monitorError: MonitorPublicErrorSchema.nullable().default(null),
     runIntent: z.boolean(),
     search: MonitorSearchSchema.nullable(),
+    /** The game window is minimised: analysis is paused until it is restored. */
+    sourceMinimized: z.boolean().default(false),
     scale: z.number().min(0.86).max(1.5),
   })
   .strict()

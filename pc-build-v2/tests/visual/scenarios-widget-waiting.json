@@ -100,5 +100,24 @@
         }
       }
     }
+  },
+  {
+    "name": "minimised-full",
+    "width": 360,
+    "height": 600,
+    "page": "widget.html",
+    "fit": true,
+    "fixture": {
+      "widget": {
+        "width": 360,
+        "sourceMinimized": true,
+        "result": {
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Северный ветер",
+          "decks": 1
+        }
+      }
+    }
   }
 ]

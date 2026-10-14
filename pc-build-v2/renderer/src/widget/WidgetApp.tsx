@@ -32,6 +32,7 @@ function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
     left.monitorState === right.monitorState &&
     left.monitorError?.code === right.monitorError?.code &&
     left.runIntent === right.runIntent &&
+    left.sourceMinimized === right.sourceMinimized &&
     left.search?.attemptId === right.search?.attemptId &&
     left.search?.phase === right.search?.phase &&
     left.search?.searchedNickname === right.search?.searchedNickname &&
