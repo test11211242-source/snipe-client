@@ -1,6 +1,6 @@
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { WIDGET_IPC_CHANNELS } from '../../../shared/contracts/widget-ipc'
-import type { MonitorResult } from '../../../shared/models/monitor'
+import type { MonitorResult, MonitorView } from '../../../shared/models/monitor'
 import {
   WIDGET_COMPACT_MIN_WIDTH,
   WIDGET_COMPACT_MAX_WIDTH,
@@ -58,6 +58,8 @@ export class WidgetController {
   #disposeBounds: (() => void) | null = null
   #boundsTimer: ReturnType<typeof setTimeout> | null = null
   #generation = 0
+  /** Error of the last WAITING_SOURCE while a source-recovery attempt is in flight. */
+  #waitingSource: Pick<MonitorView, 'error'> | null = null
   #settingsMutation: Promise<void> = Promise.resolve()
   readonly #autoOpenedIds = new Set<string>()
   readonly #autoOpenedOrder: string[] = []
@@ -88,6 +90,7 @@ export class WidgetController {
     this.#disposeMonitor = this.monitor.subscribeResults((result) =>
       this.acceptResult(result),
     )
+    // Every monitor transition publishes, so `getView` observes each one in order.
     this.#disposeMonitorView = this.monitor.subscribeViews(() => this.publishView())
     this.#disposeBounds = this.windows.onWidgetBoundsChanged((bounds) =>
       this.acceptBounds(bounds),
@@ -121,17 +124,19 @@ export class WidgetController {
     this.#autoOpenedIds.clear()
     this.#autoOpenedOrder.length = 0
     this.#autoOpeningIds.clear()
+    this.#waitingSource = null
   }
 
   getView(): WidgetView {
     const settings = this.requireSettings()
-    const monitor = this.monitor.getCurrentView()
+    const monitor = this.observeMonitor(this.monitor.getCurrentView())
+    const waiting = this.#waitingSource
     return WidgetViewSchema.parse({
       settings,
       visible: this.windows.isWidgetVisible(),
       result: projectResult(this.monitor.getLatestResult()),
-      monitorState: monitor.state,
-      monitorError: monitor.error,
+      monitorState: waiting === null ? monitor.state : 'WAITING_SOURCE',
+      monitorError: waiting === null ? monitor.error : waiting.error,
       runIntent: monitor.runIntent,
       search: monitor.search,
       scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
@@ -289,6 +294,20 @@ export class WidgetController {
       }
     }, BOUNDS_SAVE_DELAY_MS)
     this.publishView()
+  }
+
+  /**
+   * The widget waits for the game window as one stable state. While the source is lost,
+   * the supervisor retries `WAITING_SOURCE -> PREFLIGHT (-> STARTING) -> WAITING_SOURCE`
+   * every few seconds; projecting those attempts as themselves flashed the retained deck
+   * (cropped, before the window grew for it) on every retry. Recovery attempts keep the
+   * waiting projection until monitoring is READY again or the run ends.
+   */
+  private observeMonitor(view: MonitorView): MonitorView {
+    if (view.state === 'WAITING_SOURCE') this.#waitingSource = { error: view.error }
+    else if (!view.runIntent || (view.state !== 'PREFLIGHT' && view.state !== 'STARTING'))
+      this.#waitingSource = null
+    return view
   }
 
   private requireUserId(): string {
