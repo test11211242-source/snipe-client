@@ -61,6 +61,27 @@ def test_own_battle_profile_ignores_spectate_vs_without_failing():
     assert not any(kind == "layout_learned" for _, kind, _ in first_events + second_events)
 
 
+@pytest.mark.parametrize(("widths", "learned_on"), [
+    # Gap 1.028–1.031 (MuMu F11 is 1.030): always the setup layout, never learned.
+    ((370, 371, 369, 370), []),
+    # Gap 1.047–1.053, just beyond the match band: learned once, then reused.
+    ((378, 379, 377, 378), [0]),
+])
+def test_pixel_jitter_across_restarts_never_flips_or_learns_twice(widths, learned_on):
+    engine = TriggerEngine(game_payload())
+    fires, learned, layouts = [], [], []
+    for battle, width in enumerate(widths):
+        for index in range(70):
+            frame, _ = arena(width, 640, seed=index, badge=index >= 45)
+            if engine.process(frame, battle * 20 + index * 0.1) is not None:
+                fires.append(battle)
+                layouts.append(engine.geometry.layout["layoutSource"])
+            learned += [battle for kind, _ in engine.take_events() if kind == "layout_learned"]
+    assert fires == [0, 1, 2, 3]
+    assert learned == learned_on
+    assert layouts == ["learned" if learned_on else "setup"] * 4
+
+
 def test_spectate_profile_learns_only_from_spectate_vs():
     spectate = game_layout(cy=0.523)
     engine = TriggerEngine(game_payload([spectate]))

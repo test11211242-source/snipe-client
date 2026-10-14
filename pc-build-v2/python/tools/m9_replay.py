@@ -1,6 +1,6 @@
 """Offline M9 replay: setup, fixed-badge rule (c), and the actual runtime.
 
-Usage: m9_replay.py {setup|orient|runtime|autosetup} --manifest <external.json> --out <external-dir>
+Usage: m9_replay.py {setup|orient|runtime|autosetup|boundary} --manifest <external.json> --out <external-dir>
 Manifest JSON: {"recordings": [{"key": "sample1", "path": "video.mp4",
 "kind": "cheddar|ranked|spectate|long|language|toolbar|titlebar",
 "vsOnsets": [4.6], "vsDuration": 1.9, "gameAspect": 0.5625,
@@ -21,6 +21,8 @@ REPORT recording keys and an external titlebar image. Pass --titlebar-image and
 runtime.titlebarRect. Titlebar crop coordinates are caller-owned evidence.
 Runtime does not run the 17 fixed-badge distortions; it uses the REPORT resize,
 border, same-canvas shrink and titlebar matrix instead. Autosetup uses the live engine.
+Boundary sweeps game aspects across the layout match band (three restarts per
+case, one pixel apart) and measures own/spectate VS heights against 0.46.
 """
 from __future__ import annotations
 
@@ -38,11 +40,13 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from game_geometry import DETECT_FRAMES
 from geometry.acceptance import accept
+from geometry.aspect import ASPECT_MATCH_TOL, ASPECT_TOL, aspect_gap
 from geometry.game_rect import PixelRect, RectResult, detect
 from geometry.vs_finder import MATCH_T, Candidate, VSConfirmer, search
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
-from geometry.zones import Badge, regions
+from geometry.zones import Badge, layout_kind, regions
 from trigger_engine import TemporalGate, TriggerEngine
 from monitor_protocol import validate_start_payload
 from auto_setup import AutoSetupEngine, DEADLINE_MS
@@ -452,21 +456,37 @@ def _runtime_windows(record: dict[str, Any], offset: int = 0) -> list[tuple[int,
 
 def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]], *,
                  learning: bool = False, output: Path | None = None,
-                 overlay_number: int = 0, gap_at: int | None = None) -> dict[str, Any]:
+                 overlay_number: int = 0, gap_at: int | list[int] | None = None) -> dict[str, Any]:
     """Only TriggerEngine decides geometry, learning, firing and action pixels."""
     engine = TriggerEngine(_runtime_payload(layout, learning=learning))
+    gaps = [] if gap_at is None else [gap_at] if isinstance(gap_at, int) else list(gap_at)
+
+    def clock(index: int) -> float:
+        return index / 10 + 16.0 * sum(index >= gap for gap in gaps)
+
     fires, actions, states, events, timings = [], [], {}, [], []
     scores: dict[int, float] = {}
     episode_gate = TemporalGate(2, 0)
     episodes, blocked_fires, unknown_at, mismatch_at = [], [], None, None
+    # Settled (state, layout) changes within one frame size: oscillation evidence.
+    transitions, fire_layouts, settled, shape = [], [], None, None
     for index, frame in enumerate(frames):
         started = time.perf_counter()
-        now = index / 10 + (16.0 if gap_at is not None and index >= gap_at else 0.0)
+        now = clock(index)
         action = engine.process(frame, now)
         timings.append((time.perf_counter() - started) * 1000)
         fired = engine.take_triggered()
         geometry = engine.geometry
         state = geometry.state
+        key = ("armed" if state == "armed_provisional" else state,
+               geometry.layout["layoutId"] if geometry.layout else None)
+        if frame.shape[:2] != shape:
+            shape, settled = frame.shape[:2], None
+        elif geometry.frames >= DETECT_FRAMES and key != settled:
+            if settled is not None:
+                transitions.append({"frame": index, "from": settled[0], "to": key[0],
+                                    "layoutSource": geometry.layout["layoutSource"] if geometry.layout else None})
+            settled = key
         states[state] = states.get(state, 0) + 1
         if state == "aspect_mismatch" and mismatch_at is None:
             mismatch_at = index
@@ -493,6 +513,8 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
             events.append(event)
         if fired:
             fires.append(index)
+            fire_layouts.append({"source": geometry.layout["layoutSource"] if geometry.layout else None,
+                                 "gameAspect": round(geometry.layout["gameAspect"], 4) if geometry.layout else None})
             if state not in ("armed", "armed_provisional"):
                 blocked_fires.append(index)
             if output is not None and geometry.rect is not None:
@@ -511,8 +533,9 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
     counts = [sum(onset <= index < end for index in fires) for onset, end in windows]
     false = [index for index in fires if not any(onset <= index < end for onset, end in windows)]
     return {
-        "fires": fires, "fireSeconds": [index / 10 + (16.0 if gap_at is not None and index >= gap_at else 0.0) for index in fires],
-        "vsFireCounts": counts, "simulatedGap": {"beforeFrame": gap_at, "seconds": 16} if gap_at is not None else None,
+        "fires": fires, "fireSeconds": [clock(index) for index in fires], "fireLayouts": fire_layouts,
+        "vsFireCounts": counts, "simulatedGap": {"beforeFrames": gaps, "seconds": 16} if gaps else None,
+        "transitions": transitions,
         "delayS": [round((index - onset) / 10, 1) for onset, end in windows
                    for index in fires if onset <= index < end],
         "falseFires": len(false), "blockedFires": blocked_fires, "actions": actions,
@@ -584,9 +607,9 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fullscreen_ok(cells: list[dict[str, Any]]) -> bool:
-    """F11 portrait: no phantom band; the first battle learns and fires, the
-    second fires on the learned layout with the profile's kind; a battle
-    within the cooldown is recorded as such; own battles never fire a
+    """F11 portrait (gap 1.030, inside the match band): no phantom band; both
+    battles fire on the profile's own layout, aligned, without learning; a
+    battle within the cooldown is recorded as such; own battles never fire a
     spectate profile."""
     def records(cell):
         return [event for event in cell["events"] if event["type"] == "vs_candidate"]
@@ -597,10 +620,11 @@ def _fullscreen_ok(cells: list[dict[str, Any]]) -> bool:
     battles = [cell for cell in cells if "expectKind" in cell]
     battles_ok = len(battles) == 4 and all(
         cell["vsFireCounts"] == [1, 1] and cell["falseFires"] == 0 and not cell["blockedFires"]
-        and cell["chromeBand"] is None and learned(cell) == cell["fires"][:1]
+        and cell["chromeBand"] is None and not learned(cell) and cell["stableVsMin"] >= 0.9
+        and max(cell["delayS"]) <= 0.2
         and [action["frame"] for action in cell["actions"]] == cell["fires"]
-        and [(record["reason"], record["code"]) for record in records(cell)] == [("fired", "LAYOUT_LEARNED"), ("fired", None)]
-        and records(cell)[-1]["learnedLayout"] and records(cell)[-1]["kind"] == cell["expectKind"]
+        and [(record["reason"], record["code"], record["learnedLayout"], record["kind"]) for record in records(cell)]
+        == [("fired", None, False, cell["expectKind"])] * 2
         for cell in battles)
     back = [cell for cell in cells if cell.get("expectCooldown")]
     back_ok = len(back) == 1 and all(
@@ -768,8 +792,8 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
         del frames
     # Intermittent miss (owner, 14.10.2026): MuMu F11 portrait. A menu with a
     # still side column used to be trimmed as a toolbar, so the windowed
-    # profile was armed on a cut game rect and never learned the F11 layout.
-    # Each case: menu, battle, 16 s, battle again (learned, then armed).
+    # profile was armed on a cut game rect. Each case: menu, battle, 16 s,
+    # battle again; the stretched game (gap 1.030) arms the profile's layout.
     f11_cases = [("windowed_1080x1920", "windowed_1080x1920", "battle")]
     f11_cases += [("spectate_profile", target, "spectate") for target in _RUNTIME_SPECTATE]
     for source, target, kind in f11_cases:
@@ -930,9 +954,140 @@ def autosetup_replay(manifest: Path, output: Path, *, overlays: bool = False,
     return result
 
 
+# Aspect-boundary sweep (owner, 14.10.2026): gaps around the old 3 % edge
+# (required 1.025–1.035) and around the match band's own edge.
+BOUNDARY_GAPS = (1.025, 1.0275, 1.03, 1.0325, 1.035, 1.04, 1.045, 1.0475, 1.05, 1.055)
+BOUNDARY_REQUIRED = 1.035
+# Game rows added per restart: one pixel either way must not change the outcome.
+BOUNDARY_JITTER = (0, 1, -1)
+BOUNDARY_PROFILES = (("windowed_1080x1920", "windowed_1080x1920", "battle"),
+                     ("spectate_1", "spectate_2", "spectate"))
+BOUNDARY_MODES = ("squash", "tall", "crop")
+KIND_BOUNDARY = 0.46
+
+
+def _aspect_variant(frame: np.ndarray, rect: PixelRect, gap: float, mode: str, jitter: int) -> np.ndarray:
+    """The game at `gap` from its own aspect inside F11-like black bars:
+    squash (wider, as MuMu F11), tall (narrower), or crop (wider, unscaled)."""
+    x, y, width, height = rect
+    game = frame[y:y + height, x:x + width]
+    rows = round(height * gap if mode == "tall" else height / gap) + jitter
+    if mode == "crop":
+        top = (height - rows) // 2
+        game = game[top:top + rows]
+    else:
+        game = cv2.resize(game, (width, rows), interpolation=cv2.INTER_AREA if rows < height else cv2.INTER_LINEAR)
+    bar = round(height * F11_BAR)
+    output = np.zeros((rows + 2 * bar, width, 3), np.uint8)
+    output[bar:bar + rows] = game
+    return output
+
+
+def _vs_kind(frame: np.ndarray, rect: PixelRect) -> dict[str, Any]:
+    candidate = search(frame, rect)
+    if candidate is None:
+        return {"cy": None, "kind": None}
+    return {"cy": round(candidate.badge.cy, 4), "kind": layout_kind(candidate.badge)}
+
+
+def evaluate_boundary(result: dict[str, Any]) -> dict[str, Any]:
+    cases = list(result["cases"].values())
+    # Within one frame size a game may settle into a layout, never leave it.
+    allowed = {("aspect_mismatch", "aspect_unknown"), ("aspect_mismatch", "armed"), ("aspect_unknown", "armed")}
+
+    def learned(cell):
+        return sum(event["type"] == "layout_learned" for event in cell["events"])
+
+    def sources(cell):
+        return [layout["source"] for layout in cell["fireLayouts"]]
+
+    kinds = [vs for cell in cases for vs in cell["vsKinds"]] + result["nativeKinds"]
+    measured = [vs for vs in kinds if vs["cy"] is not None]
+    checks = {
+        "cases60": len(cases) == len(BOUNDARY_GAPS) * len(BOUNDARY_MODES) * len(BOUNDARY_PROFILES),
+        "everyVsFiresOnce": all(cell["vsFireCounts"] == [1] * len(BOUNDARY_JITTER) and cell["falseFires"] == 0
+                                and not cell["blockedFires"] for cell in cases),
+        "noOscillation": all(all((step["from"], step["to"]) in allowed for step in cell["transitions"])
+                             for cell in cases),
+        # Once a case fires on a learned layout it never returns to the setup one.
+        "atMostOneLearning": all(learned(cell) <= 1 and sources(cell) == sorted(sources(cell), reverse=True)
+                                 for cell in cases),
+        "requiredSweepArmsSetupLayout": all(learned(cell) == 0 and set(sources(cell)) == {"setup"}
+                                            for cell in cases if cell["gap"] <= BOUNDARY_REQUIRED),
+        "learnedOnlyOutsideMatchBand": all(aspect_gap(event["gameAspect"], cell["profileAspect"]) > ASPECT_MATCH_TOL
+                                           for cell in cases for event in cell["events"]
+                                           if event["type"] == "layout_learned"),
+        "kindStable": len(measured) == len(kinds) and all(vs["kind"] == vs["expected"] for vs in kinds),
+    }
+    return {"passed": all(checks.values()), "checks": checks,
+            "minKindMarginToBoundary": min((abs(vs["cy"] - KIND_BOUNDARY) for vs in measured), default=None),
+            "maxCyShiftFromProfile": max((abs(vs["cy"] - vs["profileCy"]) for vs in measured if "profileCy" in vs),
+                                         default=None)}
+
+
+def boundary_replay(manifest: Path, output: Path) -> dict[str, Any]:
+    """Sweep game aspects across the layout match band through the production
+    engine with learning on; three restarts per case, each one pixel apart."""
+    output = output.resolve()
+    if any((parent / ".git").exists() for parent in (output, *output.parents)):
+        raise ValueError("Replay output must be outside a Git repository")
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    records = {record["key"]: record for record in document["recordings"]}
+    if not set(_RUNTIME_NORMAL + _RUNTIME_SPECTATE) <= records.keys():
+        raise ValueError("Boundary requires the eight REPORT recording keys")
+    output.mkdir(parents=True, exist_ok=True)
+    result: dict[str, Any] = {"mode": "boundary", "matchTol": ASPECT_MATCH_TOL, "separationTol": ASPECT_TOL,
+                              "setups": {}, "cases": {}, "nativeKinds": []}
+
+    def load(key: str) -> list[np.ndarray]:
+        return decode(manifest.parent / records[key]["path"])
+
+    for key in _RUNTIME_NORMAL + _RUNTIME_SPECTATE:
+        frames = load(key)
+        rect = _geometry(frames)[0].rect
+        expected = "spectate" if key in _RUNTIME_SPECTATE else "battle"
+        result["nativeKinds"] += [{"key": key, "expected": expected, **_vs_kind(frames[(onset + end) // 2], rect)}
+                                  for onset, end in _runtime_windows(records[key])]
+        del frames
+    for setup_key, target, kind in BOUNDARY_PROFILES:
+        frames = load(setup_key)
+        profile, setup = _runtime_profile(frames, records[setup_key])
+        result["setups"][setup_key] = setup
+        if profile is None:
+            continue
+        frames = load(target)
+        rect = _geometry(frames)[0].rect
+        windows = _runtime_windows(records[target])
+        bar = round(rect[3] * F11_BAR)
+        for gap in BOUNDARY_GAPS:
+            for mode in BOUNDARY_MODES:
+                offsets = [index * len(frames) for index in range(len(BOUNDARY_JITTER))]
+                cell = _runtime_run(profile, (_aspect_variant(frame, rect, gap, mode, jitter)
+                                              for jitter in BOUNDARY_JITTER for frame in frames),
+                                    [window for offset in offsets for window in _runtime_windows(records[target], offset)],
+                                    learning=True, gap_at=offsets[1:])
+                cell["vsKinds"] = []
+                for jitter in BOUNDARY_JITTER:
+                    for onset, end in windows:
+                        variant = _aspect_variant(frames[(onset + end) // 2], rect, gap, mode, jitter)
+                        cell["vsKinds"].append({"expected": kind, "profileCy": round(profile["badge"]["cy"], 4),
+                                                **_vs_kind(variant, (0, bar, rect[2], variant.shape[0] - 2 * bar))})
+                cell["gap"], cell["mode"], cell["profileAspect"] = gap, mode, profile["gameAspect"]
+                cell["events"] = [event for event in cell["events"] if event["type"] in ("layout_learned", "vs_candidate")]
+                result["cases"][f"{setup_key}|{mode}|{gap}"] = cell
+                print(f"{setup_key}|{mode}|{gap} fires={cell['vsFireCounts']} "
+                      f"layouts={[layout['source'] for layout in cell['fireLayouts']]} "
+                      f"transitions={[(step['from'], step['to']) for step in cell['transitions']]}", flush=True)
+        del frames
+    result["acceptance"] = evaluate_boundary(result)
+    (output / "results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(json.dumps({"acceptance": result["acceptance"]}, sort_keys=True))
+    return result
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup"))
+    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup", "boundary"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--distortions", choices=("all", "none"), default="all")
@@ -948,6 +1103,8 @@ if __name__ == "__main__":
         result = runtime_replay(args.manifest, args.out, overlays=args.overlays,
                                 prototype_jpeg92=args.prototype_jpeg92, titlebar_image=args.titlebar_image,
                                 titlebar_rect=args.titlebar_rect)
+    elif args.mode == "boundary":
+        result = boundary_replay(args.manifest, args.out)
     else:
         result = replay(args.mode, args.manifest, args.out, all_distortions=args.distortions == "all",
                         overlays=args.overlays, prototype_jpeg92=args.prototype_jpeg92)

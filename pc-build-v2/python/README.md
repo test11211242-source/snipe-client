@@ -46,8 +46,13 @@ result to `frozen`; insufficient, unsupported or unstable geometry is explicit.
 Prepared capture remains protocol 1 until the live-analysis commands in M9 B2.
 
 `game_geometry.py` tracks the game rectangle across window resizing and OBS
-same-canvas scaling, subtracts matching saved chrome, and selects a saved layout
-within 3% aspect tolerance. Chrome whose saved template no longer matches after a
+same-canvas scaling, subtracts matching saved chrome, and arms the closest saved
+layout within a 4.5% aspect gap (`max(a/b, b/a) - 1`); a layout already armed for
+the frame size is kept up to 6% when nothing else matches, because the peel drops
+or regains uniform game rows as screens change. Layouts of one profile stay more
+than 3% apart, so a game learned beyond 4.5% is never refused as an overlap and
+MuMu F11 (gap 1.030) arms the windowed layout on every restart. Chrome whose
+saved template no longer matches after a
 window resize (fixed-size title-bar icons), or that a fullscreen profile never
 saved, is inferred from the layout aspect, snapped to its full-width edge and
 confirmed by the saved thickness or by a static band above a moving game. A band
@@ -117,9 +122,19 @@ non-stretching title bar from the external titlebar crop) must fire once per VS
 for fullscreen profiles in a window and small-window profiles resized. Six
 `fullscreenLetterbox` cells replay MuMu F11 portrait (game stretched to 1864/1920
 rows between black bars, after a menu whose side column stays still): with no
-phantom band, the windowed/spectate profile learns and fires on the first battle and
-fires on the learned layout on the second; a battle within the 15-second cooldown is
-recorded as `cooldown`; own battles never fire the spectate profile.
+phantom band, both battles fire within 0.1 s on the windowed/spectate layout
+(gap 1.030 is inside the match band) without learning; a battle within the
+15-second cooldown is recorded as `cooldown`; own battles never fire the spectate
+profile.
+
+`boundary` mode sweeps game aspects at gaps 1.025–1.055 (squash as F11, taller,
+and unscaled crop; letterbox bars) for an own-battle and a spectate profile with
+learning on: three restarts per case, the game one row taller or shorter each
+time, 16 s apart. Acceptance: every VS fires once, nothing learned up to 1.035,
+at most one learning per case and only beyond 4.5%, never a learned→setup
+return, and no geometry leaves `armed` within a frame size. It also measures
+the VS badge height of all eight recordings and every sweep VS: own battles must
+stay below and spectating above `layout_kind`'s 0.46.
 
 Numeric output reports firing frames, per-VS counts/delays, false/blocked fires,
 geometry states, learning codes/confidence, action sizes and process timings.

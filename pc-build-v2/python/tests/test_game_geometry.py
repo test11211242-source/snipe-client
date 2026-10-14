@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from game_geometry import GameGeometry
+from geometry.aspect import ASPECT_MATCH_TOL, aspect_gap, aspects_overlap
 from geometry.game_rect import detect
 from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import regions
@@ -344,14 +345,59 @@ def stretched_fullscreen(index: int) -> np.ndarray:
 def test_static_game_column_inside_letterbox_is_not_trimmed_as_a_toolbar():
     # Intermittent miss (owner, F11 portrait): the windowed profile was armed on
     # a game rect cut by a phantom right "toolbar", so VS scores fell to the
-    # 0.5 threshold and learning never started.
-    geometry = GameGeometry([game_layout()])
+    # 0.5 threshold. The stretched game (gap 1.031) arms the layout whole.
+    layout = game_layout()
+    geometry = GameGeometry([layout])
     for index in range(40):
         geometry.process(stretched_fullscreen(index), index / 10)
         assert geometry._band is None
-        assert geometry.layout is None
+        assert geometry.layout is layout
     assert geometry.rect == (0, 10, 360, 621)
-    assert geometry.state == "aspect_unknown"
+    assert geometry.state == "armed"
+
+
+@pytest.mark.parametrize("height", range(608, 626))
+def test_aspect_band_is_deterministic_around_the_old_three_percent_edge(height):
+    # 360 / (640 / gap) for gaps 1.024–1.053: one pixel either way never flips
+    # between arming the layout and treating the game as a new layout.
+    layout = game_layout()
+    geometry = GameGeometry([layout])
+    frame = np.zeros((height + 20, 360, 3), np.uint8)
+    for index in range(25):
+        frame[10:10 + height] = cv2.resize(moving_game(index), (360, height), interpolation=cv2.INTER_AREA)
+        geometry.process(frame, index / 10)
+    gap = aspect_gap(360 / height, layout["gameAspect"])
+    assert geometry.rect == (0, 10, 360, height)
+    if gap <= ASPECT_MATCH_TOL:
+        assert (geometry.state, geometry.layout) == ("armed", layout)
+    else:
+        assert (geometry.state, geometry.layout) == ("aspect_unknown", None)
+        # Learning beyond the band can never be refused as an overlap.
+        assert not aspects_overlap(360 / height, layout["gameAspect"])
+
+
+def test_armed_layout_is_held_when_the_peel_regains_uniform_rows():
+    # Gap 1.050 is outside the match band. A menu whose top and bottom rows are
+    # uniform peels to gap 1.040 and arms the layout; when the battle fills
+    # those rows the rectangle grows, and the same layout stays armed.
+    def frame(index, rows):
+        canvas = np.zeros((692, 360, 3), np.uint8)
+        canvas[10:682] = (40, 40, 40)
+        top = 10 + (672 - rows) // 2
+        canvas[top:top + rows] = cv2.resize(moving_game(index), (360, rows), interpolation=cv2.INTER_AREA)
+        return canvas
+
+    layout = game_layout()
+    geometry = GameGeometry([layout])
+    for index in range(60):
+        geometry.process(frame(index, 666 if index < 30 else 672), index / 10)
+        assert geometry.layout is layout and geometry.state in ("armed", "armed_provisional")
+    assert geometry.rect == (0, 10, 360, 672)
+    fresh = GameGeometry([layout])
+    for index in range(25):
+        fresh.process(frame(index, 672), index / 10)
+    assert (fresh.state, fresh.layout) == ("aspect_unknown", None)
+
 
 
 def test_side_toolbar_spanning_the_letterboxed_window_is_still_trimmed():

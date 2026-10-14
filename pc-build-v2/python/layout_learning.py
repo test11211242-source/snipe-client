@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import uuid
 
 from geometry.acceptance import accept
-from geometry.aspect import ASPECT_MAX, ASPECT_MIN, aspects_overlap
+from geometry.aspect import ASPECT_MAX, ASPECT_MIN, aspect_gap, aspects_overlap
 from geometry.game_rect import RectResult, pixel_rect
 from geometry.vs_finder import MATCH_T, VSConfirmer, normalize_game, search
 from geometry.vs_orient_trigger import OrientationTrigger
@@ -209,7 +209,7 @@ class LayoutLearning:
             elif rejection or not sources:
                 self._reject("LEARN_" + (rejection or "LAYOUT_UNEXPECTED"))
             else:
-                source = min(sources, key=lambda layout: abs(geometry.aspect / layout["gameAspect"] - 1))
+                source = min(sources, key=lambda layout: aspect_gap(geometry.aspect, layout["gameAspect"]))
                 trigger = OrientationTrigger.build(frame, geometry.rect, candidate.badge)
                 self._pending = (trigger, candidate, frame.copy(), geometry.rect, source, self._onset)
                 self._latched = True

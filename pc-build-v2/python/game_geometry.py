@@ -8,7 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from geometry.aspect import ASPECT_MAX, ASPECT_MIN, ASPECT_TOL
+from geometry.aspect import ASPECT_HOLD_TOL, ASPECT_MAX, ASPECT_MIN, ASPECT_TOL, aspect_gap, aspect_matches
 from geometry.game_rect import (COARSE, MAX_TOOLBAR, MIN_TOOLBAR, STATIC_TOL, TOL, UNIFORM_FRAC, RectResult, _uniform,
                                 detect, pixel_rect)
 from geometry.vs_orient_trigger import MAX_SHIFT, orientation_field
@@ -218,7 +218,7 @@ class GameGeometry:
                 matched[side] = size if chrome_score(strip, template, side in ("left", "right")) >= 0.50 else 0
             nw, nh = w - matched["left"] - matched["right"], h - matched["top"] - matched["bottom"]
             aspect = nw / nh
-            if any(matched.values()) and abs(aspect / layout["gameAspect"] - 1) <= ASPECT_TOL:
+            if any(matched.values()) and aspect_matches(aspect, layout["gameAspect"]):
                 return RectResult((x + matched["left"], y + matched["top"], nw, nh), aspect, "ok", chrome)
         if self._band is None:
             self._band = next((band for band in (self._infer_band(frame, result.rect, layout) for layout in self.layouts)
@@ -286,8 +286,15 @@ class GameGeometry:
             return
         self.aspect = self.rect[2] / self.rect[3]
         self.reason = "ok" if ASPECT_MIN <= self.aspect <= ASPECT_MAX else "aspect_out_of_range"
-        matching = [layout for layout in self.layouts if abs(self.aspect / layout["gameAspect"] - 1) <= ASPECT_TOL]
-        self.layout = min(matching, key=lambda layout: abs(self.aspect / layout["gameAspect"] - 1)) if matching else None
+        matching = [layout for layout in self.layouts if aspect_matches(self.aspect, layout["gameAspect"])]
+        if matching:
+            self.layout = min(matching, key=lambda layout: aspect_gap(self.aspect, layout["gameAspect"]))
+        elif not (self.layout is not None and any(layout is self.layout for layout in self.layouts)
+                  and aspect_gap(self.aspect, self.layout["gameAspect"]) <= ASPECT_HOLD_TOL):
+            # A layout already armed for this frame size is kept up to the hold
+            # band: rows the peel drops or regains when menu content changes
+            # must not disarm it mid-session.
+            self.layout = None
         if self.layout is not None and self.reason == "ok":
             self.state = "armed" if self.frames >= DETECT_FRAMES else "armed_provisional"
             self.mismatch_frames = 0

@@ -15,6 +15,7 @@ from analyze_trigger import ANALYZER_VERSION, structural_maps
 from monitor_protocol import MonitorProtocolError, validate_ratio
 from game_geometry import GameGeometry
 from layout_learning import LayoutLearning
+from geometry.aspect import aspect_gap
 from geometry.game_rect import pixel_rect
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
 from geometry.zones import Badge, layout_kind
@@ -629,8 +630,8 @@ class TriggerEngine:
         if rect is None or not layouts:
             return None, None
         aspect = rect[2] / rect[3]
-        layout = min(layouts, key=lambda item: abs(aspect / item["gameAspect"] - 1))
-        if abs(aspect / layout["gameAspect"] - 1) > SHADOW_ASPECT_TOL:
+        layout = min(layouts, key=lambda item: aspect_gap(aspect, item["gameAspect"]))
+        if aspect_gap(aspect, layout["gameAspect"]) > SHADOW_ASPECT_TOL:
             return layout, None
         try:
             return layout, self._matcher(layout).score(bgr, rect)
