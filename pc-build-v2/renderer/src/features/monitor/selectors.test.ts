@@ -18,6 +18,11 @@ describe('monitor selectors', () => {
       expect(selectRunPhase(retry, true)).toBe('waiting-source')
       expect(selectStatus(retry, true, null).text).toBe('Ждём окно игры…')
     }
+    // A worker restart while the game is open reads as a start, not a lost window.
+    for (const state of ['WAITING_SOURCE', 'PREFLIGHT', 'STARTING'] as const) {
+      const restart = monitorViewFixture({ state, runIntent: true, recovery: 'worker' })
+      expect(selectStatus(restart, true, null).text).toBe('Запускаем мониторинг…')
+    }
   })
 
   it('says only that the game window is closed or minimised while the source is minimised', () => {

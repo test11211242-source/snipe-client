@@ -1210,7 +1210,10 @@ export class MonitorSupervisor {
       this.#pendingAction = null
       this.#ocrActive = false
       this.clearRetry()
-      this.waitForSource(publicError(error))
+      this.waitForSource(
+        publicError(error),
+        RECOVERABLE_SOURCE_CODES[error.code] ? 'source' : 'worker',
+      )
       void this.process.stop()
       return
     }
@@ -1307,13 +1310,16 @@ export class MonitorSupervisor {
     this.#recoveryTimer = null
   }
 
-  private waitForSource(error: MonitorView['error']): void {
+  private waitForSource(
+    error: MonitorView['error'],
+    recovery: 'source' | 'worker' = 'source',
+  ): void {
     this.cancelRecovery()
     this.transition('WAITING_SOURCE', {
       error,
       search: null,
       readiness: { ...this.#view.readiness, sourceAvailable: false },
-      recovery: 'source',
+      recovery,
     })
     const generation = this.#generation
     const delay = SOURCE_RECOVERY_DELAYS[this.#recoveryAttempt++] ?? 15_000

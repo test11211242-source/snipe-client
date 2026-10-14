@@ -1589,6 +1589,37 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
     await test.supervisor.stop()
   })
 
+  it('presents a worker restart as a start, never as a lost game window', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    const raw: MonitorState[] = []
+    const presented: MonitorState[] = []
+    test.supervisor.subscribeViews((view) => {
+      raw.push(view.state)
+      presented.push(presentedMonitorState(view))
+    })
+    test
+      .listener()
+      ?.onExit(
+        Object.assign(new Error('closed'), { code: 'MONITOR_PROCESS_EXITED' }) as never,
+      )
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      recovery: 'worker',
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(raw.filter((state, index) => state !== raw[index - 1])).toEqual([
+      'WAITING_SOURCE',
+      'PREFLIGHT',
+      'STARTING',
+      'READY',
+    ])
+    expect(presented).not.toContain('WAITING_SOURCE')
+    expect(test.supervisor.getCurrentView().recovery).toBeNull()
+    await test.supervisor.stop()
+  })
+
   it('does not resume a changed calibration or binding during recovery', async () => {
     vi.useFakeTimers()
     const test = harness()

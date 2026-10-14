@@ -142,13 +142,21 @@ describe('native tray lifecycle', () => {
     test.controller.stop()
   })
 
-  it('keeps one label through source retries', () => {
+  it('keeps one label through source retries and shows a worker restart as running', () => {
     const test = harness()
     test.controller.start()
     for (const state of ['WAITING_SOURCE', 'PREFLIGHT', 'STARTING'] as const) {
       test.push(monitorViewFixture({ state, runIntent: true, recovery: 'source' }))
       expect(test.menu()[0]?.label).toBe('Ждём окно игры…')
     }
+    test.push(
+      monitorViewFixture({
+        state: 'WAITING_SOURCE',
+        runIntent: true,
+        recovery: 'worker',
+      }),
+    )
+    expect(test.menu()[0]?.label).toBe('Мониторинг включён')
     test.controller.stop()
   })
 

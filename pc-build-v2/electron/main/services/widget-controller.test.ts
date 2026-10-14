@@ -433,7 +433,7 @@ describe('approved review projection followup', () => {
 })
 
 describe('source-loss retries', () => {
-  it('keeps one waiting state through source retries, never the old deck', async () => {
+  it('keeps one waiting state through source retries and the deck through a worker restart', async () => {
     const test = harness(false)
     await test.controller.start('user')
     test.result(found('7f0b31d6-3c8f-4e4b-9e57-5f5bb6f3b4a1'))
@@ -468,6 +468,14 @@ describe('source-loss retries', () => {
     }
     // Monitoring really resumed: the retained deck returns once.
     expect(drive({ state: 'READY', error: null }).monitorState).toBe('READY')
+    // A worker restart with the game open keeps the deck instead of «Ждём окно игры».
+    const restart = drive({
+      state: 'WAITING_SOURCE',
+      error: { code: 'MONITOR_PROCESS_EXITED', message: 'exited' },
+      recovery: 'worker',
+    })
+    expect(restart.monitorState).toBe('STARTING')
+    expect(selectOverlayModel(restart).body.kind).toBe('found')
     // A user Start is not a recovery attempt: it projects as itself.
     drive({ state: 'STOPPING', runIntent: false })
     expect(drive({ state: 'PREFLIGHT' }).monitorState).toBe('PREFLIGHT')

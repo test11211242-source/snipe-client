@@ -186,11 +186,11 @@ export const MonitorViewSchema = z
     /** The running window source is minimised: analysis is paused until it is restored. */
     sourceMinimized: z.boolean().default(false),
     /**
-     * Automatic recovery in flight: `source` waits for a lost game window. Set on
-     * WAITING_SOURCE and kept through the attempt's PREFLIGHT/STARTING; any other state
-     * clears it.
+     * Automatic recovery in flight: `source` waits for a lost game window, `worker`
+     * restarts a failed worker. Set on WAITING_SOURCE and kept through the attempt's
+     * PREFLIGHT/STARTING; any other state clears it.
      */
-    recovery: z.enum(['source']).nullable().default(null),
+    recovery: z.enum(['source', 'worker']).nullable().default(null),
   })
   .strict()
 
@@ -205,7 +205,8 @@ export type MonitorSearch = z.infer<typeof MonitorSearchSchema>
 
 /**
  * The state every surface (main window, tray, overlay) presents. Recovery never flaps:
- * a source retry stays «waiting for the game window» through its PREFLIGHT/STARTING.
+ * a source retry stays «waiting for the game window» through its PREFLIGHT/STARTING, and
+ * a worker restart reads as a start, never as a lost window.
  */
 export function presentedMonitorState(
   view: Pick<MonitorView, 'state' | 'recovery'>,
@@ -215,5 +216,6 @@ export function presentedMonitorState(
     (view.state === 'PREFLIGHT' || view.state === 'STARTING')
   )
     return 'WAITING_SOURCE'
+  if (view.recovery === 'worker' && view.state === 'WAITING_SOURCE') return 'STARTING'
   return view.state
 }
