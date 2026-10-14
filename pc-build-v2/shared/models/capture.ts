@@ -64,6 +64,8 @@ export const CaptureSourceSnapshotSchema = z
     revision: z.string().regex(/^[a-f0-9]{32}$/),
     expiresAt: z.number().int().positive(),
     sources: z.array(CaptureSourceViewSchema).max(256),
+    /** Set by preview responses: more previews are still loading, ask again. */
+    previewsPending: z.boolean().optional(),
   })
   .strict()
 

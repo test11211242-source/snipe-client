@@ -118,7 +118,14 @@ settings. Logout/user switches fence pending loads. Monitor stderr is drained as
 rate-limited diagnostic counters and never terminates capture by lifetime volume;
 stdout remains a strict protocol. Metadata helper failures are reported separately
 from absent/ambiguous sources, without relaxing exact identity matching.
-Individual unverifiable windows remain disabled; a bound window that closes during
+Window identity, display device names and window previews come from
+`python/capture_sources.py` (plain ctypes, one short process per request, no PowerShell).
+Identity is cached per HWND and title, the display topology until Electron reports a
+display change. The picker list waits at most 1.5 s for these helpers: windows the helper
+could not check in time are listed unverified and verified again on selection, so a slow
+helper never fails the list. Previews stream window by window (DWM `PrintWindow`);
+windows the helper cannot draw fall back to one Electron thumbnail batch.
+Individual unidentifiable windows remain disabled; a bound window that closes during
 metadata lookup is not-found. A display-helper failure leaves windows in the picker
 and disables unverifiable displays. Recovery never relaxes exact title/executable
 identity or calibrated fixed-ROI matching.

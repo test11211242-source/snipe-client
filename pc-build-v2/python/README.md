@@ -18,6 +18,14 @@ and `legacyProfile`; `vsOrientation`/`vsBadge` are populated only when the marke
 contains the VS badge and its silhouette passes M9 acceptance. No temporary image
 files are created. Main-process protocol 2 consumption is part of M9 A4.
 
+`capture_sources.py` serves the source picker and does not use the `CRT2` envelope: one
+JSON request on stdin (`displays`, `windows` with HWND decimal strings, or `previews`
+with a maximum size), JSON lines on stdout. Display bounds are physical pixels
+(per-monitor DPI aware); window identity is the owner PID and `<ProcessName>.exe` from
+one process snapshot; previews are DWM `PrintWindow` captures encoded as JPEG, written
+one window at a time with status `ok`, `unavailable` (closed/minimized) or `failed`.
+Only `previews` imports numpy/OpenCV.
+
 `monitor_engine.py` is the persistent worker. It reads bounded protocol-version-4
 JSON-lines (1 MiB maximum) from stdin and emits session-bound monotonic JSON-lines
 on stdout. `start.primary` selects unchanged legacy `full_frame` matching or the

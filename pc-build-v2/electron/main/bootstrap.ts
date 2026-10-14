@@ -28,6 +28,7 @@ import { H2HService } from './services/h2h-service'
 import { ApiAuthSessionRevoker } from './services/auth-session-revoker'
 import { CaptureService } from './services/capture-service'
 import { CaptureSourceRegistry } from './services/capture-source-registry'
+import { createCaptureSourceHelpers } from './services/capture-source-helper'
 import { ElectronCaptureSourceProvider } from './services/electron-capture-source-provider'
 import { PythonWorkerService } from './services/python-worker-service'
 import { SetupSessionService } from './services/setup-session-service'
@@ -162,7 +163,14 @@ const capture = new CaptureService(
   join(pythonRoot, 'analyze_trigger.py'),
 )
 const captureSources = new CaptureSourceRegistry(
-  new ElectronCaptureSourceProvider(undefined, undefined, logger),
+  new ElectronCaptureSourceProvider({
+    ...createCaptureSourceHelpers({
+      executable: pythonExecutable,
+      scriptPath: join(pythonRoot, 'capture_sources.py'),
+      beforeSpawn: verifyRuntime,
+    }),
+    logger,
+  }),
 )
 const preparedCaptureProcess = new PreparedCaptureProcessService(
   pythonExecutable,
