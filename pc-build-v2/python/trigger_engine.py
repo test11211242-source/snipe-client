@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import math
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,19 @@ from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 NORMALIZED_SIZE = 128
 # `triggered` rank fields when the check does not run (spectate, full-frame).
 NO_RANK = {"rank": RANK_UNKNOWN, "rankEvidence": None}
+# stderr code when a C3 asset cannot be loaded (opponent search goes on).
+C3_ASSET_FAILED = "PREDICTION_ASSET_UNAVAILABLE"
+
+
+def _load_c3(loader):
+    """A missing or corrupt C3 asset turns that prediction part off; it never
+    stops the opponent monitor (review m-15)."""
+    try:
+        return loader()
+    except Exception as error:
+        sys.stderr.write(f"{C3_ASSET_FAILED} {type(error).__name__}\n")
+        return None
+
 
 class InvalidFrameError(RuntimeError):
     pass
@@ -540,6 +554,10 @@ class TriggerEngine:
         self.geometry = None
         self.learner = None
         self.matchers = {}
+        # Predictions (C3), game-relative only: own-battle VS rank lines and
+        # the result screen; None when off (full frame, or an asset failed).
+        self.rank_templates: RankTemplates | None = None
+        self.result_reader: ResultReader | None = None
         if self.kind == "full_frame":
             self.profile = TriggerProfile(self.primary["triggerProfile"])
             self.trigger_ratio = self.primary["regions"]["trigger"]
@@ -550,9 +568,8 @@ class TriggerEngine:
             self.learner = LayoutLearning(layouts, self.primary["learning"]["enabled"])
             for layout in layouts:
                 self._matcher(layout)
-            # Predictions (C3): own-battle VS rank lines and the result screen.
-            self.rank_templates = RankTemplates.load()
-            self.result_reader = ResultReader()
+            self.rank_templates = _load_c3(RankTemplates.load)
+            self.result_reader = _load_c3(ResultReader)
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
@@ -627,17 +644,21 @@ class TriggerEngine:
         is that battle's, never the pending own one (review m-13)."""
         self.triggered = True
         self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
+        reader = self.result_reader
         if self.triggered_kind != "battle":
-            self.result_reader.disarm()
+            if reader is not None:
+                reader.disarm()
             return
-        try:
-            self.triggered_rank = check_rank(bgr, rect, Badge(**layout["badge"]), self.rank_templates)
-        except Exception:  # predictions must never stop opponent monitoring
-            self.triggered_rank = NO_RANK
-        self.result_reader.arm(now)
+        if self.rank_templates is not None:
+            try:
+                self.triggered_rank = check_rank(bgr, rect, Badge(**layout["badge"]), self.rank_templates)
+            except Exception:  # predictions must never stop opponent monitoring
+                self.triggered_rank = NO_RANK
+        if reader is not None:
+            reader.arm(now)
 
     def _read_result(self, bgr, now) -> None:
-        if not self.result_reader.armed:
+        if self.result_reader is None or not self.result_reader.armed:
             return
         try:
             self.prediction_report = self.result_reader.process(bgr, self.geometry.rect, now)

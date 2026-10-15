@@ -208,6 +208,34 @@ def test_a_spectate_fire_drops_the_pending_own_battle_result():
     assert not engine.result_reader.armed
 
 
+@pytest.mark.parametrize("broken", ["rank", "result", "both"])
+def test_a_missing_or_corrupt_c3_asset_never_stops_the_opponent_monitor(monkeypatch, capsys, broken):
+    # Review m-15: the asset loads used to raise in TriggerEngine.__init__
+    # (MONITOR_INTERNAL_FAILED), taking the M9 nickname search down.
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("pol_rank_v1.json")
+
+    def corrupt(*_args, **_kwargs):
+        raise ValueError("template hash mismatch")
+
+    if broken in ("rank", "both"):
+        monkeypatch.setattr("trigger_engine.RankTemplates.load", missing)
+    if broken in ("result", "both"):
+        monkeypatch.setattr("trigger_engine.ResultReader", corrupt)
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    assert capsys.readouterr().err.count("PREDICTION_ASSET_UNAVAILABLE") == (2 if broken == "both" else 1)
+    engine.process(frame, 0)
+    assert engine.process(frame, 0.1) is not None                       # the nickname action still goes out
+    assert engine.take_triggered() and engine.triggered_kind == "battle"
+    if broken == "result":
+        assert engine.triggered_rank["rank"] == "not_pol" and engine.result_reader is None
+    else:
+        assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    assert (engine.result_reader is not None and engine.result_reader.armed) is (broken == "rank")
+    assert engine.process(arena(badge=False)[0], 30) is None and engine.take_prediction_result() is None
+
+
 def test_prediction_failures_never_stop_the_monitor(monkeypatch):
     frame, _ = arena(cy=0.429)
     engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
