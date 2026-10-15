@@ -50,6 +50,7 @@ async def lifespan(app):
             '077_add_streamer_predictions.sql',
             '078_add_prediction_live_override.sql',
             '079_harden_streamer_predictions.sql',
+            '080_allow_imported_prediction_windows.sql',
         ):
             await admin.execute((root / 'data/migrations' / name).read_text(encoding='utf-8'))
         pool = await asyncpg.create_pool(**LOCAL_DATABASE,

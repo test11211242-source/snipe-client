@@ -481,9 +481,12 @@ Pending observations are cleared on logout/account change; wall-clock adjustment
 make a delayed VS look newer.
 
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
-schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake
-Helix. It never connects to Twitch or reads owner configuration. From `pc-build-v2`, start
-the fixture in one terminal (requires the server Windows venv and local Docker compose):
+schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake Helix.
+The fixture applies prediction migrations 077–080 to its own schema and clears its
+operation/manual-request rows on reset. It exercises win, loss, non-ranked skip (including
+repeating the same UUID intent), refund and streak settlement. It never connects to Twitch
+or reads owner configuration. From `pc-build-v2`, start the fixture in one terminal
+(requires the server Windows venv and local Docker compose):
 
 ```powershell
 & C:\Dev\Snipe\server\.venv\Scripts\python.exe tests\fixtures\predictions-server.py --server-worktree C:\Dev\Snipe\worktrees\server\predictions-v2 *> "$env:TEMP\predictions-local-api.log"
