@@ -623,10 +623,12 @@ class TriggerEngine:
 
     def _own_battle(self, bgr, rect, layout, now) -> None:
         """A VS fire: record its kind; own battles get the rank check and arm
-        the result reader. Spectated battles never do."""
+        the result reader. Any other fire disarms it: the next result screen
+        is that battle's, never the pending own one (review m-13)."""
         self.triggered = True
         self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
         if self.triggered_kind != "battle":
+            self.result_reader.disarm()
             return
         try:
             self.triggered_rank = check_rank(bgr, rect, Badge(**layout["badge"]), self.rank_templates)

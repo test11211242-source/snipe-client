@@ -336,12 +336,14 @@ def run_frames(frames, ticks, pause_before=None):
 
 
 def test_result_carries_the_own_battle_id_and_no_gap():
+    # A spectate fire disarms the engine's reader (test_game_geometry), so a
+    # result only ever follows its own battle.
     frames = monitor.FrameEvents(ScriptedEngine([("battle", None, None), (None, None, None),
-                                                 ("spectate", None, None), (None, REPORT, "shift")]))
+                                                 (None, None, None), (None, REPORT, "shift")]))
     events = run_frames(frames, IDS[:4])
-    assert [event_type for event_type, _ in events] == ["triggered", "triggered", "prediction_result"]
-    assert events[0][1]["rank"] == "pol" and events[1][1]["kind"] == "spectate"
-    assert events[2][1] == {"battleId": IDS[0], "gap": False, **REPORT}
+    assert [event_type for event_type, _ in events] == ["triggered", "prediction_result"]
+    assert events[0][1]["rank"] == "pol"
+    assert events[1][1] == {"battleId": IDS[0], "gap": False, **REPORT}
 
 
 @pytest.mark.parametrize("pause_before,reason,gap", [(None, "gap", True), (1, "shift", True), (0, "shift", False)])
