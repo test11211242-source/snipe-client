@@ -7,7 +7,8 @@ Manifest (paths relative to it, never committed):
                   "crowns": [1, 0], "sign": "-"}],
      "vsManifest": "manifest-a1.json",          # M9 VS recordings (kinds, badges, rects)
      "vsExpected": {"spectate_1": {"opponent": "medal", "own": "medal"}, ...},
-     "stills": [{"key": "still_win", "path": "4.png", "sign": "+", "kind": "result"}]}
+     "stills": [{"key": "still_win", "path": "4.png", "sign": "+"}],
+     "scales": [1.0, 0.5]}                    # optional: also replay as a smaller capture
 
 Every end clip is decoded once at its native rate and replayed at 10 FPS in
 all six sampling phases (the production tick). Ground truth for the «vs»
@@ -100,10 +101,23 @@ def _ground_truth(scores: list[float], uys: list[float], fps: float) -> dict[str
         if moved or lost:
             shift = i
             break
+    return _with_outside(scores, onset, shift, fps)
+
+
+def _with_outside(scores: list[float], onset: int, shift: int | None, fps: float) -> dict[str, Any]:
     outside = [s for i, s in enumerate(scores) if i < onset - 12 or (shift is not None and i >= shift + 60)]
     return {"onset": onset / fps, "shift": None if shift is None else shift / fps,
             "nonResultMax": round(max(outside, default=-1.0), 3), "nonResultFrames": len(outside),
             "nonResultFires": sum(s >= VS_FIRE_T for s in outside)}
+
+
+def _anchored_truth(scores: list[float], fps: float, base: dict[str, Any]) -> dict[str, Any]:
+    """A scaled replay is judged on the full-size clip's onset and shift, so a
+    later onset on the smaller capture shows up as fire delay, not as truth."""
+    if base["onset"] is None:
+        return {"onset": None}
+    shift = None if base["shift"] is None else round(base["shift"] * fps)
+    return _with_outside(scores, round(base["onset"] * fps), shift, fps)
 
 
 def _battle_triggers(vs_manifest: Path) -> list[tuple[str, str, OrientationTrigger, dict[str, float]]]:
@@ -135,9 +149,12 @@ def _transplant(trigger: OrientationTrigger, units: dict[str, float], rect) -> O
                               trigger.contains_center)
 
 
-def replay_end_clip(path: Path, vs_manifest: Path | None) -> dict[str, Any]:
+def replay_end_clip(path: Path, vs_manifest: Path | None, scale: float = 1.0) -> dict[str, Any]:
+    """`scale` < 1 replays the clip as a smaller capture (whole frame resized)."""
     templates = ResultTemplates.load()
     fps, count, rect = _info(path)
+    if scale != 1.0:
+        rect = tuple(round(value * scale) for value in rect)
     step = round(fps * TICK)
     triggers = [(key, kind, _transplant(trigger, units, rect))
                 for key, kind, trigger, units in (_battle_triggers(vs_manifest) if vs_manifest else [])]
@@ -150,6 +167,8 @@ def replay_end_clip(path: Path, vs_manifest: Path | None) -> dict[str, Any]:
         readers.append({"reader": reader, "reports": [], "ms": 0.0})
     scores, uys, idle_ms, burst_ms = [], [], [], []
     for index, frame in _frames(path):
+        if scale != 1.0:
+            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         hit = find_vs(frame, rect, templates)
         scores.append(hit.score if hit else -1.0)
         uys.append(hit.uy if hit else 0.0)
@@ -199,7 +218,7 @@ def replay_end_clip(path: Path, vs_manifest: Path | None) -> dict[str, Any]:
             "candidates": sum(c is not None and c.score >= MATCH_T for c in finder),
             "kinds": sorted({layout_kind(c.badge) or "none" for c in finder if c is not None and c.score >= MATCH_T})}
     return {"frames": len(scores), "fps": fps, "gameAspect": round(rect[2] / rect[3], 4),
-            "truth": _ground_truth(scores, uys, fps), "runs": runs,
+            "truth": _ground_truth(scores, uys, fps), "scores": scores, "runs": runs,
             "idleMs": [round(float(np.median(idle_ms)), 2), round(float(np.percentile(idle_ms, 95)), 2)]
             if idle_ms else None, "burstMs": [round(v, 1) for v in burst_ms],
             "battleTrigger": trigger_cells if vs_manifest is not None else None}
@@ -261,7 +280,9 @@ def _evaluate_end(item: dict[str, Any], expected: dict[str, Any]) -> dict[str, A
     onset, shift = truth["onset"], truth["shift"]
     wrong, unknown, false, late, delays, sign_margins, last_reads = 0, 0, 0, 0, [], [], []
     for run in item["runs"]:
-        real = [r for r in run["reports"] if onset is not None and onset - 0.1 <= r["startS"] <= onset + 0.5]
+        # A burst that starts while the result screen is shown (onset .. shift)
+        # is the real one; anything else fired on a non-result screen.
+        real = [r for r in run["reports"] if onset is not None and onset - 0.1 <= r["startS"] <= shift]
         false += len(run["reports"]) - len(real)
         if len(real) != 1 or real[0]["report"] is None:
             unknown += 1
@@ -305,13 +326,25 @@ def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
     vs_records = json.loads(vs_manifest.read_text(encoding="utf-8"))["recordings"] if vs_manifest else []
     result: dict[str, Any] = {"mode": "c3", "tickS": TICK, "phases": PHASES, "results": {}, "vs": {}, "stills": {}}
     with ProcessPoolExecutor(max_workers=6) as pool:
-        ends = {r["key"]: pool.submit(replay_end_clip, base / r["path"], vs_manifest) for r in document["results"]}
+        scales = sorted(document.get("scales", [1.0]), key=lambda value: value != 1.0)
+        if scales[0] != 1.0:
+            raise ValueError("scales must include 1.0")
+        ends = {(r["key"], scale): pool.submit(replay_end_clip, base / r["path"], vs_manifest if scale == 1.0 else None,
+                                               scale)
+                for r in document["results"] for scale in scales}
         vss = {r["key"]: pool.submit(replay_vs_clip, vs_manifest.parent / r["path"], r) for r in vs_records}
         for record in document["results"]:
-            item = ends[record["key"]].result()
-            item["evaluation"] = _evaluate_end(item, record)
-            result["results"][record["key"]] = item
-            print(record["key"], json.dumps(item["evaluation"]), flush=True)
+            for scale in scales:
+                key = record["key"] if scale == 1.0 else f"{record['key']}@{scale:g}"
+                item = ends[(record["key"], scale)].result()
+                item["scale"] = scale
+                scores = item.pop("scores")
+                if scale != 1.0:
+                    item["selfOnsetS"] = item["truth"]["onset"]
+                    item["truth"] = _anchored_truth(scores, item["fps"], result["results"][record["key"]]["truth"])
+                item["evaluation"] = _evaluate_end(item, record)
+                result["results"][key] = item
+                print(key, json.dumps(item["evaluation"]), flush=True)
         for record in vs_records:
             result["vs"][record["key"]] = vss[record["key"]].result()
     for still in document.get("stills", []):

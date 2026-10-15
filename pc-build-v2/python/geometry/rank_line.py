@@ -21,7 +21,7 @@ from prediction_values import (LINE_EMPTY, LINE_LEAGUE, LINE_MEDAL, LINE_UNKNOWN
                                rank_from_lines)
 
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "pol_rank_v1.json"
-RANK_PX = 750
+RANK_PX = 550
 # Template heights in pixels at RANK_PX (icon heights on the owner's VS
 # clips: league badge ≈0.055 units, medal ≈0.045 units).
 RANK_TEMPLATE_HEIGHTS = {"league": round(0.055 * RANK_PX), "medal": round(0.045 * RANK_PX)}
@@ -35,9 +35,9 @@ OPPONENT_Y = (0.40, 1.0)
 # badge-height units uh = badge.width × aspect (measured on the bottom player
 # of the spectate clips; own-battle VS shows the own name at the same offset).
 OWN_Y = (3.05, 3.70)
-# Owner VS clips: medal lines 0.83+, league lines 0.83+; lines without a
-# rank icon reach medal 0.57 / league 0.52 (name glyphs, sparkles, the
-# Ultimate Champion league-7 badge against leagues 1-6).
+# Owner VS clips at RANK_PX: medal lines 0.78+, league lines 0.80+; lines
+# without a rank icon reach medal 0.52 / league 0.53 (name glyphs, sparkles,
+# the Ultimate Champion league-7 badge against leagues 1-6).
 MEDAL_T = 0.68
 LEAGUE_T = 0.62
 # Between these and the thresholds the line is unreadable, not empty.
@@ -108,7 +108,12 @@ def read_line(frame: np.ndarray, rect, zone: tuple[float, float, float, float],
         return LineReading(LINE_UNKNOWN, -1.0, -1.0)
     values = orientation_field(crop.image)
     medal = best_match(values, templates.medal, RANK_SCALES).score
-    league = max(best_match(values, template, RANK_SCALES).score for template in templates.leagues)
+    # Leagues: pick the closest badge at the nominal size, then try its scales
+    # (the six badges share the shield outline; this halves the matches).
+    nominal = [best_match(values, template).score for template in templates.leagues]
+    closest = templates.leagues[int(np.argmax(nominal))]
+    others = tuple(scale for scale in RANK_SCALES if scale != 1.0)
+    league = max(max(nominal), best_match(values, closest, others).score)
     return LineReading(classify(medal, league), medal, league)
 
 

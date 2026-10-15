@@ -177,8 +177,9 @@ units of the M9 game rectangle, `U = min(height, width × 16/9)`.
   source SHA-256 values are recorded.
 - `tools/m9_replay.py c3 --manifest <external.json> --out <external-dir>` (manifest
   format in `tools/c3_replay.py`) replays end-of-battle clips at 10 FPS in all six
-  sampling phases and the M9 VS recordings; `CR_C3_REPLAY_MANIFEST` enables the
-  matching `replay` test.
+  sampling phases (optionally also downscaled as smaller captures, judged on the
+  full-size clip's timing) and the M9 VS recordings; `CR_C3_REPLAY_MANIFEST`
+  enables the matching `replay` test.
 
 ### Review fixes
 
