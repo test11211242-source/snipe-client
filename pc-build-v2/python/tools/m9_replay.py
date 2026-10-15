@@ -1,6 +1,7 @@
-"""Offline M9 replay: setup, fixed-badge rule (c), and the actual runtime.
+"""Offline M9 replay: setup, fixed-badge rule (c), the actual runtime, and C3.
 
-Usage: m9_replay.py {setup|orient|runtime|autosetup|boundary} --manifest <external.json> --out <external-dir>
+Usage: m9_replay.py {setup|orient|runtime|autosetup|boundary|c3} --manifest <external.json> --out <external-dir>
+The c3 mode (predictions detectors) takes its own manifest; see tools/c3_replay.py.
 Manifest JSON: {"recordings": [{"key": "sample1", "path": "video.mp4",
 "kind": "cheddar|ranked|spectate|long|language|toolbar|titlebar",
 "vsOnsets": [4.6], "vsDuration": 1.9, "gameAspect": 0.5625,
@@ -1087,7 +1088,7 @@ def boundary_replay(manifest: Path, output: Path) -> dict[str, Any]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup", "boundary"))
+    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup", "boundary", "c3"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--distortions", choices=("all", "none"), default="all")
@@ -1096,7 +1097,10 @@ if __name__ == "__main__":
     parser.add_argument("--titlebar-image", type=Path)
     parser.add_argument("--titlebar-rect", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     args = parser.parse_args()
-    if args.mode == "autosetup":
+    if args.mode == "c3":
+        from c3_replay import c3_replay
+        result = c3_replay(args.manifest, args.out)
+    elif args.mode == "autosetup":
         result = autosetup_replay(args.manifest, args.out, overlays=args.overlays,
                                  prototype_jpeg92=args.prototype_jpeg92)
     elif args.mode == "runtime":
