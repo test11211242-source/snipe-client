@@ -1,38 +1,48 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
-import type { PredictionPreferences } from '../../../../shared/models/streamer'
+import type { StreamerCommand } from '../../../../shared/contracts/streamer-ipc'
+import type { PredictionSettings } from '../../../../shared/models/streamer'
 import {
   Banner,
   Button,
   Card,
+  ConfirmDialog,
   Group,
-  Icon,
   Pill,
   Requirements,
   Segment,
+  Select,
   Setting,
   Stepper,
   Switch,
-  type Tone,
 } from '../../ui'
 import { StreamerGate } from './StreamerGate'
 import { useStreamer } from './streamerContext'
 import styles from './Streamer.module.css'
-import { missingFor, useFoundations, useRequirements } from './useRequirements'
-import { useRunner } from './useRunner'
+import {
+  describeCommandError,
+  predictionStatusText,
+  streakProgress,
+  VOTING_CHOICES,
+  type StreamerFailureCode,
+} from './text'
+import { useRequirements } from './useRequirements'
+import type { CommandOutcome } from './useStreamerController'
 
-const RUNTIME: Record<PredictionRuntime, { tone: Tone; label: string }> = {
-  stopped: { tone: 'neutral', label: 'Выключены' },
-  starting: { tone: 'neutral', label: 'Запускаются…' },
-  active: { tone: 'ok', label: 'Включены, идут сами' },
-  suspended: { tone: 'warn', label: 'Приостановлены' },
-  failed: { tone: 'danger', label: 'Ошибка запуска' },
-  unknown: { tone: 'neutral', label: 'Нет данных' },
-}
-type PredictionRuntime =
-  'stopped' | 'starting' | 'active' | 'suspended' | 'failed' | 'unknown'
+/** Unsaved edits of the settings form; «Автопрогнозы» is saved by its own switch. */
+type Draft = Partial<Omit<PredictionSettings, 'enabled'>>
+type CommandKind = 'settings' | 'enabled' | 'battle' | 'cancel'
 
-/** Prediction preferences are only editable while predictions are off. */
+/** Every prediction command runs under a `predictions.*` key: one at a time. */
+const KEY_PREFIX = 'predictions.'
+/** A manual command for a prediction that is no longer the current one (server 409). */
+const STALE_PREDICTION = 'Прогноз уже сменился. Повторите.'
+
+/**
+ * «Прогнозы»: server-side automatic predictions. The server is the only source of truth;
+ * this page edits its settings (they apply to the next prediction, also while one runs),
+ * shows the status in fixed phrases and settles the current prediction by hand.
+ */
 export function PredictionsPage(): React.JSX.Element {
   return (
     <StreamerGate>
@@ -42,185 +52,305 @@ export function PredictionsPage(): React.JSX.Element {
 }
 
 function Predictions(): React.JSX.Element {
-  const { view, pendingKeys } = useStreamer()
-  const { run, error, clearError } = useRunner()
+  const { view, pendingKeys, command } = useStreamer()
   const requirements = useRequirements('predictions')
-  const ready = missingFor('predictions', useFoundations()).length === 0
-  // The draft survives a failed start; null means "show the saved preferences".
-  const [draft, setDraft] = useState<PredictionPreferences | null>(null)
+  const [draft, setDraft] = useState<Draft>({})
+  const [desiredEnabled, setDesiredEnabled] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // The cancel dialog is bound to the prediction it was opened for, never a newer one.
+  const [cancelId, setCancelId] = useState<number | null>(null)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const inFlight = useRef(false)
   if (view === null) return <></>
 
   const { predictions } = view
-  const active = predictions.active
-  const busy = pendingKeys.has('predictions.toggle')
-  const locked =
-    active ||
-    predictions.runtimeState === 'starting' ||
-    predictions.runtimeState === 'unknown' ||
-    busy
-  const settings = draft ?? predictions.settings
-  const change = (patch: Partial<PredictionPreferences>): void =>
-    setDraft({ ...settings, ...patch })
-  const runtime = RUNTIME[predictions.runtimeState]
-  const suspended = predictions.runtimeState === 'suspended'
+  const { prediction, stats } = predictions
+  const busy = [...pendingKeys].some((key) => key.startsWith(KEY_PREFIX))
+  const pending = (kind: CommandKind): boolean => pendingKeys.has(KEY_PREFIX + kind)
+  const saved = predictions.settings
+  const form: PredictionSettings = { ...saved, ...draft }
+  const dirty = (Object.keys(draft) as (keyof Draft)[]).some(
+    (field) => draft[field] !== saved[field],
+  )
+  const enabled =
+    pending('enabled') && desiredEnabled !== null ? desiredEnabled : saved.enabled
+  const status = predictionStatusText(predictions)
 
-  const toggle = (): void => {
-    clearError()
-    void run(
-      active ? { action: 'predictions.stop' } : { action: 'predictions.start', settings },
-      { key: 'predictions.toggle' },
-    ).then((outcome) => {
-      if (outcome.status === 'ok') setDraft(null)
-    })
+  /** Sends one prediction command; `null` when another one is still running. */
+  const send = async (
+    next: StreamerCommand,
+    kind: CommandKind,
+  ): Promise<CommandOutcome | null> => {
+    if (inFlight.current) return null
+    inFlight.current = true
+    try {
+      return await command(next, { key: KEY_PREFIX + kind })
+    } finally {
+      inFlight.current = false
+    }
   }
-  const stats = predictions.statistics
+  const manualFailure = (code: StreamerFailureCode): string =>
+    code === 'VALIDATION_FAILED' ? STALE_PREDICTION : describeCommandError(code)
+
+  const change = (patch: Draft): void => setDraft({ ...draft, ...patch })
+  const save = async (): Promise<void> => {
+    setError(null)
+    const next: StreamerCommand = { action: 'predictions.settings.save', settings: form }
+    const outcome = await send(next, 'settings')
+    if (outcome?.status === 'ok') setDraft({})
+    else if (outcome?.status === 'failed')
+      setError(`${describeCommandError(outcome.code)} Изменения остались в форме.`)
+  }
+  const toggle = async (on: boolean): Promise<void> => {
+    setError(null)
+    setDesiredEnabled(on)
+    const settings = { ...saved, enabled: on }
+    const next: StreamerCommand = { action: 'predictions.settings.save', settings }
+    const outcome = await send(next, 'enabled')
+    setDesiredEnabled(null)
+    if (outcome?.status === 'failed') setError(describeCommandError(outcome.code))
+  }
+  const settle = async (predictionId: number, result: 'win' | 'loss'): Promise<void> => {
+    setError(null)
+    const next: StreamerCommand = {
+      action: 'predictions.battle',
+      predictionId,
+      outcome: result,
+    }
+    const outcome = await send(next, 'battle')
+    if (outcome?.status === 'failed') setError(manualFailure(outcome.code))
+  }
+  const confirmCancel = async (): Promise<void> => {
+    if (cancelId === null) return
+    setCancelError(null)
+    const next: StreamerCommand = {
+      action: 'predictions.cancel',
+      predictionId: cancelId,
+      confirmed: true,
+    }
+    const outcome = await send(next, 'cancel')
+    if (outcome?.status === 'ok') setCancelId(null)
+    else if (outcome?.status === 'failed') setCancelError(manualFailure(outcome.code))
+  }
 
   return (
     <div className={styles['page']}>
-      <Banner
-        icon={suspended ? 'alert' : 'wand'}
-        title={
-          suspended
-            ? 'Прогнозы приостановлены'
-            : active
-              ? 'Прогнозы идут сами'
-              : 'Прогнозы работают сами'
-        }
-        tone={suspended ? 'warn' : active ? 'ok' : 'neutral'}
-      >
-        {suspended
-          ? 'Окно игры другого формата. Прогнозы продолжатся, когда формат вернётся.'
-          : 'Прогноз открывается, когда начинается бой, и закрывается по итогу боя. Включите один раз — во время эфира ничего нажимать не нужно.'}
+      <Banner icon="wand" title="Прогнозы" tone="neutral">
+        Ставки закрываются по таймеру.
       </Banner>
       <Requirements items={requirements} />
-      <Group
-        title="Как работают прогнозы"
-        trail={locked ? <span>изменение недоступно, пока идут прогнозы</span> : undefined}
-      >
-        <Card padded>
-          <Setting hint="Что угадывают зрители" title="Сценарий">
-            <Segment
-              label="Сценарий прогноза"
-              onChange={(predictionType) => change({ predictionType })}
-              options={[
-                { value: 'win_lose', label: 'Победа / поражение', disabled: locked },
-                { value: 'win_streak', label: 'Серия побед', disabled: locked },
-                { value: 'mix', label: 'Смешанный', disabled: locked },
-              ]}
-              value={settings.predictionType}
-            />
-          </Setting>
-          <Setting hint="От 30 секунд до 30 минут" title="Время на голосование">
-            <Stepper
-              disabled={locked}
-              format={(value) => `${value} с`}
-              label="Время на голосование, секунд"
-              max={1800}
-              min={30}
-              onChange={(predictionWindow) => change({ predictionWindow })}
-              step={30}
-              value={settings.predictionWindow}
-            />
-          </Setting>
-          {settings.predictionType === 'win_lose' ? null : (
-            <Setting
-              hint="Для сценариев «Серия побед» и «Смешанный»"
-              title="Побед в серии"
-            >
-              <Stepper
-                disabled={locked}
-                label="Побед в серии"
-                max={10}
-                min={2}
-                onChange={(winStreakCount) => change({ winStreakCount })}
-                step={1}
-                value={settings.winStreakCount}
-              />
-            </Setting>
-          )}
-          <Setting hint="Сколько ждать после итога боя" title="Пауза между прогнозами">
-            <Stepper
-              disabled={locked}
-              format={(value) => `${value} с`}
-              label="Пауза между прогнозами, секунд"
-              max={60}
-              min={1}
-              onChange={(delayBetweenPredictions) => change({ delayBetweenPredictions })}
-              step={1}
-              value={settings.delayBetweenPredictions}
-            />
-          </Setting>
-          <Setting
-            hint="Сразу после итога боя, без ваших действий"
-            title="Открывать следующий прогноз сам"
-          >
-            <Switch
-              checked={settings.autoCreateNext}
-              disabled={locked}
-              label="Создавать следующий прогноз сам"
-              onChange={(autoCreateNext) => change({ autoCreateNext })}
-            />
-          </Setting>
-        </Card>
-      </Group>
       {error === null ? null : (
         <Banner icon="alert" title="Не получилось" tone="danger">
-          {error} Параметры сохранены в форме.
+          {error}
         </Banner>
       )}
-      <Group title="Управление">
+      <Group title="Сейчас">
         <Card padded>
           <div className={styles['controlRow']}>
-            {active ? (
-              <Button loading={busy} onClick={toggle} size="lg" variant="danger">
-                <Icon name="stop" size={15} />
-                Выключить прогнозы
-              </Button>
-            ) : (
-              <Button
-                disabled={!ready || locked}
-                loading={busy}
-                onClick={toggle}
-                size="lg"
-                variant="primary"
-              >
-                <Icon name="play" size={15} />
-                Включить прогнозы
-              </Button>
-            )}
-            <Pill tone={runtime.tone}>{runtime.label}</Pill>
-            {!active && !ready ? (
-              <span className={styles['fnLabel']}>
-                <Icon name="info" size={13} />
-                Закройте пункты выше
-              </span>
+            {status === null ? null : <Pill tone={status.tone}>{status.label}</Pill>}
+            {prediction === null ? (
+              <span className={styles['muted']}>Прогноза сейчас нет</span>
             ) : null}
           </div>
-          {active && stats.activeTitle !== null ? (
-            <div className={styles['activeTitle']}>
-              <span>Текущий прогноз</span>«{stats.activeTitle}»
-            </div>
-          ) : null}
+          {prediction === null ? null : (
+            <>
+              <div className={styles['activeTitle']}>
+                <span>Текущий прогноз</span>«{prediction.title}»
+                {prediction.mode === 'streak' ? (
+                  <div className={styles['muted']}>
+                    {streakProgress(prediction.wins, prediction.target)}
+                  </div>
+                ) : null}
+              </div>
+              <div className={styles['manual']}>
+                <Button
+                  disabled={busy}
+                  loading={pending('battle')}
+                  onClick={() => void settle(prediction.id, 'win')}
+                  variant="primary"
+                >
+                  Победа
+                </Button>
+                <Button
+                  disabled={busy}
+                  loading={pending('battle')}
+                  onClick={() => void settle(prediction.id, 'loss')}
+                >
+                  Поражение
+                </Button>
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    setCancelError(null)
+                    setCancelId(prediction.id)
+                  }}
+                  variant="danger"
+                >
+                  Отменить и вернуть ставки
+                </Button>
+              </div>
+            </>
+          )}
           <div className={styles['stats']}>
             <div className={styles['stat']}>
-              <b>{stats.total}</b>
-              <small>Всего прогнозов</small>
+              <b>{stats.resolved + stats.canceled}</b>
+              <small>Прогнозов</small>
             </div>
             <div className={styles['stat']}>
-              <b>{stats.successful}</b>
-              <small>Успешных</small>
+              <b>{stats.yes}</b>
+              <small>Да</small>
             </div>
             <div className={styles['stat']}>
-              <b>{stats.successRate}%</b>
-              <small>Доля успешных</small>
+              <b>{stats.no}</b>
+              <small>Нет</small>
             </div>
             <div className={styles['stat']}>
-              <b>{stats.currentWinStreak}</b>
-              <small>Серия побед</small>
+              <b>{stats.canceled}</b>
+              <small>Отменены</small>
             </div>
           </div>
         </Card>
       </Group>
+      <Group
+        title="Настройки"
+        trail={
+          prediction === null ? undefined : (
+            <span>изменения — со следующего прогноза</span>
+          )
+        }
+      >
+        <Card padded>
+          <Setting
+            hint="Новый прогноз открывается сразу после итога"
+            title="Автопрогнозы"
+          >
+            <Switch
+              checked={enabled}
+              disabled={busy}
+              label="Автопрогнозы"
+              onChange={(on) => void toggle(on)}
+            />
+          </Setting>
+          <Setting title="Что угадывают зрители">
+            <Segment
+              label="Что угадывают зрители"
+              onChange={(mode) => change({ mode })}
+              options={[
+                { value: 'each_battle', label: 'Каждый бой', disabled: busy },
+                { value: 'streak', label: 'Серия побед', disabled: busy },
+              ]}
+              value={form.mode}
+            />
+          </Setting>
+          {form.mode === 'streak' ? (
+            <>
+              <Setting title="Длина серии">
+                <Segment
+                  label="Длина серии"
+                  onChange={(streakKind) => change({ streakKind })}
+                  options={[
+                    { value: 'fixed', label: 'Точно', disabled: busy },
+                    { value: 'random', label: 'Случайно', disabled: busy },
+                  ]}
+                  value={form.streakKind}
+                />
+              </Setting>
+              {form.streakKind === 'fixed' ? (
+                <Setting hint="От 2 до 10" title="Побед подряд">
+                  <Stepper
+                    disabled={busy}
+                    label="Побед подряд"
+                    max={10}
+                    min={2}
+                    onChange={(streakLength) => change({ streakLength })}
+                    value={form.streakLength}
+                  />
+                </Setting>
+              ) : (
+                <Setting
+                  hint="Для каждой серии длина выпадает заново. «От» не больше «До»"
+                  title="Побед подряд: от и до"
+                >
+                  <div className={styles['controlRow']}>
+                    <Stepper
+                      disabled={busy}
+                      format={(value) => `от ${value}`}
+                      label="От"
+                      max={form.streakTo}
+                      min={1}
+                      onChange={(streakFrom) => change({ streakFrom })}
+                      value={form.streakFrom}
+                    />
+                    <Stepper
+                      disabled={busy}
+                      format={(value) => `до ${value}`}
+                      label="До"
+                      max={10}
+                      min={form.streakFrom}
+                      onChange={(streakTo) => change({ streakTo })}
+                      value={form.streakTo}
+                    />
+                  </div>
+                </Setting>
+              )}
+            </>
+          ) : null}
+          <Setting hint="Потом Twitch сам закроет ставки" title="Время на ставки">
+            <Select
+              aria-label="Время на ставки"
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.currentTarget.value
+                const choice = VOTING_CHOICES.find((item) => String(item.value) === value)
+                if (choice !== undefined) change({ votingSeconds: choice.value })
+              }}
+              value={String(form.votingSeconds)}
+            >
+              {VOTING_CHOICES.map((choice) => (
+                <option key={choice.value} value={String(choice.value)}>
+                  {choice.label}
+                </option>
+              ))}
+            </Select>
+          </Setting>
+          {form.mode === 'streak' ? (
+            <Setting
+              hint="«Серия: 2/5» после каждого боя серии"
+              title="Писать прогресс в чат"
+            >
+              <Switch
+                checked={form.chatProgress}
+                disabled={busy}
+                label="Писать прогресс в чат"
+                onChange={(chatProgress) => change({ chatProgress })}
+              />
+            </Setting>
+          ) : null}
+          <div className={styles['manual']}>
+            <Button
+              disabled={!dirty || busy}
+              loading={pending('settings')}
+              onClick={() => void save()}
+              variant="primary"
+            >
+              Сохранить
+            </Button>
+          </div>
+        </Card>
+      </Group>
+      {cancelId === null ? null : (
+        <ConfirmDialog
+          confirmLabel="Вернуть ставки"
+          error={cancelError}
+          onCancel={() => {
+            if (!pending('cancel')) setCancelId(null)
+          }}
+          onConfirm={() => void confirmCancel()}
+          pending={pending('cancel')}
+          text="Все ставки вернутся зрителям."
+          title="Отменить прогноз?"
+        />
+      )}
     </div>
   )
 }

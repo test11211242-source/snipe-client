@@ -11,10 +11,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  StreamerCommand,
-  StreamerCommandResult,
-} from '../../../../shared/contracts/streamer-ipc'
+import type { StreamerCommandResult } from '../../../../shared/contracts/streamer-ipc'
 import { failure, installStream, mountStream, ok } from '../../test/streamerWorld'
 import { StreamerProvider } from './StreamerProvider'
 import { useStreamer } from './streamerContext'
@@ -104,7 +101,7 @@ describe('streamer controller: serial and coalesced commands', () => {
     await waitFor(() => expect(holder.current?.view).not.toBeNull())
     let outcome: CommandOutcome | null = null
     await act(async () => {
-      outcome = await ctl().command({ action: 'predictions.stop' })
+      outcome = await ctl().command({ action: 'chat.toggle', enabled: true })
     })
     expect(outcome).toEqual({ status: 'failed', code: 'IPC_FAILED', detail: null })
     expect(ctl().view?.twitch.username).toBe('artcs_cr')
@@ -112,13 +109,13 @@ describe('streamer controller: serial and coalesced commands', () => {
 })
 
 describe('requirements link to the owning page', () => {
-  it('predictions: Twitch → Twitch page, zones → profiles panel, monitoring → start', async () => {
+  it('predictions: Twitch → Twitch page, own-battle profile → profiles panel, monitoring → start', async () => {
     const world = mountStream(
       { name: 'stream', section: 'predictions' },
       {
         readiness: {
           twitchConnected: false,
-          resultZonesConfigured: false,
+          predictionProfileReady: false,
           monitoring: false,
         },
       },
@@ -126,17 +123,19 @@ describe('requirements link to the owning page', () => {
     const needs = await screen.findByText('Нужно для работы')
     const block = parentOf(needs)
     expect(within(block).getByText('не подключён')).toBeVisible()
-    expect(within(block).getByText('не настроены в профиле')).toBeVisible()
+    expect(within(block).getByText('нужен профиль своих боёв')).toBeVisible()
     expect(within(block).getByText('не запущен')).toBeVisible()
-    // The start button is blocked while something is missing.
-    expect(screen.getByRole('button', { name: /Включить прогнозы/ })).toBeDisabled()
+    // Nothing to start by hand: the server runs predictions once everything is there.
+    expect(screen.queryByRole('button', { name: /Включить прогнозы/ })).toBeNull()
+    expect(screen.queryByText(/Зоны результата/)).toBeNull()
 
     fireEvent.click(within(block).getByRole('button', { name: /Запустить/ }))
     await waitFor(() =>
       expect(world.bridge.crTools.startMonitor).toHaveBeenCalledTimes(1),
     )
 
-    fireEvent.click(within(block).getByRole('button', { name: /Настроить в профиле/ }))
+    const ownBattles = parentOf(within(block).getByText('нужен профиль своих боёв'))
+    fireEvent.click(within(ownBattles).getByRole('button', { name: /Профили/ }))
     expect(await screen.findByRole('dialog', { name: 'Профили' })).toBeVisible()
     fireEvent.keyDown(document, { key: 'Escape' })
 
@@ -169,65 +168,6 @@ describe('requirements link to the owning page', () => {
     const block = parentOf(needs)
     expect(within(block).getAllByText('не удалось проверить').length).toBeGreaterThan(0)
     expect(within(block).queryByText('не подключён')).not.toBeInTheDocument()
-  })
-})
-
-describe('predictions', () => {
-  it('starts with the edited preferences and keeps them when starting fails', async () => {
-    const world = mountStream({ name: 'stream', section: 'predictions' })
-    world.fake.handlers.push((command) =>
-      command.action === 'predictions.start'
-        ? failure('PREDICTION_START_FAILED')
-        : undefined,
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Серия побед' }))
-    fireEvent.click(screen.getByRole('button', { name: /Включить прогнозы/ }))
-    expect(await screen.findByText(/Не удалось включить прогнозы/)).toBeVisible()
-    const start = world.fake.command.mock.calls.find(
-      ([command]) => command.action === 'predictions.start',
-    )?.[0] as Extract<StreamerCommand, { action: 'predictions.start' }>
-    expect(start.settings.predictionType).toBe('win_streak')
-    // The draft stays in the form.
-    expect(screen.getByRole('button', { name: 'Серия побед' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    expect(screen.getByText(/Параметры сохранены в форме/)).toBeVisible()
-  })
-
-  it('locks the preferences while predictions run and stops them', async () => {
-    const world = mountStream(
-      { name: 'stream', section: 'predictions' },
-      {
-        view: (view) => {
-          view.predictions.active = true
-          view.predictions.runtimeState = 'active'
-        },
-      },
-    )
-    expect(await screen.findByText('Включены, идут сами')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Смешанный' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: /Выключить прогнозы/ }))
-    await waitFor(() =>
-      expect(world.fake.command).toHaveBeenCalledWith({ action: 'predictions.stop' }),
-    )
-    expect(await screen.findByRole('button', { name: /Включить прогнозы/ })).toBeVisible()
-  })
-
-  it('says so, and still offers to stop, while the result trigger is suspended', async () => {
-    mountStream(
-      { name: 'stream', section: 'predictions' },
-      {
-        view: (view) => {
-          view.predictions.active = true
-          view.predictions.runtimeState = 'suspended'
-        },
-      },
-    )
-    expect(await screen.findByText('Приостановлены')).toBeVisible()
-    expect(screen.getByText('Прогнозы приостановлены')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Смешанный' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Выключить прогнозы/ })).toBeEnabled()
   })
 })
 

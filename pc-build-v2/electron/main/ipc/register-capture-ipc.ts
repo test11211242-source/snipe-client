@@ -142,7 +142,6 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
       await dependencies.setup.start(
         prepared.source.selector,
         prepared.source.preference,
-        'capture',
         prepared.frame,
         target,
       ),
@@ -211,16 +210,6 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     })
   })
 
-  ipcMain.handle(SETUP_IPC_CHANNELS.startResult, async (event, rawPayload) => {
-    verify(event, dependencies.windows, 'main')
-    const payload = CaptureProfileCommandSchema.parse(rawPayload)
-    return SetupSessionResultSchema.parse(
-      await dependencies.setup.startPredictionResult(
-        payload.profileId,
-        payload.expectedRevision,
-      ),
-    )
-  })
   ipcMain.handle(SETUP_IPC_CHANNELS.getSession, (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     EmptyCapturePayloadSchema.parse(rawPayload)

@@ -25,7 +25,6 @@ function summary(profileId: string, profileName: string, isActive: boolean) {
     sourceLabel: profileName,
     sourceHealth: { state: 'unknown' as const, reason: null },
     calibrationHealth: 'validated' as const,
-    resultConfigured: false,
   }
 }
 
@@ -354,29 +353,6 @@ describe('CaptureProfileService', () => {
         ),
       ).rejects.toMatchObject({ code })
       expect(test.monitor.restartIfActive).not.toHaveBeenCalled()
-    },
-  )
-
-  it.each([true, false])(
-    'projects calibration-bound resultConfigured after append: %s',
-    async (matches) => {
-      const results = {
-        load: vi.fn().mockResolvedValue({
-          captureProfileId: PRIMARY_ID,
-          captureCalibrationId: matches ? PRIMARY_ID : SECONDARY_ID,
-          captureConfigurationRevision: 1,
-          captureConfigurationFingerprint: 'old'.padEnd(64, '0'),
-        }),
-      }
-      const test = harness(results)
-      const listed = status()
-      listed.profiles = listed.profiles.map((profile) => ({
-        ...profile,
-        calibrationId: PRIMARY_ID,
-        configurationRevision: 4,
-      }))
-      test.repository.list.mockResolvedValue(listed)
-      expect((await test.service.getView()).profiles[0]?.resultConfigured).toBe(matches)
     },
   )
 })

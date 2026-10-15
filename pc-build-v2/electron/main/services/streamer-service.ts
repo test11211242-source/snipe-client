@@ -13,7 +13,8 @@ import {
 import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
-  PredictionPreferencesSchema,
+  DEFAULT_PREDICTION_SETTINGS,
+  PredictionSettingsSchema,
   PredictionStatusSchema,
   StreamTitlePreviewSchema,
   StreamerViewSchema,
@@ -21,14 +22,12 @@ import {
   GameAccountTagSchema,
   type OverlaySettings,
   type OverlayUrlKind,
-  type PredictionPreferences,
+  type PredictionSettings,
+  type PredictionStatus,
   type StreamerView,
   type StreamTitleSettings,
   type StreamTitlePreview,
 } from '../../../shared/models/streamer'
-import type { PredictionPreferencesRepository } from '../infrastructure/prediction-preferences-repository'
-import { DEFAULT_PREDICTION_PREFERENCES } from '../infrastructure/prediction-preferences-repository'
-import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
@@ -74,23 +73,15 @@ function initialView(): StreamerView {
     access: { allowed: false, reason: 'Streamer role is required' },
     twitch: { connected: false, username: null, polling: false },
     predictions: {
-      active: false,
-      state: 'idle',
-      runtimeState: 'stopped',
-      settings: DEFAULT_PREDICTION_PREFERENCES,
-      statistics: {
-        total: 0,
-        successful: 0,
-        successRate: 0,
-        currentWinStreak: 0,
-        activeTitle: null,
-      },
-      requirements: {
-        twitchConnected: false,
-        mainMonitorConfigured: false,
-        mainMonitorRunning: false,
-        resultConfigured: false,
-      },
+      enabled: true,
+      live: false,
+      clientReady: false,
+      phase: 'client_not_ready',
+      attention: null,
+      prediction: null,
+      stats: { resolved: 0, yes: 0, no: 0, canceled: 0 },
+      history: [],
+      settings: DEFAULT_PREDICTION_SETTINGS,
     },
     title: {
       settings: DEFAULT_TITLE_SETTINGS,
@@ -139,8 +130,6 @@ export class StreamerService {
   constructor(
     private readonly auth: AuthSession,
     private readonly api: AuthenticatedApiClient,
-    private readonly preferences: PredictionPreferencesRepository,
-    _resultConfigurations: PredictionResultConfigurationRepository,
     private readonly captureConfigurations: CaptureConfigurationRepository,
     private readonly monitor: MonitorSupervisor,
     private readonly predictions: PredictionCoordinator,
@@ -185,7 +174,7 @@ export class StreamerService {
           ? monitor.value.runIntent && monitor.value.state === 'READY'
           : null,
       captureConfigured: capture.status === 'fulfilled' ? active !== null : null,
-      resultZonesConfigured: profileReady,
+      predictionProfileReady: capture.status === 'fulfilled' ? profileReady : null,
       activeProfileId: active?.profile.profileId ?? null,
     })
   }
@@ -208,11 +197,14 @@ export class StreamerService {
         case 'twitch.disconnect':
           await this.disconnectTwitch()
           break
-        case 'predictions.start':
-          await this.startPredictions(command.settings)
+        case 'predictions.settings.save':
+          await this.savePredictionSettings(command.settings)
           break
-        case 'predictions.stop':
-          await this.stopPredictions()
+        case 'predictions.battle':
+          await this.settlePredictionBattle(command.predictionId, command.outcome)
+          break
+        case 'predictions.cancel':
+          await this.cancelPrediction(command.predictionId)
           break
         case 'title.save':
           await this.updateTitle(command.settings)
@@ -456,15 +448,40 @@ export class StreamerService {
     })
   }
 
-  startPredictions(settings: PredictionPreferences): Promise<StreamerView> {
-    return this.mutate(async () => {
-      this.assertAccess()
-      await this.predictions.start(PredictionPreferencesSchema.parse(settings))
-    })
+  savePredictionSettings(settings: PredictionSettings): Promise<StreamerView> {
+    const parsed = PredictionSettingsSchema.parse(settings)
+    return this.predictionMutation(() => this.predictions.saveSettings(parsed), parsed)
   }
 
-  stopPredictions(): Promise<StreamerView> {
-    return this.mutate(() => this.predictions.stop())
+  settlePredictionBattle(
+    predictionId: number,
+    outcome: 'win' | 'loss',
+  ): Promise<StreamerView> {
+    return this.predictionMutation(() =>
+      this.predictions.manualBattle(predictionId, outcome),
+    )
+  }
+
+  cancelPrediction(predictionId: number): Promise<StreamerView> {
+    return this.predictionMutation(() => this.predictions.cancel(predictionId))
+  }
+
+  private predictionMutation(
+    operation: () => Promise<PredictionStatus>,
+    settings?: PredictionSettings,
+  ): Promise<StreamerView> {
+    return this.mutate(async () => {
+      const generation = this.auth.getContextGeneration()
+      const status = await operation()
+      if (generation !== this.auth.getContextGeneration())
+        throw new ApplicationError(
+          'STREAMER_CANCELLED',
+          'Prediction operation was cancelled',
+        )
+      this.patch({
+        predictions: { ...status, settings: settings ?? this.#view.predictions.settings },
+      })
+    })
   }
 
   updateTitle(settings: StreamTitleSettings): Promise<StreamerView> {
@@ -632,33 +649,26 @@ export class StreamerService {
       access: { allowed: true, reason: null },
       refresh: { ...this.#view.refresh, state: 'refreshing', errors: [] },
     })
-    const userId = authView.user.id
-    const predictionObservationGeneration = this.predictions.observationGeneration
-    const local = await Promise.allSettled([
-      this.preferences.load(userId),
-      this.captureConfigurations.load(userId),
-      this.monitor.getView(),
-    ])
-    if (!this.isCurrentRefresh(generation, signal)) return this.#view
-    const localErrors: StreamerView['refresh']['errors'] = []
-    const localPreferences =
-      local[0].status === 'fulfilled'
-        ? local[0].value
-        : { ...DEFAULT_PREDICTION_PREFERENCES }
-    if (local[0].status === 'rejected')
-      localErrors.push(publicFailure('predictions', local[0].reason))
-    const captureConfig = local[1].status === 'fulfilled' ? local[1].value : null
-    if (local[1].status === 'rejected')
-      localErrors.push(publicFailure('predictions', local[1].reason))
-    const monitorView =
-      local[2].status === 'fulfilled' ? local[2].value : { state: 'FAILED' as const }
-    if (local[2].status === 'rejected')
-      localErrors.push(publicFailure('predictions', local[2].reason))
-    const predictionRequest = this.api.request({
-      method: 'GET',
-      path: '/api/streamer/predictions/status',
-      schema: PredictionStatusSchema,
-      signal,
+    const predictionRequest = Promise.all([
+      this.api.request({
+        method: 'GET',
+        path: '/api/streamer/predictions/status',
+        schema: PredictionStatusSchema,
+        signal,
+      }),
+      this.api.request({
+        method: 'GET',
+        path: '/api/streamer/predictions/settings',
+        schema: PredictionSettingsSchema,
+        signal,
+      }),
+    ]).then(([status, settings]) => {
+      if (!status.ok) return status
+      if (!settings.ok) return settings
+      return {
+        ...status,
+        data: parsePredictions(status.data, settings.data),
+      }
     })
     const requests = await Promise.allSettled([
       this.api.request({
@@ -689,7 +699,7 @@ export class StreamerService {
     ])
     if (!this.isCurrentRefresh(generation, signal)) return this.#view
     const sections = ['twitch', 'predictions', 'title', 'deckSharing', 'overlay'] as const
-    const errors: StreamerView['refresh']['errors'] = [...localErrors]
+    const errors: StreamerView['refresh']['errors'] = []
     let next = this.#view
     for (let index = 0; index < requests.length; index += 1) {
       const settled = requests[index]
@@ -719,13 +729,10 @@ export class StreamerService {
             twitch: { ...parseTwitch(value), polling: this.#oauthPollsRemaining > 0 },
           }
         else if (section === 'predictions') {
-          const parsed = parsePredictions(value, localPreferences)
-          this.predictions.observeServerState(
-            parsed.active,
-            userId,
-            predictionObservationGeneration,
-          )
-          next = { ...next, predictions: { ...next.predictions, ...parsed } }
+          next = {
+            ...next,
+            predictions: StreamerViewSchema.shape.predictions.parse(value),
+          }
         } else if (section === 'title') next = { ...next, title: parseTitle(value) }
         else if (section === 'deckSharing') {
           const settings =
@@ -772,16 +779,6 @@ export class StreamerService {
     next = {
       ...next,
       access: { allowed: true, reason: null },
-      predictions: {
-        ...next.predictions,
-        runtimeState: this.predictions.state,
-        requirements: {
-          twitchConnected: next.twitch.connected,
-          mainMonitorConfigured: getPredictionProfileReadiness(captureConfig).ready,
-          mainMonitorRunning: monitorView.state === 'READY',
-          resultConfigured: true,
-        },
-      },
       refresh: {
         state:
           boundedErrors.length === 0

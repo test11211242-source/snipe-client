@@ -24,7 +24,7 @@
     "fixture": {
       "streamer": {
         "twitch": "off",
-        "zones": false
+        "predictionProfile": false
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
@@ -36,7 +36,7 @@
     "fixture": {
       "streamer": {
         "twitch": "off",
-        "zones": false
+        "predictionProfile": false
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
@@ -109,7 +109,7 @@
     "height": 700,
     "fixture": {
       "streamer": {
-        "zones": true
+        "predictionProfile": true
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
@@ -120,7 +120,7 @@
     "height": 700,
     "fixture": {
       "streamer": {
-        "zones": true
+        "predictionProfile": true
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
@@ -132,7 +132,7 @@
     "fixture": {
       "streamer": {
         "twitch": "off",
-        "zones": false,
+        "predictionProfile": false,
         "monitoring": false
       }
     },
@@ -145,7 +145,7 @@
     "fixture": {
       "streamer": {
         "twitch": "off",
-        "zones": false,
+        "predictionProfile": false,
         "monitoring": false
       }
     },
@@ -157,7 +157,7 @@
     "height": 700,
     "fixture": {
       "streamer": {
-        "predictions": "active"
+        "predictions": "voting"
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]
@@ -168,7 +168,7 @@
     "height": 700,
     "fixture": {
       "streamer": {
-        "predictions": "active"
+        "predictions": "voting"
       }
     },
     "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\") })()"]

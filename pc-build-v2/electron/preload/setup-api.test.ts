@@ -82,4 +82,18 @@ describe('automatic setup preload', () => {
     electron.invoke.mockResolvedValue({ ...preview, width: 641 })
     await expect(setupApi.getDetectionPreview({ sessionId })).rejects.toThrow()
   })
+
+  it('exposes no result-zone setup and rejects result-zone session views', () => {
+    expect(setupApi).not.toHaveProperty('startResult')
+    expect(Object.values(SETUP_IPC_CHANNELS)).not.toContain('setup:start-result')
+    expect(
+      SetupSessionViewSchema.safeParse({ ...view, kind: 'predictionResult' }).success,
+    ).toBe(false)
+    expect(
+      SetupSessionViewSchema.safeParse({
+        ...view,
+        regions: { ...view.regions, resultTrigger: null },
+      }).success,
+    ).toBe(false)
+  })
 })

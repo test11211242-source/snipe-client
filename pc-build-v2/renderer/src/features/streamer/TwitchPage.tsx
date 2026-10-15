@@ -52,7 +52,7 @@ function Twitch(): React.JSX.Element {
       icon: 'trophy',
       title: 'Прогнозы',
       sub: 'Создаются на вашем канале сами',
-      on: view.predictions.active,
+      on: view.predictions.enabled,
     },
     {
       section: 'title',

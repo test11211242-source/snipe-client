@@ -41,9 +41,3 @@ export function profileNotes(profile: CaptureProfileSummary): ProfileNotes {
           : null,
   }
 }
-
-/** Source states in which result-zone capture cannot take a frame. */
-export function sourceUsable(profile: CaptureProfileSummary): boolean {
-  const state = profile.sourceHealth.state
-  return state === 'available' || state === 'unknown'
-}

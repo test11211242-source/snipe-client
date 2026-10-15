@@ -7,6 +7,10 @@ import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-
 import { ApiClient } from './api-client'
 import { z } from 'zod'
 import { predictionStatusFixture } from '../../../tests/prediction-fixtures'
+import {
+  DEFAULT_PREDICTION_SETTINGS,
+  type PredictionStatus,
+} from '../../../shared/models/streamer'
 
 const userView = {
   state: 'AUTHENTICATED' as const,
@@ -23,11 +27,12 @@ const userView = {
 function harness(
   connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x',
   activeProfile: object | null = null,
-  resultConfig: object = {},
 ) {
   let authGeneration = 1
   let activeMutations = 0
   let maxMutations = 0
+  let predictionStatus = structuredClone(predictionStatusFixture)
+  let predictionSettings = { ...DEFAULT_PREDICTION_SETTINGS }
   const request = vi.fn(
     async (input: {
       method: string
@@ -58,7 +63,13 @@ function harness(
         return {
           ok: true as const,
           status: 200,
-          data: predictionStatusFixture,
+          data: predictionStatus,
+        }
+      if (input.path.endsWith('/predictions/settings'))
+        return {
+          ok: true as const,
+          status: 200,
+          data: predictionSettings,
         }
       if (input.path.endsWith('/title/status'))
         return {
@@ -88,20 +99,20 @@ function harness(
   )
   const shell = { openExternal: vi.fn().mockResolvedValue(undefined) }
   const clipboard = { writeText: vi.fn() }
+  const predictions = {
+    startLifecycle: vi.fn(),
+    shutdown: vi.fn(),
+    saveSettings: vi.fn((settings: typeof predictionSettings) => {
+      predictionSettings = settings
+      predictionStatus = { ...predictionStatus, enabled: settings.enabled }
+      return Promise.resolve(predictionStatus)
+    }),
+    manualBattle: vi.fn().mockResolvedValue(predictionStatusFixture),
+    cancel: vi.fn().mockResolvedValue(predictionStatusFixture),
+  }
   const service = new StreamerService(
     { getView: () => userView, getContextGeneration: () => authGeneration } as never,
     { request } as never,
-    {
-      load: vi.fn().mockResolvedValue({
-        predictionType: 'win_lose',
-        predictionWindow: 60,
-        winStreakCount: 2,
-        delayBetweenPredictions: 5,
-        autoCreateNext: true,
-      }),
-      save: vi.fn(),
-    } as never,
-    { load: vi.fn().mockResolvedValue(resultConfig) } as never,
     {
       load: vi.fn().mockResolvedValue(null),
       getActive: vi.fn().mockResolvedValue(activeProfile),
@@ -117,15 +128,7 @@ function harness(
       }),
     } as never,
     { getView: vi.fn().mockResolvedValue({ state: 'READY', runIntent: true }) } as never,
-    {
-      state: 'stopped',
-      observationGeneration: 0,
-      observeServerState: vi.fn(),
-      startLifecycle: vi.fn(),
-      shutdown: vi.fn(),
-      start: vi.fn(),
-      stop: vi.fn(),
-    } as never,
+    predictions as never,
     shell,
     clipboard,
     () => new Date('2026-07-12T12:00:00.000Z'),
@@ -134,11 +137,139 @@ function harness(
     service,
     request,
     shell,
+    predictions,
+    setPredictionStatus: (status: PredictionStatus) => {
+      predictionStatus = status
+    },
     clipboard,
     maxMutations: () => maxMutations,
     changeAuth: () => ++authGeneration,
   }
 }
+
+describe('prediction settings and manual settlement', () => {
+  it('loads settings from the server with the 30-second default', async () => {
+    const test = harness()
+    const view = await test.service.refresh()
+    expect(view.predictions.settings).toEqual(DEFAULT_PREDICTION_SETTINGS)
+    expect(test.request.mock.calls.map(([input]) => input.path)).toContain(
+      '/api/streamer/predictions/settings',
+    )
+    expect(view.predictions.settings.votingSeconds).toBe(30)
+  })
+
+  it('saves new settings without starting or stopping the monitor', async () => {
+    const test = harness()
+    const settings = {
+      ...DEFAULT_PREDICTION_SETTINGS,
+      enabled: false,
+      mode: 'streak' as const,
+    }
+    const result = await test.service.execute({
+      action: 'predictions.settings.save',
+      settings,
+    })
+    expect(result.ok).toBe(true)
+    expect(test.predictions.saveSettings).toHaveBeenCalledWith(settings)
+    expect(test.service.getView().predictions.settings).toEqual(settings)
+    expect(test.service.getView().predictions.enabled).toBe(false)
+  })
+
+  it.each(['win', 'loss'] as const)(
+    'routes manual %s with the current prediction identity',
+    async (outcome) => {
+      const test = harness()
+      const status = {
+        ...predictionStatusFixture,
+        stats: {
+          resolved: 1,
+          yes: outcome === 'win' ? 1 : 0,
+          no: outcome === 'loss' ? 1 : 0,
+          canceled: 0,
+        },
+      }
+      test.setPredictionStatus(status)
+      test.predictions.manualBattle.mockResolvedValue(status)
+      const result = await test.service.execute({
+        action: 'predictions.battle',
+        predictionId: 71,
+        outcome,
+      })
+      expect(result.ok).toBe(true)
+      expect(test.predictions.manualBattle).toHaveBeenCalledExactlyOnceWith(71, outcome)
+      expect(test.service.getView().predictions.stats).toEqual(status.stats)
+    },
+  )
+
+  it('requires confirmation before forwarding cancel', async () => {
+    const test = harness()
+    expect(
+      (
+        await test.service.execute({
+          action: 'predictions.cancel',
+          predictionId: 71,
+        })
+      ).ok,
+    ).toBe(false)
+    expect(test.predictions.cancel).not.toHaveBeenCalled()
+    expect(
+      (
+        await test.service.execute({
+          action: 'predictions.cancel',
+          predictionId: 71,
+          confirmed: true,
+        })
+      ).ok,
+    ).toBe(true)
+    expect(test.predictions.cancel).toHaveBeenCalledExactlyOnceWith(71)
+  })
+
+  it('rejects invalid streak ranges at the IPC boundary', async () => {
+    const test = harness()
+    const result = await test.service.execute({
+      action: 'predictions.settings.save',
+      settings: { ...DEFAULT_PREDICTION_SETTINGS, streakFrom: 6, streakTo: 2 },
+    })
+    expect(result.ok).toBe(false)
+    expect(test.predictions.saveSettings).not.toHaveBeenCalled()
+  })
+
+  it('renders a server-side stop and restart without a local runtime gate', async () => {
+    const test = harness()
+    expect((await test.service.refresh()).predictions.enabled).toBe(true)
+    test.setPredictionStatus({
+      ...predictionStatusFixture,
+      enabled: false,
+      phase: 'disabled',
+    })
+    expect((await test.service.refresh()).predictions.enabled).toBe(false)
+    test.setPredictionStatus(predictionStatusFixture)
+    expect((await test.service.refresh()).predictions.enabled).toBe(true)
+  })
+
+  it('never applies a manual response from an old auth generation', async () => {
+    const test = harness()
+    const gate = Promise.withResolvers<PredictionStatus>()
+    test.predictions.manualBattle.mockReturnValueOnce(gate.promise)
+    const before = test.service.getView().predictions
+    const pending = test.service.execute({
+      action: 'predictions.battle',
+      predictionId: 71,
+      outcome: 'win',
+    })
+    await vi.waitFor(() => expect(test.predictions.manualBattle).toHaveBeenCalled())
+    test.changeAuth()
+    gate.resolve({
+      ...predictionStatusFixture,
+      stats: { resolved: 1, yes: 1, no: 0, canceled: 0 },
+    })
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(test.service.getView().predictions).toEqual(before)
+  })
+})
 
 describe('StreamerService', () => {
   it.each([
@@ -376,7 +507,7 @@ describe('StreamerService', () => {
       accountsCount: 0,
       monitoring: true,
       captureConfigured: false,
-      resultZonesConfigured: false,
+      predictionProfileReady: false,
       activeProfileId: null,
     })
     const original = test.request.getMockImplementation()
@@ -404,7 +535,7 @@ describe('StreamerService', () => {
     await test.service.refresh()
     expect(await test.service.getReadiness()).toMatchObject({
       captureConfigured: true,
-      resultZonesConfigured: false,
+      predictionProfileReady: false,
       activeProfileId: profileId,
     })
   })
@@ -426,7 +557,7 @@ describe('StreamerService', () => {
       })
       await test.service.refresh()
       expect(await test.service.getReadiness()).toMatchObject({
-        resultZonesConfigured: cy === 0.43,
+        predictionProfileReady: cy === 0.43,
         activeProfileId: profileId,
       })
     },

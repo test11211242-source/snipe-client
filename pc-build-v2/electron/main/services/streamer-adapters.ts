@@ -1,12 +1,13 @@
 import type {
   OverlaySettings,
-  PredictionPreferences,
+  PredictionSettings,
   StreamTitleSettings,
   StreamerView,
 } from '../../../shared/models/streamer'
 import {
   MAX_STREAMER_ACCOUNTS,
   PredictionStatusSchema,
+  PredictionSettingsSchema,
 } from '../../../shared/models/streamer'
 
 type RecordValue = Record<string, unknown>
@@ -87,23 +88,11 @@ export function parseTwitch(value: unknown): StreamerView['twitch'] {
 
 export function parsePredictions(
   value: unknown,
-  settings: PredictionPreferences,
-): Pick<StreamerView['predictions'], 'active' | 'state' | 'settings' | 'statistics'> {
-  const status = PredictionStatusSchema.parse(value)
+  settings: PredictionSettings,
+): StreamerView['predictions'] {
   return {
-    active: status.enabled,
-    state: status.phase,
-    settings,
-    statistics: {
-      total: status.stats.resolved + status.stats.canceled,
-      successful: status.stats.yes,
-      successRate:
-        status.stats.resolved === 0
-          ? 0
-          : (100 * status.stats.yes) / status.stats.resolved,
-      currentWinStreak: status.prediction?.wins ?? 0,
-      activeTitle: status.prediction?.title ?? null,
-    },
+    ...PredictionStatusSchema.parse(value),
+    settings: PredictionSettingsSchema.parse(settings),
   }
 }
 

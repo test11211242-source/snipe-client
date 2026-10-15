@@ -20,7 +20,7 @@ import {
   DEFAULT_TITLE_SETTINGS,
   DEFAULT_OVERLAY_SETTINGS,
 } from '../services/streamer-adapters'
-import { DEFAULT_PREDICTION_PREFERENCES } from '../infrastructure/prediction-preferences-repository'
+import { DEFAULT_PREDICTION_SETTINGS } from '../../../shared/models/streamer'
 import { registerStreamerIpc } from './register-streamer-ipc'
 
 const event = { sender: { id: 1 }, senderFrame: { url: 'file:///app/index.html' } }
@@ -32,14 +32,14 @@ const view = new StreamerService(
   {} as never,
   {} as never,
   {} as never,
-  {} as never,
-  {} as never,
 ).getView()
 const commands: StreamerCommand[] = [
   { action: 'twitch.connect' },
   { action: 'twitch.disconnect', confirmed: true },
-  { action: 'predictions.start', settings: DEFAULT_PREDICTION_PREFERENCES },
-  { action: 'predictions.stop' },
+  { action: 'predictions.settings.save', settings: DEFAULT_PREDICTION_SETTINGS },
+  { action: 'predictions.battle', predictionId: 1, outcome: 'win' },
+  { action: 'predictions.battle', predictionId: 1, outcome: 'loss' },
+  { action: 'predictions.cancel', predictionId: 1, confirmed: true },
   ...(['title.save', 'title.preview', 'title.apply'] as const).map((action) => ({
     action,
     settings: DEFAULT_TITLE_SETTINGS,
@@ -81,7 +81,7 @@ function harness() {
       accountsCount: 1,
       monitoring: true,
       captureConfigured: true,
-      resultZonesConfigured: false,
+      predictionProfileReady: false,
       activeProfileId: '00000000-0000-4000-8000-000000000001',
     }),
   }
@@ -123,7 +123,7 @@ describe('streamer mutation capability', () => {
     'ACCOUNT_SAVE_UNAVAILABLE',
     'UNAUTHORIZED',
     'FORBIDDEN',
-    'PREDICTION_START_FAILED',
+    'VALIDATION_FAILED',
   ])('preserves allowlisted %s through JSON', async (code) => {
     const test = harness()
     const response = { ok: false, error: { code, detail: 'Safe domain detail' } }
@@ -165,7 +165,7 @@ describe('streamer mutation capability', () => {
     const test = harness()
     expect(
       await registeredHandler(STREAMER_IPC_CHANNELS.readiness)(event, {}),
-    ).toMatchObject({ accountsCount: 1, resultZonesConfigured: false })
+    ).toMatchObject({ accountsCount: 1, predictionProfileReady: false })
     await expect(
       registeredHandler(STREAMER_IPC_CHANNELS.readiness)(event, { extra: true }),
     ).rejects.toThrow()

@@ -11,7 +11,6 @@ import {
   NICK,
   PROFILE_ID,
   TRIGGER,
-  resultView,
   sessionView,
   sourcesFixture,
   triggerProfile,
@@ -374,8 +373,6 @@ describe('setup flow: new profile', () => {
               trigger: TRIGGER,
               nickname: NICK,
               topLeftEvidence: EVIDENCE,
-              resultTrigger: null,
-              resultData: null,
             },
             triggerProfile: triggerProfile(),
           }),
@@ -688,8 +685,6 @@ describe('setup flow: stale session and generation', () => {
               trigger: TRIGGER,
               nickname: NICK,
               topLeftEvidence: EVIDENCE,
-              resultTrigger: null,
-              resultData: null,
             },
           }),
         },
@@ -704,8 +699,6 @@ describe('setup flow: stale session and generation', () => {
             trigger: TRIGGER,
             nickname: NICK,
             topLeftEvidence: EVIDENCE,
-            resultTrigger: null,
-            resultData: null,
           },
           error: {
             code: 'SETUP_FAILED',
@@ -727,8 +720,6 @@ describe('setup flow: check and save', () => {
     trigger: TRIGGER,
     nickname: NICK,
     topLeftEvidence: EVIDENCE,
-    resultTrigger: null,
-    resultData: null,
   }
 
   async function check(
@@ -824,8 +815,6 @@ describe('setup flow: save outcome', () => {
     trigger: TRIGGER,
     nickname: NICK,
     topLeftEvidence: EVIDENCE,
-    resultTrigger: null,
-    resultData: null,
   }
   async function saved(
     saveOutcome: NonNullable<ReturnType<typeof sessionView>['saveOutcome']>,
@@ -935,42 +924,6 @@ describe('setup flow: save outcome', () => {
     })
     expect(within(outcome()).getByText('Мониторинг не запустился')).toBeVisible()
     expect(within(outcome()).getByText('не запустился')).toBeVisible()
-  })
-
-  it('reports a result-zone save with its own wording', async () => {
-    mountSetup(
-      { name: 'setup', intent: { kind: 'resume' } },
-      {
-        session: {
-          initial: resultView({
-            regions: {
-              ...complete,
-              trigger: null,
-              nickname: null,
-              topLeftEvidence: null,
-              resultTrigger: TRIGGER,
-              resultData: NICK,
-            },
-            triggerProfile: triggerProfile(),
-          }),
-          committed: {
-            saveOutcome: {
-              local: 'saved',
-              projection: 'synced',
-              runtime: 'not_requested',
-              warning: null,
-            },
-          },
-        },
-      },
-    )
-    await findEditor()
-    fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Сохранить зоны' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Зоны результата сохранены' }),
-    ).toBeVisible()
-    expect(screen.getByText('не затронут')).toBeVisible()
   })
 
   it('closes a finished session with close, not cancel, and returns', async () => {
@@ -1169,35 +1122,7 @@ describe('setup flow: source step', () => {
   })
 })
 
-describe('setup flow: resume and result zones', () => {
-  it('resumes a result-zone session: two regions, check, save', async () => {
-    const world = mountSetup(
-      { name: 'setup', intent: { kind: 'resume' } },
-      { session: { initial: resultView({ profileName: 'Основной' }) } },
-    )
-    await findEditor()
-    expect(screen.getByRole('button', { name: /^Триггер результата/ })).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Зона с итогом/ })).toBeVisible()
-    expect(
-      screen.queryByRole('button', { name: /^Ник соперника/ }),
-    ).not.toBeInTheDocument()
-    draw(TRIGGER)
-    fireEvent.click(tab(/^Зона с итогом/))
-    await waitFor(() => expect(setRegionCalls(world)).toHaveLength(1))
-    expect(setRegionCalls(world)[0]?.region).toBe('resultTrigger')
-    draw(NICK)
-    fireEvent.click(screen.getByRole('button', { name: /Дальше: проверка триггера/ }))
-    await screen.findByRole('heading', { name: 'Проверьте области' })
-    expect(setRegionCalls(world).map((call) => call.region)).toEqual([
-      'resultTrigger',
-      'resultData',
-    ])
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить зоны' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Зоны результата сохранены' }),
-    ).toBeVisible()
-  })
-
+describe('setup flow: resume', () => {
   it('says there is no setup to resume', async () => {
     mountSetup({ name: 'setup', intent: { kind: 'resume' } })
     expect(await screen.findByText(/Начатой настройки нет/)).toBeVisible()

@@ -50,10 +50,6 @@ import { WidgetController } from './services/widget-controller'
 import { ImageAssetService } from './services/image-asset-service'
 import { WindowCoordinator } from './windows/window-coordinator'
 import {
-  PredictionPreferencesRepository,
-  nodePredictionPreferencesFileSystem,
-} from './infrastructure/prediction-preferences-repository'
-import {
   PredictionResultConfigurationRepository,
   nodePredictionResultFileSystem,
 } from './infrastructure/prediction-result-configuration-repository'
@@ -201,9 +197,6 @@ const setup = new SetupSessionService(
   api,
   auth,
   () => new Date(),
-  predictionResults,
-  authenticatedApi,
-  targetResolver,
   ocr,
   logger,
 )
@@ -227,26 +220,15 @@ const monitor = new MonitorSupervisor(
   new MonitorJournalRepository(join(app.getPath('userData'), 'monitor-journal.v1')),
   logger,
 )
-const predictionPreferences = new PredictionPreferencesRepository(
-  join(app.getPath('userData'), 'prediction-preferences.v1'),
-  nodePredictionPreferencesFileSystem,
-)
-let captureProfiles: CaptureProfileService | null = null
 const predictions = new PredictionCoordinator(
   auth,
   authenticatedApi,
-  predictionResults,
   monitor,
   captureConfigurations,
-  (operation) => {
-    if (captureProfiles === null)
-      throw new Error('Capture profile service is unavailable')
-    return captureProfiles.runCaptureCommit(operation)
-  },
   logger,
   app.getVersion(),
 )
-captureProfiles = new CaptureProfileService(
+const captureProfiles = new CaptureProfileService(
   auth,
   captureConfigurations,
   targetResolver,
@@ -269,8 +251,6 @@ const h2h = new H2HService(authenticatedApi, auth)
 const streamer = new StreamerService(
   auth,
   authenticatedApi,
-  predictionPreferences,
-  predictionResults,
   captureConfigurations,
   monitor,
   predictions,

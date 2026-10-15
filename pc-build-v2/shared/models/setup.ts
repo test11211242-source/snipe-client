@@ -63,7 +63,6 @@ export const SetupDetectionSchema = z
 
 export const SetupSessionViewSchema = z
   .object({
-    kind: z.enum(['capture', 'predictionResult']).default('capture'),
     sessionId: z.uuid(),
     generation: z.number().int().nonnegative(),
     state: SetupStateSchema,
@@ -99,8 +98,6 @@ export const SetupSessionViewSchema = z
         trigger: NormalizedRectSchema.nullable(),
         nickname: NormalizedRectSchema.nullable(),
         topLeftEvidence: NormalizedRectSchema.nullable(),
-        resultTrigger: NormalizedRectSchema.nullable().default(null),
-        resultData: NormalizedRectSchema.nullable().default(null),
       })
       .strict(),
     triggerProfile: TriggerProfileSchema.nullable(),

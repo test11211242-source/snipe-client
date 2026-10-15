@@ -27,19 +27,9 @@ export const PredictionResultConfigurationSchema = z
   })
   .strict()
 
-export const PredictionRuntimeProfileSchema = z
-  .object({
-    configuredFrameSize: PixelSizeSchema,
-    trigger: NormalizedRectSchema,
-    data: NormalizedRectSchema,
-    triggerProfile: TriggerProfileSchema,
-  })
-  .strict()
-
 export type PredictionResultConfiguration = z.infer<
   typeof PredictionResultConfigurationSchema
 >
-export type PredictionRuntimeProfile = z.infer<typeof PredictionRuntimeProfileSchema>
 
 export function predictionResultMatchesCapture(
   result: PredictionResultConfiguration,

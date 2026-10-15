@@ -229,17 +229,17 @@ describe('genuine Python setup output → strict TS capture contracts', () => {
     expect(result.vsBadge?.cx).toBeCloseTo(0.496, 2)
     expect(result.vsBadge?.cy).toBeCloseTo(0.429, 2)
 
-    // Prediction-result setup must remain structural even on this same VS frame.
-    const prediction = await service.analyze(frame, {
+    // Without a game rectangle the analyzer stays structural even on this same VS frame.
+    const structural = await service.analyze(frame, {
       x: 120 / 360,
       y: 215 / 640,
       width: 120 / 360,
       height: 120 / 640,
     })
-    expect(prediction.vsOrientation).toBeNull()
-    expect(prediction.vsBadge).toBeNull()
-    expect(prediction.profile).toEqual(result.profile)
-    expect(prediction.legacyProfile).toEqual(result.legacyProfile)
+    expect(structural.vsOrientation).toBeNull()
+    expect(structural.vsBadge).toBeNull()
+    expect(structural.profile).toEqual(result.profile)
+    expect(structural.legacyProfile).toEqual(result.legacyProfile)
   }, 30_000)
 
   it('parses protocol-2 non-VS output with a supplied game rectangle', async () => {

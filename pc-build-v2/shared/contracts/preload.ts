@@ -120,7 +120,6 @@ export interface CrToolsApi {
 }
 
 export interface CrToolsSetupApi {
-  startResult: (payload: CaptureProfileCommand) => Promise<SetupSessionView>
   getSession: () => Promise<SetupSessionView>
   getFrame: (payload: SetupCommand) => Promise<SetupFrame>
   retryDetection: (payload: SetupCommand) => Promise<SetupSessionView>

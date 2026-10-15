@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { MonitorTriggeredEvent } from '../shared/contracts/monitor-protocol'
-import { PredictionStatusSchema } from '../shared/models/streamer'
+import {
+  DEFAULT_PREDICTION_SETTINGS,
+  PredictionStatusSchema,
+} from '../shared/models/streamer'
 import { ApiClient, AuthenticatedApiClient } from '../electron/main/services/api-client'
 import { PredictionCoordinator } from '../electron/main/services/prediction-coordinator'
+import { StreamerService } from '../electron/main/services/streamer-service'
 
 const baseUrl = process.env['SNIPE_PREDICTIONS_SMOKE_URL']
 
@@ -12,7 +16,7 @@ const baseUrl = process.env['SNIPE_PREDICTIONS_SMOKE_URL']
 // isolated Docker PostgreSQL schema and the server tests' HTTP fake Helix.
 // Never point this fixture at production or a channel with real viewers' bets.
 describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
-  it('sends heartbeat and only own-battle starts through the real API client', async () => {
+  it('runs own-battle heartbeat, manual win/loss/refund and a two-win streak against the server', async () => {
     const url = new URL(baseUrl ?? '')
     expect(url.hostname).toBe('127.0.0.1')
     const health = await fetch(`${url.origin}/health`)
@@ -69,13 +73,27 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
     const coordinator = new PredictionCoordinator(
       auth as never,
       api,
-      {} as never,
       monitor as never,
       captures as never,
-      undefined,
       logger,
       'synthetic-client-version',
     )
+    const service = new StreamerService(
+      auth as never,
+      api,
+      captures as never,
+      monitor as never,
+      coordinator,
+      { openExternal: vi.fn() },
+      { writeText: vi.fn() },
+    )
+    const nextPrediction = async (): Promise<number> => {
+      const response = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
+      expect(response.ok).toBe(true)
+      const next = PredictionStatusSchema.parse(await response.json())
+      if (next.prediction === null) throw new Error('No open synthetic prediction')
+      return next.prediction.id
+    }
     try {
       coordinator.startLifecycle()
       await vi.waitFor(
@@ -145,6 +163,103 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         'prediction.battle_start',
         expect.anything(),
       )
+      const firstId = status.prediction?.id
+      if (firstId === undefined) throw new Error('Missing synthetic prediction')
+      expect(
+        await service.execute({
+          action: 'predictions.battle',
+          predictionId: firstId,
+          outcome: 'win',
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.stats.yes).toBe(1)
+
+      const lossId = await nextPrediction()
+      expect(
+        await service.execute({
+          action: 'predictions.battle',
+          predictionId: lossId,
+          outcome: 'loss',
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.stats.no).toBe(1)
+
+      const cancelId = await nextPrediction()
+      expect(
+        await service.execute({
+          action: 'predictions.cancel',
+          predictionId: cancelId,
+          confirmed: true,
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.stats.canceled).toBe(1)
+
+      const streak = {
+        ...DEFAULT_PREDICTION_SETTINGS,
+        mode: 'streak' as const,
+        streakLength: 2,
+      }
+      expect(
+        await service.execute({
+          action: 'predictions.settings.save',
+          settings: { ...streak, enabled: false },
+        }),
+      ).toMatchObject({ ok: true })
+      expect(
+        await service.execute({
+          action: 'predictions.settings.save',
+          settings: streak,
+        }),
+      ).toMatchObject({ ok: true })
+      const streakId = await nextPrediction()
+      expect(
+        await service.execute({
+          action: 'predictions.battle',
+          predictionId: streakId,
+          outcome: 'win',
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.prediction).toMatchObject({
+        id: streakId,
+        target: 2,
+        wins: 1,
+      })
+      expect(
+        await service.execute({
+          action: 'predictions.battle',
+          predictionId: streakId,
+          outcome: 'win',
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.stats.yes).toBe(2)
+
+      const withBetsId = await nextPrediction()
+      expect((await fetch(`${url.origin}/__smoke/bets`, { method: 'POST' })).ok).toBe(
+        true,
+      )
+      expect(
+        await service.execute({
+          action: 'predictions.settings.save',
+          settings: { ...streak, enabled: false },
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions).toMatchObject({
+        enabled: false,
+        attention: 'settle_after_disable',
+        prediction: { id: withBetsId, hasBets: true },
+      })
+      const canceledBefore = service.getView().predictions.stats.canceled
+      expect(
+        await service.execute({
+          action: 'predictions.cancel',
+          predictionId: withBetsId,
+          confirmed: true,
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.prediction).toBeNull()
+      expect(service.getView().predictions.stats.canceled).toBe(canceledBefore + 1)
+      const finalEvidence = await fetch(`${url.origin}/__smoke/evidence`)
+      expect(await finalEvidence.json()).toMatchObject({ chatMessages: 1 })
     } finally {
       await coordinator.shutdown()
     }

@@ -26,7 +26,6 @@ import {
 import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorSupervisor } from './monitor-supervisor'
-import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
 
 import type { GameLayoutWire } from '../../../shared/contracts/monitor-protocol'
@@ -64,41 +63,26 @@ export class CaptureProfileService {
       const sourceHealth = await this.targetResolver.resolveProfiles(
         status.profiles.map((profile) => profile.profileId),
       )
-      await Promise.all(
-        status.profiles.map(async (profile) => {
-          const error = sourceHealth.get(profile.profileId)
-          if (error === null) {
-            profile.sourceHealth = { state: 'available', reason: null }
-          } else {
-            const code =
-              error instanceof ApplicationError
-                ? error.code
-                : 'SOURCE_METADATA_UNAVAILABLE'
-            profile.sourceHealth = {
-              state:
-                code === 'SOURCE_NOT_FOUND'
-                  ? 'missing'
-                  : code === 'SOURCE_AMBIGUOUS'
-                    ? 'ambiguous'
-                    : 'metadata_unavailable',
-              reason: code,
-            }
-            if (code === 'SOURCE_REBIND_REQUIRED')
-              profile.calibrationHealth = 'needs_validation'
+      for (const profile of status.profiles) {
+        const error = sourceHealth.get(profile.profileId)
+        if (error === null) {
+          profile.sourceHealth = { state: 'available', reason: null }
+        } else {
+          const code =
+            error instanceof ApplicationError ? error.code : 'SOURCE_METADATA_UNAVAILABLE'
+          profile.sourceHealth = {
+            state:
+              code === 'SOURCE_NOT_FOUND'
+                ? 'missing'
+                : code === 'SOURCE_AMBIGUOUS'
+                  ? 'ambiguous'
+                  : 'metadata_unavailable',
+            reason: code,
           }
-          const result = await this.resultRepository?.load(user.id, profile.profileId)
-          profile.resultConfigured =
-            result != null &&
-            predictionResultMatchesCapture(result, {
-              profileId: profile.profileId,
-              configurationRevision: profile.configurationRevision,
-              configurationFingerprint: profile.configurationFingerprint,
-              ...(profile.calibrationId === undefined
-                ? {}
-                : { calibrationId: profile.calibrationId }),
-            })
-        }),
-      )
+          if (code === 'SOURCE_REBIND_REQUIRED')
+            profile.calibrationHealth = 'needs_validation'
+        }
+      }
     }
     this.assertAuthContext({ userId: user.id, generation })
     return CaptureProfilesViewSchema.parse(

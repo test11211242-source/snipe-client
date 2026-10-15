@@ -13,16 +13,6 @@ const TagSchema = GameAccountTagSchema
 const CountSchema = z.number().int().nonnegative().max(1_000_000)
 export const MAX_STREAMER_ACCOUNTS = 20
 
-export const PredictionPreferencesSchema = z
-  .object({
-    predictionType: z.enum(['win_lose', 'win_streak', 'mix']),
-    predictionWindow: z.number().int().min(30).max(1800),
-    winStreakCount: z.number().int().min(2).max(10),
-    delayBetweenPredictions: z.number().int().min(1).max(60),
-    autoCreateNext: z.boolean(),
-  })
-  .strict()
-
 export const PredictionSettingsSchema = z
   .object({
     enabled: z.boolean(),
@@ -226,38 +216,9 @@ export const StreamerViewSchema = z
         polling: z.boolean(),
       })
       .strict(),
-    predictions: z
-      .object({
-        active: z.boolean(),
-        state: z.string().max(64),
-        runtimeState: z.enum([
-          'stopped',
-          'starting',
-          'active',
-          'suspended',
-          'failed',
-          'unknown',
-        ]),
-        settings: PredictionPreferencesSchema,
-        statistics: z
-          .object({
-            total: CountSchema,
-            successful: CountSchema,
-            successRate: z.number().min(0).max(100),
-            currentWinStreak: CountSchema,
-            activeTitle: z.string().max(200).nullable(),
-          })
-          .strict(),
-        requirements: z
-          .object({
-            twitchConnected: z.boolean(),
-            mainMonitorConfigured: z.boolean(),
-            mainMonitorRunning: z.boolean(),
-            resultConfigured: z.boolean(),
-          })
-          .strict(),
-      })
-      .strict(),
+    predictions: PredictionStatusSchema.extend({
+      settings: PredictionSettingsSchema,
+    }).strict(),
     title: z
       .object({
         settings: StreamTitleSettingsSchema,
@@ -329,7 +290,6 @@ export const StreamerConfirmationSchema = z
   .object({ confirmed: z.literal(true) })
   .strict()
 
-export type PredictionPreferences = z.infer<typeof PredictionPreferencesSchema>
 export type OverlaySettings = z.infer<typeof OverlaySettingsSchema>
 export type StreamTitleSettings = z.infer<typeof StreamTitleSettingsSchema>
 export type StreamTitlePreview = z.infer<typeof StreamTitlePreviewSchema>

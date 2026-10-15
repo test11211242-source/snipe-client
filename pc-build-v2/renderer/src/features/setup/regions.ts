@@ -1,5 +1,4 @@
 import type { RegionKind } from '../../../../shared/models/capture'
-import type { SetupSessionView } from '../../../../shared/models/setup'
 
 export interface RegionDef {
   id: RegionKind
@@ -32,26 +31,3 @@ export const CAPTURE_REGIONS: readonly RegionDef[] = [
     labelBelow: false,
   },
 ]
-
-export const RESULT_REGIONS: readonly RegionDef[] = [
-  {
-    id: 'resultTrigger',
-    label: 'Триггер результата',
-    help: 'Выделите неподвижный элемент экрана с итогом боя. Приложение само найдёт устойчивую структуру внутри рамки.',
-    labelBelow: true,
-  },
-  {
-    id: 'resultData',
-    label: 'Зона с итогом',
-    help: 'Выделите область с итогом боя — «Победа» или «Поражение». Именно она уйдёт боту прогнозов.',
-    labelBelow: false,
-  },
-]
-
-export function regionsOf(kind: SetupSessionView['kind']): readonly RegionDef[] {
-  return kind === 'predictionResult' ? RESULT_REGIONS : CAPTURE_REGIONS
-}
-
-export function triggerRegionOf(kind: SetupSessionView['kind']): RegionKind {
-  return kind === 'predictionResult' ? 'resultTrigger' : 'trigger'
-}

@@ -239,12 +239,20 @@ describe('overview', () => {
   it('shows the foundations and sends the fix of a missing one to its home', async () => {
     mountStream(
       { name: 'stream', section: 'overview' },
-      { readiness: { resultZonesConfigured: false } },
+      { readiness: { predictionProfileReady: false } },
     )
     expect(await screen.findByText('Основа')).toBeVisible()
-    expect(screen.getByText('не настроены в профиле')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Настроить в профиле' }))
+    const state = screen.getByText('нужен профиль своих боёв')
+    const base = state.parentElement ?? document.body
+    expect(within(base).getByText('Профиль для прогнозов')).toBeVisible()
+    fireEvent.click(within(base).getByRole('button', { name: 'Профили' }))
     expect(await screen.findByRole('dialog', { name: 'Профили' })).toBeVisible()
+  })
+
+  it('shows the predictions status phrase and voting time in the feature row', async () => {
+    mountStream({ name: 'stream', section: 'overview' })
+    expect(await screen.findByText('Ждём начала трансляции')).toBeVisible()
+    expect(screen.getByText('Каждый бой · 30 с на ставки')).toBeVisible()
   })
 
   it('toggles deck sharing and the widgets from the feature rows', async () => {

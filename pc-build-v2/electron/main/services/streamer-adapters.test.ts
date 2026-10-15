@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   MAX_STREAMER_ACCOUNTS,
+  DEFAULT_PREDICTION_SETTINGS,
   OverlaySettingsSchema,
   StreamerViewSchema,
 } from '../../../shared/models/streamer'
@@ -35,17 +36,11 @@ describe('streamer server adapters', () => {
   it('projects authoritative prediction counts and bounds loose title payloads', () => {
     const predictions = parsePredictions(
       { ...predictionStatusFixture, stats: { resolved: 8, yes: 3, no: 5, canceled: 2 } },
-      {
-        predictionType: 'win_lose',
-        predictionWindow: 60,
-        winStreakCount: 2,
-        delayBetweenPredictions: 5,
-        autoCreateNext: true,
-      },
+      DEFAULT_PREDICTION_SETTINGS,
     )
-    expect(predictions.state).toBe('waiting_stream')
-    expect(predictions.statistics.total).toBe(10)
-    expect(predictions.statistics.successRate).toBe(37.5)
+    expect(predictions.phase).toBe('waiting_stream')
+    expect(predictions.stats).toEqual({ resolved: 8, yes: 3, no: 5, canceled: 2 })
+    expect(predictions.settings.votingSeconds).toBe(30)
     expect(
       parseTitle({
         settings: { account_display_mode: 'invalid', max_accounts: 999 },

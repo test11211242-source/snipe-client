@@ -5,7 +5,7 @@ import type { SetupSessionView } from '../../../../shared/models/setup'
 import { Banner, Button, Icon, Spinner, cx } from '../../ui'
 import { FrameStage, type StageBox } from './FrameStage'
 import { rectToPixels, sameRect } from './geometry'
-import { regionsOf } from './regions'
+import { CAPTURE_REGIONS } from './regions'
 import styles from './Setup.module.css'
 import type { SetupSession } from './useSetupSession'
 
@@ -32,7 +32,7 @@ export function RegionEditor({
   /** Trigger analyzed and all regions saved: move on to the check step. */
   onChecked: () => void
 }): React.JSX.Element {
-  const defs = regionsOf(view.kind)
+  const defs = CAPTURE_REGIONS
   const [active, setActive] = useState<RegionKind>(
     () =>
       defs.find((def) => view.regions[def.id] === null)?.id ?? defs[0]?.id ?? 'trigger',

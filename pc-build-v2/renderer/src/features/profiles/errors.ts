@@ -7,7 +7,6 @@ const MESSAGES: Partial<Record<CaptureProfileErrorCode, string>> = {
     'Список профилей изменился. Мы его обновили — повторите действие.',
   CAPTURE_PROFILE_LAST: 'Единственный профиль удалить нельзя.',
   CAPTURE_PROFILE_NOT_FOUND: 'Такого профиля уже нет. Список обновлён.',
-  PREDICTIONS_ACTIVE: 'Остановите прогнозы Twitch, чтобы менять профили.',
   CAPTURE_PROFILE_GEOMETRY_MISMATCH:
     'У нового источника другие пропорции. Перенастройте области профиля.',
   CAPTURE_PROFILE_SOURCE_UNAVAILABLE:

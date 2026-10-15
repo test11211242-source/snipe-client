@@ -27,13 +27,6 @@ const root = '/api/streamer/predictions'
 const battleId = '00000000-0000-4000-8000-000000000001'
 const secondBattleId = '00000000-0000-4000-8000-000000000002'
 const readyMonitor = { state: 'READY', runIntent: true, sourceMinimized: false } as const
-const legacySettings = {
-  predictionType: 'win_lose',
-  predictionWindow: 60,
-  winStreakCount: 2,
-  delayBetweenPredictions: 5,
-  autoCreateNext: true,
-} as const
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -172,8 +165,6 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
       data = { accepted: true, reason: 'accepted' }
     else if (input.path.endsWith('/battle-result'))
       data = { applied: true, finalOutcome: 'win', reason: 'applied' }
-    else if (input.path.endsWith('/settings') && input.method === 'GET')
-      data = DEFAULT_PREDICTION_SETTINGS
     else data = serverStatus
     return Promise.resolve(success(input.schema.parse(data)))
   })
@@ -182,13 +173,10 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
       Promise.resolve(configuration === null ? null : { profile: { configuration } }),
     ),
   }
-  const results = { load: vi.fn() }
-  const lifecycle = vi.fn()
   const monitor = {
     getView: vi.fn(() => Promise.resolve(monitorView)),
     start: vi.fn(),
     stop: vi.fn(),
-    configurePredictionRuntime: vi.fn(),
     subscribeBattleStarts: vi.fn((listener: (event: BattleStart) => void) =>
       subscribe((value) => {
         battleListener = value
@@ -210,10 +198,8 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
   const coordinator = new PredictionCoordinator(
     auth as never,
     { request } as never,
-    results as never,
     monitor as never,
     captures as never,
-    lifecycle,
     logger,
     '2.7.0',
   )
@@ -224,8 +210,6 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     request,
     monitor,
     captures,
-    results,
-    lifecycle,
     logger,
     disposers,
     calls: (suffix: string) =>
@@ -334,8 +318,6 @@ describe('PredictionCoordinator heartbeat', () => {
       ready: true,
       reason: 'ok',
     })
-    expect(test.coordinator.state).toBe('active')
-    expect(test.results.load).not.toHaveBeenCalled()
     expect(test.captures.getActive).toHaveBeenCalledWith('42')
     await vi.advanceTimersByTimeAsync(29_999)
     expect(test.calls('heartbeat')).toHaveLength(1)
@@ -439,7 +421,6 @@ describe('PredictionCoordinator heartbeat', () => {
       test.changeAuth('user')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(test.calls('heartbeat')).toHaveLength(1)
-      expect(test.coordinator.state).toBe('stopped')
       test.changeAuth('streamer', '84')
       await flush()
       expect(test.calls('heartbeat')).toHaveLength(2)
@@ -462,7 +443,6 @@ describe('PredictionCoordinator heartbeat', () => {
     expect(old?.authContextGuard?.()).toBe(false)
     pending.resolve(success(status(false)))
     await flush()
-    expect(test.coordinator.state).toBe('active')
     expect(test.logger.info).toHaveBeenCalledWith('prediction.heartbeat', {
       code: 'AUTH_CANCELLED',
       attempt: 1,
@@ -565,24 +545,19 @@ describe('PredictionCoordinator event forwarding', () => {
     ])
   })
 
-  it('forwards after app/server restarts without requiring local enable and follows server disable', async () => {
+  it('forwards after app/server restarts whatever the server enabled flag says', async () => {
     const test = harness()
-    expect(test.coordinator.state).toBe('stopped')
+    test.setServerStatus(status(false))
     test.battle()
     test.result()
     await flush()
     expect(test.calls('battle-start')).toHaveLength(1)
     expect(test.calls('battle-result')).toHaveLength(1)
-    test.setServerStatus(status(false))
     test.coordinator.notifyContextChanged()
     await flush()
-    expect(test.coordinator.state).toBe('stopped')
     test.battle(battle({ triggerId: secondBattleId }))
     await flush()
     expect(test.calls('battle-start')).toHaveLength(2)
-    test.setServerStatus(status())
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(test.coordinator.state).toBe('active')
   })
 })
 
@@ -721,25 +696,21 @@ describe('PredictionCoordinator retry and logging', () => {
       expect(logs).not.toContain(privateField)
   })
 
-  it('logs heartbeat and settings load/save outcomes as well as battle calls', async () => {
+  it('logs heartbeat, settings, manual battle and cancel outcomes as codes only', async () => {
     const test = harness()
     await flush()
-    await test.coordinator.stop()
-    expect(test.logger.info).toHaveBeenCalledWith('prediction.heartbeat', {
-      code: 'ok',
-      attempt: 1,
-      status: 200,
-    })
-    expect(test.logger.info).toHaveBeenCalledWith('prediction.settings_load', {
-      code: 'ok',
-      attempt: 1,
-      status: 200,
-    })
-    expect(test.logger.info).toHaveBeenCalledWith('prediction.settings_save', {
-      code: 'ok',
-      attempt: 1,
-      status: 200,
-    })
+    await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.cancel(1)
+    for (const operation of ['heartbeat', 'settings_save', 'manual_battle', 'cancel'])
+      expect(test.logger.info).toHaveBeenCalledWith(`prediction.${operation}`, {
+        code: 'ok',
+        attempt: 1,
+        status: 200,
+      })
+    const logs = JSON.stringify(test.logger.info.mock.calls)
+    for (const privateField of ['Выиграю', 'caster', 'clientVersion', 'votingSeconds'])
+      expect(logs).not.toContain(privateField)
   })
 })
 
@@ -800,56 +771,38 @@ describe('PredictionCoordinator auth isolation and lifecycle', () => {
     expect(test.calls('heartbeat')).toHaveLength(2)
   })
 
-  it('does not let a heartbeat started during a settings mutation overwrite its result', async () => {
-    const test = harness()
-    await flush()
-    const saving = deferred<ApiResult<unknown>>()
-    const heartbeat = deferred<ApiResult<unknown>>()
-    test.request.mockImplementationOnce(() => saving.promise)
-    const command = test.coordinator.saveSettings({
-      ...DEFAULT_PREDICTION_SETTINGS,
-      enabled: false,
-    })
-    test.request.mockImplementationOnce(() => heartbeat.promise)
-    test.coordinator.notifyContextChanged()
-    await flush()
-    saving.resolve(success(status(false)))
-    await command
-    heartbeat.resolve(success(status()))
-    await flush()
-    expect(test.coordinator.state).toBe('stopped')
-  })
-
-  it('ignores old-user and pre-mutation observations but follows current server state', async () => {
-    const test = harness()
-    await flush()
-    const stale = test.coordinator.observationGeneration
-    await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    test.coordinator.observeServerState(false, '42', stale)
-    test.coordinator.observeServerState(false, '84')
-    expect(test.coordinator.state).toBe('active')
-    test.coordinator.observeServerState(false, '42')
-    expect(test.coordinator.state).toBe('stopped')
-    test.coordinator.observeServerState(true, '42')
-    expect(test.coordinator.state).toBe('active')
-    test.changeAuth('signed_out')
-    test.coordinator.observeServerState(true, '42')
-    expect(test.coordinator.state).toBe('stopped')
-  })
-
-  it('does not send a disable mutation after the settings read changes auth context', async () => {
+  it('cancels an in-flight manual battle on account switch and never resends it', async () => {
     const test = harness()
     await flush()
     const pending = deferred<ApiResult<unknown>>()
     test.request.mockImplementationOnce(() => pending.promise)
-    const stopping = test.coordinator.stop(true)
+    const command = test.coordinator.manualBattle(1, 'win')
+    const sent = test.calls('current/battle')[0]
+    expect(sent).toBeDefined()
     test.changeAuth('streamer', '84')
-    pending.resolve(success(DEFAULT_PREDICTION_SETTINGS))
-    await stopping
+    expect(sent?.signal?.aborted).toBe(true)
+    expect(sent?.authContextGuard?.()).toBe(false)
+    pending.resolve(success(status()))
+    await expect(command).rejects.toMatchObject({ code: 'AUTH_CANCELLED' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(test.calls('current/battle')).toHaveLength(1)
+    expect(test.logger.info).toHaveBeenCalledWith('prediction.manual_battle', {
+      code: 'AUTH_CANCELLED',
+      attempt: 1,
+    })
+  })
+
+  it('rejects a settings save whose response arrives after logout', async () => {
+    const test = harness()
     await flush()
-    expect(test.calls('settings').filter((input) => input.method === 'PUT')).toHaveLength(
-      0,
-    )
+    const pending = deferred<ApiResult<unknown>>()
+    test.request.mockImplementationOnce(() => pending.promise)
+    const saving = test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+    test.changeAuth('signed_out')
+    pending.resolve(success(status()))
+    await expect(saving).rejects.toMatchObject({ code: 'AUTH_CANCELLED' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(test.calls('settings')).toHaveLength(1)
   })
 
   it('cleans subscriptions and timers without server mutation or monitor lifecycle calls', async () => {
@@ -873,71 +826,195 @@ describe('PredictionCoordinator auth isolation and lifecycle', () => {
     for (const dispose of test.disposers) expect(dispose).toHaveBeenCalledOnce()
     expect(test.monitor.start).not.toHaveBeenCalled()
     expect(test.monitor.stop).not.toHaveBeenCalled()
-    expect(test.monitor.configurePredictionRuntime).not.toHaveBeenCalled()
-    expect(test.lifecycle).not.toHaveBeenCalled()
     expect(test.request.mock.calls.every(([input]) => input.method === 'POST')).toBe(true)
   })
 })
 
-describe('PredictionCoordinator temporary settings bridges', () => {
-  it('saves validated server settings and derives state from the returned server view only', async () => {
-    const test = harness()
-    await flush()
-    test.setServerStatus(status(false))
-    await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    expect(test.coordinator.state).toBe('stopped')
-    expect(test.calls('settings')[0]).toMatchObject({
-      method: 'PUT',
-      body: DEFAULT_PREDICTION_SETTINGS,
-    })
-    test.setServerStatus(status())
-    await test.coordinator.start(legacySettings)
-    expect(test.calls('settings').at(-1)?.body).toEqual({
-      ...DEFAULT_PREDICTION_SETTINGS,
-      enabled: true,
-      votingSeconds: 60,
-      streakLength: 2,
-    })
-    expect(test.coordinator.state).toBe('active')
-    expect(test.monitor.configurePredictionRuntime).not.toHaveBeenCalled()
-    expect(test.monitor.start).not.toHaveBeenCalled()
-    expect(test.coordinator.suspended).toBe(false)
-  })
+describe('PredictionCoordinator server commands', () => {
+  const settled: PredictionStatus = {
+    ...status(),
+    stats: { resolved: 1, yes: 1, no: 0, canceled: 0 },
+  }
 
-  it('disables by loading authoritative settings and preserving every non-enabled field', async () => {
+  it('saves settings with one PUT and returns the authoritative server status', async () => {
     const test = harness()
     await flush()
-    const settings = {
-      ...DEFAULT_PREDICTION_SETTINGS,
-      mode: 'streak' as const,
-      streakLength: 7,
-      chatProgress: false,
-    }
-    test.request.mockResolvedValueOnce(success(settings))
     test.setServerStatus(status(false))
-    await test.coordinator.stop()
-    expect(test.calls('settings').map((input) => input.method)).toEqual(['GET', 'PUT'])
-    expect(test.calls('settings')[1]?.body).toEqual({ ...settings, enabled: false })
-    expect(test.coordinator.state).toBe('stopped')
+    const settings = { ...DEFAULT_PREDICTION_SETTINGS, enabled: false }
+    await expect(test.coordinator.saveSettings(settings)).resolves.toEqual(status(false))
+    expect(test.calls('settings')).toHaveLength(1)
+    expect(test.calls('settings')[0]).toMatchObject({ method: 'PUT', timeoutMs: 15_000 })
+    expect(test.calls('settings')[0]?.body).toEqual(settings)
+    expect(test.monitor.start).not.toHaveBeenCalled()
     expect(test.monitor.stop).not.toHaveBeenCalled()
   })
 
-  it('does not optimistically change state after a rejected settings mutation', async () => {
+  it.each(['win', 'loss'] as const)(
+    'sends manual %s as exact JSON and returns the server status',
+    async (outcome) => {
+      const test = harness()
+      await flush()
+      test.setServerStatus(settled)
+      await expect(test.coordinator.manualBattle(1, outcome)).resolves.toEqual(settled)
+      expect(test.calls('current/battle')).toHaveLength(1)
+      expect(test.calls('current/battle')[0]).toMatchObject({
+        method: 'POST',
+        timeoutMs: 15_000,
+      })
+      expect(test.calls('current/battle')[0]?.body).toEqual({ predictionId: 1, outcome })
+    },
+  )
+
+  it('sends cancel as exact JSON and returns the server status', async () => {
+    const test = harness()
+    await flush()
+    test.setServerStatus(settled)
+    await expect(test.coordinator.cancel(7)).resolves.toEqual(settled)
+    expect(test.calls('current/cancel')).toHaveLength(1)
+    expect(test.calls('current/cancel')[0]).toMatchObject({ method: 'POST' })
+    expect(test.calls('current/cancel')[0]?.body).toEqual({ predictionId: 7 })
+  })
+
+  it('validates every command response with the strict status schema', async () => {
+    const test = harness()
+    await flush()
+    await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.cancel(1)
+    for (const suffix of ['settings', 'current/battle', 'current/cancel', 'heartbeat']) {
+      const schema = test.calls(suffix)[0]?.schema
+      expect(schema?.safeParse(status()).success).toBe(true)
+      for (const legacy of [
+        { active: true },
+        { state: 'active' },
+        { statistics: {} },
+        { requirements: {} },
+        { settings: DEFAULT_PREDICTION_SETTINGS },
+      ])
+        expect(schema?.safeParse({ ...status(), ...legacy }).success).toBe(false)
+    }
+  })
+
+  it.each([
+    ['current/battle', 'manual_battle', 'NETWORK_UNAVAILABLE'],
+    ['current/battle', 'manual_battle', 'REQUEST_TIMEOUT'],
+    ['current/cancel', 'cancel', 'NETWORK_UNAVAILABLE'],
+    ['current/cancel', 'cancel', 'REQUEST_TIMEOUT'],
+  ] as const)(
+    'never resends %s after a lost response (%s, %s)',
+    async (suffix, operation, code) => {
+      const test = harness()
+      await flush()
+      test.request.mockResolvedValueOnce(failure(code))
+      const command =
+        operation === 'manual_battle'
+          ? test.coordinator.manualBattle(1, 'win')
+          : test.coordinator.cancel(1)
+      await expect(command).rejects.toMatchObject({ code })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(test.calls(suffix)).toHaveLength(1)
+      expect(test.logger.info).toHaveBeenCalledWith(`prediction.${operation}`, {
+        code,
+        attempt: 1,
+      })
+      expect(test.logger.info).not.toHaveBeenCalledWith(
+        `prediction.${operation}`,
+        expect.objectContaining({ attempt: 2 }),
+      )
+    },
+  )
+
+  it('never resends a manual battle after a thrown transport failure or conflict', async () => {
+    const test = harness()
+    await flush()
+    test.request.mockRejectedValueOnce(new Error('Private socket hang up after send'))
+    await expect(test.coordinator.manualBattle(1, 'win')).rejects.toMatchObject({
+      code: 'UNKNOWN',
+    })
+    test.request.mockResolvedValueOnce(failure('VALIDATION_FAILED', 409))
+    await expect(test.coordinator.manualBattle(1, 'loss')).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+    })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(test.calls('current/battle')).toHaveLength(2)
+    expect(test.logger.info).toHaveBeenCalledWith('prediction.manual_battle', {
+      code: 'VALIDATION_FAILED',
+      attempt: 1,
+      status: 409,
+    })
+    expect(JSON.stringify(test.logger.info.mock.calls)).not.toContain('Private')
+  })
+
+  it('retries an idempotent settings save once after exactly two seconds', async () => {
+    const test = harness()
+    await flush()
+    test.request.mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
+    const saving = test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+    await flush()
+    expect(test.calls('settings')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(test.calls('settings')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(saving).resolves.toEqual(status())
+    expect(test.calls('settings')).toHaveLength(2)
+    expect(test.calls('settings')[1]?.body).toEqual(test.calls('settings')[0]?.body)
+    expect(test.logger.info).toHaveBeenCalledWith('prediction.settings_save', {
+      code: 'ok',
+      attempt: 2,
+      status: 200,
+    })
+  })
+
+  it('does not retry a rejected settings save', async () => {
     const test = harness()
     await flush()
     test.request.mockResolvedValueOnce(failure('FORBIDDEN', 403))
     await expect(
       test.coordinator.saveSettings({ ...DEFAULT_PREDICTION_SETTINGS, enabled: false }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
-    expect(test.coordinator.state).toBe('active')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(test.calls('settings')).toHaveLength(1)
   })
 
-  it('rejects settings commands without a current streamer context', async () => {
-    const test = harness('user')
+  it('sends a manual command at once even while a battle event awaits its retry', async () => {
+    const test = harness()
+    await flush()
+    test.request.mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
+    test.battle()
+    await flush()
+    await test.coordinator.manualBattle(1, 'win')
+    expect(test.calls('current/battle')).toHaveLength(1)
+    expect(test.calls('battle-start')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.calls('battle-start')).toHaveLength(2)
+  })
+
+  it('rejects invalid command input before any request', async () => {
+    const test = harness()
+    await flush()
+    const count = test.request.mock.calls.length
+    await expect(test.coordinator.manualBattle(0, 'win')).rejects.toThrow()
+    await expect(test.coordinator.manualBattle(1.5, 'win')).rejects.toThrow()
+    await expect(test.coordinator.manualBattle(1, 'draw' as never)).rejects.toThrow()
+    await expect(test.coordinator.cancel(-1)).rejects.toThrow()
     await expect(
-      test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS),
-    ).rejects.toMatchObject({ code: 'STREAMER_ROLE_REQUIRED' })
-    await test.coordinator.stop(true)
+      test.coordinator.saveSettings({
+        ...DEFAULT_PREDICTION_SETTINGS,
+        streakFrom: 6,
+        streakTo: 5,
+      }),
+    ).rejects.toThrow()
+    expect(test.request).toHaveBeenCalledTimes(count)
+  })
+
+  it('rejects every command without a current streamer context', async () => {
+    const test = harness('user')
+    for (const command of [
+      () => test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS),
+      () => test.coordinator.manualBattle(1, 'win'),
+      () => test.coordinator.cancel(1),
+    ])
+      await expect(command()).rejects.toMatchObject({ code: 'STREAMER_ROLE_REQUIRED' })
     expect(test.request).not.toHaveBeenCalled()
   })
 })

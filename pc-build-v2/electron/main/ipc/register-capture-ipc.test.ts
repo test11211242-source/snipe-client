@@ -191,7 +191,6 @@ describe('main-window setup capability', () => {
       retryDetection: vi.fn().mockReturnValue(view),
       switchToManual: vi.fn().mockResolvedValue(view),
       getDetectionPreview: vi.fn().mockReturnValue(null),
-      startPredictionResult: vi.fn().mockResolvedValue(view),
       getSession: vi.fn().mockReturnValue(view),
       getFrame: vi.fn().mockReturnValue({
         ...command,
@@ -252,17 +251,15 @@ describe('main-window setup capability', () => {
       const payload =
         name === 'getSession'
           ? {}
-          : name === 'startResult'
-            ? { profileId, expectedRevision: 2 }
-            : name === 'setRegion' || name === 'finish'
-              ? {
-                  ...command,
-                  region: 'nickname',
-                  rect: { x: 0, y: 0, width: 0.5, height: 0.5 },
-                }
-              : name === 'getDetectionPreview'
-                ? { sessionId }
-                : command
+          : name === 'setRegion' || name === 'finish'
+            ? {
+                ...command,
+                region: 'nickname',
+                rect: { x: 0, y: 0, width: 0.5, height: 0.5 },
+              }
+            : name === 'getDetectionPreview'
+              ? { sessionId }
+              : command
       const handler = registeredHandler(channel)
       await handler(event, payload)
       expect(test.windows.assertSender).toHaveBeenCalledWith(
@@ -296,7 +293,6 @@ describe('main-window setup capability', () => {
     expect(test.setup.start).toHaveBeenCalledWith(
       { kind: 'window', windowHwnd: '10' },
       source,
-      'capture',
       expect.objectContaining({
         game: {
           rect: { x: 20, y: 0, width: 56, height: 100 },
@@ -316,12 +312,27 @@ describe('main-window setup capability', () => {
       }),
       { profileId, profileName: 'Profile', expectedRevision: 2 },
     )
-    await registeredHandler(SETUP_IPC_CHANNELS.startResult)(event, {
-      profileId,
-      expectedRevision: 2,
-    })
-    expect(test.setup.startPredictionResult).toHaveBeenCalledWith(profileId, 2)
     expect(test.windows.close).not.toHaveBeenCalled()
+    test.dispose()
+  })
+  it('registers no result-zone setup and rejects result regions', async () => {
+    const test = setupHarness()
+    expect(electron.handlers.has('setup:start-result')).toBe(false)
+    for (const channel of [SETUP_IPC_CHANNELS.setRegion, SETUP_IPC_CHANNELS.finish]) {
+      for (const region of ['resultTrigger', 'resultData']) {
+        await expect(
+          Promise.resolve().then(() =>
+            registeredHandler(channel)(event, {
+              ...command,
+              region,
+              rect: { x: 0, y: 0, width: 0.5, height: 0.5 },
+            }),
+          ),
+        ).rejects.toThrow()
+      }
+    }
+    expect(test.setup.setRegion).not.toHaveBeenCalled()
+    expect(test.setup.finish).not.toHaveBeenCalled()
     test.dispose()
   })
   it('transfers live ownership to auto setup without freezing', async () => {

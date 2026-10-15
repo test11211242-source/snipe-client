@@ -104,11 +104,10 @@ export function SetupFlow({
     setUnavailableFor(sessionId)
   }
 
-  const result = view?.kind === 'predictionResult' && stage === 'session'
   const adjusting = view !== null && adjustingFor === view.sessionId
   const sourceLost = view !== null && lostFor === view.sessionId
   const captureUnavailable = view !== null && unavailableFor === view.sessionId
-  const detection = view?.kind === 'capture' ? view.detection : null
+  const detection = view?.detection ?? null
   // Automatic setup succeeded and the user has not started editing: save or adjust.
   const autoSuccess =
     stage === 'session' &&
@@ -118,7 +117,6 @@ export function SetupFlow({
   // The automatic track: its own step names, until the user moves to the manual editor.
   const autoTrack =
     intent.kind !== 'rebind' &&
-    !result &&
     (stage === 'name' ||
       stage === 'source' ||
       (stage === 'session' &&
@@ -126,19 +124,19 @@ export function SetupFlow({
         detection !== null &&
         (view?.state === 'DETECTING' || detection.status === 'succeeded')))
   const track = autoTrack ? AUTO_STEPS : FULL_STEPS
-  const offset = result ? 2 : intent.kind === 'new' || intent.kind === 'resume' ? 0 : 1
+  const offset = intent.kind === 'new' || intent.kind === 'resume' ? 0 : 1
   const steps = intent.kind === 'rebind' ? track.slice(1, 2) : track.slice(offset)
   const effectivePhase: Phase = view?.state === 'REVIEW' ? 'check' : phase
   // Main did not find the game in the frozen frame: there is nothing to mark yet.
   const gameMissing =
     stage === 'session' &&
-    view?.kind === 'capture' &&
+    view !== null &&
     view.state === 'FAILED' &&
     view.error?.code === 'SETUP_GAME_NOT_FOUND'
   // The window went away while manual setup tried to freeze a frame.
   const sourceLostFailure =
     stage === 'session' &&
-    view?.kind === 'capture' &&
+    view !== null &&
     view.state === 'FAILED' &&
     isSourceLostCode(view.error?.code)
   const manualIndex =
@@ -394,11 +392,7 @@ export function SetupFlow({
             : 'Настройка была отменена, например при смене аккаунта. Ничего не сохранено.'
         }
         onClose={() => void exit()}
-        onRetry={
-          failed && view.kind === 'capture' && intent.kind !== 'resume'
-            ? () => void restart()
-            : null
-        }
+        onRetry={failed && intent.kind !== 'resume' ? () => void restart() : null}
         retryLabel="Выбрать источник заново"
         view={view}
       />

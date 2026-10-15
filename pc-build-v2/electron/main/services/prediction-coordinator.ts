@@ -9,13 +9,11 @@ import { hasStreamerRole } from '../../../shared/models/auth'
 import type { CaptureConfiguration } from '../../../shared/models/capture'
 import type { MonitorView } from '../../../shared/models/monitor'
 import {
-  DEFAULT_PREDICTION_SETTINGS,
   PredictionSettingsSchema,
   PredictionStatusSchema,
-  type PredictionPreferences,
   type PredictionSettings,
+  type PredictionStatus,
 } from '../../../shared/models/streamer'
-import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
 import type { AuthSession } from './auth-session'
@@ -39,6 +37,15 @@ const BattleResultResponseSchema = z
     reason: CodeSchema,
   })
   .strict()
+const ManualBattleRequestSchema = z
+  .object({
+    predictionId: z.number().int().positive(),
+    outcome: z.enum(['win', 'loss']),
+  })
+  .strict()
+const CurrentPredictionRequestSchema = z
+  .object({ predictionId: z.number().int().positive() })
+  .strict()
 
 type BattleStart = MonitorTriggeredEvent['payload']
 type BattleResult = MonitorPredictionResultEvent['payload']
@@ -48,9 +55,19 @@ interface Context {
   signal: AbortSignal
 }
 type Operation =
-  'heartbeat' | 'battle_start' | 'battle_result' | 'settings_load' | 'settings_save'
+  | 'heartbeat'
+  | 'battle_start'
+  | 'battle_result'
+  | 'settings_save'
+  | 'manual_battle'
+  | 'cancel'
+/**
+ * `network` repeats once after 2 s on a transport failure; only for requests the
+ * server applies idempotently. `none` never repeats: a lost manual-settle response
+ * may already have advanced a streak, so a resend could count the battle twice.
+ */
+type RetryPolicy = 'network' | 'none'
 
-export type PredictionRuntimeState = 'stopped' | 'active'
 export interface PredictionReadiness {
   ready: boolean
   reason: 'ok' | 'monitor_not_ready' | 'profile_not_own_battle' | 'profile_full_frame'
@@ -89,12 +106,10 @@ export function getPredictionProfileReadiness(
 }
 
 export class PredictionCoordinator {
-  #state: PredictionRuntimeState = 'stopped'
-  #observationGeneration = 0
   #context: Context | null = null
   #controller = new AbortController()
   #heartbeatController = new AbortController()
-  #heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  #heartbeatTimer: NodeJS.Timeout | undefined
   #eventQueue: Promise<void> = Promise.resolve()
   #disposers: (() => void)[] = []
   #started = false
@@ -103,36 +118,11 @@ export class PredictionCoordinator {
   constructor(
     private readonly auth: AuthSession,
     private readonly api: AuthenticatedApiClient,
-    _results: PredictionResultConfigurationRepository,
     private readonly monitor: MonitorSupervisor,
-    private readonly captures?: CaptureConfigurationRepository,
-    _runLifecycle?: (operation: () => Promise<void>) => Promise<void>,
-    private readonly logger?: Pick<StructuredLogger, 'info'>,
-    private readonly clientVersion = 'unknown',
+    private readonly captures: CaptureConfigurationRepository,
+    private readonly logger: Pick<StructuredLogger, 'info'>,
+    private readonly clientVersion: string,
   ) {}
-
-  get state(): PredictionRuntimeState {
-    return this.#state
-  }
-
-  get observationGeneration(): number {
-    return this.#observationGeneration
-  }
-
-  readonly suspended = false
-
-  observeServerState(
-    enabled: boolean,
-    userId: string,
-    generation = this.#observationGeneration,
-  ): void {
-    if (
-      generation !== this.#observationGeneration ||
-      this.currentContext()?.userId !== userId
-    )
-      return
-    this.#state = enabled ? 'active' : 'stopped'
-  }
 
   startLifecycle(): void {
     if (this.#started) return
@@ -162,53 +152,46 @@ export class PredictionCoordinator {
     void this.sendHeartbeat({ ...context, signal }).catch(() => undefined)
   }
 
-  async saveSettings(settings: PredictionSettings): Promise<void> {
-    const context = this.requireContext()
-    const parsed = PredictionSettingsSchema.parse(settings)
-    ++this.#observationGeneration
-    const status = await this.request(
-      context,
+  /** The server replaces the whole settings row, so a network retry is idempotent. */
+  async saveSettings(settings: PredictionSettings): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
       'settings_save',
       'PUT',
       '/api/streamer/predictions/settings',
       PredictionStatusSchema,
-      parsed,
-    )
-    if (this.isCurrent(context)) {
-      ++this.#observationGeneration
-      this.observeServerState(status.enabled, context.userId)
-    }
-  }
-
-  // Temporary bridge for the C1 UI. C2 replaces these commands with settings.save.
-  start(settings: PredictionPreferences): Promise<void> {
-    return this.saveSettings(
-      PredictionSettingsSchema.parse({
-        ...DEFAULT_PREDICTION_SETTINGS,
-        enabled: true,
-        mode: settings.predictionType === 'win_lose' ? 'each_battle' : 'streak',
-        streakKind: settings.predictionType === 'mix' ? 'random' : 'fixed',
-        streakLength: settings.winStreakCount,
-        votingSeconds: settings.predictionWindow,
-      }),
+      PredictionSettingsSchema.parse(settings),
+      'network',
     )
   }
 
-  async stop(bestEffort = false): Promise<void> {
-    try {
-      const context = this.requireContext()
-      const settings = await this.request(
-        context,
-        'settings_load',
-        'GET',
-        '/api/streamer/predictions/settings',
-        PredictionSettingsSchema,
-      )
-      if (!this.isCurrent(context)) return
-      await this.saveSettings({ ...settings, enabled: false })
-    } catch (error) {
-      if (!bestEffort) throw error
-    }
+  /** Never retried: a lost response may already have advanced the streak. */
+  async manualBattle(
+    predictionId: number,
+    outcome: 'win' | 'loss',
+  ): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
+      'manual_battle',
+      'POST',
+      '/api/streamer/predictions/current/battle',
+      PredictionStatusSchema,
+      ManualBattleRequestSchema.parse({ predictionId, outcome }),
+      'none',
+    )
+  }
+
+  /** Never retried: a lost response is reconciled by the next status read. */
+  async cancel(predictionId: number): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
+      'cancel',
+      'POST',
+      '/api/streamer/predictions/current/cancel',
+      PredictionStatusSchema,
+      CurrentPredictionRequestSchema.parse({ predictionId }),
+      'none',
+    )
   }
 
   shutdown(): Promise<void> {
@@ -224,13 +207,11 @@ export class PredictionCoordinator {
     this.#controller.abort()
     this.#controller = new AbortController()
     this.#heartbeatController.abort()
-    if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer)
-    this.#heartbeatTimer = null
+    clearInterval(this.#heartbeatTimer)
+    this.#heartbeatTimer = undefined
     this.#eventQueue = Promise.resolve()
     this.#context = null
-    this.#state = 'stopped'
     this.#monitorSignature = null
-    ++this.#observationGeneration
   }
 
   private updateAuthContext(): void {
@@ -267,9 +248,8 @@ export class PredictionCoordinator {
   }
 
   private async sendHeartbeat(context: Context): Promise<void> {
-    const observation = this.#observationGeneration
     const [capture, monitor] = await Promise.allSettled([
-      this.captures?.getActive(context.userId) ?? Promise.resolve(null),
+      this.captures.getActive(context.userId),
       this.monitor.getView(),
     ])
     if (!this.isCurrent(context)) return
@@ -282,16 +262,15 @@ export class PredictionCoordinator {
             monitor.value,
           )
         : { ready: false, reason: 'monitor_not_ready' as const }
-    const status = await this.request(
+    await this.request(
       context,
       'heartbeat',
       'POST',
       '/api/streamer/predictions/heartbeat',
       PredictionStatusSchema,
       { clientVersion: this.clientVersion, ...readiness },
+      'network',
     )
-    if (this.isCurrent(context))
-      this.observeServerState(status.enabled, context.userId, observation)
   }
 
   private enqueueBattleStart(event: BattleStart): void {
@@ -299,6 +278,7 @@ export class PredictionCoordinator {
       this.log('battle_start', { code: 'skipped', reason: 'not_own_battle' })
       return
     }
+    // The server deduplicates on battleId, so the network retry cannot double count.
     this.enqueue('battle_start', (context) =>
       this.request(
         context,
@@ -312,6 +292,7 @@ export class PredictionCoordinator {
           rank: event.rank,
           rankEvidence: event.rankEvidence,
         },
+        'network',
       ),
     )
   }
@@ -325,6 +306,7 @@ export class PredictionCoordinator {
         '/api/streamer/predictions/battle-result',
         BattleResultResponseSchema,
         event,
+        'network',
       ),
     )
   }
@@ -352,12 +334,14 @@ export class PredictionCoordinator {
   private async request<T>(
     context: Context,
     operation: Operation,
-    method: 'GET' | 'POST' | 'PUT',
+    method: 'POST' | 'PUT',
     path: `/api/${string}`,
     schema: z.ZodType<T>,
-    body?: unknown,
+    body: unknown,
+    retry: RetryPolicy,
   ): Promise<T> {
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const attempts = retry === 'network' ? 2 : 1
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (!this.isCurrent(context)) {
         this.log(operation, { code: 'AUTH_CANCELLED', attempt })
         throw new ApplicationError('AUTH_CANCELLED', 'Prediction request was cancelled')
@@ -369,7 +353,7 @@ export class PredictionCoordinator {
           method,
           path,
           schema,
-          ...(body === undefined ? {} : { body }),
+          body,
           timeoutMs: 15_000,
           signal: context.signal,
           authContextGuard: () => this.isCurrent(context),
@@ -406,27 +390,28 @@ export class PredictionCoordinator {
         code = error instanceof ApplicationError ? error.code : 'UNKNOWN'
       }
       this.log(operation, { code, attempt, ...(status === undefined ? {} : { status }) })
-      if (attempt === 2 || (code !== 'NETWORK_UNAVAILABLE' && code !== 'REQUEST_TIMEOUT'))
+      if (
+        attempt === attempts ||
+        (code !== 'NETWORK_UNAVAILABLE' && code !== 'REQUEST_TIMEOUT')
+      )
         throw new ApplicationError(code, 'Prediction request failed')
       await this.retryDelay(context.signal)
     }
     throw new ApplicationError('UNKNOWN', 'Prediction request failed')
   }
 
-  private retryDelay(signal: AbortSignal): Promise<void> {
-    return new Promise((resolve) => {
-      const finish = (): void => {
-        clearTimeout(timer)
-        signal.removeEventListener('abort', finish)
-        resolve()
-      }
-      const timer = setTimeout(finish, 2_000)
-      signal.addEventListener('abort', finish, { once: true })
-      if (signal.aborted) finish()
-    })
+  private async retryDelay(signal: AbortSignal): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<undefined>()
+    const finish = (): void => resolve(undefined)
+    const timer = setTimeout(finish, 2_000)
+    signal.addEventListener('abort', finish, { once: true })
+    if (signal.aborted) finish()
+    await promise
+    clearTimeout(timer)
+    signal.removeEventListener('abort', finish)
   }
 
   private log(operation: Operation, codes: Record<string, unknown>): void {
-    this.logger?.info(`prediction.${operation}`, codes)
+    this.logger.info(`prediction.${operation}`, codes)
   }
 }

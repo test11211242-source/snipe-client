@@ -58,35 +58,6 @@ export class CaptureTargetResolver {
     }
   }
 
-  async resolveProfileTarget(profileId: string): Promise<ResolvedCaptureProfileTarget> {
-    const user = this.auth.getView().user
-    if (user === null)
-      throw new ApplicationError('AUTH_REQUIRED', 'Sign in to configure result zones')
-    const collection = await this.repository.list(user.id)
-    const profile = await this.repository.get(user.id, profileId)
-    const summary = collection?.profiles.find((item) => item.profileId === profileId)
-    if (collection === null || profile === null || summary === undefined)
-      throw new ApplicationError(
-        'CAPTURE_PROFILE_NOT_FOUND',
-        'The selected capture profile no longer exists',
-      )
-    if (summary.configurationFingerprint !== profile.configuration.fingerprint)
-      throw new ApplicationError(
-        'CAPTURE_PROFILE_STALE',
-        'Capture profiles changed while selecting result zones',
-      )
-    return {
-      userId: user.id,
-      profileId,
-      profileName: profile.profileName,
-      collectionRevision: collection.revision,
-      configuration: profile.configuration,
-      selector: await this.registry.resolvePreference(
-        profile.configuration.sourceBinding.identity,
-      ),
-    }
-  }
-
   async resolveProfile(profileId: string): Promise<ResolvedMonitorTarget> {
     const user = this.auth.getView().user
     if (user === null)

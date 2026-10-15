@@ -49,16 +49,6 @@ import {
 } from '../infrastructure/capture-configuration-repository'
 import type { ApiClient } from './api-client'
 import type { AuthSession } from './auth-session'
-import type { AuthenticatedApiClient } from './api-client'
-import type { CaptureTargetResolver } from './capture-target-resolver'
-import {
-  predictionResultFingerprint,
-  type PredictionResultConfigurationRepository,
-} from '../infrastructure/prediction-result-configuration-repository'
-import {
-  PredictionResultConfigurationSchema,
-  type PredictionResultConfiguration,
-} from '../../../shared/models/prediction-result'
 import {
   canonicalizeNormalizedRect,
   normalizedToPixelRect,
@@ -89,7 +79,7 @@ interface InternalSession {
   commitLocked: boolean
   legacyTriggerProfile: LegacyTriggerAnalysis | null
   vsOrientation: VsOrientationTrigger | null
-  profileTarget: SetupCaptureProfileTarget | null
+  profileTarget: SetupCaptureProfileTarget
   authGeneration: number
   live?: LivePreparedCapture
   detectionController?: AbortController
@@ -99,7 +89,6 @@ interface InternalSession {
   pendingSync?: {
     requests: { path: `/api/${string}`; body: unknown }[]
     captureFingerprint: string
-    resultFingerprint?: string
   }
 }
 
@@ -227,9 +216,6 @@ export class SetupSessionService {
     private readonly api: ApiClient,
     private readonly auth: AuthSession,
     private readonly now: () => Date = () => new Date(),
-    private readonly resultRepository?: PredictionResultConfigurationRepository,
-    private readonly authenticatedApi?: AuthenticatedApiClient,
-    private readonly targetResolver?: CaptureTargetResolver,
     private readonly nameChecker?: SetupNameChecker,
     private readonly logger?: Pick<StructuredLogger, 'info' | 'warn'>,
   ) {}
@@ -249,12 +235,11 @@ export class SetupSessionService {
   async start(
     selector: SetupCaptureSelector,
     preference: CapturePreference,
-    kind: SetupSessionView['kind'] = 'capture',
     preparedFrame?: CapturedFrame,
     requestedProfile?: Omit<SetupCaptureProfileTarget, 'userId'>,
   ): Promise<SetupSessionView> {
     return this.serializedStart(() =>
-      this.performStart(selector, preference, kind, preparedFrame, requestedProfile),
+      this.performStart(selector, preference, preparedFrame, requestedProfile),
     )
   }
 
@@ -299,7 +284,6 @@ export class SetupSessionService {
           profileTarget,
           authGeneration,
           view: SetupSessionViewSchema.parse({
-            kind: 'capture',
             sessionId: randomUUID(),
             generation: 0,
             state: 'DETECTING',
@@ -314,8 +298,6 @@ export class SetupSessionService {
               trigger: null,
               nickname: null,
               topLeftEvidence: null,
-              resultTrigger: null,
-              resultData: null,
             },
             triggerProfile: null,
             error: null,
@@ -800,7 +782,6 @@ export class SetupSessionService {
   private async performStart(
     selector: SetupCaptureSelector,
     preference: CapturePreference,
-    kind: SetupSessionView['kind'],
     preparedFrame: CapturedFrame | undefined,
     requestedProfile: Omit<SetupCaptureProfileTarget, 'userId'> | undefined,
   ): Promise<SetupSessionView> {
@@ -815,10 +796,10 @@ export class SetupSessionService {
     }
     const authGeneration = this.auth.getContextGeneration()
     const user = this.auth.getView().user
-    const profileTarget =
-      kind === 'capture' || requestedProfile !== undefined
-        ? await this.resolveProfileTarget(user?.id ?? null, requestedProfile)
-        : null
+    const profileTarget = await this.resolveProfileTarget(
+      user?.id ?? null,
+      requestedProfile,
+    )
     const controller = new AbortController()
     if (
       this.auth.getContextGeneration() !== authGeneration ||
@@ -840,13 +821,12 @@ export class SetupSessionService {
       profileTarget,
       authGeneration,
       view: SetupSessionViewSchema.parse({
-        kind,
         sessionId: randomUUID(),
         generation: 0,
         state: 'CREATED',
         source: preference,
-        profileId: profileTarget?.profileId ?? null,
-        profileName: profileTarget?.profileName ?? null,
+        profileId: profileTarget.profileId,
+        profileName: profileTarget.profileName,
         frameSize: null,
         game: null,
         regionOrigins: null,
@@ -856,8 +836,6 @@ export class SetupSessionService {
           trigger: null,
           nickname: null,
           topLeftEvidence: null,
-          resultTrigger: null,
-          resultData: null,
         },
         triggerProfile: null,
         error: null,
@@ -869,8 +847,8 @@ export class SetupSessionService {
       session.frame =
         preparedFrame ?? (await this.capture.capture(selector, controller.signal))
       if (this.#session !== session || controller.signal.aborted) return session.view
-      const game = kind === 'capture' ? session.frame.game : undefined
-      if (kind === 'capture' && !game?.rect) {
+      const game = session.frame.game
+      if (!game?.rect) {
         throw new ApplicationError(
           'SETUP_GAME_NOT_FOUND',
           'Не вижу игру в окне — сделайте кадр ещё раз',
@@ -881,22 +859,21 @@ export class SetupSessionService {
         state: 'SELECTING',
         generation: session.view.generation + 1,
         frameSize: session.frame.size,
-        game: !game?.rect
-          ? null
-          : {
-              viewport: {
-                x: game.rect.x / session.frame.size.width,
-                y: game.rect.y / session.frame.size.height,
-                width: game.rect.width / session.frame.size.width,
-                height: game.rect.height / session.frame.size.height,
-              },
-              aspect: game.aspect,
-              source: 'freeze',
-            },
-        regionOrigins:
-          kind === 'capture'
-            ? { trigger: 'manual', nickname: 'manual', topLeftEvidence: 'manual' }
-            : null,
+        game: {
+          viewport: {
+            x: game.rect.x / session.frame.size.width,
+            y: game.rect.y / session.frame.size.height,
+            width: game.rect.width / session.frame.size.width,
+            height: game.rect.height / session.frame.size.height,
+          },
+          aspect: game.aspect,
+          source: 'freeze',
+        },
+        regionOrigins: {
+          trigger: 'manual',
+          nickname: 'manual',
+          topLeftEvidence: 'manual',
+        },
       })
     } catch (error) {
       if (this.#session === session && !controller.signal.aborted) {
@@ -909,53 +886,6 @@ export class SetupSessionService {
       }
     }
     return session.view
-  }
-
-  async startPredictionResult(
-    profileId?: string,
-    expectedRevision?: number,
-  ): Promise<SetupSessionView> {
-    const authGeneration = this.auth.getContextGeneration()
-    if (this.targetResolver === undefined) {
-      throw new ApplicationError(
-        'RESULT_SETUP_UNAVAILABLE',
-        'Result setup is unavailable',
-      )
-    }
-    const resolved =
-      profileId === undefined
-        ? await this.targetResolver.resolveActiveProfile()
-        : await this.targetResolver.resolveProfileTarget(profileId)
-    if (
-      expectedRevision !== undefined &&
-      expectedRevision !== resolved.collectionRevision
-    ) {
-      throw new ApplicationError(
-        'CAPTURE_PROFILE_STALE',
-        'Capture profiles changed; reload before configuring result zones',
-      )
-    }
-    const user = this.auth.getView().user
-    if (
-      user?.id !== resolved.userId ||
-      authGeneration !== this.auth.getContextGeneration()
-    ) {
-      throw new ApplicationError(
-        'AUTH_CONTEXT_CHANGED',
-        'The signed-in user changed while result setup was starting',
-      )
-    }
-    return this.start(
-      resolved.selector,
-      resolved.configuration.sourceBinding.identity,
-      'predictionResult',
-      undefined,
-      {
-        profileId: resolved.profileId,
-        profileName: resolved.profileName,
-        expectedRevision: resolved.collectionRevision,
-      },
-    )
   }
 
   getSession(): SetupSessionView {
@@ -995,30 +925,17 @@ export class SetupSessionService {
     if (session.view.state !== 'SELECTING') {
       throw new ApplicationError('SETUP_STATE_INVALID', 'Regions cannot be changed now')
     }
-    const allowed =
-      session.view.kind === 'capture'
-        ? ['trigger', 'nickname', 'topLeftEvidence']
-        : ['resultTrigger', 'resultData']
-    if (!allowed.includes(region)) {
+    const validated = NormalizedRectSchema.parse(rect)
+    const game = session.frame?.game
+    if (session.frame === null || !game?.rect) {
       throw new ApplicationError(
-        'SETUP_REGION_INVALID',
-        'Region does not belong to this setup mode',
+        'SETUP_GAME_NOT_FOUND',
+        'Не вижу игру в окне — сделайте кадр ещё раз',
       )
     }
-    const validated = NormalizedRectSchema.parse(rect)
-    if (session.view.kind === 'capture') {
-      const game = session.frame?.game
-      if (session.frame === null || !game?.rect) {
-        throw new ApplicationError(
-          'SETUP_GAME_NOT_FOUND',
-          'Не вижу игру в окне — сделайте кадр ещё раз',
-        )
-      }
-      frameToGameRect(validated, session.frame.size, game.rect)
-    }
+    frameToGameRect(validated, session.frame.size, game.rect)
     const previous = session.view.regions[region]
     if (
-      (region === 'trigger' || region === 'nickname' || region === 'topLeftEvidence') &&
       session.view.regionOrigins?.[region] === 'auto' &&
       previous !== null &&
       previous.x === validated.x &&
@@ -1028,7 +945,7 @@ export class SetupSessionService {
     ) {
       return session.view
     }
-    if (region === 'trigger' || region === 'resultTrigger') {
+    if (region === 'trigger') {
       session.legacyTriggerProfile = null
       session.vsOrientation = null
     }
@@ -1040,7 +957,7 @@ export class SetupSessionService {
         session.view.regionOrigins === null
           ? null
           : { ...session.view.regionOrigins, [region]: 'manual' },
-      ...(region === 'trigger' || region === 'resultTrigger'
+      ...(region === 'trigger'
         ? { triggerProfile: null, triggerKind: null, triggerOutline: null }
         : {}),
       error: null,
@@ -1054,9 +971,8 @@ export class SetupSessionService {
     region: RegionKind,
     rect: NormalizedRect,
   ): Promise<SetupSessionView> {
-    const session = this.assertCommand(sessionId, generation)
-    const finalRegion = session.view.kind === 'capture' ? 'topLeftEvidence' : 'resultData'
-    if (region !== finalRegion) {
+    this.assertCommand(sessionId, generation)
+    if (region !== 'topLeftEvidence') {
       throw new ApplicationError(
         'SETUP_REGION_INVALID',
         'Only the final setup region can complete configuration',
@@ -1077,9 +993,7 @@ export class SetupSessionService {
     if (session.view.state !== 'SELECTING' || session.frame === null) {
       throw new ApplicationError('SETUP_STATE_INVALID', 'Trigger cannot be analyzed now')
     }
-    const triggerRegion =
-      session.view.kind === 'predictionResult' ? 'resultTrigger' : 'trigger'
-    const trigger = session.view.regions[triggerRegion]
+    const trigger = session.view.regions.trigger
     if (trigger === null)
       throw new ApplicationError(
         'SETUP_REGION_MISSING',
@@ -1099,19 +1013,18 @@ export class SetupSessionService {
         session.frame,
         canonicalTrigger,
         session.controller.signal,
-        session.view.kind === 'capture' ? (session.frame.game?.rect ?? null) : null,
+        session.frame.game?.rect ?? null,
       )
       if (!this.currentDetectionOperation(session, operationGeneration, 'ANALYZING')) {
         return session.view
       }
       session.legacyTriggerProfile = analysis.legacyProfile
-      session.vsOrientation =
-        session.view.kind === 'capture' ? analysis.vsOrientation : null
+      session.vsOrientation = analysis.vsOrientation
       session.view = SetupSessionViewSchema.parse({
         ...session.view,
         state: 'SELECTING',
         generation: generation + 1,
-        regions: { ...session.view.regions, [triggerRegion]: canonicalTrigger },
+        regions: { ...session.view.regions, trigger: canonicalTrigger },
         triggerProfile: analysis.profile,
         triggerKind:
           session.vsOrientation === null ? 'structural' : 'vs_edge_orientation',
@@ -1143,18 +1056,11 @@ export class SetupSessionService {
     ) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Analyze the trigger before review')
     }
-    if (session.view.kind === 'capture')
-      NormalizedRegionsSchema.parse({
-        trigger: session.view.regions.trigger,
-        nickname: session.view.regions.nickname,
-        topLeftEvidence: session.view.regions.topLeftEvidence,
-      })
-    else if (
-      session.view.regions.resultTrigger === null ||
-      session.view.regions.resultData === null
-    ) {
-      throw new ApplicationError('SETUP_INCOMPLETE', 'Select both result regions')
-    }
+    NormalizedRegionsSchema.parse({
+      trigger: session.view.regions.trigger,
+      nickname: session.view.regions.nickname,
+      topLeftEvidence: session.view.regions.topLeftEvidence,
+    })
     session.view = SetupSessionViewSchema.parse({
       ...session.view,
       state: 'REVIEW',
@@ -1173,11 +1079,6 @@ export class SetupSessionService {
       session.legacyTriggerProfile === null
     ) {
       throw new ApplicationError('SETUP_INCOMPLETE', 'Setup is not ready to save')
-    }
-    if (session.view.kind === 'predictionResult') {
-      return this.#runCaptureCommit(() =>
-        this.commitPredictionResult(session, generation),
-      )
     }
     return this.#runCaptureCommit(() => this.commitCapture(session, generation))
   }
@@ -1227,7 +1128,7 @@ export class SetupSessionService {
     if (
       token === null ||
       user?.id === undefined ||
-      user.id !== profileTarget?.userId ||
+      user.id !== profileTarget.userId ||
       !this.hasCurrentAuthContext(session)
     ) {
       session.commitLocked = false
@@ -1451,194 +1352,6 @@ export class SetupSessionService {
     return this.completeSaved(session, generation, activateProfile)
   }
 
-  private async commitPredictionResult(
-    session: InternalSession,
-    generation: number,
-  ): Promise<SetupSessionView> {
-    this.assertCommand(session.view.sessionId, generation)
-    if (session.view.state !== 'REVIEW') {
-      throw new ApplicationError(
-        'SETUP_STATE_INVALID',
-        'Setup is no longer ready to save',
-      )
-    }
-    if (
-      session.frame === null ||
-      session.view.triggerProfile === null ||
-      session.legacyTriggerProfile === null ||
-      session.view.regions.resultTrigger === null ||
-      session.view.regions.resultData === null ||
-      this.resultRepository === undefined ||
-      this.authenticatedApi === undefined
-    ) {
-      throw new ApplicationError('SETUP_INCOMPLETE', 'Result setup is not ready to save')
-    }
-    const user = this.auth.getView().user
-    const profileTarget = session.profileTarget
-    if (user?.id === undefined || user.id !== profileTarget?.userId)
-      throw new ApplicationError('AUTH_REQUIRED', 'Sign in again to save setup')
-    const frame = session.frame
-    const trigger = session.view.regions.resultTrigger
-    const data = session.view.regions.resultData
-    const profile = session.view.triggerProfile
-    const legacyProfile = session.legacyTriggerProfile
-    const timestamp = this.now().toISOString()
-    session.commitLocked = true
-    session.view = SetupSessionViewSchema.parse({
-      ...session.view,
-      state: 'SAVING',
-      error: null,
-    })
-    const token = await this.auth.getAccessToken()
-    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (token === null || !this.hasCurrentAuthContext(session)) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'AUTH_CONTEXT_CHANGED',
-        'The signed-in user changed while result setup was saving',
-      )
-    }
-    const profileStatus = await this.repository.list(profileTarget.userId)
-    if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-    if (!this.hasCurrentAuthContext(session)) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'AUTH_CONTEXT_CHANGED',
-        'The signed-in session changed while result setup was saving',
-      )
-    }
-    const captureProfile = profileStatus?.profiles.find(
-      (profileSummary) => profileSummary.profileId === profileTarget.profileId,
-    )
-    if (
-      profileStatus?.revision !== profileTarget.expectedRevision ||
-      captureProfile === undefined
-    ) {
-      return this.resultCommitFailure(
-        session,
-        generation,
-        'CAPTURE_PROFILE_STALE',
-        'The capture profile changed while result setup was open',
-      )
-    }
-    const captureReference = {
-      target_type: session.view.source.kind === 'window' ? 'window' : 'screen',
-      target_id:
-        session.view.source.kind === 'window'
-          ? 'window-preference'
-          : session.view.source.displayId,
-      target_name: session.view.source.label,
-      source_frame_size: frame.size,
-      selected_target: {
-        targetType: session.view.source.kind === 'window' ? 'window' : 'screen',
-        name: session.view.source.label,
-        executableName:
-          session.view.source.kind === 'window'
-            ? session.view.source.executableLabel
-            : null,
-      },
-      created_at: timestamp,
-    }
-    const triggerPixels = normalizedToPixelRect(trigger, frame.size)
-    const dataPixels = normalizedToPixelRect(data, frame.size)
-    const triggerPayload = {
-      ...triggerPixels,
-      ratio: trigger,
-      screen_resolution: frame.size,
-      capture_reference: captureReference,
-      trigger_profile: buildLegacyTriggerProfile(trigger, profile, legacyProfile),
-    }
-    const dataPayload = {
-      ...dataPixels,
-      ratio: data,
-      screen_resolution: frame.size,
-      capture_reference: captureReference,
-    }
-    try {
-      const resultProfileId = profileTarget.profileId
-      const previous = await this.resultRepository.load(user.id, resultProfileId)
-      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-      if (!this.hasCurrentAuthContext(session)) {
-        return this.resultCommitFailure(
-          session,
-          generation,
-          'AUTH_CONTEXT_CHANGED',
-          'The signed-in session changed while result setup was saving',
-        )
-      }
-      const unsigned: Omit<PredictionResultConfiguration, 'fingerprint'> = {
-        schemaVersion: 2,
-        userId: user.id,
-        captureProfileId: resultProfileId,
-        captureConfigurationRevision: captureProfile.configurationRevision,
-        captureConfigurationFingerprint: captureProfile.configurationFingerprint,
-        ...(captureProfile.calibrationId === undefined
-          ? {}
-          : { captureCalibrationId: captureProfile.calibrationId }),
-        revision: (previous?.revision ?? 0) + 1,
-        committedAt: timestamp,
-        source: session.view.source,
-        frameSize: frame.size,
-        trigger,
-        data,
-        triggerProfile: profile,
-      }
-      const saved = PredictionResultConfigurationSchema.parse({
-        ...unsigned,
-        fingerprint: predictionResultFingerprint(unsigned),
-      })
-      await this.resultRepository.save(saved, resultProfileId)
-      session.view = SetupSessionViewSchema.parse({
-        ...session.view,
-        saveOutcome: {
-          local: 'saved',
-          projection: 'not_attempted',
-          runtime: 'not_requested',
-          warning: null,
-        },
-      })
-      session.pendingSync = {
-        captureFingerprint: captureProfile.configurationFingerprint,
-        resultFingerprint: saved.fingerprint,
-        requests: captureProfile.isActive
-          ? [
-              { path: '/api/streamer/result-trigger-area', body: triggerPayload },
-              { path: '/api/streamer/result-data-area', body: dataPayload },
-            ]
-          : [],
-      }
-      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-      if (!this.hasCurrentAuthContext(session)) {
-        this.cancelForAuthTransition()
-        return session.view
-      }
-    } catch {
-      if (!this.isCurrentOperation(session, generation, 'SAVING')) return session.view
-      session.frame = null
-      session.legacyTriggerProfile = null
-      session.view = SetupSessionViewSchema.parse({
-        ...session.view,
-        state: 'FAILED',
-        generation: generation + 1,
-        error: {
-          code: 'RESULT_SETUP_LOCAL_COMMIT_FAILED',
-          message:
-            'Result zones could not be saved locally. The server projection was not changed.',
-        },
-        saveOutcome: {
-          local: 'failed',
-          projection: 'not_attempted',
-          runtime: 'not_requested',
-          warning: null,
-        },
-      })
-      return session.view
-    }
-    return this.completeSaved(session, generation, false)
-  }
-
   private async completeSaved(
     session: InternalSession,
     generation: number,
@@ -1731,19 +1444,13 @@ export class SetupSessionService {
     const pending = session.pendingSync
     const target = session.profileTarget
     if (pending === undefined || pending.requests.length === 0) return 'not_required'
-    if (target === null || !this.hasCurrentAuthContext(session)) return 'failed'
+    if (!this.hasCurrentAuthContext(session)) return 'failed'
     if (recheck) {
       const current = await this.repository.get(target.userId, target.profileId)
       const collection = await this.repository.list(target.userId)
-      const result =
-        pending.resultFingerprint === undefined
-          ? null
-          : await this.resultRepository?.load(target.userId, target.profileId)
       if (
         current?.configuration.fingerprint !== pending.captureFingerprint ||
-        collection?.activeProfileId !== target.profileId ||
-        (pending.resultFingerprint !== undefined &&
-          result?.fingerprint !== pending.resultFingerprint)
+        collection?.activeProfileId !== target.profileId
       ) {
         throw new ApplicationError(
           'CAPTURE_PROFILE_STALE',
@@ -1794,22 +1501,6 @@ export class SetupSessionService {
       session.view = SetupSessionViewSchema.parse({ ...session.view, state: 'SAVING' })
       return this.completeSaved(session, generation, false, true)
     })
-  }
-
-  private resultCommitFailure(
-    session: InternalSession,
-    generation: number,
-    code: string,
-    message: string,
-  ): SetupSessionView {
-    session.commitLocked = false
-    session.view = SetupSessionViewSchema.parse({
-      ...session.view,
-      state: 'REVIEW',
-      generation: generation + 1,
-      error: { code, message },
-    })
-    return session.view
   }
 
   private captureCommitAuthFailure(
@@ -1949,7 +1640,7 @@ export class SetupSessionService {
   private hasCurrentAuthContext(session: InternalSession): boolean {
     return (
       this.auth.getContextGeneration() === session.authGeneration &&
-      this.auth.getView().user?.id === session.profileTarget?.userId
+      this.auth.getView().user?.id === session.profileTarget.userId
     )
   }
 

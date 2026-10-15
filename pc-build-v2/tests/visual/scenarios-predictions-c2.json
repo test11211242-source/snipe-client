@@ -1,0 +1,471 @@
+[
+  {
+    "name": "predictions-c2-waiting-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-waiting-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {}
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-voting-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-voting-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-locked-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "locked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-locked-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "locked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-result-unknown-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "resultUnknown"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-result-unknown-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "resultUnknown"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-streak-3of5-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streak",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-streak-3of5-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streak",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-streak-voting-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streakVoting",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-disabled-with-bets-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "disabledWithBets"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-disabled-with-bets-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "disabledWithBets"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-disabled-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "disabled"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-stream-ended-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streamEnded",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakKind": "random"
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-client-not-ready-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "clientNotReady",
+        "monitoring": false
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-twitch-unavailable-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "twitchUnavailable"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-not-eligible-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "notEligible"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-idle-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "idle"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-requirements-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "predictionProfile": false,
+        "monitoring": false
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-requirements-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "twitch": "off",
+        "predictionProfile": false,
+        "monitoring": false
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settings-fixed-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictionSettings": {
+          "mode": "streak",
+          "streakKind": "fixed",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settings-fixed-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictionSettings": {
+          "mode": "streak",
+          "streakKind": "fixed",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settings-random-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictionSettings": {
+          "mode": "streak",
+          "streakKind": "random",
+          "streakFrom": 2,
+          "streakTo": 5,
+          "votingSeconds": 90,
+          "chatProgress": false
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settings-random-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictionSettings": {
+          "mode": "streak",
+          "streakKind": "random",
+          "streakFrom": 2,
+          "streakTo": 5,
+          "votingSeconds": 90,
+          "chatProgress": false
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settings-draft-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Серия побед'); await h.sleep(150); h.click('Случайно'); await h.sleep(300); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-cancel-confirm-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Отменить и вернуть ставки'); await h.sleep(400); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-cancel-confirm-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Отменить и вернуть ставки'); await h.sleep(400); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-pending-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting",
+        "predictionsPending": true
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Победа'); await h.sleep(400); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-settled-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Победа'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-streak-win-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streak",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Победа'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-overview-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  },
+  {
+    "name": "predictions-c2-overview-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "streamer": {
+        "predictions": "resultUnknown"
+      }
+    },
+    "steps": ["(async () => { await window.__h.go('stream', \"Обзор\") })()"]
+  }
+]

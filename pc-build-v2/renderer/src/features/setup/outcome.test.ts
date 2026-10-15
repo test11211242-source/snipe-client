@@ -111,20 +111,17 @@ describe('describeOutcome', () => {
     expect(untouched.lines.map((line) => line.value)).toContain('не затронут')
   })
 
-  it('reports an unsaved result as danger and uses the result wording', () => {
+  it('reports an unsaved profile as danger', () => {
     const outcome = describeOutcome(
-      committed(
-        {
-          local: 'failed',
-          projection: 'not_attempted',
-          runtime: 'not_requested',
-          warning: null,
-        },
-        { kind: 'predictionResult' },
-      ),
+      committed({
+        local: 'failed',
+        projection: 'not_attempted',
+        runtime: 'not_requested',
+        warning: null,
+      }),
     )
     expect(outcome.tone).toBe('danger')
-    expect(outcome.title).toBe('Зоны результата не сохранены')
+    expect(outcome.title).toBe('Профиль не сохранён')
     expect(outcome.canRetrySync).toBe(false)
   })
 

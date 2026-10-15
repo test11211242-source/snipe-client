@@ -26,7 +26,6 @@ export interface ProfileRowActions {
   duplicate: () => void
   rebind: () => void
   recalibrate: () => void
-  resultZone: () => void
   remove: () => void
 }
 
@@ -137,7 +136,6 @@ export function ProfileRow({
   profile,
   all,
   waiting,
-  isStreamer,
   busy,
   editing,
   canDelete,
@@ -146,7 +144,6 @@ export function ProfileRow({
   profile: CaptureProfileSummary
   all: readonly CaptureProfileSummary[]
   waiting: boolean
-  isStreamer: boolean
   busy: boolean
   editing: boolean
   canDelete: boolean
@@ -212,22 +209,6 @@ export function ProfileRow({
             ) : null}
           </span>
         )}
-        {isStreamer ? (
-          <span
-            className={cx(
-              styles['line'],
-              profile.resultConfigured ? styles['lineOk'] : styles['lineWarn'],
-            )}
-          >
-            <Icon name={profile.resultConfigured ? 'check' : 'alert'} size={12} />
-            Зоны результата: {profile.resultConfigured ? 'настроены' : 'нет'}
-            {profile.resultConfigured ? null : (
-              <LinkButton onClick={actions.resultZone} tone="accent">
-                Настроить
-              </LinkButton>
-            )}
-          </span>
-        ) : null}
       </div>
       <div className={styles['trail']}>
         {profile.isActive ? (
@@ -272,19 +253,6 @@ export function ProfileRow({
               title="Перенастроить"
             />
           </MenuItem>
-          {isStreamer ? (
-            <MenuItem onSelect={actions.resultZone}>
-              <MenuEntry
-                icon="target"
-                sub="Область итога боя для прогнозов"
-                title={
-                  profile.resultConfigured
-                    ? 'Перенастроить зоны результата'
-                    : 'Зоны результата'
-                }
-              />
-            </MenuItem>
-          ) : null}
           <MenuSeparator />
           <MenuItem danger disabled={!canDelete} onSelect={actions.remove}>
             <MenuEntry

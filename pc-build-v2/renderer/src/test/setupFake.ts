@@ -45,7 +45,6 @@ export function triggerProfile(grade: 'high' | 'medium' = 'high'): TriggerProfil
 
 export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSessionView {
   return {
-    kind: 'capture',
     sessionId: SESSION_ID,
     generation: 1,
     state: 'SELECTING',
@@ -62,18 +61,12 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
       trigger: null,
       nickname: null,
       topLeftEvidence: null,
-      resultTrigger: null,
-      resultData: null,
     },
     triggerProfile: null,
     error: null,
     saveOutcome: null,
     ...overrides,
   }
-}
-
-export function resultView(overrides: Partial<SetupSessionView> = {}): SetupSessionView {
-  return sessionView({ kind: 'predictionResult', ...overrides })
 }
 
 export const GAME_VIEWPORT: NormalizedRect = { x: 0.36, y: 0, width: 0.28, height: 1 }
@@ -159,8 +152,6 @@ export function detectedView(
       trigger: { x: 0.47, y: 0.4, width: 0.06, height: 0.12 },
       nickname: { x: 0.38, y: 0.3, width: 0.24, height: 0.08 },
       topLeftEvidence: { x: 0.37, y: 0.02, width: 0.12, height: 0.06 },
-      resultTrigger: null,
-      resultData: null,
     },
     triggerProfile: triggerProfile(),
     ...overrides,
@@ -275,7 +266,7 @@ export function createSetupFake(options: SetupFakeOptions = {}): SetupFake {
         const current = fence(payload)
         if (current.state !== 'SELECTING')
           return Promise.reject(new Error('Regions cannot be changed now'))
-        const resets = payload.region === 'trigger' || payload.region === 'resultTrigger'
+        const resets = payload.region === 'trigger'
         return Promise.resolve(
           next({
             regions: { ...current.regions, [payload.region]: payload.rect },
@@ -336,7 +327,6 @@ export function createSetupFake(options: SetupFakeOptions = {}): SetupFake {
       )
     }),
     finish: vi.fn(),
-    startResult: vi.fn(),
     retryDetection: vi.fn((payload: { sessionId: string; generation: number }) => {
       const current = fence(payload)
       if (current.state !== 'DETECTING' || current.detection?.status !== 'failed')

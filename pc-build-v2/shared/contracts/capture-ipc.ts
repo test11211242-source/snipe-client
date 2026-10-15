@@ -30,7 +30,6 @@ export const MAIN_CAPTURE_IPC_CHANNELS = Object.freeze({
 })
 
 export const SETUP_IPC_CHANNELS = Object.freeze({
-  startResult: 'setup:start-result',
   getSession: 'setup:get-session',
   getFrame: 'setup:get-frame',
   retryDetection: 'setup:retry-detection',
@@ -73,7 +72,6 @@ export const CaptureProfileErrorCodeSchema = z.enum([
   'SOURCE_NOT_FOUND',
   'SOURCE_AMBIGUOUS',
   'SOURCE_REBIND_REQUIRED',
-  'PREDICTIONS_ACTIVE',
   'AUTH_REQUIRED',
   'AUTH_CONTEXT_CHANGED',
   'CAPTURE_PREPARATION_STALE',

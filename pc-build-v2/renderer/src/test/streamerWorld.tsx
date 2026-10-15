@@ -12,7 +12,9 @@ import {
   type TitleBuilder,
 } from '../../../shared/contracts/title-builder'
 import {
+  DEFAULT_PREDICTION_SETTINGS,
   StreamerViewSchema,
+  type PredictionStatus,
   type StreamerView,
   type StreamTitleSettings,
 } from '../../../shared/models/streamer'
@@ -23,35 +25,39 @@ import { authFixture, installBridge, type Bridge, type BridgeOptions } from './b
 
 const PROFILE_ID = '00000000-0000-4000-8000-000000000001'
 
+type CurrentPrediction = NonNullable<PredictionStatus['prediction']>
+
+/** An unsettled «Каждый бой» prediction with bets; tests patch what they need. */
+export function predictionFixture(
+  patch: Partial<CurrentPrediction> = {},
+): CurrentPrediction {
+  return {
+    id: 41,
+    title: 'Выиграю следующий бой?',
+    mode: 'each_battle',
+    target: 1,
+    wins: 0,
+    locksAt: '2026-10-10T12:00:30.000Z',
+    hasBets: true,
+    ...patch,
+  }
+}
+
 /** A complete, valid StreamerView; tests mutate the returned copy. */
 export function streamerViewFixture(): StreamerView {
   return StreamerViewSchema.parse({
     access: { allowed: true, reason: null },
     twitch: { connected: true, username: 'artcs_cr', polling: false },
     predictions: {
-      active: false,
-      state: 'stopped',
-      runtimeState: 'stopped',
-      settings: {
-        predictionType: 'win_lose',
-        predictionWindow: 120,
-        winStreakCount: 3,
-        delayBetweenPredictions: 10,
-        autoCreateNext: true,
-      },
-      statistics: {
-        total: 12,
-        successful: 9,
-        successRate: 75,
-        currentWinStreak: 2,
-        activeTitle: null,
-      },
-      requirements: {
-        twitchConnected: true,
-        mainMonitorConfigured: true,
-        mainMonitorRunning: true,
-        resultConfigured: true,
-      },
+      enabled: true,
+      live: false,
+      clientReady: true,
+      phase: 'waiting_stream',
+      attention: null,
+      prediction: null,
+      stats: { resolved: 12, yes: 7, no: 5, canceled: 2 },
+      history: [],
+      settings: DEFAULT_PREDICTION_SETTINGS,
     },
     title: {
       settings: {
@@ -153,7 +159,7 @@ export function readinessFixture(
     accountsCount: 2,
     monitoring: true,
     captureConfigured: true,
-    resultZonesConfigured: true,
+    predictionProfileReady: true,
     activeProfileId: PROFILE_ID,
     ...patch,
   }
@@ -230,15 +236,35 @@ function applyDefault(
     case 'widget.enabled':
       view.overlay.settings.enabled = command.enabled
       break
-    case 'predictions.start':
-      view.predictions.active = true
-      view.predictions.runtimeState = 'active'
+    case 'predictions.settings.save':
       view.predictions.settings = command.settings
+      view.predictions.enabled = command.settings.enabled
+      if (view.predictions.prediction === null)
+        view.predictions.phase = command.settings.enabled ? 'waiting_stream' : 'disabled'
       break
-    case 'predictions.stop':
-      view.predictions.active = false
-      view.predictions.runtimeState = 'stopped'
+    case 'predictions.battle':
+    case 'predictions.cancel': {
+      const current = view.predictions.prediction
+      // The server answers 409 for a prediction that is no longer the current one.
+      if (current?.id !== command.predictionId) return failure('VALIDATION_FAILED')
+      const stats = view.predictions.stats
+      const won = command.action === 'predictions.battle' && command.outcome === 'win'
+      // A streak win short of the target only counts one battle.
+      if (won && current.wins + 1 < current.target) {
+        current.wins += 1
+        break
+      }
+      if (command.action === 'predictions.cancel') stats.canceled += 1
+      else {
+        stats.resolved += 1
+        if (won) stats.yes += 1
+        else stats.no += 1
+      }
+      view.predictions.prediction = null
+      view.predictions.attention = null
+      view.predictions.phase = 'idle'
       break
+    }
     case 'twitch.disconnect':
       view.twitch.connected = false
       view.twitch.username = null
