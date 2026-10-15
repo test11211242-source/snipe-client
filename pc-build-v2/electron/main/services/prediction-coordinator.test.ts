@@ -487,6 +487,7 @@ describe('PredictionCoordinator event forwarding', () => {
       kind: 'battle',
       rank: 'unknown',
       rankEvidence: null,
+      vsAgeMs: 0,
     })
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'skipped',
@@ -791,7 +792,7 @@ describe('PredictionCoordinator retry and logging', () => {
     test.battle()
     test.result()
     await flush()
-    expect(test.calls('battle-start')).toHaveLength(1)
+    expect(test.calls('battle-start')).toHaveLength(2)
     expect(test.calls('battle-result')).toHaveLength(1)
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'UNKNOWN',

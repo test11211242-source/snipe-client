@@ -370,7 +370,7 @@ describe('recovery after a failed prediction command', () => {
     await test.service.refresh()
     const original = test.request.getMockImplementation()
     if (original === undefined) throw new Error('Missing request fixture')
-    const gate = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<undefined>()
     test.request.mockImplementation(async (input) => {
       if (input.path === '/api/streamer/predictions/status') await gate.promise
       return original(input)
@@ -387,7 +387,7 @@ describe('recovery after a failed prediction command', () => {
     await flushMicrotasks()
     expect(settled).toBe(false)
     expect(test.service.getView().predictions.prediction?.wins).toBe(3)
-    gate.resolve()
+    gate.resolve(undefined)
     expect(await pending).toMatchObject({ ok: false, error: { code: 'REQUEST_TIMEOUT' } })
     expect(test.service.getView().predictions.prediction?.wins).toBe(4)
   })
@@ -462,7 +462,7 @@ describe('recovery after a failed prediction command', () => {
     await test.service.refresh()
     const original = test.request.getMockImplementation()
     if (original === undefined) throw new Error('Missing request fixture')
-    const gate = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<undefined>()
     test.request.mockImplementation(async (input) => {
       if (input.path === '/api/streamer/predictions/status') await gate.promise
       return original(input)
@@ -476,7 +476,7 @@ describe('recovery after a failed prediction command', () => {
     // The application controller stops the service on every account transition.
     test.changeAuth()
     await test.service.stop()
-    gate.resolve()
+    gate.resolve(undefined)
     expect(await pending).toEqual({
       ok: false,
       error: { code: 'STREAMER_CANCELLED', detail: null },

@@ -495,7 +495,7 @@ export class MonitorProcessService {
       owned.resolveReady()
       return
     }
-    if (!owned.ready && event.type !== 'fatal' && event.type !== 'stopped') {
+    if (!owned.ready && event.type !== 'fatal') {
       this.protocolFailure(
         owned,
         'MONITOR_PROTOCOL_ORDER',
@@ -556,7 +556,7 @@ export class MonitorProcessService {
         image,
       }
       owned.listener.onAction(action)
-    } else if (event.type === 'fatal') {
+    } else {
       this.logger.warn('Monitor worker fatal', {
         code: event.payload.code,
         stage: event.payload.stage,

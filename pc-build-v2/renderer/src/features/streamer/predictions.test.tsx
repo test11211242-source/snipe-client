@@ -206,6 +206,7 @@ describe('predictions: status pill uses only the fixed phrases', () => {
 })
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const UUID_INTENT: unknown = expect.stringMatching(UUID)
 const SKIP = 'Бой не считается'
 const MANUAL = ['Победа', 'Поражение', SKIP, CANCEL]
 const STALE = 'Прогноз уже сменился. Проверьте итог.'
@@ -259,7 +260,7 @@ describe('predictions: manual settle', () => {
           action: 'predictions.battle',
           predictionId: 41,
           outcome: 'win',
-          requestId: expect.stringMatching(UUID),
+          requestId: UUID_INTENT,
         },
       ]),
     )
@@ -276,7 +277,7 @@ describe('predictions: manual settle', () => {
           action: 'predictions.battle',
           predictionId: 41,
           outcome: 'loss',
-          requestId: expect.stringMatching(UUID),
+          requestId: UUID_INTENT,
         },
       ]),
     )
@@ -293,7 +294,7 @@ describe('predictions: manual settle', () => {
           action: 'predictions.battle',
           predictionId: 41,
           outcome: 'not_ranked',
-          requestId: expect.stringMatching(UUID),
+          requestId: UUID_INTENT,
         },
       ]),
     )
@@ -423,7 +424,7 @@ describe('predictions: manual settle', () => {
     expect(await screen.findByText(STALE)).toBeVisible()
     expect(screen.getByText(/«Выиграю 2 боя подряд\?»/)).toBeVisible()
     expect(button(CANCEL)).toBeEnabled()
-    expect(world.fake.view.predictions.prediction?.id).toBe(42)
+    expect(world.fake.view.predictions.prediction.id).toBe(42)
     expect(world.fake.view.predictions.stats.canceled).toBe(2)
     expect(commandsOf(world, 'predictions.cancel')).toHaveLength(1)
   })
