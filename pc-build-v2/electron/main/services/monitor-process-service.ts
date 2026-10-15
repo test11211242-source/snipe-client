@@ -13,7 +13,8 @@ import {
   type MonitorGeometryEvent,
   type MonitorLearningEvent,
   type MonitorLayoutLearnedEvent,
-  type MonitorPredictionStateEvent,
+  type MonitorTriggeredEvent,
+  type MonitorPredictionResultEvent,
   type MonitorSourceStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
 import { pythonWorkerEnvironment } from './python-environment'
@@ -91,13 +92,12 @@ export interface MonitorAction {
 }
 
 export interface MonitorProcessListener {
-  onTriggered: (timestamp: string, triggerId?: string) => void
+  onTriggered: (payload: MonitorTriggeredEvent['payload']) => void
   onAction: (action: MonitorAction) => void
-  onPredictionResult: (action: MonitorAction) => void
+  onPredictionResult: (payload: MonitorPredictionResultEvent['payload']) => void
   onGeometry?: (payload: MonitorGeometryEvent['payload']) => void
   onLearning?: (payload: MonitorLearningEvent['payload']) => void
   onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
-  onPredictionState?: (payload: MonitorPredictionStateEvent['payload']) => void
   onSourceState?: (payload: MonitorSourceStateEvent['payload']) => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
@@ -488,7 +488,7 @@ export class MonitorProcessService {
       return
     }
     if (event.type === 'triggered') {
-      owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
+      owned.listener.onTriggered(event.payload)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
     } else if (event.type === 'vs_candidate') {
@@ -510,12 +510,12 @@ export class MonitorProcessService {
         fired: event.payload.triggerId !== null,
       })
       owned.listener.onLayoutLearned?.(event.payload)
-    } else if (event.type === 'prediction_state') {
-      owned.listener.onPredictionState?.(event.payload)
+    } else if (event.type === 'prediction_result') {
+      owned.listener.onPredictionResult(event.payload)
     } else if (event.type === 'source_state') {
       this.logger.info('Monitor source state', { minimized: event.payload.minimized })
       owned.listener.onSourceState?.(event.payload)
-    } else if (event.type === 'action' || event.type === 'prediction_result') {
+    } else if (event.type === 'action') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)
       if (
@@ -539,8 +539,7 @@ export class MonitorProcessService {
         height: event.payload.height,
         image,
       }
-      if (event.type === 'action') owned.listener.onAction(action)
-      else owned.listener.onPredictionResult(action)
+      owned.listener.onAction(action)
     } else if (event.type === 'fatal') {
       this.logger.warn('Monitor worker fatal', {
         code: event.payload.code,

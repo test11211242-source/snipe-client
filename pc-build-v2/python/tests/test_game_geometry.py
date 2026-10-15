@@ -11,7 +11,7 @@ from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import regions
 from synthetic_frames import arena, framed
 from test_trigger_engine import payload, profile_for, trigger_image
-from trigger_engine import PredictionTriggerEngine, TriggerEngine
+from trigger_engine import TriggerEngine
 
 
 def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10-13T12:00:00Z", chrome=None, cy=0.429):
@@ -28,7 +28,6 @@ def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10
 def game_payload(layouts=None, *, learning=True):
     result = payload(profile_for(trigger_image((20, 80, 140))))
     result["selector"] = {"kind": "window", "windowHwnd": "123"}
-    result["prediction"] = None
     result["primary"] = {"kind": "game_relative", "profileCalibrationId": str(uuid.uuid4()),
                          "layouts": layouts or [game_layout()], "learning": {"enabled": learning, "maxLayouts": 4}}
     return result
@@ -141,17 +140,16 @@ def test_game_relative_confirmation_uses_current_nickname_frame_and_no_fatal_res
     assert engine.process(arena(480, 640, badge=False)[0], 0.2) is None
 
 
-def test_prediction_aspect_mismatch_pauses_and_resumes_without_fatal():
-    configured = payload(profile_for(trigger_image((60, 30, 160))))
-    primary = configured["primary"]
-    engine = PredictionTriggerEngine({"configuredFrameSize": primary["configuredFrameSize"], "trigger": primary["regions"]["trigger"],
-                                      "data": primary["regions"]["nicknameRegion"], "triggerProfile": primary["triggerProfile"]}, configured["limits"])
-    assert engine.process(np.zeros((256, 256, 3), np.uint8), 0) is None
-    assert engine.take_events() == [("prediction_state", {"state": "aspect_mismatch"})]
-    assert engine.process(np.zeros((256, 256, 3), np.uint8), 0.11) is None
-    assert engine.take_events() == []
-    assert engine.process(np.zeros((128, 256, 3), np.uint8), 0.22) is None
-    assert engine.take_events() == [("prediction_state", {"state": "active"})]
+@pytest.mark.parametrize("cy,kind", [(0.429, "battle"), (0.52, "spectate")])
+def test_trigger_records_the_fired_layout_kind(cy, kind):
+    frame, _ = arena(cy=cy)
+    engine = TriggerEngine(game_payload([game_layout(cy=cy)]))
+    assert engine.process(frame, 0) is None
+    assert engine.process(frame, 0.1) is not None
+    assert engine.take_triggered()
+    assert engine.triggered_kind == kind
+    assert engine.process(frame, 0.2) is None
+    assert engine.triggered_kind is None
 
 
 def test_structural_game_relative_uses_existing_matcher():

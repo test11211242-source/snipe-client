@@ -23,6 +23,107 @@ export const PredictionPreferencesSchema = z
   })
   .strict()
 
+export const PredictionSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    mode: z.enum(['each_battle', 'streak']),
+    streakKind: z.enum(['fixed', 'random']),
+    streakLength: z.number().int().min(2).max(10),
+    streakFrom: z.number().int().min(1).max(10),
+    streakTo: z.number().int().min(1).max(10),
+    votingSeconds: z.union([
+      z.literal(30),
+      z.literal(45),
+      z.literal(60),
+      z.literal(90),
+      z.literal(120),
+      z.literal(180),
+    ]),
+    chatProgress: z.boolean(),
+  })
+  .strict()
+  .refine((settings) => settings.streakFrom <= settings.streakTo, {
+    path: ['streakTo'],
+    message: 'Invalid streak range',
+  })
+
+export const DEFAULT_PREDICTION_SETTINGS: PredictionSettings = {
+  enabled: true,
+  mode: 'each_battle',
+  streakKind: 'fixed',
+  streakLength: 3,
+  streakFrom: 2,
+  streakTo: 5,
+  votingSeconds: 30,
+  chatProgress: true,
+}
+
+export const PredictionStatusSchema = z
+  .object({
+    enabled: z.boolean(),
+    live: z.boolean(),
+    clientReady: z.boolean(),
+    phase: z.enum([
+      'voting',
+      'locked',
+      'disabled',
+      'client_not_ready',
+      'waiting_stream',
+      'idle',
+    ]),
+    attention: z.string().max(64).nullable(),
+    prediction: z
+      .object({
+        id: z.number().int().positive(),
+        title: z.string().max(200),
+        mode: z.enum(['each_battle', 'streak']),
+        target: z.number().int().min(1).max(10),
+        wins: z.number().int().nonnegative(),
+        locksAt: z.string(),
+        hasBets: z.boolean(),
+      })
+      .strict()
+      .nullable(),
+    stats: z
+      .object({
+        resolved: CountSchema,
+        yes: CountSchema,
+        no: CountSchema,
+        canceled: CountSchema,
+      })
+      .strict(),
+    history: z
+      .array(
+        z
+          .object({
+            id: z.number().int().positive(),
+            twitchPredictionId: z.string(),
+            title: z.string().max(200),
+            mode: z.enum(['each_battle', 'streak']),
+            target: z.number().int().min(1).max(10),
+            wins: z.number().int().nonnegative(),
+            phase: z.enum([
+              'voting',
+              'locked',
+              'resolved_yes',
+              'resolved_no',
+              'canceled',
+            ]),
+            createdAt: z.string(),
+            endedAt: z.string().nullable(),
+            settledBy: z
+              .enum(['screen', 'streamer', 'twitch', 'disable', 'stream_end'])
+              .nullable(),
+          })
+          .strict(),
+      )
+      .max(10),
+  })
+  .strict()
+
+export type PredictionSettings = z.infer<typeof PredictionSettingsSchema>
+export type PredictionStatus = z.infer<typeof PredictionStatusSchema>
+
 export const OverlaySettingsSchema = z
   .object({
     enabled: z.boolean(),

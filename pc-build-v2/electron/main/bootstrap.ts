@@ -244,13 +244,14 @@ const predictions = new PredictionCoordinator(
     return captureProfiles.runCaptureCommit(operation)
   },
   logger,
+  app.getVersion(),
 )
 captureProfiles = new CaptureProfileService(
   auth,
   captureConfigurations,
   targetResolver,
   monitor,
-  () => predictions.state,
+  () => predictions.notifyContextChanged(),
   predictionResults,
 )
 monitor.setLearnedLayoutHandler((userId, profileId, calibrationId, layout) =>

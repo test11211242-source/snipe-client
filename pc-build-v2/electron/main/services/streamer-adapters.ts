@@ -4,7 +4,10 @@ import type {
   StreamTitleSettings,
   StreamerView,
 } from '../../../shared/models/streamer'
-import { MAX_STREAMER_ACCOUNTS } from '../../../shared/models/streamer'
+import {
+  MAX_STREAMER_ACCOUNTS,
+  PredictionStatusSchema,
+} from '../../../shared/models/streamer'
 
 type RecordValue = Record<string, unknown>
 
@@ -19,10 +22,6 @@ const bool = (value: unknown, fallback = false): boolean =>
 const integer = (value: unknown, fallback: number, min: number, max: number): number =>
   typeof value === 'number' && Number.isFinite(value)
     ? Math.max(min, Math.min(max, Math.trunc(value)))
-    : fallback
-const number = (value: unknown, fallback: number, min: number, max: number): number =>
-  typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(min, Math.min(max, value))
     : fallback
 const choice = <T extends string>(
   value: unknown,
@@ -90,19 +89,20 @@ export function parsePredictions(
   value: unknown,
   settings: PredictionPreferences,
 ): Pick<StreamerView['predictions'], 'active' | 'state' | 'settings' | 'statistics'> {
-  const status = record(record(value)['status'])
-  const statistics = record(status['statistics'])
-  const current = record(record(status['current_prediction'])['prediction'])
+  const status = PredictionStatusSchema.parse(value)
   return {
-    active: bool(status['is_active']),
-    state: text(status['state'], 'idle', 64),
+    active: status.enabled,
+    state: status.phase,
     settings,
     statistics: {
-      total: integer(statistics['total_predictions'], 0, 0, 1_000_000),
-      successful: integer(statistics['successful_predictions'], 0, 0, 1_000_000),
-      successRate: number(statistics['success_rate'], 0, 0, 100),
-      currentWinStreak: integer(statistics['current_win_streak'], 0, 0, 1_000_000),
-      activeTitle: text(current['title'], '', 200) || null,
+      total: status.stats.resolved + status.stats.canceled,
+      successful: status.stats.yes,
+      successRate:
+        status.stats.resolved === 0
+          ? 0
+          : (100 * status.stats.yes) / status.stats.resolved,
+      currentWinStreak: status.prediction?.wins ?? 0,
+      activeTitle: status.prediction?.title ?? null,
     },
   }
 }

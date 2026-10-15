@@ -237,9 +237,9 @@ and name-check results are diagnostic-only. One `setup.name_check` main-log reco
 only status and HTTP status or reason, never nickname text or pixels; saving aborts pending
 checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
 The renderer follows the minimal user-facing wording in M9 specification §1.3.
-While the prediction-result trigger has an aspect mismatch, new battle starts are not
-enqueued or sent; already-open predictions retain their existing result-resolution path.
-The suspension state also covers a mismatch that began before predictions were enabled.
+Predictions follow server state and never start, restart or stop monitoring. Readiness requires
+a running, unminimised game-relative own-battle profile; result setup is not required until C3.
+Until C3 adds detection, every result is settled manually and VS rank is `unknown`.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -291,9 +291,9 @@ next captured attempt; an in-flight attempt and its manual retry keep their orig
 parameters. Renderer views contain no tokens, HWNDs, selectors, trigger templates,
 source images or raw OCR/model responses.
 
-The private monitor protocol is JSON-lines version 3. Main sends one validated start
+The private monitor protocol is JSON-lines version 4. Main sends one validated start
 command and an eventual stop command. Python emits monotonic, session-bound `ready`,
-`triggered`, `action`, prediction, diagnostic, `source_state`, `fatal` and `stopped` events
+`triggered`, `action`, diagnostic, `source_state`, `fatal` and `stopped` events
 with trigger IDs. Diagnostics are sent only when a profile's match state (matcher, matched,
 reason) changes. Game-relative profiles also send one `vs_candidate` record per VS
 candidate or near miss (orientation score ≥ 0.30, or a learning decision), logged as
@@ -435,12 +435,14 @@ first. Only an active profile updates the server's legacy mirror, in trigger/dat
 two endpoints are not transactional. A partial remote failure is a synchronization warning,
 not a false local-save failure, and the same fenced retry resends the saved mirror.
 
-Predictions reuse the single monitor process. Normal battle triggers notify the server through a
-serialized main-only coordinator. The optional result profile has one confirmation and a 60-second
-cooldown; its cropped PNG is emitted on the private process pipe and posted as multipart with a
-150-second deadline, never exposed to a renderer. Start rolls the server back if local monitor
-configuration fails. Stop removes prediction runtime while preserving a monitor that was already
-running.
+The main-only prediction coordinator sends a heartbeat every 30 seconds and immediately on
+monitor/profile changes while signed in as a streamer. Own-battle VS events use their shared
+trigger UUID as `battleId` and send kind, rank and rank evidence to `/predictions/battle-start`.
+Spectate and full-frame events are never forwarded. The old full-frame result matcher and
+prediction image uploads are removed. A strict `prediction_result` JSON event contract is
+reserved for C3; C1 does not produce result events. Interrupted/minimised monitoring marks
+the last own battle as having a gap. Network failures get one retry after two seconds;
+outcomes are logged as codes, not user data. The server owns voting timers and settlement.
 
 Known server limitations are not hidden by client fallbacks. The OAuth state now uses one-time,
 expiring server records, but the previously exposed Twitch client secret must still be rotated.
@@ -558,8 +560,8 @@ flushed again later if Windows cancels logoff and the user continues working.
 Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
 the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
 and logs only the error type; it does not invalidate the capture-profile migration. Nickname
-confirmation/action share their trigger UUID, while `prediction_result` has an independent
-event UUID and must not be correlated by it.
+confirmation/action share their trigger UUID. Future `prediction_result` events carry the
+own-battle `battleId` explicitly; event-envelope IDs are not battle IDs.
 
 ## v1 scope and future work
 

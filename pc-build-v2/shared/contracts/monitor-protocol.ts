@@ -9,7 +9,6 @@ import {
   VsBadgeSchema as MonitorVsBadgeSchema,
   GameTriggerSchema,
 } from '../models/capture'
-import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
 import { GameAspectSchema, gameAspectsOverlap } from './game-aspect'
 export {
   WindowChromeSchema as MonitorWindowChromeSchema,
@@ -156,7 +155,6 @@ export const MonitorStartPayloadSchema = z
     primary: MonitorPrimarySchema,
     capturePolicy: z.literal('immediate_nickname'),
     limits: MonitorLimitsSchema,
-    prediction: PredictionRuntimeProfileSchema.nullable(),
   })
   .strict()
 
@@ -187,6 +185,15 @@ export const MonitorTriggeredEventSchema = ProtocolBaseSchema.extend({
     .object({
       timestamp: z.iso.datetime(),
       triggerId: z.uuid(),
+      kind: z.enum(['battle', 'spectate']).nullable(),
+      rank: z.enum(['pol', 'not_pol', 'unknown']),
+      rankEvidence: z
+        .object({
+          opponent: z.enum(['medal', 'league', 'trophy', 'empty', 'other', 'unknown']),
+          own: z.enum(['medal', 'league', 'trophy', 'empty', 'other', 'unknown']),
+        })
+        .strict()
+        .nullable(),
     })
     .strict(),
 }).strict()
@@ -195,7 +202,7 @@ export const MonitorDiagnosticEventSchema = ProtocolBaseSchema.extend({
   type: z.literal('diagnostic'),
   payload: z
     .object({
-      profile: z.enum(['primary', 'prediction']),
+      profile: z.literal('primary'),
       matcher: z.enum(['structural', 'vs_orientation']),
       matched: z.boolean(),
       score: z.number().min(0).max(1),
@@ -226,8 +233,27 @@ export const MonitorActionEventSchema = ProtocolBaseSchema.extend({
     .strict(),
 }).strict()
 
-export const MonitorPredictionResultEventSchema = MonitorActionEventSchema.extend({
+export const MonitorPredictionResultEventSchema = ProtocolBaseSchema.extend({
   type: z.literal('prediction_result'),
+  payload: z
+    .object({
+      battleId: z.uuid().nullable(),
+      gap: z.boolean(),
+      outcome: z.enum(['win', 'loss', 'draw', 'unknown']),
+      evidence: z
+        .object({
+          crowns: z
+            .object({
+              top: z.number().int().min(0).max(3).nullable(),
+              bottom: z.number().int().min(0).max(3).nullable(),
+            })
+            .strict(),
+          deltaSign: z.enum(['+', '-']).nullable(),
+          deltaIcon: z.enum(['pol', 'trophy', 'absent', 'unreadable']),
+        })
+        .strict(),
+    })
+    .strict(),
 }).strict()
 
 export const MonitorFatalEventSchema = ProtocolBaseSchema.extend({
@@ -306,11 +332,6 @@ export const MonitorLayoutLearnedEventSchema = ProtocolBaseSchema.extend({
     .strict(),
 }).strict()
 
-export const MonitorPredictionStateEventSchema = ProtocolBaseSchema.extend({
-  type: z.literal('prediction_state'),
-  payload: z.object({ state: z.enum(['active', 'aspect_mismatch']) }).strict(),
-}).strict()
-
 /** Window source minimised (analysis paused) or restored; sent only on change. */
 export const MonitorSourceStateEventSchema = ProtocolBaseSchema.extend({
   type: z.literal('source_state'),
@@ -369,7 +390,6 @@ export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorGeometryEventSchema,
   MonitorLearningEventSchema,
   MonitorLayoutLearnedEventSchema,
-  MonitorPredictionStateEventSchema,
   MonitorSourceStateEventSchema,
   MonitorVsCandidateEventSchema,
   MonitorFatalEventSchema,
@@ -383,8 +403,9 @@ export type GameLayoutWire = z.infer<typeof GameLayoutWireSchema>
 export type MonitorGeometryEvent = z.infer<typeof MonitorGeometryEventSchema>
 export type MonitorLearningEvent = z.infer<typeof MonitorLearningEventSchema>
 export type MonitorLayoutLearnedEvent = z.infer<typeof MonitorLayoutLearnedEventSchema>
-export type MonitorPredictionStateEvent = z.infer<
-  typeof MonitorPredictionStateEventSchema
+export type MonitorTriggeredEvent = z.infer<typeof MonitorTriggeredEventSchema>
+export type MonitorPredictionResultEvent = z.infer<
+  typeof MonitorPredictionResultEventSchema
 >
 export type MonitorSourceStateEvent = z.infer<typeof MonitorSourceStateEventSchema>
 export type MonitorVsCandidateEvent = z.infer<typeof MonitorVsCandidateEventSchema>

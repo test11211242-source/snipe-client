@@ -46,7 +46,7 @@ function status(
   }
 }
 
-function harness(predictionState = 'stopped', resultRepository?: object) {
+function harness(resultRepository?: object) {
   let userId = 'user-1'
   let authGeneration = 1
   let current = status()
@@ -118,6 +118,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
       ]),
     ),
   }
+  const onContextChanged = vi.fn()
   const service = new CaptureProfileService(
     {
       getView: () => ({ user: { id: userId } }),
@@ -126,7 +127,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     repository as never,
     targetResolver as never,
     monitor as never,
-    () => predictionState,
+    onContextChanged,
     resultRepository as never,
   )
   return {
@@ -134,6 +135,7 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     repository,
     monitor,
     targetResolver,
+    onContextChanged,
     changeAuthContext: (nextUserId: string) => {
       userId = nextUserId
       authGeneration += 1
@@ -154,23 +156,13 @@ describe('CaptureProfileService', () => {
     expect(monitor.restartIfActive).toHaveBeenCalledTimes(1)
   })
 
-  it('blocks profile activation while Twitch prediction state is active', async () => {
-    const { service, repository, targetResolver } = harness('active')
-
-    await expect(service.activate(SECONDARY_ID, 1)).rejects.toMatchObject({
-      code: 'PREDICTIONS_ACTIVE',
+  it('notifies prediction readiness after profile activation without a prediction-state lock', async () => {
+    const { service, repository, onContextChanged } = harness()
+    await expect(service.activate(SECONDARY_ID, 1)).resolves.toMatchObject({
+      monitor: { state: 'READY' },
     })
-    expect(repository.activate).not.toHaveBeenCalled()
-    expect(targetResolver.resolveProfile).not.toHaveBeenCalled()
-  })
-
-  it('blocks profile activation while Twitch predictions are starting', async () => {
-    const { service, repository } = harness('starting')
-
-    await expect(service.activate(SECONDARY_ID, 1)).rejects.toMatchObject({
-      code: 'PREDICTIONS_ACTIVE',
-    })
-    expect(repository.activate).not.toHaveBeenCalled()
+    expect(repository.activate).toHaveBeenCalledWith('user-1', SECONDARY_ID, 1)
+    expect(onContextChanged).toHaveBeenCalledOnce()
   })
 
   it('serializes setup commits and profile activation through one lifecycle lock', async () => {
@@ -217,7 +209,7 @@ describe('CaptureProfileService', () => {
       load: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockRejectedValue(new Error('disk cleanup failed')),
     }
-    const { service, repository, monitor } = harness('stopped', resultRepository)
+    const { service, repository, monitor } = harness(resultRepository)
     repository.delete.mockImplementation(() => Promise.resolve(status(SECONDARY_ID, 2)))
     repository.list
       .mockResolvedValueOnce(status(PRIMARY_ID, 1))
@@ -289,7 +281,7 @@ describe('CaptureProfileService', () => {
       save: vi.fn(),
       delete: vi.fn(),
     }
-    const test = harness('active', results)
+    const test = harness(results)
     const learned = monitorLearnedLayoutFixture()
     await expect(
       test.service.appendLearnedLayout('user-1', PRIMARY_ID, PRIMARY_ID, learned),
@@ -376,7 +368,7 @@ describe('CaptureProfileService', () => {
           captureConfigurationFingerprint: 'old'.padEnd(64, '0'),
         }),
       }
-      const test = harness('stopped', results)
+      const test = harness(results)
       const listed = status()
       listed.profiles = listed.profiles.map((profile) => ({
         ...profile,

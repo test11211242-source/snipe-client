@@ -198,7 +198,6 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
             "primary",
             "capturePolicy",
             "limits",
-            "prediction",
         },
         "start payload",
     )
@@ -250,20 +249,6 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
     }
     if limits != expected_limits:
         raise MonitorProtocolError("monitor limits are invalid")
-    prediction = payload["prediction"]
-    if prediction is not None:
-        prediction = _exact(
-            prediction,
-            {"configuredFrameSize", "trigger", "data", "triggerProfile"},
-            "prediction profile",
-        )
-        prediction_size = _exact(prediction["configuredFrameSize"], {"width", "height"}, "prediction frame size")
-        _positive_int(prediction_size["width"], 16384, "prediction frame width")
-        _positive_int(prediction_size["height"], 16384, "prediction frame height")
-        prediction["trigger"] = validate_ratio(prediction["trigger"], "prediction trigger")
-        prediction["data"] = validate_ratio(prediction["data"], "prediction data")
-        if not isinstance(prediction["triggerProfile"], dict):
-            raise MonitorProtocolError("prediction trigger profile is invalid")
     return payload
 
 
@@ -300,7 +285,47 @@ def read_command(stream: BinaryIO, expected_session_id: str | None = None) -> di
     return command
 
 
+def validate_prediction_result(value: Any) -> dict[str, Any]:
+    """Future C3 report: metadata only; C1 never produces these events."""
+    payload = _exact(value, {"battleId", "gap", "outcome", "evidence"}, "prediction result")
+    if payload["battleId"] is not None:
+        _uuid(payload["battleId"], "battle id")
+    if not isinstance(payload["gap"], bool):
+        raise MonitorProtocolError("prediction gap is invalid")
+    if payload["outcome"] not in ("win", "loss", "draw", "unknown"):
+        raise MonitorProtocolError("prediction outcome is invalid")
+    evidence = _exact(payload["evidence"], {"crowns", "deltaSign", "deltaIcon"}, "prediction evidence")
+    crowns = _exact(evidence["crowns"], {"top", "bottom"}, "prediction crowns")
+    for side, count in crowns.items():
+        if count is not None:
+            _integer(count, 0, 3, "prediction crowns." + side)
+    if (evidence["deltaSign"] not in ("+", "-", None) or
+            evidence["deltaIcon"] not in ("pol", "trophy", "absent", "unreadable")):
+        raise MonitorProtocolError("prediction evidence is invalid")
+    return payload
+
+
 def encode_event(session_id: str, sequence: int, event_type: str, payload: dict[str, Any]) -> bytes:
+    if event_type == "prediction_result":
+        validate_prediction_result(payload)
+    elif event_type == "prediction_state":
+        raise MonitorProtocolError("prediction state events are no longer supported")
+    elif event_type == "triggered":
+        _exact(payload, {"timestamp", "triggerId", "kind", "rank", "rankEvidence"}, "triggered")
+        _uuid(payload["triggerId"], "trigger id")
+        timestamp = payload["timestamp"]
+        try:
+            if not isinstance(timestamp, str) or "T" not in timestamp or not timestamp.endswith("Z"):
+                raise ValueError()
+            datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise MonitorProtocolError("triggered timestamp is invalid") from error
+        if payload["kind"] not in ("battle", "spectate", None) or payload["rank"] not in ("pol", "not_pol", "unknown"):
+            raise MonitorProtocolError("triggered kind or rank is invalid")
+        if payload["rankEvidence"] is not None:
+            evidence = _exact(payload["rankEvidence"], {"opponent", "own"}, "rank evidence")
+            if any(line not in ("medal", "league", "trophy", "empty", "other", "unknown") for line in evidence.values()):
+                raise MonitorProtocolError("rank evidence is invalid")
     event = {
         "protocolVersion": PROTOCOL_VERSION,
         "sessionId": session_id,
