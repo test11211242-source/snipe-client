@@ -148,8 +148,55 @@ def test_trigger_records_the_fired_layout_kind(cy, kind):
     assert engine.process(frame, 0.1) is not None
     assert engine.take_triggered()
     assert engine.triggered_kind == kind
+    # Own battles get the rank check (no rank icons here: empty lines) and arm
+    # the result reader; spectated battles never do.
+    if kind == "battle":
+        assert engine.triggered_rank == {"rank": "not_pol", "rankEvidence": {"opponent": "empty", "own": "empty"}}
+    else:
+        assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    assert engine.result_reader.armed is (kind == "battle")
     assert engine.process(frame, 0.2) is None
     assert engine.triggered_kind is None
+    assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+
+
+def test_result_screen_is_read_only_after_an_own_battle_and_never_on_a_fire_tick(monkeypatch):
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    calls = []
+    report = {"outcome": "win", "evidence": {"crowns": {"top": 0, "bottom": 1}, "deltaSign": "+",
+                                             "deltaIcon": "pol"}}
+
+    def process(_frame, rect, now):
+        calls.append(now)
+        engine.result_reader.diagnostics = {"endReason": "shift"}
+        return report if now >= 25 else None
+
+    monkeypatch.setattr(engine.result_reader, "process", process)
+    blank = arena(badge=False)[0]
+    assert engine.process(blank, 0) is None and engine.take_prediction_result() is None
+    assert calls == []                                    # never armed: nothing is read
+    engine.process(frame, 1.0)
+    engine.process(frame, 1.1)
+    assert engine.take_triggered() and engine.result_reader.armed
+    assert calls == []                                    # not on the fire tick
+    engine.process(blank, 1.2)
+    assert calls == [1.2] and engine.take_prediction_result() is None
+    engine.process(blank, 25.0)
+    assert engine.take_prediction_result() == (report, "shift")
+    assert engine.take_prediction_result() is None
+
+
+def test_prediction_failures_never_stop_the_monitor(monkeypatch):
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    monkeypatch.setattr("trigger_engine.check_rank", lambda *_args: 1 / 0)
+    engine.process(frame, 0)
+    assert engine.process(frame, 0.1) is not None
+    assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    monkeypatch.setattr(engine.result_reader, "process", lambda *_args: 1 / 0)
+    assert engine.process(arena(badge=False)[0], 30) is None
+    assert not engine.result_reader.armed and engine.take_prediction_result() is None
 
 
 def test_structural_game_relative_uses_existing_matcher():

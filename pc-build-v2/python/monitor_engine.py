@@ -35,6 +35,49 @@ class EventWriter:
             sys.stdout.buffer.flush()
 
 
+class FrameEvents:
+    """Protocol events of one monitor frame, shared by the worker and the replay.
+
+    Tracks the last own-battle VS for `prediction_result`: `battleId` is its
+    trigger id; `gap` is set when the source was minimised since then or the
+    capture paused during the result read.
+    """
+
+    def __init__(self, engine: TriggerEngine):
+        self.engine = engine
+        self.own_battle_id: str | None = None
+        self.battle_gap = True
+
+    def source_paused(self) -> None:
+        self.battle_gap = True
+
+    def process(self, bgr, now: float, timestamp: str, trigger_id: str) -> list[tuple[str, dict[str, Any]]]:
+        engine = self.engine
+        action = engine.process(bgr, now)
+        events: list[tuple[str, dict[str, Any]]] = []
+        triggered = engine.take_triggered()
+        for event_type, event_payload in engine.take_events():
+            if event_type == "layout_learned" and triggered:
+                event_payload["triggerId"] = trigger_id
+            events.append((event_type, event_payload))
+        if triggered:
+            events.append(("triggered", {"timestamp": timestamp, "triggerId": trigger_id,
+                                         "kind": engine.triggered_kind, **engine.triggered_rank}))
+            if engine.triggered_kind == "battle":
+                self.own_battle_id, self.battle_gap = trigger_id, False
+        if action is not None:
+            image, image_width, image_height = action
+            events.append(("action", {"timestamp": timestamp, "triggerId": trigger_id, "width": image_width,
+                                      "height": image_height, "byteLength": len(image),
+                                      "imageBase64": base64.b64encode(image).decode("ascii")}))
+        result = engine.take_prediction_result()
+        if result is not None:
+            report, end_reason = result
+            events.append(("prediction_result", {"battleId": self.own_battle_id,
+                                                 "gap": self.battle_gap or end_reason == "gap", **report}))
+        return events
+
+
 def run(start: dict[str, Any]) -> int:
     session_id = start["sessionId"]
     payload = start["payload"]
@@ -44,6 +87,7 @@ def run(start: dict[str, Any]) -> int:
     ready = threading.Event()
     failure_lock = threading.Lock()
     engine = None
+    frames = None
     backend = None
     minimized = threading.Event()
     iconic = None
@@ -101,39 +145,12 @@ def run(start: dict[str, Any]) -> int:
                 writer.emit("ready", {"frameWidth": width, "frameHeight": height})
                 ready.set()
             now = time.monotonic()
-            action = engine.process(bgr, now)
-            emit_diagnostic("primary", engine.last_match)
             trigger_id = str(uuid.uuid4())
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            triggered = engine.take_triggered()
-            for event_type, event_payload in engine.take_events():
-                if event_type == "layout_learned" and triggered:
-                    event_payload["triggerId"] = trigger_id
+            events = frames.process(bgr, now, timestamp, trigger_id)
+            emit_diagnostic("primary", engine.last_match)
+            for event_type, event_payload in events:
                 writer.emit(event_type, event_payload)
-            if triggered:
-                writer.emit(
-                    "triggered",
-                    {
-                        "timestamp": timestamp,
-                        "triggerId": trigger_id,
-                        "kind": engine.triggered_kind,
-                        "rank": "unknown",
-                        "rankEvidence": None,
-                    },
-                )
-            if action is not None:
-                image, image_width, image_height = action
-                writer.emit(
-                    "action",
-                    {
-                        "timestamp": timestamp,
-                        "triggerId": trigger_id,
-                        "width": image_width,
-                        "height": image_height,
-                        "byteLength": len(image),
-                        "imageBase64": base64.b64encode(image).decode("ascii"),
-                    },
-                )
         except GeometryChangedError as error:
             fail("CAPTURE_GEOMETRY_CHANGED", "The capture geometry changed", "frame", error)
         except InvalidFrameError as error:
@@ -162,6 +179,7 @@ def run(start: dict[str, Any]) -> int:
         stop_reader.start()
         if not terminal.is_set():
             engine = TriggerEngine(payload)
+            frames = FrameEvents(engine)
         if not terminal.is_set():
             stage = "start"
             iconic = window_iconic_probe(payload["selector"])
@@ -181,6 +199,7 @@ def run(start: dict[str, Any]) -> int:
                     # Analysis pauses while minimised and resumes on the first restored frame.
                     if state:
                         minimized.set()
+                        frames.source_paused()
                     else:
                         minimized.clear()
                     writer.emit("source_state", {"minimized": state})

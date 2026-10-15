@@ -136,6 +136,19 @@ def test_hidden_vs_is_not_read_and_ends_after_missing_time(monkeypatch) -> None:
     assert [row[0] for row in reader.diagnostics["trace"]] == [0.0, 0.1, 0.2, 0.3, 0.4, 0.8, 0.9, 1.0, 1.1]
 
 
+def test_frame_pause_ends_the_burst_on_the_reads_before_it(monkeypatch) -> None:
+    screen = Screen(monkeypatch)
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, delay=0)
+    screen.vs = {round(30 + t / 10, 1): (0.85, 0.024) for t in range(0, 60)}
+    assert run(reader, screen, 30.0, 30.5) == []
+    (t, report, reason), = run(reader, screen, 34.0, 34.0)             # minimised for 3.5 s
+    assert reason == "gap" and reader.diagnostics["elapsedS"] == 0.5
+    # Read 0.5 s only: final crown counts are never confirmed by the pause.
+    assert report["evidence"]["crowns"] == {"top": None, "bottom": None}
+    assert report["outcome"] == "loss" and not reader.armed
+
+
 def test_burst_is_capped(monkeypatch) -> None:
     screen = Screen(monkeypatch)
     reader = ResultReader(templates=object())

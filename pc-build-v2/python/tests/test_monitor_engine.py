@@ -48,7 +48,7 @@ def test_guarded_lifecycle(monkeypatch, stage, code):
                 raise ValueError('private internal diagnostic')
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
-                               take_events=lambda: [])
+                               take_events=lambda: [], take_prediction_result=lambda: None)
 
 
     class Backend:
@@ -123,6 +123,7 @@ def test_diagnostics_are_written_only_when_the_match_state_changes(monkeypatch):
         state.process = process
         state.take_triggered = lambda: False
         state.take_events = lambda: []
+        state.take_prediction_result = lambda: None
         return state
 
     class Backend:
@@ -173,7 +174,7 @@ def test_minimised_window_pauses_analysis_and_reports_both_transitions(monkeypat
             processed.append(True)
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
-                               take_events=lambda: [])
+                               take_events=lambda: [], take_prediction_result=lambda: None)
 
     class Backend:
         def __init__(self, _selector):
@@ -222,8 +223,12 @@ def test_minimised_window_pauses_analysis_and_reports_both_transitions(monkeypat
     assert len(processed) == 2  # stopped: no analysis after stop either
 
 
+RANKS = {"battle": {"rank": "pol", "rankEvidence": {"opponent": "medal", "own": "league"}},
+         "spectate": {"rank": "unknown", "rankEvidence": None}, None: {"rank": "unknown", "rankEvidence": None}}
+
+
 @pytest.mark.parametrize("kind", ["battle", "spectate", None])
-def test_primary_trigger_emits_identity_kind_and_reserved_rank_without_result_detection(monkeypatch, kind):
+def test_primary_trigger_emits_identity_kind_and_rank(monkeypatch, kind):
     events, readers = [], []
     image = b"nickname image"
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
@@ -238,7 +243,8 @@ def test_primary_trigger_emits_identity_kind_and_reserved_rank_without_result_de
 
     state = SimpleNamespace(
         process=lambda _frame, _now: (image, 2, 2), last_match=None,
-        take_triggered=lambda: True, triggered_kind=kind, take_events=lambda: [],
+        take_triggered=lambda: True, triggered_kind=kind, triggered_rank=RANKS[kind], take_events=lambda: [],
+        take_prediction_result=lambda: None,
     )
     initialized = []
 
@@ -273,10 +279,73 @@ def test_primary_trigger_emits_identity_kind_and_reserved_rank_without_result_de
     assert [event_type for event_type, _ in events] == ["ready", "triggered", "action", "stopped"]
     triggered = events[1][1]
     assert triggered["kind"] == kind
-    assert triggered["rank"] == "unknown"
-    assert triggered["rankEvidence"] is None
+    assert {key: triggered[key] for key in ("rank", "rankEvidence")} == RANKS[kind]
     assert set(triggered) == {"timestamp", "triggerId", "kind", "rank", "rankEvidence"}
     action = events[2][1]
     assert action["triggerId"] == triggered["triggerId"]
     assert action["timestamp"] == triggered["timestamp"]
     assert action["byteLength"] == len(image)
+
+
+class ScriptedEngine:
+    """Engine double: per tick (kind or None, report or None, endReason)."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.last_match = None
+        self.triggered_kind = None
+        self.triggered_rank = {"rank": "unknown", "rankEvidence": None}
+        self._fired = False
+        self._result = None
+
+    def process(self, _frame, _now):
+        kind, report, reason = self.script.pop(0)
+        self._fired, self.triggered_kind = kind is not None, kind
+        self.triggered_rank = ({"rank": "pol", "rankEvidence": {"opponent": "medal", "own": "medal"}}
+                               if kind == "battle" else {"rank": "unknown", "rankEvidence": None})
+        self._result = None if report is None else (report, reason)
+        return None
+
+    def take_triggered(self):
+        fired, self._fired = self._fired, False
+        return fired
+
+    def take_events(self):
+        return []
+
+    def take_prediction_result(self):
+        result, self._result = self._result, None
+        return result
+
+
+REPORT = {"outcome": "loss", "evidence": {"crowns": {"top": 1, "bottom": 0}, "deltaSign": "-", "deltaIcon": "pol"}}
+STAMP = "2026-10-15T12:00:00Z"
+IDS = ["00000000-0000-4000-8000-00000000000%d" % n for n in range(1, 8)]
+
+
+def run_frames(frames, ticks, pause_before=None):
+    out = []
+    for index, trigger_id in enumerate(ticks):
+        if pause_before == index:
+            frames.source_paused()
+        out += [(event_type, payload) for event_type, payload in
+                frames.process(np.zeros((2, 2, 3), np.uint8), index / 10, STAMP, trigger_id)]
+    for event_type, payload in out:   # every event passes the C1 protocol validation
+        monitor.encode_event("s", 1, event_type, payload)
+    return out
+
+
+def test_result_carries_the_own_battle_id_and_no_gap():
+    frames = monitor.FrameEvents(ScriptedEngine([("battle", None, None), (None, None, None),
+                                                 ("spectate", None, None), (None, REPORT, "shift")]))
+    events = run_frames(frames, IDS[:4])
+    assert [event_type for event_type, _ in events] == ["triggered", "triggered", "prediction_result"]
+    assert events[0][1]["rank"] == "pol" and events[1][1]["kind"] == "spectate"
+    assert events[2][1] == {"battleId": IDS[0], "gap": False, **REPORT}
+
+
+@pytest.mark.parametrize("pause_before,reason,gap", [(None, "gap", True), (1, "shift", True), (0, "shift", False)])
+def test_result_gap_after_a_pause_since_the_vs(pause_before, reason, gap):
+    frames = monitor.FrameEvents(ScriptedEngine([("battle", None, None), (None, None, None), (None, REPORT, reason)]))
+    events = run_frames(frames, IDS[:3], pause_before)
+    assert events[-1][1]["gap"] is gap and events[-1][1]["battleId"] == IDS[0]

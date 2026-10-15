@@ -15,7 +15,9 @@ While armed and idle only the small result-«vs» band is checked. The first
 match starts the burst: for at most `BURST_CAP_S`, each tick also reads the
 pill and the six crown slots, and the burst ends as soon as the «vs» moves up
 (the screen starts shifting, after which the player may skip) or is missing
-for `MISSING_S`. Ticks without the «vs» at its place are never read.
+for `MISSING_S`. Ticks without the «vs» at its place are never read. A pause
+in the frames longer than `MISSING_S` (minimised source, stalled capture)
+ends the burst on what was read before it (`endReason == "gap"`).
 """
 from __future__ import annotations
 
@@ -44,6 +46,7 @@ PILL_ABSENT_S = 0.7
 # a burst ending sooner never confirms final counts (no 0:0 «draw» from a skip).
 CROWNS_FINAL_S = 1.0
 CONFIRM = 2
+END_REASONS = ("shift", "vs_lost", "cap", "no_game", "gap", "capture_end")
 
 
 @dataclass
@@ -64,6 +67,7 @@ class _Burst:
     missing_since: float | None = None
     pill_seen: bool = False
     ticks: int = 0
+    last: float = 0.0
 
 
 def decide(samples: list[_Sample], *, elapsed: float, pill_seen: bool) -> dict[str, Any]:
@@ -137,7 +141,11 @@ class ResultReader:
 
     def _burst_tick(self, frame: np.ndarray, rect, now: float) -> dict[str, Any] | None:
         burst = self.burst
+        if burst.ticks and now - burst.last > MISSING_S:
+            # The frames paused: nothing after the pause belongs to this read.
+            return self._finish(burst.last, "gap")
         burst.ticks += 1
+        burst.last = now
         if rect is None:
             return self._finish(now, "no_game")
         # The first tick reuses the trigger hit.
@@ -166,7 +174,8 @@ class ResultReader:
         burst = self.burst
         elapsed = now - burst.start
         report = decide(burst.samples, elapsed=elapsed, pill_seen=burst.pill_seen)
-        self.diagnostics = {"endReason": reason, "elapsedS": round(elapsed, 3), "ticks": burst.ticks,
+        self.diagnostics = {"endReason": reason, "startS": round(burst.start, 3), "elapsedS": round(elapsed, 3),
+                            "ticks": burst.ticks,
                             "trace": [[s.t, s.top, s.bottom, int(s.icon), s.sign] for s in burst.samples]}
         self.disarm()
         return report
