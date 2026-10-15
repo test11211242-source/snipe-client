@@ -137,6 +137,8 @@ export class MonitorSupervisor {
   >()
   #lastOwnBattleId: string | null = null
   #battleGap = true
+  #predictionGeneration: number | null = null
+  #predictionDrainGap: boolean | null = null
   #userContextId: string | null = null
   #userContextGeneration = 0
   readonly #viewListeners = new Set<(view: MonitorView) => void>()
@@ -466,6 +468,7 @@ export class MonitorSupervisor {
   }
 
   stop(reason: MonitorSession['stopReason'] = 'user'): Promise<MonitorView> {
+    this.beginPredictionDrain()
     ++this.#stopIntentGeneration
     this.cancelRecovery()
     this.clearRetry()
@@ -489,8 +492,7 @@ export class MonitorSupervisor {
     this.#ocrController = null
     this.#pendingAction = null
     this.transition('STOPPING')
-    const operation = this.process
-      .stop()
+    const operation = this.stopProcess()
       .then(async () => {
         await this.#journalWrite
         if (generation === this.#generation && this.#view.state === 'STOPPING') {
@@ -555,7 +557,7 @@ export class MonitorSupervisor {
     contextGeneration: number,
   ): Promise<MonitorView> {
     try {
-      await this.process.stop()
+      await this.stopProcess()
       this.assertCurrent(generation, userId, contextGeneration)
       if (userId === null)
         throw new ApplicationError('AUTH_REQUIRED', 'Sign in to start monitoring')
@@ -680,6 +682,8 @@ export class MonitorSupervisor {
         },
       })
       this.assertCurrent(generation, userId, contextGeneration)
+      this.#predictionGeneration = generation
+      this.#predictionDrainGap = null
       await this.process.start(payload, {
         onTriggered: (event) =>
           this.acceptTriggered(generation, userId, contextGeneration, event),
@@ -720,7 +724,9 @@ export class MonitorSupervisor {
             this.patch({ sourceMinimized: minimized })
         },
         onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
+        onStopped: () => this.finishPredictionRun(generation),
         onExit: (error) => {
+          this.finishPredictionRun(generation)
           if (error !== null) this.failRun(generation, userId, contextGeneration, error)
         },
       })
@@ -917,8 +923,13 @@ export class MonitorSupervisor {
     result: MonitorPredictionResultEvent['payload'],
   ): void {
     if (
-      !this.isCurrent(generation, userId, contextGeneration) ||
-      this.#view.state !== 'READY'
+      generation !== this.#predictionGeneration ||
+      !this.isUserContextCurrent(userId, contextGeneration) ||
+      !(
+        (this.isCurrent(generation, userId, contextGeneration) &&
+          this.#view.state === 'READY') ||
+        this.#predictionDrainGap !== null
+      )
     )
       return
     for (const listener of this.#predictionResultListeners) {
@@ -926,7 +937,10 @@ export class MonitorSupervisor {
         const copy = {
           ...result,
           battleId: this.#lastOwnBattleId,
-          gap: result.gap || this.#battleGap || result.battleId !== this.#lastOwnBattleId,
+          gap:
+            result.gap ||
+            (this.#predictionDrainGap ?? this.#battleGap) ||
+            result.battleId !== this.#lastOwnBattleId,
           evidence: { ...result.evidence, crowns: { ...result.evidence.crowns } },
         }
         void Promise.resolve(listener(copy)).catch(() => undefined)
@@ -1178,6 +1192,7 @@ export class MonitorSupervisor {
     ) {
       return
     }
+    this.beginPredictionDrain()
     if (
       this.#view.runIntent &&
       (RECOVERABLE_SOURCE_CODES[error.code] || this.takeWorkerRestart(error.code))
@@ -1192,7 +1207,7 @@ export class MonitorSupervisor {
         publicError(error),
         RECOVERABLE_SOURCE_CODES[error.code] ? 'source' : 'worker',
       )
-      void this.process.stop()
+      void this.stopProcess()
       return
     }
     ++this.#generation
@@ -1202,7 +1217,27 @@ export class MonitorSupervisor {
     this.transition('FAILED', { error: publicError(error), runIntent: false })
     this.clearRetry()
     this.finalizeSession('failed')
-    void this.process.stop()
+    void this.stopProcess()
+  }
+
+  private beginPredictionDrain(): void {
+    if (
+      this.#predictionGeneration !== null &&
+      this.#view.state === 'READY' &&
+      this.#predictionDrainGap === null
+    )
+      this.#predictionDrainGap = this.#battleGap
+  }
+
+  private finishPredictionRun(generation: number | null): void {
+    if (this.#predictionGeneration !== generation) return
+    this.#predictionGeneration = null
+    this.#predictionDrainGap = null
+  }
+
+  private stopProcess(): Promise<void> {
+    const generation = this.#predictionGeneration
+    return this.process.stop().finally(() => this.finishPredictionRun(generation))
   }
 
   private takeWorkerRestart(code: string): boolean {

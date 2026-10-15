@@ -455,7 +455,13 @@ Spectate and full-frame events are never forwarded. The old full-frame result ma
 prediction image uploads are removed. The worker emits one strict `prediction_result` JSON
 event per read result screen of an own battle (no images), with `battleId`, `gap`, `outcome`
 and evidence containing nullable crown counts `crowns:{top,bottom}` (0–3), `deltaSign` and
-`deltaIcon`. Interrupted/minimised monitoring marks the last own battle as having a gap.
+`deltaIcon`. Actual capture pauses and minimisation mark the own battle as having a gap.
+On Stop or capture failure, main accepts the current worker's final result until its
+`stopped` acknowledgement (or exit), preserving the pre-stop gap and own VS ID; the
+stop request itself does not manufacture a gap. Auth changes and older workers stay fenced.
+Missing or corrupt bundled prediction assets keep nickname search running. Main logs the
+allowlisted `PREDICTION_ASSET_UNAVAILABLE` code and bounded error class once per worker;
+all other stderr stays suppressed as byte/line counters, with no asset paths or raw text.
 Heartbeat, VS and result network failures get one retry after two seconds. Idempotent
 VS/result reports also retry once on HTTP 5xx, including non-JSON server errors; manual
 actions never do. Outcomes are logged as codes, not user data. The server owns voting
