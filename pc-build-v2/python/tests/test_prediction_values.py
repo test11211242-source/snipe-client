@@ -2,17 +2,46 @@ from __future__ import annotations
 
 import pytest
 
+from monitor_protocol import MonitorProtocolError, encode_event
 from prediction_values import (DELTA_ICONS, DELTA_SIGNS, OUTCOMES, RANK_LINES, RANKS, outcome_from_evidence,
                                rank_from_lines)
 
+TRIGGER_ID = "00000000-0000-4000-8000-000000000001"
 
-def test_wire_values_match_the_server_validation() -> None:
-    # server/routers/streamer_predictions.py RankEvidence / ResultEvidence / BattleResultRequest
-    assert RANK_LINES == ("medal", "league", "trophy", "empty", "other", "unknown")
-    assert RANKS == ("pol", "not_pol", "unknown")
-    assert OUTCOMES == ("win", "loss", "draw", "unknown")
-    assert DELTA_SIGNS == ("+", "-", None)
-    assert DELTA_ICONS == ("pol", "trophy", "absent", "unreadable")
+
+def triggered(rank: str, line: str) -> dict:
+    return {"timestamp": "2026-10-15T12:00:00Z", "triggerId": TRIGGER_ID, "kind": "battle", "rank": rank,
+            "rankEvidence": {"opponent": line, "own": line}}
+
+
+def result(outcome: str, sign, icon: str) -> dict:
+    return {"battleId": TRIGGER_ID, "gap": False, "outcome": outcome,
+            "evidence": {"crowns": {"top": None, "bottom": None}, "deltaSign": sign, "deltaIcon": icon}}
+
+
+# Review n-1: the boundary is the worker's protocol encoder (the TypeScript
+# schema is checked against replay output in tests/monitor-events-replay.test.ts).
+@pytest.mark.parametrize("rank", RANKS)
+@pytest.mark.parametrize("line", RANK_LINES)
+def test_every_rank_value_passes_the_worker_protocol(rank: str, line: str) -> None:
+    encode_event("s", 1, "triggered", triggered(rank, line))
+
+
+@pytest.mark.parametrize("outcome", OUTCOMES)
+@pytest.mark.parametrize("sign", DELTA_SIGNS)
+@pytest.mark.parametrize("icon", DELTA_ICONS)
+def test_every_result_value_passes_the_worker_protocol(outcome: str, sign, icon: str) -> None:
+    encode_event("s", 1, "prediction_result", result(outcome, sign, icon))
+
+
+@pytest.mark.parametrize("event_type,payload", [
+    ("triggered", triggered("trophy", "empty")), ("triggered", triggered("pol", "crown")),
+    ("prediction_result", result("not_ranked", "-", "pol")), ("prediction_result", result("loss", "\u2212", "pol")),
+    ("prediction_result", result("loss", "-", "cup")),
+])
+def test_values_outside_the_contract_are_rejected(event_type: str, payload: dict) -> None:
+    with pytest.raises(MonitorProtocolError):
+        encode_event("s", 1, event_type, payload)
 
 
 @pytest.mark.parametrize("opponent,own,rank", [
