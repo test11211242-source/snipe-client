@@ -447,6 +447,106 @@
     ]
   },
   {
+    "name": "predictions-c2-skip-locked-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "locked"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Бой не считается'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-streak-result-unknown-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streakResultUnknown",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-skip-streak-result-unknown-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "streakResultUnknown",
+        "predictionSettings": {
+          "mode": "streak",
+          "streakLength": 5
+        }
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Бой не считается'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-skip-without-battle-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "voting"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Бой не считается'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-unconfirmed-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "locked",
+        "predictionsCommandError": "REQUEST_TIMEOUT"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); h.click('Победа'); await h.sleep(600); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-reconnect-twitch-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "reconnectTwitch"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-twitch-prediction-exists-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "twitchPredictionExists"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); })()"
+    ]
+  },
+  {
     "name": "predictions-c2-overview-wide",
     "width": 1100,
     "height": 700,

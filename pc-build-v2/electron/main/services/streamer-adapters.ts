@@ -1,13 +1,12 @@
 import type {
   OverlaySettings,
-  PredictionSettings,
   StreamTitleSettings,
   StreamerView,
 } from '../../../shared/models/streamer'
 import {
   MAX_STREAMER_ACCOUNTS,
+  PredictionSettingsResponseSchema,
   PredictionStatusSchema,
-  PredictionSettingsSchema,
 } from '../../../shared/models/streamer'
 
 type RecordValue = Record<string, unknown>
@@ -86,13 +85,18 @@ export function parseTwitch(value: unknown): StreamerView['twitch'] {
   }
 }
 
+/**
+ * Projects the server status and settings responses into the strict renderer
+ * view. Additive server fields are stripped at every level; malformed known
+ * fields throw.
+ */
 export function parsePredictions(
   value: unknown,
-  settings: PredictionSettings,
+  settings: unknown,
 ): StreamerView['predictions'] {
   return {
     ...PredictionStatusSchema.parse(value),
-    settings: PredictionSettingsSchema.parse(settings),
+    settings: PredictionSettingsResponseSchema.parse(settings),
   }
 }
 

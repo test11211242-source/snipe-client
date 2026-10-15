@@ -46,7 +46,11 @@ async def lifespan(app):
     try:
         await admin.execute(f'CREATE SCHEMA {SCHEMA}')
         await admin.execute(f'SET search_path TO {SCHEMA}')
-        for name in ('077_add_streamer_predictions.sql', '078_add_prediction_live_override.sql'):
+        for name in (
+            '077_add_streamer_predictions.sql',
+            '078_add_prediction_live_override.sql',
+            '079_harden_streamer_predictions.sql',
+        ):
             await admin.execute((root / 'data/migrations' / name).read_text(encoding='utf-8'))
         pool = await asyncpg.create_pool(**LOCAL_DATABASE,
             server_settings={'search_path': SCHEMA}, min_size=1, max_size=4)
@@ -133,7 +137,7 @@ async def bets():
 @app.get('/__smoke/evidence')
 async def evidence():
     async with app.state.smoke.pool.acquire() as conn:
-        battles = await conn.fetch('SELECT battle_id,kind,evidence FROM streamer_prediction_battles ORDER BY id')
+        battles = await conn.fetch('SELECT battle_id,kind,evidence,outcome,outcome_source FROM streamer_prediction_battles ORDER BY id')
     return {
         'heartbeatsReady': (await app.state.streamer_predictions.status(USER))['clientReady'],
         'battles': [dict(row) for row in battles],
@@ -145,7 +149,7 @@ async def evidence():
 @app.post('/__smoke/reset')
 async def reset():
     async with app.state.streamer_predictions.repository.transaction(USER) as tx:
-        await tx.conn.execute('TRUNCATE streamer_prediction_battles, streamer_predictions, streamer_prediction_settings RESTART IDENTITY')
+        await tx.conn.execute('TRUNCATE streamer_prediction_operations, streamer_prediction_manual_requests, streamer_prediction_battles, streamer_predictions, streamer_prediction_settings RESTART IDENTITY')
         app.state.smoke.helix.predictions.clear()
         app.state.smoke.helix.requests.clear()
         app.state.smoke.helix.chat_messages.clear()

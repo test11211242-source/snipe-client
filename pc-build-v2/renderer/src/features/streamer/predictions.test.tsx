@@ -8,14 +8,16 @@ import type {
   StreamerCommandResult,
 } from '../../../../shared/contracts/streamer-ipc'
 import type { StreamerView } from '../../../../shared/models/streamer'
+import { authFixture } from '../../test/bridge'
 import {
+  applyStreamerCommand,
   failure,
   mountStream,
   ok,
   predictionFixture,
   type StreamWorld,
 } from '../../test/streamerWorld'
-import { PREDICTION_PHRASES } from './text'
+import { describeCommandError, PREDICTION_PHRASES } from './text'
 
 afterEach(() => {
   cleanup()
@@ -70,9 +72,8 @@ const stepButton = (group: string, name: 'Уменьшить' | 'Увеличи�
 const stepperValue = (name: string): string | null =>
   within(stepper(name)).getByRole('spinbutton').getAttribute('aria-valuenow')
 
-/** Codes and server words that must never reach the screen. */
 const TECHNICAL =
-  /result_unknown|result_missed|settle_after_disable|stream_ended|client_lost|twitch_unavailable|channel_not_eligible|waiting_stream|client_not_ready|resolved_|each_battle|new_code/
+  /result_unknown|result_missed|settle_after_disable|stream_ended|client_lost|twitch_unavailable|channel_not_eligible|reconnect_twitch|twitch_prediction_exists|waiting_stream|client_not_ready|resolved_|each_battle|not_ranked|new_code/
 
 describe('predictions: status pill uses only the fixed phrases', () => {
   const ALL = Object.values(PREDICTION_PHRASES)
@@ -137,6 +138,21 @@ describe('predictions: status pill uses only the fixed phrases', () => {
       PREDICTION_PHRASES.waitingStream,
     ],
     [
+      'Twitch must be reconnected during the prediction',
+      running({ phase: 'locked', attention: 'reconnect_twitch' }),
+      PREDICTION_PHRASES.reconnectTwitch,
+    ],
+    [
+      'Twitch must be reconnected before a prediction',
+      { live: true, phase: 'idle', attention: 'reconnect_twitch' },
+      PREDICTION_PHRASES.reconnectTwitch,
+    ],
+    [
+      'a prediction this app did not open runs on Twitch',
+      { live: true, phase: 'idle', attention: 'twitch_prediction_exists' },
+      PREDICTION_PHRASES.twitchPredictionExists,
+    ],
+    [
       'stream offline during the prediction',
       running({ live: false, phase: 'locked' }),
       PREDICTION_PHRASES.waitingStream,
@@ -189,7 +205,20 @@ describe('predictions: status pill uses only the fixed phrases', () => {
   })
 })
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const SKIP = 'Бой не считается'
+const MANUAL = ['Победа', 'Поражение', SKIP, CANCEL]
+const STALE = 'Прогноз уже сменился. Проверьте итог.'
+const UNCONFIRMED = 'Сервер не подтвердил действие. Проверьте итог.'
+
+/** The request IDs of every manual battle command sent so far, in order. */
+const requestIds = (world: StreamWorld): string[] =>
+  commandsOf(world, 'predictions.battle').flatMap((command) =>
+    command.action === 'predictions.battle' ? [command.requestId] : [],
+  )
+
 describe('predictions: manual settle', () => {
+  /** Every attention state with a prediction; `locked` ones have a counted battle. */
   const STATES: [string, Partial<Predictions>][] = [
     ['voting', running()],
     ['locked', running({ phase: 'locked' })],
@@ -209,14 +238,29 @@ describe('predictions: manual settle', () => {
     ],
     ['Twitch not answering', running({ attention: 'twitch_unavailable' })],
     ['channel not eligible', running({ attention: 'channel_not_eligible' })],
+    [
+      'Twitch must be reconnected',
+      running({ phase: 'locked', attention: 'reconnect_twitch' }),
+    ],
   ]
+
+  it.each(STATES)('%s: every manual action is offered', async (_, patch) => {
+    mountPredictions(patch)
+    await screen.findByRole('button', { name: 'Победа' })
+    for (const name of MANUAL) expect(button(name)).toBeEnabled()
+  })
 
   it.each(STATES)('%s: «Победа» resolves it', async (_, patch) => {
     const world = mountPredictions(patch)
     fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
     await waitFor(() =>
       expect(commandsOf(world, 'predictions.battle')).toEqual([
-        { action: 'predictions.battle', predictionId: 41, outcome: 'win' },
+        {
+          action: 'predictions.battle',
+          predictionId: 41,
+          outcome: 'win',
+          requestId: expect.stringMatching(UUID),
+        },
       ]),
     )
     expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
@@ -228,11 +272,44 @@ describe('predictions: manual settle', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Поражение' }))
     await waitFor(() =>
       expect(commandsOf(world, 'predictions.battle')).toEqual([
-        { action: 'predictions.battle', predictionId: 41, outcome: 'loss' },
+        {
+          action: 'predictions.battle',
+          predictionId: 41,
+          outcome: 'loss',
+          requestId: expect.stringMatching(UUID),
+        },
       ]),
     )
     expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
     expect(screen.getByText('Нет').parentElement).toHaveTextContent('6')
+  })
+
+  it.each(STATES)('%s: the skip needs a counted battle', async (_, patch) => {
+    const world = mountPredictions(patch)
+    fireEvent.click(await screen.findByRole('button', { name: SKIP }))
+    await waitFor(() =>
+      expect(commandsOf(world, 'predictions.battle')).toEqual([
+        {
+          action: 'predictions.battle',
+          predictionId: 41,
+          outcome: 'not_ranked',
+          requestId: expect.stringMatching(UUID),
+        },
+      ]),
+    )
+    await waitFor(() => expect(button(SKIP)).toBeEnabled())
+    // The prediction stays open either way; nothing is resolved or refunded.
+    expect(screen.getByText(/«Выиграю следующий бой\?»/)).toBeVisible()
+    expect(world.fake.view.predictions.stats).toEqual({
+      resolved: 12,
+      yes: 7,
+      no: 5,
+      canceled: 2,
+    })
+    if (patch.phase === 'locked')
+      expect(screen.queryByText(/Не получилось/)).not.toBeInTheDocument()
+    // No counted battle: the server invents none and answers 409.
+    else expect(await screen.findByText(STALE)).toBeVisible()
   })
 
   it.each(STATES)('%s: cancel refunds after one confirmation', async (_, patch) => {
@@ -260,7 +337,7 @@ describe('predictions: manual settle', () => {
   it('shows no settle buttons without a prediction', async () => {
     mountPredictions({ phase: 'waiting_stream' })
     expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
-    for (const name of ['Победа', 'Поражение', 'Отменить и вернуть ставки'])
+    for (const name of MANUAL)
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
   })
 
@@ -272,9 +349,40 @@ describe('predictions: manual settle', () => {
     await waitFor(() => expect(button('Поражение')).toBeEnabled())
     fireEvent.click(button('Поражение'))
     expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
-    expect(commandsOf(world, 'predictions.battle')).toEqual([
+    expect(commandsOf(world, 'predictions.battle')).toMatchObject([
       { action: 'predictions.battle', predictionId: 41, outcome: 'win' },
       { action: 'predictions.battle', predictionId: 41, outcome: 'loss' },
+    ])
+    const [win, loss] = requestIds(world)
+    expect(win).toMatch(UUID)
+    expect(loss).toMatch(UUID)
+    expect(win).not.toBe(loss)
+  })
+
+  it('«Бой не считается» keeps the streak; two confirmed skips are two battles', async () => {
+    const world = mountPredictions(
+      running({ phase: 'locked', attention: 'result_unknown', prediction: STREAK }),
+    )
+    expect(await screen.findByText(PREDICTION_PHRASES.unknown)).toBeVisible()
+    fireEvent.click(button(SKIP))
+    // The unknown result is skipped: the streak is unchanged and counting goes on.
+    expect((await screen.findAllByText('Серия: 3 из 5')).length).toBeGreaterThan(0)
+    await waitFor(() =>
+      expect(screen.queryByText(PREDICTION_PHRASES.unknown)).not.toBeInTheDocument(),
+    )
+    await waitFor(() => expect(button(SKIP)).toBeEnabled())
+    fireEvent.click(button(SKIP))
+    await waitFor(() => expect(requestIds(world)).toHaveLength(2))
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    expect(world.fake.view.predictions.prediction?.wins).toBe(3)
+    fireEvent.click(button('Победа'))
+    expect((await screen.findAllByText('Серия: 4 из 5')).length).toBeGreaterThan(0)
+    const ids = requestIds(world)
+    expect(new Set(ids).size).toBe(3)
+    expect(commandsOf(world, 'predictions.battle')).toMatchObject([
+      { outcome: 'not_ranked' },
+      { outcome: 'not_ranked' },
+      { outcome: 'win' },
     ])
   })
 
@@ -288,7 +396,7 @@ describe('predictions: manual settle', () => {
     expect(button('Победа')).toBeVisible()
   })
 
-  it('cancels only the prediction the dialog was opened for, never a newer one', async () => {
+  it('cancels only the dialog’s prediction; a stale one closes it with the new status', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const world = mountPredictions(running())
     fireEvent.click(await screen.findByRole('button', { name: CANCEL }))
@@ -310,20 +418,211 @@ describe('predictions: manual settle', () => {
         { action: 'predictions.cancel', predictionId: 41, confirmed: true },
       ]),
     )
-    expect(await within(dialog).findByText(/Прогноз уже сменился/)).toBeVisible()
-    expect(world.fake.view.predictions.prediction.id).toBe(42)
+    // The dialog closes; the page explains it once, above the refreshed status.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(await screen.findByText(STALE)).toBeVisible()
+    expect(screen.getByText(/«Выиграю 2 боя подряд\?»/)).toBeVisible()
+    expect(button(CANCEL)).toBeEnabled()
+    expect(world.fake.view.predictions.prediction?.id).toBe(42)
     expect(world.fake.view.predictions.stats.canceled).toBe(2)
+    expect(commandsOf(world, 'predictions.cancel')).toHaveLength(1)
   })
 
-  it('passes the shown prediction to «Победа» and explains a stale one', async () => {
+  it('a stale «Победа» shows the refreshed prediction before unlocking', async () => {
     const world = mountPredictions(running())
+    world.fake.handlers.push((command, fake) => {
+      if (command.action !== 'predictions.battle') return undefined
+      // The server already moved on to #42; the press targeted the shown #41.
+      fake.view.predictions.prediction = predictionFixture({
+        id: 42,
+        title: 'Выиграю 2 боя подряд?',
+        mode: 'streak',
+        target: 2,
+      })
+      return failure('VALIDATION_FAILED')
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    expect(await screen.findByText(STALE)).toBeVisible()
+    expect(screen.getByText(/«Выиграю 2 боя подряд\?»/)).toBeVisible()
+    expect(commandsOf(world, 'predictions.battle')).toMatchObject([{ predictionId: 41 }])
+    expect(button('Победа')).toBeEnabled()
+  })
+})
+
+describe('predictions: a lost manual response', () => {
+  /** The first manual command reaches the server and is applied; its answer is lost. */
+  const loseFirstAnswer = (world: StreamWorld): void => {
+    let lost = false
+    world.fake.handlers.push((command, fake) => {
+      if (command.action !== 'predictions.battle' || lost) return undefined
+      lost = true
+      applyStreamerCommand(fake, command)
+      return failure('REQUEST_TIMEOUT')
+    })
+  }
+
+  it('says «Проверьте итог», never «повторите», and is not retried', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    loseFirstAnswer(world)
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    expect(
+      screen.queryByText(describeCommandError('REQUEST_TIMEOUT')),
+    ).not.toBeInTheDocument()
+    expect(requestIds(world)).toHaveLength(1)
+  })
+
+  it('a repeat of the same shown intent reuses its request ID; the server counts it once', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    expect((await screen.findAllByText('Серия: 3 из 5')).length).toBeGreaterThan(0)
+    const shown = structuredClone(world.fake.view)
+    loseFirstAnswer(world)
+    // The status refresh after the failure did not get through: «3 из 5» stays shown.
+    vi.mocked(window.crTools.getStreamerView).mockResolvedValueOnce(shown)
+    fireEvent.click(button('Победа'))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    expect(screen.getAllByText('Серия: 3 из 5').length).toBeGreaterThan(0)
+    expect(world.fake.view.predictions.prediction?.wins).toBe(4)
+    fireEvent.click(button('Победа'))
+    expect((await screen.findAllByText('Серия: 4 из 5')).length).toBeGreaterThan(0)
+    const [first, repeat] = requestIds(world)
+    expect(first).toMatch(UUID)
+    expect(repeat).toBe(first)
+    expect(world.fake.view.predictions.prediction?.wins).toBe(4)
+  })
+
+  it('a refreshed view with other wins starts a new intent', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    loseFirstAnswer(world)
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    // The refresh brought the applied win, so the page already shows it.
+    expect(screen.getAllByText('Серия: 4 из 5').length).toBeGreaterThan(0)
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    fireEvent.click(button('Победа'))
+    expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
+    const [first, next] = requestIds(world)
+    expect(next).toMatch(UUID)
+    expect(next).not.toBe(first)
+  })
+
+  it('keeps every control locked until the refreshed status arrives', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    await screen.findByRole('button', { name: 'Победа' })
+    loseFirstAnswer(world)
+    const getView = vi.mocked(window.crTools.getStreamerView)
+    const refreshed = Promise.withResolvers<StreamerView>()
+    getView.mockReturnValueOnce(refreshed.promise)
+    const reads = getView.mock.calls.length
+    fireEvent.click(button('Победа'))
+    await waitFor(() => expect(getView.mock.calls.length).toBe(reads + 1))
+    for (const name of [...MANUAL, 'Сохранить', 'Каждый бой'])
+      expect(button(name)).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Автопрогнозы' })).toBeDisabled()
+    expect(screen.queryByText(UNCONFIRMED)).not.toBeInTheDocument()
+    await act(async () => {
+      refreshed.resolve(structuredClone(world.fake.view))
+      await refreshed.promise
+    })
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    expect(screen.getAllByText('Серия: 4 из 5').length).toBeGreaterThan(0)
+    expect(screen.getByText(UNCONFIRMED)).toBeVisible()
+  })
+
+  it('a failed status refresh keeps the request ID for the repeat', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
     world.fake.handlers.push((command) =>
-      command.action === 'predictions.battle' ? failure('VALIDATION_FAILED') : undefined,
+      command.action === 'predictions.battle' && requestIds(world).length === 1
+        ? failure('NETWORK_UNAVAILABLE')
+        : undefined,
+    )
+    vi.mocked(window.crTools.getStreamerView).mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    fireEvent.click(button('Победа'))
+    expect((await screen.findAllByText('Серия: 4 из 5')).length).toBeGreaterThan(0)
+    const [first, repeat] = requestIds(world)
+    expect(repeat).toBe(first)
+  })
+
+  it('an accepted but uncounted win keeps its request ID at the same progress', async () => {
+    const world = mountPredictions(
+      running({ phase: 'locked', attention: 'settle_after_disable', prediction: STREAK }),
+    )
+    // The server stores the press for a gated battle: 200, the shown progress stays.
+    world.fake.handlers.push((command, fake) =>
+      command.action === 'predictions.battle'
+        ? ok(structuredClone(fake.view))
+        : undefined,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
-    expect(await screen.findByText(/Прогноз уже сменился/)).toBeVisible()
-    expect(commandsOf(world, 'predictions.battle')[0]).toMatchObject({ predictionId: 41 })
-    expect(button('Победа')).toBeEnabled()
+    await waitFor(() => expect(requestIds(world)).toHaveLength(1))
+    await waitFor(() => expect(button('Победа')).toBeEnabled())
+    fireEvent.click(button('Победа'))
+    await waitFor(() => expect(requestIds(world)).toHaveLength(2))
+    const [first, repeat] = requestIds(world)
+    expect(first).toMatch(UUID)
+    expect(repeat).toBe(first)
+  })
+
+  /** First press: the answer is lost and the status refresh fails too. */
+  const pressUnconfirmed = async (world: StreamWorld): Promise<string | undefined> => {
+    world.fake.handlers.push((command) =>
+      command.action === 'predictions.battle' ? failure('REQUEST_TIMEOUT') : undefined,
+    )
+    vi.mocked(window.crTools.getStreamerView).mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    return requestIds(world)[0]
+  }
+
+  it('leaving the stream area and coming back repeats with the same request ID', async () => {
+    const sent = await pressUnconfirmed(
+      mountPredictions(running({ phase: 'locked', prediction: STREAK })),
+    )
+    expect(sent).toMatch(UUID)
+    // The page and its controller unmount; the same account opens «Прогнозы» again.
+    cleanup()
+    const again = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    await waitFor(() => expect(requestIds(again)).toHaveLength(1))
+    expect(requestIds(again)[0]).toBe(sent)
+  })
+
+  it('another account never reuses the request ID', async () => {
+    const sent = await pressUnconfirmed(
+      mountPredictions(running({ phase: 'locked', prediction: STREAK })),
+    )
+    cleanup()
+    const auth = authFixture(['user', 'streamer'])
+    if (auth.user === null) throw new Error('Missing auth fixture user')
+    const other = mountStream(PREDICTIONS, {
+      auth: { ...auth, user: { ...auth.user, id: 'user-2' } },
+      view: (view) =>
+        Object.assign(
+          view.predictions,
+          structuredClone(running({ phase: 'locked', prediction: STREAK })),
+        ),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+    await waitFor(() => expect(requestIds(other)).toHaveLength(1))
+    expect(requestIds(other)[0]).toMatch(UUID)
+    expect(requestIds(other)[0]).not.toBe(sent)
+  })
+
+  it('an account switch cancels the recovery read', async () => {
+    const world = mountPredictions(running({ phase: 'locked', prediction: STREAK }))
+    await screen.findByRole('button', { name: 'Победа' })
+    world.fake.handlers.push((command) =>
+      command.action === 'predictions.battle' ? failure('STREAMER_CANCELLED') : undefined,
+    )
+    const getView = vi.mocked(window.crTools.getStreamerView)
+    const reads = getView.mock.calls.length
+    fireEvent.click(button('Победа'))
+    expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+    expect(getView.mock.calls.length).toBe(reads)
   })
 })
 
@@ -337,7 +636,7 @@ describe('predictions: one command at a time', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Серия побед' }))
     fireEvent.click(button('Победа'))
     await waitFor(() => expect(button('Поражение')).toBeDisabled())
-    for (const name of ['Победа', 'Отменить и вернуть ставки', 'Сохранить', 'Каждый бой'])
+    for (const name of ['Победа', SKIP, CANCEL, 'Сохранить', 'Каждый бой'])
       expect(button(name)).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Автопрогнозы' })).toBeDisabled()
     expect(screen.getByRole('combobox', { name: 'Время на ставки' })).toBeDisabled()
@@ -368,6 +667,7 @@ describe('predictions: one command at a time', () => {
     fireEvent.click(button('Сохранить'))
     await waitFor(() => expect(button('Победа')).toBeDisabled())
     expect(button('Поражение')).toBeDisabled()
+    expect(button(SKIP)).toBeDisabled()
     expect(button('Отменить и вернуть ставки')).toBeDisabled()
     await act(async () => {
       gate.resolve(ok(structuredClone(world.fake.view)))

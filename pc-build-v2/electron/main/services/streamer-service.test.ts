@@ -10,8 +10,12 @@ import { predictionStatusFixture } from '../../../tests/prediction-fixtures'
 import {
   DEFAULT_PREDICTION_SETTINGS,
   type PredictionStatus,
+  type StreamerView,
 } from '../../../shared/models/streamer'
 
+import { ApplicationError } from '../../../shared/errors/application-error'
+
+const REQUEST_ID = '6f1f7c2e-8a3b-4c7d-9e2f-0a1b2c3d4e5f'
 const userView = {
   state: 'AUTHENTICATED' as const,
   user: {
@@ -175,8 +179,8 @@ describe('prediction settings and manual settlement', () => {
     expect(test.service.getView().predictions.enabled).toBe(false)
   })
 
-  it.each(['win', 'loss'] as const)(
-    'routes manual %s with the current prediction identity',
+  it.each(['win', 'loss', 'not_ranked'] as const)(
+    'routes manual %s with the current prediction identity and request ID',
     async (outcome) => {
       const test = harness()
       const status = {
@@ -194,12 +198,32 @@ describe('prediction settings and manual settlement', () => {
         action: 'predictions.battle',
         predictionId: 71,
         outcome,
+        requestId: REQUEST_ID,
       })
       expect(result.ok).toBe(true)
-      expect(test.predictions.manualBattle).toHaveBeenCalledExactlyOnceWith(71, outcome)
+      expect(test.predictions.manualBattle).toHaveBeenCalledExactlyOnceWith(
+        71,
+        outcome,
+        REQUEST_ID,
+      )
       expect(test.service.getView().predictions.stats).toEqual(status.stats)
     },
   )
+
+  it('rejects a manual battle without a UUID request ID before any request', async () => {
+    const test = harness()
+    for (const requestId of [undefined, '', 'press-1', 7])
+      expect(
+        await test.service.execute({
+          action: 'predictions.battle',
+          predictionId: 71,
+          outcome: 'win',
+          ...(requestId === undefined ? {} : { requestId }),
+        }),
+      ).toEqual({ ok: false, error: { code: 'VALIDATION_FAILED', detail: null } })
+    expect(test.predictions.manualBattle).not.toHaveBeenCalled()
+    expect(test.request).not.toHaveBeenCalled()
+  })
 
   it('requires confirmation before forwarding cancel', async () => {
     const test = harness()
@@ -256,6 +280,7 @@ describe('prediction settings and manual settlement', () => {
       action: 'predictions.battle',
       predictionId: 71,
       outcome: 'win',
+      requestId: REQUEST_ID,
     })
     await vi.waitFor(() => expect(test.predictions.manualBattle).toHaveBeenCalled())
     test.changeAuth()
@@ -268,6 +293,228 @@ describe('prediction settings and manual settlement', () => {
       error: { code: 'STREAMER_CANCELLED' },
     })
     expect(test.service.getView().predictions).toEqual(before)
+  })
+})
+
+describe('recovery after a failed prediction command', () => {
+  const streak = (id: number, wins: number): PredictionStatus => ({
+    ...predictionStatusFixture,
+    live: true,
+    phase: 'locked',
+    prediction: {
+      id,
+      title: 'Выиграю 5 боёв подряд?',
+      mode: 'streak',
+      target: 5,
+      wins,
+      locksAt: '2026-07-12T12:00:30.000Z',
+      hasBets: true,
+    },
+  })
+  const battle = (outcome: 'win' | 'loss' | 'not_ranked' = 'win') => ({
+    action: 'predictions.battle' as const,
+    predictionId: 71,
+    outcome,
+    requestId: REQUEST_ID,
+  })
+  const statusReads = (request: {
+    mock: { calls: [{ path: string }][]; invocationCallOrder: number[] }
+  }): number[] =>
+    request.mock.calls.flatMap(([input], index) =>
+      input.path === '/api/streamer/predictions/status'
+        ? [request.mock.invocationCallOrder[index] ?? 0]
+        : [],
+    )
+  /** Lets every already-queued continuation run; no wall-clock wait. */
+  const flushMicrotasks = async (): Promise<void> => {
+    for (let turn = 0; turn < 50; turn += 1) await Promise.resolve()
+  }
+
+  it.each([
+    'NETWORK_UNAVAILABLE',
+    'REQUEST_TIMEOUT',
+    'SERVER_ERROR',
+    'INVALID_RESPONSE',
+    'VALIDATION_FAILED',
+  ] as const)(
+    'refreshes the status after %s and keeps the original error',
+    async (code) => {
+      const test = harness()
+      test.setPredictionStatus(streak(71, 3))
+      await test.service.refresh()
+      // The press reached the server and was applied; only its response was lost.
+      test.predictions.manualBattle.mockImplementationOnce(() => {
+        test.setPredictionStatus(streak(71, 4))
+        return Promise.reject(new ApplicationError(code, 'lost response'))
+      })
+      const before = statusReads(test.request).length
+      const result = await test.service.execute(battle())
+      expect(result).toEqual({ ok: false, error: { code, detail: null } })
+      expect(test.predictions.manualBattle).toHaveBeenCalledOnce()
+      const after = statusReads(test.request)
+      expect(after.length).toBe(before + 1)
+      expect(after.at(-1)).toBeGreaterThan(
+        test.predictions.manualBattle.mock.invocationCallOrder[0] ?? Infinity,
+      )
+      expect(test.service.getView().predictions.prediction).toMatchObject({
+        id: 71,
+        wins: 4,
+      })
+      expect(test.service.getView().refresh.errors).toEqual([])
+    },
+  )
+
+  it('answers a failed manual command only after the status refresh finished', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    const gate = Promise.withResolvers<void>()
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status') await gate.promise
+      return original(input)
+    })
+    test.predictions.manualBattle.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(71, 4))
+      return Promise.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    })
+    let settled = false
+    const pending = test.service.execute(battle()).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(statusReads(test.request).length).toBe(2))
+    await flushMicrotasks()
+    expect(settled).toBe(false)
+    expect(test.service.getView().predictions.prediction?.wins).toBe(3)
+    gate.resolve()
+    expect(await pending).toMatchObject({ ok: false, error: { code: 'REQUEST_TIMEOUT' } })
+    expect(test.service.getView().predictions.prediction?.wins).toBe(4)
+  })
+
+  it('keeps the original error and the last status when the refresh also fails', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status')
+        return {
+          ok: false,
+          error: createApiError('NETWORK_UNAVAILABLE', 'offline', true),
+        } as never
+      return original(input)
+    })
+    test.predictions.manualBattle.mockRejectedValueOnce(
+      new ApplicationError('NETWORK_UNAVAILABLE', 'offline'),
+    )
+    expect(await test.service.execute(battle('not_ranked'))).toMatchObject({
+      ok: false,
+      error: { code: 'NETWORK_UNAVAILABLE' },
+    })
+    const view = test.service.getView()
+    expect(view.predictions.prediction).toMatchObject({ id: 71, wins: 3 })
+    expect(view.refresh.errors.map((error) => error.section)).toContain('predictions')
+  })
+
+  it('refreshes after a stale (409) cancel so the new prediction is shown', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    test.predictions.cancel.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(72, 0))
+      return Promise.reject(new ApplicationError('VALIDATION_FAILED', 'stale'))
+    })
+    expect(
+      await test.service.execute({
+        action: 'predictions.cancel',
+        predictionId: 71,
+        confirmed: true,
+      }),
+    ).toEqual({ ok: false, error: { code: 'VALIDATION_FAILED', detail: null } })
+    expect(test.service.getView().predictions.prediction?.id).toBe(72)
+  })
+
+  it('an account switch before the failure arrives cancels the recovery', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const before = test.service.getView().predictions
+    const gate = Promise.withResolvers<PredictionStatus>()
+    test.predictions.manualBattle.mockReturnValueOnce(gate.promise)
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(test.predictions.manualBattle).toHaveBeenCalled())
+    const reads = statusReads(test.request).length
+    test.changeAuth()
+    gate.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    expect(await pending).toEqual({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED', detail: null },
+    })
+    expect(statusReads(test.request)).toHaveLength(reads)
+    expect(test.service.getView().predictions).toEqual(before)
+  })
+
+  it('an account switch during the recovery refresh discards it', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    const gate = Promise.withResolvers<void>()
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status') await gate.promise
+      return original(input)
+    })
+    test.predictions.manualBattle.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(71, 4))
+      return Promise.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    })
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(statusReads(test.request).length).toBe(2))
+    // The application controller stops the service on every account transition.
+    test.changeAuth()
+    await test.service.stop()
+    gate.resolve()
+    expect(await pending).toEqual({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED', detail: null },
+    })
+    expect(test.service.getView().predictions.prediction).toBeNull()
+  })
+
+  it('does not mark a new account failed when an old recovery rejects after stop', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const recovery = Promise.withResolvers<StreamerView>()
+    const refresh = vi
+      .spyOn(test.service, 'refresh')
+      .mockReturnValueOnce(recovery.promise)
+    test.predictions.manualBattle.mockRejectedValueOnce(
+      new ApplicationError('REQUEST_TIMEOUT', 'lost response'),
+    )
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+    test.changeAuth()
+    await test.service.stop()
+    recovery.reject(new Error('stale recovery failed'))
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(test.service.getView().refresh.state).toBe('idle')
+  })
+
+  it('never retries a failed manual command by itself', async () => {
+    const test = harness()
+    test.predictions.manualBattle.mockRejectedValue(
+      new ApplicationError('REQUEST_TIMEOUT', 'lost response'),
+    )
+    await test.service.execute(battle())
+    await flushMicrotasks()
+    expect(test.predictions.manualBattle).toHaveBeenCalledOnce()
   })
 })
 

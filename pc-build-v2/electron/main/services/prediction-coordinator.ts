@@ -29,18 +29,19 @@ const BattleStartResponseSchema = z
     accepted: z.boolean(),
     reason: CodeSchema,
   })
-  .strict()
+  .strip()
 const BattleResultResponseSchema = z
   .object({
     applied: z.boolean(),
     finalOutcome: CodeSchema.nullable(),
     reason: CodeSchema,
   })
-  .strict()
+  .strip()
 const ManualBattleRequestSchema = z
   .object({
     predictionId: z.number().int().positive(),
-    outcome: z.enum(['win', 'loss']),
+    outcome: z.enum(['win', 'loss', 'not_ranked']),
+    requestId: z.uuid(),
   })
   .strict()
 const CurrentPredictionRequestSchema = z
@@ -176,7 +177,8 @@ export class PredictionCoordinator {
   /** Never retried: a lost response may already have advanced the streak. */
   async manualBattle(
     predictionId: number,
-    outcome: 'win' | 'loss',
+    outcome: 'win' | 'loss' | 'not_ranked',
+    requestId: string,
   ): Promise<PredictionStatus> {
     return this.request(
       this.requireContext(),
@@ -184,7 +186,7 @@ export class PredictionCoordinator {
       'POST',
       '/api/streamer/predictions/current/battle',
       PredictionStatusSchema,
-      ManualBattleRequestSchema.parse({ predictionId, outcome }),
+      ManualBattleRequestSchema.parse({ predictionId, outcome, requestId }),
       'none',
     )
   }

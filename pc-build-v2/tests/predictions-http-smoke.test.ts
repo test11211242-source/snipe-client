@@ -21,7 +21,7 @@ const baseUrl = process.env['SNIPE_PREDICTIONS_SMOKE_URL']
 // isolated Docker PostgreSQL schema and the server tests' HTTP fake Helix.
 // Never point this fixture at production or a channel with real viewers' bets.
 describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
-  it('runs own-battle heartbeat, manual win/loss/refund and a two-win streak against the server', async () => {
+  it('runs own-battle heartbeat, manual win/loss/skip/refund and a two-win streak against the server', async () => {
     const url = new URL(baseUrl ?? '')
     expect(url.hostname).toBe('127.0.0.1')
     const health = await fetch(`${url.origin}/health`)
@@ -175,11 +175,38 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       )
       const firstId = status.prediction?.id
       if (firstId === undefined) throw new Error('Missing synthetic prediction')
+      const skipIntent = {
+        action: 'predictions.battle' as const,
+        predictionId: firstId,
+        outcome: 'not_ranked' as const,
+        requestId: randomUUID(),
+      }
+      expect(await service.execute(skipIntent)).toMatchObject({ ok: true })
+      expect(service.getView().predictions).toMatchObject({
+        prediction: { id: firstId, wins: 0 },
+        stats: { yes: 0, no: 0 },
+      })
+      // Retrying the same human intent after an uncertain response must not count a battle.
+      expect(await service.execute(skipIntent)).toMatchObject({ ok: true })
+      expect(service.getView().predictions.prediction).toMatchObject({ wins: 0 })
+      const skippedEvidence = (await (
+        await fetch(`${url.origin}/__smoke/evidence`)
+      ).json()) as {
+        battles: { battle_id: string; outcome: string; outcome_source: string }[]
+      }
+      expect(skippedEvidence.battles).toContainEqual(
+        expect.objectContaining({
+          battle_id: battleId,
+          outcome: 'not_ranked',
+          outcome_source: 'streamer',
+        }),
+      )
       expect(
         await service.execute({
           action: 'predictions.battle',
           predictionId: firstId,
           outcome: 'win',
+          requestId: randomUUID(),
         }),
       ).toMatchObject({ ok: true })
       expect(service.getView().predictions.stats.yes).toBe(1)
@@ -190,6 +217,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
           action: 'predictions.battle',
           predictionId: lossId,
           outcome: 'loss',
+          requestId: randomUUID(),
         }),
       ).toMatchObject({ ok: true })
       expect(service.getView().predictions.stats.no).toBe(1)
@@ -227,6 +255,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
           action: 'predictions.battle',
           predictionId: streakId,
           outcome: 'win',
+          requestId: randomUUID(),
         }),
       ).toMatchObject({ ok: true })
       expect(service.getView().predictions.prediction).toMatchObject({
@@ -239,6 +268,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
           action: 'predictions.battle',
           predictionId: streakId,
           outcome: 'win',
+          requestId: randomUUID(),
         }),
       ).toMatchObject({ ok: true })
       expect(service.getView().predictions.stats.yes).toBe(2)

@@ -13,29 +13,41 @@ const TagSchema = GameAccountTagSchema
 const CountSchema = z.number().int().nonnegative().max(1_000_000)
 export const MAX_STREAMER_ACCOUNTS = 20
 
+const PredictionModeSchema = z.enum(['each_battle', 'streak'])
+const predictionSettingsShape = {
+  enabled: z.boolean(),
+  mode: PredictionModeSchema,
+  streakKind: z.enum(['fixed', 'random']),
+  streakLength: z.number().int().min(2).max(10),
+  streakFrom: z.number().int().min(1).max(10),
+  streakTo: z.number().int().min(1).max(10),
+  votingSeconds: z.union([
+    z.literal(30),
+    z.literal(45),
+    z.literal(60),
+    z.literal(90),
+    z.literal(120),
+    z.literal(180),
+  ]),
+  chatProgress: z.boolean(),
+}
+const validStreakRange = (settings: { streakFrom: number; streakTo: number }): boolean =>
+  settings.streakFrom <= settings.streakTo
+const STREAK_RANGE_ISSUE = { path: ['streakTo'], message: 'Invalid streak range' }
+
+/** Outbound requests and the renderer view: unknown keys are rejected. */
 export const PredictionSettingsSchema = z
-  .object({
-    enabled: z.boolean(),
-    mode: z.enum(['each_battle', 'streak']),
-    streakKind: z.enum(['fixed', 'random']),
-    streakLength: z.number().int().min(2).max(10),
-    streakFrom: z.number().int().min(1).max(10),
-    streakTo: z.number().int().min(1).max(10),
-    votingSeconds: z.union([
-      z.literal(30),
-      z.literal(45),
-      z.literal(60),
-      z.literal(90),
-      z.literal(120),
-      z.literal(180),
-    ]),
-    chatProgress: z.boolean(),
-  })
+  .object(predictionSettingsShape)
   .strict()
-  .refine((settings) => settings.streakFrom <= settings.streakTo, {
-    path: ['streakTo'],
-    message: 'Invalid streak range',
-  })
+  .refine(validStreakRange, STREAK_RANGE_ISSUE)
+
+/**
+ * Server GET responses: additive fields from a newer server are stripped while
+ * every known field keeps its type and bounds.
+ */
+export const PredictionSettingsResponseSchema = z
+  .object(predictionSettingsShape)
+  .refine(validStreakRange, STREAK_RANGE_ISSUE)
 
 export const DEFAULT_PREDICTION_SETTINGS: PredictionSettings = {
   enabled: true,
@@ -48,8 +60,40 @@ export const DEFAULT_PREDICTION_SETTINGS: PredictionSettings = {
   chatProgress: true,
 }
 
-export const PredictionStatusSchema = z
-  .object({
+const openPredictionShape = {
+  id: z.number().int().positive(),
+  title: z.string().max(200),
+  mode: PredictionModeSchema,
+  target: z.number().int().min(1).max(10),
+  wins: z.number().int().nonnegative(),
+  locksAt: z.string(),
+  hasBets: z.boolean(),
+}
+const predictionStatsShape = {
+  resolved: CountSchema,
+  yes: CountSchema,
+  no: CountSchema,
+  canceled: CountSchema,
+}
+const predictionHistoryItemShape = {
+  id: z.number().int().positive(),
+  twitchPredictionId: z.string(),
+  title: z.string().max(200),
+  mode: PredictionModeSchema,
+  target: z.number().int().min(1).max(10),
+  wins: z.number().int().nonnegative(),
+  phase: z.enum(['voting', 'locked', 'resolved_yes', 'resolved_no', 'canceled']),
+  createdAt: z.string(),
+  endedAt: z.string().nullable(),
+  settledBy: z.enum(['screen', 'streamer', 'twitch', 'disable', 'stream_end']).nullable(),
+}
+
+function predictionStatusShape<
+  Prediction extends z.ZodType,
+  Stats extends z.ZodType,
+  HistoryItem extends z.ZodType,
+>(prediction: Prediction, stats: Stats, historyItem: HistoryItem) {
+  return {
     enabled: z.boolean(),
     live: z.boolean(),
     clientReady: z.boolean(),
@@ -62,54 +106,31 @@ export const PredictionStatusSchema = z
       'idle',
     ]),
     attention: z.string().max(64).nullable(),
-    prediction: z
-      .object({
-        id: z.number().int().positive(),
-        title: z.string().max(200),
-        mode: z.enum(['each_battle', 'streak']),
-        target: z.number().int().min(1).max(10),
-        wins: z.number().int().nonnegative(),
-        locksAt: z.string(),
-        hasBets: z.boolean(),
-      })
-      .strict()
-      .nullable(),
-    stats: z
-      .object({
-        resolved: CountSchema,
-        yes: CountSchema,
-        no: CountSchema,
-        canceled: CountSchema,
-      })
-      .strict(),
-    history: z
-      .array(
-        z
-          .object({
-            id: z.number().int().positive(),
-            twitchPredictionId: z.string(),
-            title: z.string().max(200),
-            mode: z.enum(['each_battle', 'streak']),
-            target: z.number().int().min(1).max(10),
-            wins: z.number().int().nonnegative(),
-            phase: z.enum([
-              'voting',
-              'locked',
-              'resolved_yes',
-              'resolved_no',
-              'canceled',
-            ]),
-            createdAt: z.string(),
-            endedAt: z.string().nullable(),
-            settledBy: z
-              .enum(['screen', 'streamer', 'twitch', 'disable', 'stream_end'])
-              .nullable(),
-          })
-          .strict(),
-      )
-      .max(10),
-  })
-  .strict()
+    prediction: prediction.nullable(),
+    stats,
+    history: z.array(historyItem).max(10),
+  }
+}
+
+/**
+ * Server responses (status, heartbeat, settings save, manual commands):
+ * unknown keys are stripped at every level so an additive server field never
+ * breaks a released client, while known fields keep their types and bounds.
+ */
+export const PredictionStatusSchema = z.object(
+  predictionStatusShape(
+    z.object(openPredictionShape),
+    z.object(predictionStatsShape),
+    z.object(predictionHistoryItemShape),
+  ),
+)
+
+/** Main-projected renderer view: strict at every level. */
+const predictionStatusViewShape = predictionStatusShape(
+  z.object(openPredictionShape).strict(),
+  z.object(predictionStatsShape).strict(),
+  z.object(predictionHistoryItemShape).strict(),
+)
 
 export type PredictionSettings = z.infer<typeof PredictionSettingsSchema>
 export type PredictionStatus = z.infer<typeof PredictionStatusSchema>
@@ -216,9 +237,9 @@ export const StreamerViewSchema = z
         polling: z.boolean(),
       })
       .strict(),
-    predictions: PredictionStatusSchema.extend({
-      settings: PredictionSettingsSchema,
-    }).strict(),
+    predictions: z
+      .object({ ...predictionStatusViewShape, settings: PredictionSettingsSchema })
+      .strict(),
     title: z
       .object({
         settings: StreamTitleSettingsSchema,

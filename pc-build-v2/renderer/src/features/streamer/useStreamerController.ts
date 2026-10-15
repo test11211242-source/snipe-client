@@ -142,25 +142,47 @@ export function useStreamerController(enabled: boolean): StreamerController {
     enabled,
   )
 
+  /**
+   * A failed prediction command carries no view, yet main refreshed the prediction status
+   * before answering (the command may have been applied, or targeted a prediction that
+   * is gone). That view is read before the command leaves the queue, so the controls
+   * unlock only on it. An account switch (`STREAMER_CANCELLED`) skips the recovery.
+   */
+  const recoverPredictionView = useCallback(async (): Promise<void> => {
+    const mine = ++generation.current
+    try {
+      const fresh = await window.crTools.getStreamerView()
+      if (!isStale(mine)) setView(fresh)
+    } catch {
+      // The last view stays; the caller still reports the original failure.
+    }
+  }, [isStale])
+
   const execute = useCallback(
     async (command: StreamerCommand): Promise<CommandOutcome> => {
+      const prediction = command.action.startsWith('predictions.')
+      let failed: Extract<CommandOutcome, { status: 'failed' }>
       try {
         const result = await window.crTools.streamer.command(command)
-        if (!result.ok)
-          return {
-            status: 'failed',
-            code: result.error.code,
-            detail: result.error.detail,
-          }
-        generation.current += 1
-        if (mounted.current) setView(result.view)
-        if (mounted.current) void loadReadiness()
-        return { status: 'ok', result }
+        if (result.ok) {
+          generation.current += 1
+          if (mounted.current) setView(result.view)
+          if (mounted.current) void loadReadiness()
+          return { status: 'ok', result }
+        }
+        failed = {
+          status: 'failed',
+          code: result.error.code,
+          detail: result.error.detail,
+        }
       } catch {
-        return { status: 'failed', code: 'IPC_FAILED', detail: null }
+        failed = { status: 'failed', code: 'IPC_FAILED', detail: null }
       }
+      if (prediction && failed.code !== 'STREAMER_CANCELLED' && mounted.current)
+        await recoverPredictionView()
+      return failed
     },
-    [loadReadiness],
+    [loadReadiness, recoverPredictionView],
   )
 
   const syncPending = useCallback((): void => {

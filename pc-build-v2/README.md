@@ -438,11 +438,17 @@ allow 2–10 wins, random bounds 1–10 with an ordered range. Changes apply to 
 prediction. Voting closes only on the server/Twitch timer; no trigger locks voting.
 
 The prediction page renders server phases, attention, streak progress and persisted
-yes/no/canceled counts. Every unsettled prediction has manual win/loss and refund controls,
-including disabled predictions with bets; refunds require one confirmation tied to the
-selected prediction ID. The main IPC commands are `predictions.settings.save`,
-`predictions.battle` and `predictions.cancel`. Manual settlement is never automatically
-retried after an uncertain network response, because one win can advance a streak.
+yes/no/canceled counts. Every unsettled prediction has manual win/loss, «Бой не считается»
+and refund controls, including disabled predictions with bets. A refund confirmation binds
+the selected prediction ID; a stale-ID failure closes it and shows a page banner.
+The main IPC commands are `predictions.settings.save`, `predictions.battle` and
+`predictions.cancel`. Manual settlement is never automatically retried. Each account,
+displayed prediction/progress and outcome keeps its UUID intent after an uncertain answer,
+even across page navigation; a confirmed skip starts a new intent because it changes no wins.
+After a failed command, main refreshes server state and the renderer consumes that view
+before unlocking controls. Uncertain outcomes ask the streamer to check the result.
+Server response schemas strip additive fields recursively while preserving known-field
+validation; outgoing settings, manual commands and the main-to-renderer view stay strict.
 
 `PredictionResultConfigurationRepository` and its existing
 `prediction-result-config.v1` files remain for the v5 capture migration contract, without

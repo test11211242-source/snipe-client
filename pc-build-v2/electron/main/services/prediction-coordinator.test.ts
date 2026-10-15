@@ -26,6 +26,7 @@ type TestRequest = ApiRequest<unknown> & { authContextGuard?: () => boolean }
 const root = '/api/streamer/predictions'
 const battleId = '00000000-0000-4000-8000-000000000001'
 const secondBattleId = '00000000-0000-4000-8000-000000000002'
+const manualRequestId = '00000000-0000-4000-8000-000000000003'
 const readyMonitor = { state: 'READY', runIntent: true, sourceMinimized: false } as const
 
 function deferred<T>() {
@@ -750,7 +751,7 @@ describe('PredictionCoordinator retry and logging', () => {
           suffix === 'settings'
             ? test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
             : suffix === 'current/battle'
-              ? test.coordinator.manualBattle(1, 'win')
+              ? test.coordinator.manualBattle(1, 'win', manualRequestId)
               : test.coordinator.cancel(1)
         await expect(command).rejects.toMatchObject({ code: 'SERVER_ERROR' })
       }
@@ -866,7 +867,7 @@ describe('PredictionCoordinator retry and logging', () => {
     const test = harness()
     await flush()
     await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     await test.coordinator.cancel(1)
     for (const operation of ['heartbeat', 'settings_save', 'manual_battle', 'cancel'])
       expect(test.logger.info).toHaveBeenCalledWith(`prediction.${operation}`, {
@@ -942,7 +943,7 @@ describe('PredictionCoordinator auth isolation and lifecycle', () => {
     await flush()
     const pending = deferred<ApiResult<unknown>>()
     test.request.mockImplementationOnce(() => pending.promise)
-    const command = test.coordinator.manualBattle(1, 'win')
+    const command = test.coordinator.manualBattle(1, 'win', manualRequestId)
     const sent = test.calls('current/battle')[0]
     expect(sent).toBeDefined()
     test.changeAuth('streamer', '84')
@@ -1015,19 +1016,25 @@ describe('PredictionCoordinator server commands', () => {
     expect(test.monitor.stop).not.toHaveBeenCalled()
   })
 
-  it.each(['win', 'loss'] as const)(
+  it.each(['win', 'loss', 'not_ranked'] as const)(
     'sends manual %s as exact JSON and returns the server status',
     async (outcome) => {
       const test = harness()
       await flush()
       test.setServerStatus(settled)
-      await expect(test.coordinator.manualBattle(1, outcome)).resolves.toEqual(settled)
+      await expect(
+        test.coordinator.manualBattle(1, outcome, manualRequestId),
+      ).resolves.toEqual(settled)
       expect(test.calls('current/battle')).toHaveLength(1)
       expect(test.calls('current/battle')[0]).toMatchObject({
         method: 'POST',
         timeoutMs: 15_000,
       })
-      expect(test.calls('current/battle')[0]?.body).toEqual({ predictionId: 1, outcome })
+      expect(test.calls('current/battle')[0]?.body).toEqual({
+        predictionId: 1,
+        outcome,
+        requestId: manualRequestId,
+      })
     },
   )
 
@@ -1041,11 +1048,11 @@ describe('PredictionCoordinator server commands', () => {
     expect(test.calls('current/cancel')[0]?.body).toEqual({ predictionId: 7 })
   })
 
-  it('validates every command response with the strict status schema', async () => {
+  it('validates known command response fields and strips additive server fields', async () => {
     const test = harness()
     await flush()
     await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     await test.coordinator.cancel(1)
     for (const suffix of ['settings', 'current/battle', 'current/cancel', 'heartbeat']) {
       const schema = test.calls(suffix)[0]?.schema
@@ -1057,9 +1064,55 @@ describe('PredictionCoordinator server commands', () => {
         { requirements: {} },
         { settings: DEFAULT_PREDICTION_SETTINGS },
       ])
-        expect(schema?.safeParse({ ...status(), ...legacy }).success).toBe(false)
+        expect(schema?.parse({ ...status(), ...legacy })).toEqual(status())
     }
   })
+
+  it('strips additive battle acknowledgements but rejects malformed known fields', async () => {
+    const test = harness()
+    await flush()
+    test.battle()
+    test.result()
+    await flush()
+    const startSchema = test.calls('battle-start')[0]?.schema
+    const resultSchema = test.calls('battle-result')[0]?.schema
+    expect(
+      startSchema?.parse({ accepted: true, reason: 'accepted', futureField: true }),
+    ).toEqual({ accepted: true, reason: 'accepted' })
+    expect(
+      resultSchema?.parse({
+        applied: true,
+        finalOutcome: 'win',
+        reason: 'resolved',
+        futureField: { version: 2 },
+      }),
+    ).toEqual({ applied: true, finalOutcome: 'win', reason: 'resolved' })
+    expect(startSchema?.safeParse({ accepted: 'yes', reason: 'accepted' }).success).toBe(
+      false,
+    )
+    expect(
+      resultSchema?.safeParse({ applied: true, finalOutcome: 1, reason: 'resolved' })
+        .success,
+    ).toBe(false)
+  })
+
+  it.each(['NETWORK_UNAVAILABLE', 'REQUEST_TIMEOUT', 'SERVER_ERROR'] as const)(
+    'never retries the skip-battle intent on %s',
+    async (code) => {
+      const test = harness()
+      await flush()
+      test.request.mockResolvedValueOnce(failure(code, code === 'SERVER_ERROR' ? 503 : 0))
+      const action = test.coordinator.manualBattle(1, 'not_ranked', manualRequestId)
+      await expect(action).rejects.toMatchObject({ code })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(test.calls('current/battle')).toHaveLength(1)
+      expect(test.calls('current/battle')[0]?.body).toEqual({
+        predictionId: 1,
+        outcome: 'not_ranked',
+        requestId: manualRequestId,
+      })
+    },
+  )
 
   it.each([
     ['current/battle', 'manual_battle', 'NETWORK_UNAVAILABLE'],
@@ -1074,7 +1127,7 @@ describe('PredictionCoordinator server commands', () => {
       test.request.mockResolvedValueOnce(failure(code))
       const command =
         operation === 'manual_battle'
-          ? test.coordinator.manualBattle(1, 'win')
+          ? test.coordinator.manualBattle(1, 'win', manualRequestId)
           : test.coordinator.cancel(1)
       await expect(command).rejects.toMatchObject({ code })
       await vi.advanceTimersByTimeAsync(60_000)
@@ -1094,11 +1147,15 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness()
     await flush()
     test.request.mockRejectedValueOnce(new Error('Private socket hang up after send'))
-    await expect(test.coordinator.manualBattle(1, 'win')).rejects.toMatchObject({
+    await expect(
+      test.coordinator.manualBattle(1, 'win', manualRequestId),
+    ).rejects.toMatchObject({
       code: 'UNKNOWN',
     })
     test.request.mockResolvedValueOnce(failure('VALIDATION_FAILED', 409))
-    await expect(test.coordinator.manualBattle(1, 'loss')).rejects.toMatchObject({
+    await expect(
+      test.coordinator.manualBattle(1, 'loss', manualRequestId),
+    ).rejects.toMatchObject({
       code: 'VALIDATION_FAILED',
     })
     await vi.advanceTimersByTimeAsync(60_000)
@@ -1148,7 +1205,7 @@ describe('PredictionCoordinator server commands', () => {
     test.request.mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
     test.battle()
     await flush()
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     expect(test.calls('current/battle')).toHaveLength(1)
     expect(test.calls('battle-start')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(2_000)
@@ -1159,9 +1216,18 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness()
     await flush()
     const count = test.request.mock.calls.length
-    await expect(test.coordinator.manualBattle(0, 'win')).rejects.toThrow()
-    await expect(test.coordinator.manualBattle(1.5, 'win')).rejects.toThrow()
-    await expect(test.coordinator.manualBattle(1, 'draw' as never)).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(0, 'win', manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1.5, 'win', manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1, 'draw' as never, manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1, 'win', 'invalid-uuid'),
+    ).rejects.toThrow()
     await expect(test.coordinator.cancel(-1)).rejects.toThrow()
     await expect(
       test.coordinator.saveSettings({
@@ -1177,7 +1243,7 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness('user')
     for (const command of [
       () => test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS),
-      () => test.coordinator.manualBattle(1, 'win'),
+      () => test.coordinator.manualBattle(1, 'win', manualRequestId),
       () => test.coordinator.cancel(1),
     ])
       await expect(command()).rejects.toMatchObject({ code: 'STREAMER_ROLE_REQUIRED' })
