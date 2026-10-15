@@ -673,6 +673,19 @@ class TriggerEngine:
             return None
         return report, self.result_reader.diagnostics["endReason"]
 
+    def finish_prediction(self, now: float) -> tuple[dict[str, Any], str] | None:
+        """Capture is ending: the result screen being read (if any), once,
+        as `(report, endReason)` (review m-14)."""
+        reader = self.result_reader
+        if reader is None:
+            return None
+        try:
+            report = reader.finish(now)
+        except Exception:  # predictions must never stop opponent monitoring
+            reader.disarm()
+            return None
+        return None if report is None else (report, reader.diagnostics["endReason"])
+
     def _candidate(self, bgr, now, layout, score, *, matched=False, fired=False, kind_ignored=False, code=None):
         """Candidate evidence of this frame, or None when it shows no VS."""
         if not (fired or kind_ignored or code or (score is not None and score >= CANDIDATE_T)):

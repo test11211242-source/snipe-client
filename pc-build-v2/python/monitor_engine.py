@@ -72,10 +72,18 @@ class FrameEvents:
                                       "imageBase64": base64.b64encode(image).decode("ascii")}))
         result = engine.take_prediction_result()
         if result is not None:
-            report, end_reason = result
-            events.append(("prediction_result", {"battleId": self.own_battle_id,
-                                                 "gap": self.battle_gap or end_reason == "gap", **report}))
+            events.append(self._result(*result))
         return events
+
+    def finish(self, now: float) -> list[tuple[str, dict[str, Any]]]:
+        """Capture ends (stop, source closed, failure): the result screen being
+        read, if any, as its one `prediction_result`, before `stopped`."""
+        result = self.engine.finish_prediction(now)
+        return [] if result is None else [self._result(*result)]
+
+    def _result(self, report: dict[str, Any], end_reason: str) -> tuple[str, dict[str, Any]]:
+        return ("prediction_result", {"battleId": self.own_battle_id,
+                                      "gap": self.battle_gap or end_reason == "gap", **report})
 
 
 def run(start: dict[str, Any]) -> int:
@@ -224,6 +232,10 @@ def run(start: dict[str, Any]) -> int:
             pass
     if ready.is_set() and writer.sequence > 0 and not writer_failed:
         try:
+            # Capture has stopped (backend.stop() joined its thread): a result
+            # screen cut short is still reported, before `stopped` (review m-14).
+            for event_type, event_payload in frames.finish(time.monotonic()) if frames is not None else ():
+                writer.emit(event_type, event_payload)
             writer.emit("stopped", {})
         except Exception:
             writer_failed = True
