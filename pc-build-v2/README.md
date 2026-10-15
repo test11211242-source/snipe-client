@@ -461,6 +461,13 @@ VS/result reports also retry once on HTTP 5xx, including non-JSON server errors;
 actions never do. Outcomes are logged as codes, not user data. The server owns voting
 timers and settlement.
 
+Battle reports carry `vsAgeMs`: monotonic milliseconds since CR Tools observed the own VS,
+recomputed for every attempt and capped at 24 hours. An unacknowledged start is kept and
+resent before its result; if that resend also fails, the result still reaches the server
+so the missing battle requires manual attention instead of silently counting the next one.
+Pending observations are cleared on logout/account change; wall-clock adjustments never
+make a delayed VS look newer.
+
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
 schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake
 Helix. It never connects to Twitch or reads owner configuration. From `pc-build-v2`, start

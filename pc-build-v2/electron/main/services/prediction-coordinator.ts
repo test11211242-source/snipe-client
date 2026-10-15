@@ -49,6 +49,11 @@ const CurrentPredictionRequestSchema = z
 
 type BattleStart = MonitorTriggeredEvent['payload']
 type BattleResult = MonitorPredictionResultEvent['payload']
+interface BattleObservation {
+  event: BattleStart
+  observedAt: number
+}
+const MAX_VS_AGE_MS = 86_400_000
 interface Context {
   userId: string
   generation: number
@@ -114,6 +119,8 @@ export class PredictionCoordinator {
   #disposers: (() => void)[] = []
   #started = false
   #monitorSignature: string | null = null
+  #unacknowledgedStarts = new Map<string, BattleObservation>()
+  #latestBattle: BattleObservation | null = null
 
   constructor(
     private readonly auth: AuthSession,
@@ -122,6 +129,7 @@ export class PredictionCoordinator {
     private readonly captures: CaptureConfigurationRepository,
     private readonly logger: Pick<StructuredLogger, 'info'>,
     private readonly clientVersion: string,
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {}
 
   startLifecycle(): void {
@@ -212,6 +220,8 @@ export class PredictionCoordinator {
     this.#eventQueue = Promise.resolve()
     this.#context = null
     this.#monitorSignature = null
+    this.#unacknowledgedStarts.clear()
+    this.#latestBattle = null
   }
 
   private updateAuthContext(): void {
@@ -278,37 +288,86 @@ export class PredictionCoordinator {
       this.log('battle_start', { code: 'skipped', reason: 'not_own_battle' })
       return
     }
-    // The server deduplicates by battleId, including uncertain HTTP 5xx responses.
-    this.enqueue('battle_start', (context) =>
-      this.request(
-        context,
-        'battle_start',
-        'POST',
-        '/api/streamer/predictions/battle-start',
-        BattleStartResponseSchema,
-        {
-          battleId: event.triggerId,
-          kind: 'battle',
-          rank: event.rank,
-          rankEvidence: event.rankEvidence,
-        },
-        'battle_event',
-      ),
+    if (this.currentContext() === null) {
+      this.log('battle_start', { code: 'skipped', reason: 'auth_context_changed' })
+      return
+    }
+    const observedAt = this.monotonicNow()
+    for (const [id, pending] of this.#unacknowledgedStarts) {
+      if (observedAt - pending.observedAt > MAX_VS_AGE_MS)
+        this.#unacknowledgedStarts.delete(id)
+    }
+    const observation: BattleObservation = { event, observedAt }
+    this.#latestBattle = observation
+    this.#unacknowledgedStarts.set(event.triggerId, observation)
+    this.enqueue('battle_start', (context) => this.sendBattleStart(context, observation))
+  }
+
+  private async sendBattleStart(
+    context: Context,
+    observation: BattleObservation,
+  ): Promise<void> {
+    const event = observation.event
+    await this.request(
+      context,
+      'battle_start',
+      'POST',
+      '/api/streamer/predictions/battle-start',
+      BattleStartResponseSchema,
+      () => ({
+        battleId: event.triggerId,
+        kind: 'battle',
+        rank: event.rank,
+        rankEvidence: event.rankEvidence,
+        vsAgeMs: this.vsAgeMs(observation),
+      }),
+      'battle_event',
     )
+    if (this.#unacknowledgedStarts.get(event.triggerId) === observation)
+      this.#unacknowledgedStarts.delete(event.triggerId)
   }
 
   private enqueueResult(event: BattleResult): void {
-    this.enqueue('battle_result', (context) =>
-      this.request(
+    const observation =
+      event.battleId === null
+        ? undefined
+        : (this.#unacknowledgedStarts.get(event.battleId) ??
+          (this.#latestBattle?.event.triggerId === event.battleId
+            ? this.#latestBattle
+            : undefined))
+    this.enqueue('battle_result', async (context) => {
+      if (
+        observation !== undefined &&
+        this.#unacknowledgedStarts.get(observation.event.triggerId) === observation
+      ) {
+        // A lost start must precede its result again; even a second outage must
+        // not suppress the result (the server records an unknown VS as missed).
+        await this.sendBattleStart(context, observation).catch(() => undefined)
+      }
+      await this.request(
         context,
         'battle_result',
         'POST',
         '/api/streamer/predictions/battle-result',
         BattleResultResponseSchema,
-        event,
+        () => ({ ...event, vsAgeMs: this.vsAgeMs(observation) }),
         'battle_event',
-      ),
-    )
+      )
+      if (observation !== undefined) {
+        if (this.#unacknowledgedStarts.get(observation.event.triggerId) === observation)
+          this.#unacknowledgedStarts.delete(observation.event.triggerId)
+        if (this.#latestBattle === observation) this.#latestBattle = null
+      }
+    })
+  }
+
+  private vsAgeMs(observation: BattleObservation | undefined): number {
+    return observation === undefined
+      ? 0
+      : Math.min(
+          MAX_VS_AGE_MS,
+          Math.max(0, Math.floor(this.monotonicNow() - observation.observedAt)),
+        )
   }
 
   private enqueue(
@@ -337,7 +396,7 @@ export class PredictionCoordinator {
     method: 'POST' | 'PUT',
     path: `/api/${string}`,
     schema: z.ZodType<T>,
-    body: unknown,
+    body: Record<string, unknown> | (() => Record<string, unknown>),
     retry: RetryPolicy,
   ): Promise<T> {
     const attempts = retry === 'none' ? 1 : 2
@@ -353,7 +412,7 @@ export class PredictionCoordinator {
           method,
           path,
           schema,
-          body,
+          body: typeof body === 'function' ? body() : body,
           timeoutMs: 15_000,
           signal: context.signal,
           authContextGuard: () => this.isCurrent(context),

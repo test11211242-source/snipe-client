@@ -129,6 +129,7 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     'state' | 'runIntent' | 'sourceMinimized'
   >
   let configuration: CaptureConfiguration | null = profile(0.4, 0.459)
+  let monotonicMs = 0
   let serverStatus = status()
   const disposers: Mock[] = []
   const subscribe = <T>(setListener: (listener: T) => void, listener: T) => {
@@ -202,6 +203,7 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     captures as never,
     logger,
     '2.7.0',
+    () => monotonicMs,
   )
   coordinators.push(coordinator)
   coordinator.startLifecycle()
@@ -211,6 +213,9 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     monitor,
     captures,
     logger,
+    advanceClock: (milliseconds: number) => {
+      monotonicMs += milliseconds
+    },
     disposers,
     calls: (suffix: string) =>
       request.mock.calls
@@ -521,7 +526,7 @@ describe('PredictionCoordinator event forwarding', () => {
     })
     test.result(event)
     await flush()
-    expect(test.calls('battle-result')[0]?.body).toEqual(event)
+    expect(test.calls('battle-result')[0]?.body).toEqual({ ...event, vsAgeMs: 0 })
   })
 
   it('serializes starts and results while heartbeats remain independent', async () => {
@@ -543,6 +548,126 @@ describe('PredictionCoordinator event forwarding', () => {
       `${root}/battle-result`,
       `${root}/battle-start`,
     ])
+  })
+
+  it('keeps an unsent VS and resends it before the result with its original monotonic age', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+      .mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
+    test.battle()
+    await flush()
+    expect(test.calls('battle-start')[0]?.body).toMatchObject({ battleId, vsAgeMs: 0 })
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.calls('battle-start')[1]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 2_000,
+    })
+    test.advanceClock(3_000)
+    vi.setSystemTime(new Date('2000-01-01T00:00:00Z'))
+    test.result()
+    await flush()
+    expect(test.request.mock.calls.slice(-2).map(([request]) => request.path)).toEqual([
+      `${root}/battle-start`,
+      `${root}/battle-result`,
+    ])
+    expect(test.calls('battle-start')[2]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 5_000,
+    })
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 5_000,
+    })
+  })
+
+  it('still sends a result if replaying its unsent VS fails twice again', async () => {
+    const test = harness()
+    await flush()
+    for (let attempt = 0; attempt < 4; attempt += 1)
+      test.request.mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+    test.battle()
+    await flush()
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.result()
+    await flush()
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.calls('battle-start')).toHaveLength(4)
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 4_000,
+    })
+  })
+
+  it('caps monotonic VS age at the server limit on both reports', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.advanceClock(90_000_000)
+    // The current battle remains available even past the age cap; no wall clock is used.
+    test.result()
+    await flush()
+    expect(test.calls('battle-start')[2]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 86_400_000,
+    })
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 86_400_000,
+    })
+  })
+
+  it('retains each failed VS identity instead of binding its result to a newer battle', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.advanceClock(10_000)
+    test.battle(battle({ triggerId: secondBattleId }))
+    await flush()
+    test.advanceClock(5_000)
+    test.result()
+    await flush()
+    expect(test.calls('battle-start').map((request) => request.body)).toMatchObject([
+      { battleId },
+      { battleId },
+      { battleId: secondBattleId, vsAgeMs: 0 },
+      { battleId, vsAgeMs: 15_000 },
+    ])
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 15_000,
+    })
+  })
+
+  it('clears a failed VS on auth change and never resends another user’s observation', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.changeAuth('streamer', '84')
+    await flush()
+    test.result()
+    await flush()
+    expect(test.calls('battle-start')).toHaveLength(2)
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({ battleId, vsAgeMs: 0 })
   })
 
   it('forwards after app/server restarts whatever the server enabled flag says', async () => {
@@ -643,7 +768,7 @@ describe('PredictionCoordinator retry and logging', () => {
     test.result()
     await flush()
     await vi.advanceTimersByTimeAsync(2_000)
-    expect(test.calls('battle-start')).toHaveLength(2)
+    expect(test.calls('battle-start')).toHaveLength(3)
     expect(test.calls('battle-result')).toHaveLength(1)
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'NETWORK_UNAVAILABLE',
