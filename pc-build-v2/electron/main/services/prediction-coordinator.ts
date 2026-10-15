@@ -79,7 +79,7 @@ export interface PredictionReadiness {
   reason: 'ok' | 'monitor_not_ready' | 'profile_not_own_battle' | 'profile_full_frame'
 }
 
-/** C1 intentionally needs no result setup; C3 supplies result recognition later. */
+/** C3 uses bundled result templates; legacy result-zone setup is not required. */
 export function getPredictionReadiness(
   configuration: CaptureConfiguration | null,
   monitor: Pick<MonitorView, 'state' | 'runIntent' | 'sourceMinimized'>,

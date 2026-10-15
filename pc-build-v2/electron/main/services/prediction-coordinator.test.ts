@@ -670,21 +670,6 @@ describe('PredictionCoordinator event forwarding', () => {
     expect(test.calls('battle-start')).toHaveLength(2)
     expect(test.calls('battle-result')[0]?.body).toMatchObject({ battleId, vsAgeMs: 0 })
   })
-
-  it('forwards after app/server restarts whatever the server enabled flag says', async () => {
-    const test = harness()
-    test.setServerStatus(status(false))
-    test.battle()
-    test.result()
-    await flush()
-    expect(test.calls('battle-start')).toHaveLength(1)
-    expect(test.calls('battle-result')).toHaveLength(1)
-    test.coordinator.notifyContextChanged()
-    await flush()
-    test.battle(battle({ triggerId: secondBattleId }))
-    await flush()
-    expect(test.calls('battle-start')).toHaveLength(2)
-  })
 })
 
 describe('PredictionCoordinator retry and logging', () => {

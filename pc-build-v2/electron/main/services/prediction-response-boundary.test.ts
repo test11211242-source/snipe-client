@@ -87,6 +87,25 @@ function getSettings(body: unknown) {
 }
 
 describe('prediction server response boundary', () => {
+  it.each([false, true])(
+    'projects current server enabled=%s through a fresh HTTP client, not local settings',
+    async (enabled) => {
+      const status = await getStatus({
+        ...remoteStatus,
+        enabled,
+        phase: enabled ? 'voting' : 'idle',
+        prediction: enabled ? remoteStatus.prediction : null,
+      })
+      const settings = await getSettings({ ...remoteSettings, enabled: !enabled })
+      if (!status.ok || !settings.ok) throw new Error('Server snapshot was rejected')
+      const view = parsePredictions(status.data, settings.data)
+      expect(view.enabled).toBe(enabled)
+      expect(view.phase).toBe(enabled ? 'voting' : 'idle')
+      expect(view.prediction?.id ?? null).toBe(enabled ? prediction.id : null)
+      expect(view.settings.enabled).toBe(!enabled)
+    },
+  )
+
   it('projects an HTTP 200 payload with nested additive fields into the strict view', async () => {
     const status = await getStatus(remoteStatus)
     const settings = await getSettings(remoteSettings)
