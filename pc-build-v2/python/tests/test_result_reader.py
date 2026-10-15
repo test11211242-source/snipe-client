@@ -79,14 +79,14 @@ def test_pill_icon_absent_or_unreadable(reads, seen, icon) -> None:
 class Screen:
     """Scripted per-tick readings for the reader (no pixels)."""
 
-    def __init__(self, monkeypatch, crowns=((0.8, 0, 0), (0, 0, 0))):
+    def __init__(self, monkeypatch, crowns=((0.8, 0, 0), (0, 0, 0)), pill=PillReading(0.8, "medal", "-", 0.25)):
         self.vs: dict[float, tuple[float, float] | None] = {}
         self.shifted: dict[float, tuple[float, float]] = {}
         self.calls = 0
         monkeypatch.setattr(rr, "find_vs", self.find_vs)
         monkeypatch.setattr(rr, "crown_scores",
                             lambda frame, rect, vs, t: {"top": list(crowns[0]), "bottom": list(crowns[1])})
-        monkeypatch.setattr(rr, "read_pill", lambda frame, rect, vs, t: PillReading(0.8, "medal", "-", 0.25))
+        monkeypatch.setattr(rr, "read_pill", lambda frame, rect, vs, t: pill)
         self.now = 0.0
 
     def find_vs(self, frame, rect, templates, band=None):
@@ -99,6 +99,24 @@ class Screen:
             return VsHit(0.2, 0, 0, 0, 0)
         score, uy = value
         return VsHit(score, 540, 760 + uy * 1520, 0, uy)
+
+
+@pytest.mark.parametrize("score,icon", [
+    (0.46, "absent"),       # highest pill-box score before a PoL pill appears (owner clips)
+    (0.56, "unreadable"),   # something pill-like but no PoL icon: a trophy pill, say
+])
+def test_a_pill_without_a_pol_icon_is_never_read_as_a_pol_result(monkeypatch, score, icon) -> None:
+    # Review M-9: no trophy template. Such a screen may read `absent` (a
+    # `not_pol` VS then counts as not ranked) or `unreadable`, never pol + sign.
+    screen = Screen(monkeypatch, pill=PillReading(score, None, None, None))
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, delay=0)
+    screen.vs = {round(30 + t / 10, 1): (0.85, 0.024) for t in range(0, 16)}
+    screen.vs[31.6] = (0.8, 0.01)
+    (_, report, reason), = run(reader, screen, 30.0, 33.0)
+    assert reason == "shift"
+    assert report == {"outcome": "unknown", "evidence": {"crowns": {"top": 1, "bottom": 0}, "deltaSign": None,
+                                                         "deltaIcon": icon}}
 
 
 def run(reader: ResultReader, screen: Screen, start: float, stop: float, rect=(0, 0, 1080, 1520)):

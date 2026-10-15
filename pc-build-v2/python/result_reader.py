@@ -88,6 +88,11 @@ def decide(samples: list[_Sample], *, final: bool, pill_seen: bool) -> dict[str,
             if current.sign is not None and current.sign == previous.sign:
                 confirmed.add(current.sign)
     sign = next(iter(confirmed)) if len(confirmed) == 1 else SIGN_UNREADABLE
+    # No trophy-pill template yet (review M-9): a trophy-road pill reads
+    # `absent` (nothing PoL-like) or `unreadable`; `pol` needs the PoL icon on
+    # two consecutive reads. Its VS reads `not_pol` (a cup scores as an empty
+    # line), and the server counts a `not_pol` battle as not ranked with
+    # `absent`, as `unknown` with anything else; never as a win or loss.
     if icon:
         delta_icon = ICON_POL
     elif pill_seen or last_read < PILL_ABSENT_S:

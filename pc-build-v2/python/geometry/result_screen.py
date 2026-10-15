@@ -52,7 +52,11 @@ TEXT_PX = 1000         # glyphs next to the icon
 PILL_ICON_UNITS = {"medal": 0.0375, "league": 0.040}
 ICON_SCALES = (0.85, 0.95, 1.05, 1.15)
 ICON_T = 0.50          # PoL icon (medal / league badge) in the pill
-ICON_SEEN_T = 0.40     # something pill-like was on screen
+# Something pill-like but not a readable PoL icon (unreadable, not absent).
+# Owner clips: the pill box scores <= 0.46 before the pill appears (crowns
+# landing included) and >= 0.61 once a PoL pill is there; 0.40 made every
+# burst «pill seen», so a pill-less screen could never read `absent`.
+ICON_SEEN_T = 0.55
 # Sign: height of the leftmost glyph over the digit height.
 PLUS_MIN = 0.50
 MINUS_MAX = 0.36
