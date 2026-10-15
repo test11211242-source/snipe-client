@@ -176,8 +176,10 @@ stop the opponent monitor.
   `{"rank", "rankEvidence": {"opponent", "own"}}`.
 - `result_reader.py` `ResultReader`: armed from VS + 20 s to VS + 7 min. Idle ticks
   check only the small result-«vs» band; a burst reads the pill and six crown
-  slots until the «vs» moves up (shift), is missing for 0.6 s, the frames pause,
-  or 3 s pass.
+  slots until the «vs» moves up (shift, also when it is already above its band),
+  is missing for 0.6 s, the frames pause, or 3 s pass. Crown counts are reported
+  only after a seen shift or the cap with the last read ≥ 1.0 s into the burst;
+  any other end leaves them `null`, so a cut-short count never becomes a draw.
 - `prediction_values.py` holds every wire value, matching the server validation.
 - `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
   orientation fields only (no pixels, no names), generated once by

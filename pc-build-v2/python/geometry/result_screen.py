@@ -23,6 +23,11 @@ ASSET = Path(__file__).resolve().parents[1] / "assets" / "result_screen_v1.json"
 
 # Result «vs»: band around the game centre, (dx0, dx1, dy0, dy1) units.
 VS_BAND = (-0.08, 0.09, -0.04, 0.12)
+# Above it: where the «vs» rests (uy ≈ -0.134) or passes (-0.12 … -0.04) once
+# the screen has shifted up after the last crown. Owner clips: the shifted
+# «vs» scores 0.61-0.87 here for 0.12-0.97 s; before the shift (crowns
+# landing included) this band scores <= 0.42.
+VS_SHIFTED_BAND = (-0.08, 0.09, -0.24, -0.02)
 VS_PX = 540
 # First match fires the burst. Battle and «Match over» frames score <= 0.41
 # on the owner's clips, the settled «vs» 0.68-0.86.
@@ -82,8 +87,8 @@ class VsHit:
     uy: float
 
 
-def find_vs(frame: np.ndarray, rect, templates: ResultTemplates) -> VsHit | None:
-    crop = crop_units(frame, rect, game_center(rect), VS_BAND, VS_PX)
+def find_vs(frame: np.ndarray, rect, templates: ResultTemplates, band=VS_BAND) -> VsHit | None:
+    crop = crop_units(frame, rect, game_center(rect), band, VS_PX)
     if crop is None:
         return None
     match = best_match(orientation_field(crop.image), templates.vs)
