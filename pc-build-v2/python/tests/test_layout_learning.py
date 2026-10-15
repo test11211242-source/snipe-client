@@ -6,7 +6,7 @@ import pytest
 from game_geometry import GameGeometry
 from geometry.vs_finder import Candidate, NORM_C, NORM_W
 from geometry.vs_orient_trigger import OrientationTrigger
-from geometry.zones import Badge
+from geometry.zones import Badge, layout_kind
 from layout_learning import LayoutLearning, transfer_corner_zone, transfer_zone
 from synthetic_frames import arena
 from test_game_geometry import game_layout, game_payload
@@ -17,13 +17,14 @@ from trigger_engine import TriggerEngine
 def run_new_format(engine, *, cy=0.429, begin=0, count=70, onset=45, data_pixel=False):
     output, events = [], []
     for index in range(count):
-        frame, _ = arena(480, 640, seed=index, badge=index >= onset, cy=cy)
+        frame, badge = arena(480, 640, seed=index, badge=index >= onset, cy=cy)
         if data_pixel and index >= onset:
             # Record each source frame with an identifiable pixel safely above the badge.
             frame[190, 200] = (index, 200, 11)
         action = engine.process(frame, begin + index * 0.1)
         new_events = engine.take_events()
         if action is not None:
+            assert engine.triggered_kind == layout_kind(badge)
             output.append((index, action))
         events.extend((index, kind, value) for kind, value in new_events)
     return output, events

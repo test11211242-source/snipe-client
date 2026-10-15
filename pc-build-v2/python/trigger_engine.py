@@ -552,6 +552,7 @@ class TriggerEngine:
             self.limits["confirmationsNeeded"], self.limits["cooldownSeconds"]
         )
         self.triggered = False
+        self.triggered_kind: str | None = None
         self.last_match: MatchResult | None = None
         self.candidates = VsCandidateLog()
         self._sample: dict[str, Any] | None = None
@@ -562,6 +563,7 @@ class TriggerEngine:
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
+        self.triggered_kind = None
         # Game-relative ticks also feed the 5-Hz evidence/finder clock. Accept
         # exact 10-Hz timestamps despite binary-float subtraction roundoff;
         # leave the legacy full-frame scheduling contract unchanged.
@@ -672,6 +674,7 @@ class TriggerEngine:
                                      if item["layoutId"] in self.matchers}
                     if fired:
                         self.triggered = True
+                        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
                     self._sample = self._candidate(bgr, now, layout, None, matched=True, fired=fired, code="LAYOUT_LEARNED")
                     if fired:
                         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
@@ -706,6 +709,7 @@ class TriggerEngine:
         if not fired:
             return None
         self.triggered = True
+        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
         return encode_action_png(crop(bgr, data_rect), self.limits)
 
@@ -719,47 +723,3 @@ class TriggerEngine:
         return triggered
 
 
-class PredictionTriggerEngine:
-    """Independent result trigger sharing the monitor frame and process."""
-
-    def __init__(self, value: dict[str, Any], limits: dict[str, Any]):
-        self.profile = TriggerProfile(value["triggerProfile"])
-        self.trigger_ratio = value["trigger"]
-        self.data_ratio = value["data"]
-        self.limits = limits
-        self.frame_interval = 1.0 / limits["fps"]
-        self.last_frame_time = -math.inf
-        self.gate = TemporalGate(2, 60.0)
-        self.last_match: MatchResult | None = None
-        self.configured_aspect = value["configuredFrameSize"]["width"] / value["configuredFrameSize"]["height"]
-        self.state = "active"
-        self.events = []
-
-    def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
-        if now - self.last_frame_time < self.frame_interval:
-            return None
-        self.last_frame_time = now
-        bgr = ensure_bgr(frame)
-        frame_height, frame_width = bgr.shape[:2]
-        actual_aspect = frame_width / frame_height
-        if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            if self.state != "aspect_mismatch":
-                self.state = "aspect_mismatch"
-                self.events.append(("prediction_state", {"state": self.state}))
-            self.last_match = None
-            self.gate.confirmations = 0
-            return None
-        if self.state != "active":
-            self.state = "active"
-            self.events.append(("prediction_state", {"state": self.state}))
-        outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
-        inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
-        self.last_match = self.profile.evaluate(crop(bgr, inner))
-        if not self.gate.observe(self.last_match.matched, now):
-            return None
-        data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
-        return encode_action_png(crop(bgr, data_rect), self.limits)
-
-    def take_events(self):
-        events, self.events = self.events, []
-        return events

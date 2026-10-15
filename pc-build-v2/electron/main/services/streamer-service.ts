@@ -14,6 +14,7 @@ import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
   PredictionPreferencesSchema,
+  PredictionStatusSchema,
   StreamTitlePreviewSchema,
   StreamerViewSchema,
   StreamTitleSettingsSchema,
@@ -28,12 +29,14 @@ import {
 import type { PredictionPreferencesRepository } from '../infrastructure/prediction-preferences-repository'
 import { DEFAULT_PREDICTION_PREFERENCES } from '../infrastructure/prediction-preferences-repository'
 import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
-import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
 import type { MonitorSupervisor } from './monitor-supervisor'
-import type { PredictionCoordinator } from './prediction-coordinator'
+import {
+  getPredictionProfileReadiness,
+  type PredictionCoordinator,
+} from './prediction-coordinator'
 import {
   DEFAULT_OVERLAY_SETTINGS,
   DEFAULT_TITLE_SETTINGS,
@@ -137,7 +140,7 @@ export class StreamerService {
     private readonly auth: AuthSession,
     private readonly api: AuthenticatedApiClient,
     private readonly preferences: PredictionPreferencesRepository,
-    private readonly resultConfigurations: PredictionResultConfigurationRepository,
+    _resultConfigurations: PredictionResultConfigurationRepository,
     private readonly captureConfigurations: CaptureConfigurationRepository,
     private readonly monitor: MonitorSupervisor,
     private readonly predictions: PredictionCoordinator,
@@ -160,33 +163,9 @@ export class StreamerService {
       this.monitor.getView(),
     ])
     const active = capture.status === 'fulfilled' ? capture.value : null
-    let resultConfigured: boolean | null = null
-    if (capture.status === 'fulfilled') {
-      if (active === null || user === null) resultConfigured = false
-      else {
-        try {
-          const result = await this.resultConfigurations.load(
-            user.id,
-            active.profile.profileId,
-          )
-          resultConfigured =
-            result !== null &&
-            predictionResultMatchesCapture(result, {
-              profileId: active.profile.profileId,
-              configurationRevision: active.profile.configuration.revision,
-              configurationFingerprint: active.profile.configuration.fingerprint,
-              ...(active.profile.configuration.calibration.coordinateSpace ===
-              'game_relative'
-                ? {
-                    calibrationId: active.profile.configuration.calibration.calibrationId,
-                  }
-                : {}),
-            })
-        } catch {
-          resultConfigured = null
-        }
-      }
-    }
+    const profileReady = getPredictionProfileReadiness(
+      active?.profile.configuration ?? null,
+    ).ready
     if (generation !== this.auth.getContextGeneration())
       throw new ApplicationError('STREAMER_CANCELLED', 'Readiness was cancelled')
     return StreamerReadinessSchema.parse({
@@ -206,7 +185,7 @@ export class StreamerService {
           ? monitor.value.runIntent && monitor.value.state === 'READY'
           : null,
       captureConfigured: capture.status === 'fulfilled' ? active !== null : null,
-      resultZonesConfigured: resultConfigured,
+      resultZonesConfigured: profileReady,
       activeProfileId: active?.profile.profileId ?? null,
     })
   }
@@ -479,15 +458,8 @@ export class StreamerService {
 
   startPredictions(settings: PredictionPreferences): Promise<StreamerView> {
     return this.mutate(async () => {
-      const user = this.assertAccess()
-      if (this.predictions.state !== 'stopped' || this.#view.predictions.active)
-        throw new ApplicationError(
-          'PREDICTION_ALREADY_ACTIVE',
-          'Stop predictions before changing their settings',
-        )
-      const parsed = PredictionPreferencesSchema.parse(settings)
-      await this.preferences.save(user.id, parsed)
-      await this.predictions.start(parsed)
+      this.assertAccess()
+      await this.predictions.start(PredictionPreferencesSchema.parse(settings))
     })
   }
 
@@ -662,14 +634,8 @@ export class StreamerService {
     })
     const userId = authView.user.id
     const predictionObservationGeneration = this.predictions.observationGeneration
-    const captureProfiles = await this.captureConfigurations
-      .list(userId)
-      .catch(() => null)
     const local = await Promise.allSettled([
       this.preferences.load(userId),
-      captureProfiles === null
-        ? Promise.resolve(null)
-        : this.resultConfigurations.load(userId, captureProfiles.activeProfileId),
       this.captureConfigurations.load(userId),
       this.monitor.getView(),
     ])
@@ -681,39 +647,19 @@ export class StreamerService {
         : { ...DEFAULT_PREDICTION_PREFERENCES }
     if (local[0].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[0].reason))
-    const loadedResultConfig = local[1].status === 'fulfilled' ? local[1].value : null
+    const captureConfig = local[1].status === 'fulfilled' ? local[1].value : null
     if (local[1].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[1].reason))
-    const captureConfig = local[2].status === 'fulfilled' ? local[2].value : null
+    const monitorView =
+      local[2].status === 'fulfilled' ? local[2].value : { state: 'FAILED' as const }
     if (local[2].status === 'rejected')
       localErrors.push(publicFailure('predictions', local[2].reason))
-    const activeCapture = captureProfiles?.profiles.find(
-      (profile) => profile.profileId === captureProfiles.activeProfileId,
-    )
-    const resultConfig =
-      loadedResultConfig !== null &&
-      activeCapture !== undefined &&
-      predictionResultMatchesCapture(loadedResultConfig, activeCapture)
-        ? loadedResultConfig
-        : null
-    const monitorView =
-      local[3].status === 'fulfilled' ? local[3].value : { state: 'FAILED' as const }
-    if (local[3].status === 'rejected')
-      localErrors.push(publicFailure('predictions', local[3].reason))
-    const predictionRequest = Promise.all([
-      this.api.request({
-        method: 'GET',
-        path: '/api/streamer/bot/status',
-        schema: CommandSuccessSchema,
-        signal,
-      }),
-      this.api.request({
-        method: 'GET',
-        path: '/api/streamer/result-config',
-        schema: CommandSuccessSchema,
-        signal,
-      }),
-    ]).then(([status, result]) => (!status.ok ? status : !result.ok ? result : status))
+    const predictionRequest = this.api.request({
+      method: 'GET',
+      path: '/api/streamer/predictions/status',
+      schema: PredictionStatusSchema,
+      signal,
+    })
     const requests = await Promise.allSettled([
       this.api.request({
         method: 'GET',
@@ -762,11 +708,11 @@ export class StreamerService {
         )
         continue
       }
-      const value = settled.value.data
+      const value = settled.value.data as Record<string, unknown>
       const previous = next
       const previousUrls = this.#urls
       try {
-        CommandSuccessSchema.parse(value)
+        if (section !== 'predictions') CommandSuccessSchema.parse(value)
         if (section === 'twitch')
           next = {
             ...next,
@@ -828,12 +774,12 @@ export class StreamerService {
       access: { allowed: true, reason: null },
       predictions: {
         ...next.predictions,
-        runtimeState: this.predictions.suspended ? 'suspended' : this.predictions.state,
+        runtimeState: this.predictions.state,
         requirements: {
           twitchConnected: next.twitch.connected,
-          mainMonitorConfigured: captureConfig !== null,
+          mainMonitorConfigured: getPredictionProfileReadiness(captureConfig).ready,
           mainMonitorRunning: monitorView.state === 'READY',
-          resultConfigured: resultConfig !== null,
+          resultConfigured: true,
         },
       },
       refresh: {

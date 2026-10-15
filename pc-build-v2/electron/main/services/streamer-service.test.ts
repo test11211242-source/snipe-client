@@ -6,6 +6,7 @@ import { createApiError } from '../../../shared/errors/api-error'
 import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-ipc'
 import { ApiClient } from './api-client'
 import { z } from 'zod'
+import { predictionStatusFixture } from '../../../tests/prediction-fixtures'
 
 const userView = {
   state: 'AUTHENTICATED' as const,
@@ -53,11 +54,11 @@ function harness(
           status: 200,
           data: { success: true, connected: true, username: 'caster' },
         }
-      if (input.path.endsWith('/bot/status'))
+      if (input.path.endsWith('/predictions/status'))
         return {
           ok: true as const,
           status: 200,
-          data: { success: true, status: { is_active: false, state: 'idle' } },
+          data: predictionStatusFixture,
         }
       if (input.path.endsWith('/title/status'))
         return {
@@ -102,7 +103,7 @@ function harness(
     } as never,
     { load: vi.fn().mockResolvedValue(resultConfig) } as never,
     {
-      load: vi.fn().mockResolvedValue({}),
+      load: vi.fn().mockResolvedValue(null),
       getActive: vi.fn().mockResolvedValue(activeProfile),
       list: vi.fn().mockResolvedValue({
         activeProfileId: '00000000-0000-4000-8000-000000000001',
@@ -392,60 +393,40 @@ describe('StreamerService', () => {
     })
   })
 
-  it.each([true, false])(
-    'derives result-zone readiness from the active profile fingerprint: %s',
-    async (matches) => {
-      const profileId = '00000000-0000-4000-8000-000000000001'
-      const active = {
-        profile: {
-          profileId,
-          configuration: {
-            revision: 1,
-            fingerprint: 'a'.repeat(64),
-            calibration: { coordinateSpace: 'full_frame_normalized' },
-          },
-        },
-      }
-      const result = {
-        captureProfileId: profileId,
-        captureConfigurationRevision: 1,
-        captureConfigurationFingerprint: (matches ? 'a' : 'b').repeat(64),
-      }
-      const test = harness(undefined, active, result)
-      await test.service.refresh()
-      expect(await test.service.getReadiness()).toMatchObject({
-        captureConfigured: true,
-        resultZonesConfigured: matches,
-        activeProfileId: profileId,
-      })
-    },
-  )
+  it('does not accept a full-frame profile even with saved result zones', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const test = harness(undefined, {
+      profile: {
+        profileId,
+        configuration: { calibration: { coordinateSpace: 'full_frame_normalized' } },
+      },
+    })
+    await test.service.refresh()
+    expect(await test.service.getReadiness()).toMatchObject({
+      captureConfigured: true,
+      resultZonesConfigured: false,
+      activeProfileId: profileId,
+    })
+  })
 
-  it.each([true, false])(
-    'derives game-relative readiness from calibration identity after layout append: %s',
-    async (matches) => {
+  it.each([0.43, 0.52])(
+    'requires only own-battle game-relative layouts: %s',
+    async (cy) => {
       const profileId = '00000000-0000-4000-8000-000000000001'
-      const calibrationId = '00000000-0000-4000-8000-000000000010'
-      const active = {
+      const test = harness(undefined, {
         profile: {
           profileId,
           configuration: {
-            revision: 4,
-            fingerprint: 'b'.repeat(64),
-            calibration: { coordinateSpace: 'game_relative', calibrationId },
+            calibration: {
+              coordinateSpace: 'game_relative',
+              layouts: [{ trigger: { kind: 'vs_edge_orientation', badge: { cy } } }],
+            },
           },
         },
-      }
-      const result = {
-        captureProfileId: profileId,
-        captureCalibrationId: matches ? calibrationId : profileId,
-        captureConfigurationRevision: 1,
-        captureConfigurationFingerprint: 'a'.repeat(64),
-      }
-      const test = harness(undefined, active, result)
+      })
       await test.service.refresh()
       expect(await test.service.getReadiness()).toMatchObject({
-        resultZonesConfigured: matches,
+        resultZonesConfigured: cy === 0.43,
         activeProfileId: profileId,
       })
     },

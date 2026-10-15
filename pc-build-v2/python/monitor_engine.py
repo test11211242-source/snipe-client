@@ -16,7 +16,7 @@ import cv2
 from capture.monitor_backend import WindowsMonitorBackend
 from capture.backend import CaptureBackendError, window_iconic_probe
 from monitor_protocol import MonitorProtocolError, encode_event, read_command
-from trigger_engine import GeometryChangedError, InvalidFrameError, PredictionTriggerEngine, TriggerEngine, ensure_bgr
+from trigger_engine import GeometryChangedError, InvalidFrameError, TriggerEngine, ensure_bgr
 
 # WGC sends no frames for a minimised window; poll IsIconic so the UI can say so.
 ICONIC_POLL_SECONDS = 0.5
@@ -44,7 +44,6 @@ def run(start: dict[str, Any]) -> int:
     ready = threading.Event()
     failure_lock = threading.Lock()
     engine = None
-    prediction_engine = None
     backend = None
     minimized = threading.Event()
     iconic = None
@@ -117,6 +116,9 @@ def run(start: dict[str, Any]) -> int:
                     {
                         "timestamp": timestamp,
                         "triggerId": trigger_id,
+                        "kind": engine.triggered_kind,
+                        "rank": "unknown",
+                        "rankEvidence": None,
                     },
                 )
             if action is not None:
@@ -126,24 +128,6 @@ def run(start: dict[str, Any]) -> int:
                     {
                         "timestamp": timestamp,
                         "triggerId": trigger_id,
-                        "width": image_width,
-                        "height": image_height,
-                        "byteLength": len(image),
-                        "imageBase64": base64.b64encode(image).decode("ascii"),
-                    },
-                )
-            prediction_result = prediction_engine.process(bgr, now) if prediction_engine else None
-            if prediction_engine is not None:
-                emit_diagnostic("prediction", prediction_engine.last_match)
-                for event_type, event_payload in prediction_engine.take_events():
-                    writer.emit(event_type, event_payload)
-            if prediction_result is not None:
-                image, image_width, image_height = prediction_result
-                writer.emit(
-                    "prediction_result",
-                    {
-                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                        "triggerId": str(uuid.uuid4()),
                         "width": image_width,
                         "height": image_height,
                         "byteLength": len(image),
@@ -178,8 +162,6 @@ def run(start: dict[str, Any]) -> int:
         stop_reader.start()
         if not terminal.is_set():
             engine = TriggerEngine(payload)
-        if not terminal.is_set() and payload["prediction"] is not None:
-            prediction_engine = PredictionTriggerEngine(payload["prediction"], payload["limits"])
         if not terminal.is_set():
             stage = "start"
             iconic = window_iconic_probe(payload["selector"])

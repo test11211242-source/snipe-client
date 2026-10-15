@@ -5,7 +5,6 @@ import pytest
 from analyze_trigger import analyze
 from monitor_protocol import MonitorProtocolError
 from trigger_engine import (
-    PredictionTriggerEngine,
     TriggerEngine,
     TriggerProfile,
     encode_action_png,
@@ -186,6 +185,7 @@ def test_main_trigger_requires_consecutive_frames_and_release_before_rearm() -> 
     assert action is not None
     assert engine.take_triggered() is True
     assert engine.take_triggered() is False
+    assert engine.triggered_kind is None
     _, width, height = action
     assert (width, height) == (64, 128)
 
@@ -229,24 +229,6 @@ def test_trigger_shifted_lower_outside_saved_roi_never_fires() -> None:
         assert engine.last_match.matched is False
 
 
-def test_prediction_result_uses_shared_matcher_and_two_confirmations() -> None:
-    trigger = trigger_image((60, 30, 160), label="END")
-    configured = payload(profile_for(trigger))
-    engine = PredictionTriggerEngine(
-        {
-            "configuredFrameSize": configured["primary"]["configuredFrameSize"],
-            "trigger": configured["primary"]["regions"]["trigger"],
-            "data": configured["primary"]["regions"]["nicknameRegion"],
-            "triggerProfile": configured["primary"]["triggerProfile"],
-        },
-        configured["limits"],
-    )
-    frame = frame_for(trigger)
-    assert engine.process(frame, 0.0) is None
-    result = engine.process(frame, 0.11)
-    assert result is not None
-    _, width, height = result
-    assert (width, height) == (64, 128)
 
 
 def test_source_aspect_ratio_change_requires_new_setup() -> None:

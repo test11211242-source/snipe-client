@@ -442,7 +442,6 @@ def _runtime_payload(layout: dict[str, Any], *, learning: bool) -> dict[str, Any
         "limits": {"fps": 10, "maxImageBytes": 10 * 1024 * 1024, "maxImagePixels": 20_000_000,
                    "maxImageWidth": 8192, "maxImageHeight": 8192, "confirmationsNeeded": 2,
                    "confirmationDecay": 0.5, "cooldownSeconds": 15},
-        "prediction": None,
         "primary": {"kind": "game_relative", "profileCalibrationId": layout["layoutId"],
                     "layouts": [layout], "learning": {"enabled": learning, "maxLayouts": 4}},
     })
@@ -514,7 +513,8 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
         if fired:
             fires.append(index)
             fire_layouts.append({"source": geometry.layout["layoutSource"] if geometry.layout else None,
-                                 "gameAspect": round(geometry.layout["gameAspect"], 4) if geometry.layout else None})
+                                 "gameAspect": round(geometry.layout["gameAspect"], 4) if geometry.layout else None,
+                                 "kind": engine.triggered_kind, "rank": "unknown", "rankEvidence": None})
             if state not in ("armed", "armed_provisional"):
                 blocked_fires.append(index)
             if output is not None and geometry.rect is not None:

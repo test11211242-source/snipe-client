@@ -58,7 +58,6 @@ function payload(): MonitorStartPayload {
       confirmationDecay: 0.5,
       cooldownSeconds: 15,
     },
-    prediction: null,
   }
 }
 
@@ -109,7 +108,6 @@ function listener(): MonitorProcessListener {
     onGeometry: vi.fn(),
     onLearning: vi.fn(),
     onLayoutLearned: vi.fn(),
-    onPredictionState: vi.fn(),
     onFatal: vi.fn(),
     onExit: vi.fn(),
   }
@@ -370,11 +368,17 @@ describe('MonitorProcessService', () => {
     child.event(3, 'triggered', {
       timestamp: '2026-07-12T12:00:00.000Z',
       triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+      kind: 'battle',
+      rank: 'unknown',
+      rankEvidence: null,
     })
-    expect(processListener.onTriggered).toHaveBeenCalledWith(
-      '2026-07-12T12:00:00.000Z',
-      '19d970c1-fc4f-4bea-a767-8f108d3b8739',
-    )
+    expect(processListener.onTriggered).toHaveBeenCalledWith({
+      timestamp: '2026-07-12T12:00:00.000Z',
+      triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+      kind: 'battle',
+      rank: 'unknown',
+      rankEvidence: null,
+    })
     child.event(4, 'action', {
       timestamp: '2026-07-12T12:00:00.000Z',
       triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
@@ -386,17 +390,14 @@ describe('MonitorProcessService', () => {
     expect(processListener.onAction).toHaveBeenCalledWith(
       expect.objectContaining({ width: 20, height: 10, image }),
     )
-    child.event(5, 'prediction_result', {
-      timestamp: '2026-07-12T12:00:01.000Z',
-      triggerId: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
-      width: 20,
-      height: 10,
-      byteLength: image.byteLength,
-      imageBase64: image.toString('base64'),
-    })
-    expect(processListener.onPredictionResult).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 20, height: 10, image }),
-    )
+    const result = {
+      battleId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+      gap: false,
+      outcome: 'win',
+      evidence: { crowns: { top: 0, bottom: 1 }, deltaSign: '+', deltaIcon: 'pol' },
+    }
+    child.event(5, 'prediction_result', result)
+    expect(processListener.onPredictionResult).toHaveBeenCalledWith(result)
     const stopping = monitored.value.stop()
     await vi.advanceTimersByTimeAsync(3_000)
     expect(monitored.treeKill).toHaveBeenCalledWith(4321)
@@ -546,8 +547,14 @@ describe('MonitorProcessService', () => {
     child.event(2, 'geometry', geometry)
     child.event(3, 'learning', learning)
     child.event(4, 'layout_learned', learned)
-    child.event(5, 'prediction_state', { state: 'aspect_mismatch' })
-    child.event(6, 'triggered', { timestamp: '2026-10-13T00:00:01.000Z', triggerId })
+    const battleStart = {
+      timestamp: '2026-10-13T00:00:01.000Z',
+      triggerId,
+      kind: 'battle',
+      rank: 'unknown',
+      rankEvidence: null,
+    }
+    child.event(6, 'triggered', battleStart)
     child.event(7, 'diagnostic', {
       profile: 'primary',
       matcher: 'vs_orientation',
@@ -562,8 +569,7 @@ describe('MonitorProcessService', () => {
     expect(events.onGeometry).toHaveBeenCalledWith(geometry)
     expect(events.onLearning).toHaveBeenCalledWith(learning)
     expect(events.onLayoutLearned).toHaveBeenCalledWith(learned)
-    expect(events.onPredictionState).toHaveBeenCalledWith({ state: 'aspect_mismatch' })
-    expect(events.onTriggered).toHaveBeenCalledWith('2026-10-13T00:00:01.000Z', triggerId)
+    expect(events.onTriggered).toHaveBeenCalledWith(battleStart)
     expect(monitored.logger.info).toHaveBeenCalledWith(
       'Trigger diagnostic',
       expect.objectContaining({
@@ -726,9 +732,18 @@ describe('MonitorProcessService', () => {
     const earlyRejected = expect(earlyStart).rejects.toMatchObject({
       code: 'MONITOR_PROTOCOL_ORDER',
     })
-    earlyChild.event(1, 'prediction_state', { state: 'aspect_mismatch' })
+    earlyChild.event(1, 'prediction_result', {
+      battleId: null,
+      gap: true,
+      outcome: 'unknown',
+      evidence: {
+        crowns: { top: null, bottom: null },
+        deltaSign: null,
+        deltaIcon: 'unreadable',
+      },
+    })
     await earlyRejected
-    expect(earlyEvents.onPredictionState).not.toHaveBeenCalled()
+    expect(earlyEvents.onPredictionResult).not.toHaveBeenCalled()
     earlyChild.emit('close', 1, null)
 
     const child = new FakeChild()
@@ -749,18 +764,16 @@ describe('MonitorProcessService', () => {
     child.emit('close', 1, null)
   })
 
-  it('allows A2 consumers to leave new event callbacks unset until A3', async () => {
+  it('allows consumers to leave geometry and learning callbacks unset', async () => {
     const child = new FakeChild()
     const monitored = service(child)
     const events = listener()
     delete events.onGeometry
     delete events.onLearning
     delete events.onLayoutLearned
-    delete events.onPredictionState
     const started = monitored.value.start(payload(), events)
     child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
     await started
-    child.event(2, 'prediction_state', { state: 'active' })
     child.event(3, 'learning', {
       status: 'failed',
       reason: 'LEARN_STRUCTURAL_TRIGGER',
@@ -803,4 +816,54 @@ describe('MonitorProcessService', () => {
     child.emit('close', 0, null)
     await stopped
   })
+
+  it.each([
+    ['prediction_state', { state: 'active' }],
+    [
+      'prediction_result',
+      {
+        battleId: null,
+        gap: true,
+        outcome: 'unknown',
+        evidence: { crown: 'unreadable', deltaSign: null, deltaIcon: 'unreadable' },
+      },
+    ],
+    [
+      'prediction_result',
+      {
+        battleId: null,
+        gap: false,
+        outcome: 'win',
+        evidence: { crowns: { top: 0, bottom: 4 }, deltaSign: '+', deltaIcon: 'pol' },
+      },
+    ],
+    [
+      'prediction_result',
+      {
+        timestamp: '2026-10-15T00:00:00.000Z',
+        triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+        width: 1,
+        height: 1,
+        byteLength: 3,
+        imageBase64: 'AAAA',
+      },
+    ],
+  ] as const)(
+    'rejects obsolete or malformed %s reports before notifying result consumers',
+    async (type, report) => {
+      const child = new FakeChild()
+      const monitored = service(child)
+      const events = listener()
+      const started = monitored.value.start(payload(), events)
+      child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+      await started
+      child.event(2, type, report)
+      expect(events.onPredictionResult).not.toHaveBeenCalled()
+      expect(events.onAction).not.toHaveBeenCalled()
+      expect(events.onFatal).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'MONITOR_PROTOCOL_INVALID' }),
+      )
+      child.emit('close', 1, null)
+    },
+  )
 })
