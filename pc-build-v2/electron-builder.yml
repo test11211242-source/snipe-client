@@ -19,6 +19,8 @@ extraResources:
       - 'geometry/**/*.py'
       - 'assets/vs_badge_v1.png'
       - 'assets/vs_badge_v1_mask.png'
+      - 'assets/result_screen_v1.json'
+      - 'assets/pol_rank_v1.json'
       - '!**/__pycache__/**'
       - '!**/tests/**'
   - from: resources/python-runtime

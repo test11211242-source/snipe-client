@@ -155,6 +155,31 @@ normal or spectate setups, missing learning events/actions, or cross-kind fires
 fail the command with a nonzero exit. The 17 A1 distortion flags do not change this
 runtime matrix.
 
+### Predictions C3 detectors (not wired to the monitor yet)
+
+Shape only: every comparison uses the doubled-angle edge-orientation field
+(`geometry/shape_match.py`), never colour or brightness. Positions are interface
+units of the M9 game rectangle, `U = min(height, width × 16/9)`.
+
+- `geometry/rank_line.py` `check_rank(frame, gameRect, badge, RankTemplates.load())`
+  reads the opponent and own rank lines on the own-battle VS trigger frame and
+  returns `{"rank", "rankEvidence": {"opponent", "own"}}` for `triggered`.
+- `result_reader.py` `ResultReader`: `arm(now)` on each own-battle VS, then
+  `process(frame, gameRect, now)` every tick; it returns the `prediction_result`
+  body without `battleId`/`gap` once per armed battle, `finish(now)` when capture
+  stops mid-burst. Idle ticks check only the small result-«vs» band; a burst reads
+  the pill and six crown slots until the «vs» moves up (shift), is missing for
+  0.6 s, or 3 s pass.
+- `prediction_values.py` holds every wire value, matching the server validation.
+- `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
+  orientation fields only (no pixels, no names), generated once by
+  `tools/make_c3_assets.py` from an external owner clip and the league/medal art;
+  source SHA-256 values are recorded.
+- `tools/m9_replay.py c3 --manifest <external.json> --out <external-dir>` (manifest
+  format in `tools/c3_replay.py`) replays end-of-battle clips at 10 FPS in all six
+  sampling phases and the M9 VS recordings; `CR_C3_REPLAY_MANIFEST` enables the
+  matching `replay` test.
+
 ### Review fixes
 
 Prepared capture retains eight exact full-resolution BGR samples, dropping alpha
