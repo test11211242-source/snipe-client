@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { MonitorTriggeredEvent } from '../shared/contracts/monitor-protocol'
+import {
+  MonitorProcessEventSchema,
+  type MonitorPredictionResultEvent,
+  type MonitorTriggeredEvent,
+} from '../shared/contracts/monitor-protocol'
 import {
   DEFAULT_PREDICTION_SETTINGS,
   PredictionStatusSchema,
@@ -45,6 +50,8 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
     )
     let battleListener: ((event: MonitorTriggeredEvent['payload']) => unknown) | null =
       null
+    let resultListener:
+      ((event: MonitorPredictionResultEvent['payload']) => unknown) | null = null
     const monitor = {
       getView: () =>
         Promise.resolve({ state: 'READY', runIntent: true, sourceMinimized: false }),
@@ -52,7 +59,10 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         battleListener = listener
         return vi.fn()
       },
-      subscribePredictionResults: vi.fn(() => vi.fn()),
+      subscribePredictionResults: (listener: typeof resultListener) => {
+        resultListener = listener
+        return vi.fn()
+      },
       subscribeViews: vi.fn(() => vi.fn()),
     }
     const captures = {
@@ -260,6 +270,80 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       expect(service.getView().predictions.stats.canceled).toBe(canceledBefore + 1)
       const finalEvidence = await fetch(`${url.origin}/__smoke/evidence`)
       expect(await finalEvidence.json()).toMatchObject({ chatMessages: 1 })
+
+      const eventsFile = process.env['CR_C3_EVENTS_JSONL']
+      if (eventsFile !== undefined) {
+        const replayed = readFileSync(eventsFile, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => MonitorProcessEventSchema.parse(JSON.parse(line)))
+          .find(
+            (event) =>
+              event.type === 'prediction_result' &&
+              event.payload.outcome === 'win' &&
+              !event.payload.gap &&
+              event.payload.evidence.deltaIcon === 'pol',
+          )
+        if (replayed?.type !== 'prediction_result' || replayed.payload.battleId === null)
+          throw new Error('No usable captured C3 win event')
+        const capturedResult = replayed.payload
+        const capturedBattleId = replayed.payload.battleId
+        expect((await fetch(`${url.origin}/__smoke/reset`, { method: 'POST' })).ok).toBe(
+          true,
+        )
+        coordinator.notifyContextChanged()
+        await vi.waitFor(
+          async () => {
+            const ready = await api.request({
+              method: 'GET',
+              path: '/api/streamer/predictions/status',
+              schema: PredictionStatusSchema,
+            })
+            expect(ready).toMatchObject({ ok: true, data: { clientReady: true } })
+          },
+          { timeout: 5_000 },
+        )
+        const automaticId = await nextPrediction()
+        // The available VS clips are Cheddar (not_pol), not the ranked battle
+        // ending in this result clip. Bind a synthetic own VS with unknown rank;
+        // keep the captured C3 result payload completely unchanged.
+        listener({
+          triggerId: capturedBattleId,
+          timestamp: new Date().toISOString(),
+          kind: 'battle',
+          rank: 'unknown',
+          rankEvidence: null,
+        })
+        expect(resultListener).not.toBeNull()
+        const deliverResult = resultListener as unknown as (
+          event: MonitorPredictionResultEvent['payload'],
+        ) => unknown
+        deliverResult(capturedResult)
+        await vi.waitFor(
+          async () => {
+            const resolved = await api.request({
+              method: 'GET',
+              path: '/api/streamer/predictions/status',
+              schema: PredictionStatusSchema,
+            })
+            if (!resolved.ok) throw new Error(resolved.error.code)
+            expect(resolved.data.stats).toEqual({
+              resolved: 1,
+              yes: 1,
+              no: 0,
+              canceled: 0,
+            })
+            expect(
+              resolved.data.history.find((item) => item.id === automaticId),
+            ).toMatchObject({ phase: 'resolved_yes', settledBy: 'screen' })
+          },
+          { timeout: 5_000 },
+        )
+        expect(logger.info).toHaveBeenCalledWith(
+          'prediction.battle_result',
+          expect.objectContaining({ code: 'ok', applied: true, finalOutcome: 'win' }),
+        )
+      }
     } finally {
       await coordinator.shutdown()
     }

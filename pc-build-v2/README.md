@@ -240,8 +240,9 @@ only status and HTTP status or reason, never nickname text or pixels; saving abo
 checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
 The renderer follows the minimal user-facing wording in M9 specification §1.3.
 Predictions follow server state and never start, restart or stop monitoring. Readiness requires
-a running, unminimised game-relative own-battle profile; result setup is not required until C3.
-Until C3 adds detection, every result is settled manually and VS rank is `unknown`.
+a running, unminimised game-relative own-battle profile; result reading needs no extra setup
+(bundled shape templates, `python/README.md`). An unreadable result is `unknown` and is settled
+manually.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -451,12 +452,12 @@ The main-only prediction coordinator sends a heartbeat every 30 seconds and imme
 monitor/profile changes while signed in as a streamer. Own-battle VS events use their shared
 trigger UUID as `battleId` and send kind, rank and rank evidence to `/predictions/battle-start`.
 Spectate and full-frame events are never forwarded. The old full-frame result matcher and
-prediction image uploads are removed. A strict `prediction_result` JSON event contract
-reserves `battleId`, `gap`, `outcome` and evidence with nullable crown counts
-`crowns:{top,bottom}` (0–3), `deltaSign` and `deltaIcon`. C1/C2 never produce result events;
-C3 owns all detection. Interrupted/minimised monitoring marks the last own battle as
-having a gap. Heartbeat, VS and future result network failures get one retry after two
-seconds; outcomes are logged as codes, not user data. The server owns settlement.
+prediction image uploads are removed. The worker emits one strict `prediction_result` JSON
+event per read result screen of an own battle (no images), with `battleId`, `gap`, `outcome`
+and evidence containing nullable crown counts `crowns:{top,bottom}` (0–3), `deltaSign` and
+`deltaIcon`. Interrupted/minimised monitoring marks the last own battle as having a gap.
+Heartbeat, VS and result network failures get one retry after two seconds; outcomes are
+logged as codes, not user data. The server owns voting timers and settlement.
 
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
 schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake
@@ -479,6 +480,13 @@ Remove-Item Env:SNIPE_PREDICTIONS_SMOKE_URL
 
 The ordinary suite skips this one explicitly opt-in integration test. The fixture's health
 marker and loopback check prevent accidentally pointing the smoke at an ordinary server.
+
+Set `CR_C3_EVENTS_JSONL` to the C3 replay's external `wired-events.jsonl` to additionally
+feed an unchanged captured `prediction_result` through the coordinator and server and
+assert settlement with source `screen`. The smoke binds a synthetic own VS with unknown
+rank: the available start clips are Cheddar, not the ranked battle whose ending was
+recorded. This proves result delivery and automatic settlement, not a continuous ranked
+recording. `tests/monitor-events-replay.test.ts` validates every event in the same file.
 
 Known server limitations are not hidden by client fallbacks. The OAuth state now uses one-time,
 expiring server records, but the previously exposed Twitch client secret must still be rotated.
@@ -596,7 +604,7 @@ flushed again later if Windows cancels logoff and the user continues working.
 Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
 the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
 and logs only the error type; it does not invalidate the capture-profile migration. Nickname
-confirmation/action share their trigger UUID. Future `prediction_result` events carry the
+confirmation/action share their trigger UUID. `prediction_result` events carry the
 own-battle `battleId` explicitly; event-envelope IDs are not battle IDs.
 
 ## v1 scope and future work

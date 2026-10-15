@@ -18,10 +18,15 @@ from layout_learning import LayoutLearning
 from geometry.aspect import aspect_gap
 from geometry.game_rect import pixel_rect
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
+from geometry.rank_line import RankTemplates, check_rank
 from geometry.zones import Badge, layout_kind
+from prediction_values import RANK_UNKNOWN
+from result_reader import ResultReader
 from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
+# `triggered` rank fields when the check does not run (spectate, full-frame).
+NO_RANK = {"rank": RANK_UNKNOWN, "rankEvidence": None}
 
 class InvalidFrameError(RuntimeError):
     pass
@@ -545,6 +550,9 @@ class TriggerEngine:
             self.learner = LayoutLearning(layouts, self.primary["learning"]["enabled"])
             for layout in layouts:
                 self._matcher(layout)
+            # Predictions (C3): own-battle VS rank lines and the result screen.
+            self.rank_templates = RankTemplates.load()
+            self.result_reader = ResultReader()
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
@@ -553,6 +561,8 @@ class TriggerEngine:
         )
         self.triggered = False
         self.triggered_kind: str | None = None
+        self.triggered_rank: dict[str, Any] = NO_RANK
+        self.prediction_report: dict[str, Any] | None = None
         self.last_match: MatchResult | None = None
         self.candidates = VsCandidateLog()
         self._sample: dict[str, Any] | None = None
@@ -564,6 +574,8 @@ class TriggerEngine:
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
         self.triggered_kind = None
+        self.triggered_rank = NO_RANK
+        self.prediction_report = None
         # Game-relative ticks also feed the 5-Hz evidence/finder clock. Accept
         # exact 10-Hz timestamps despite binary-float subtraction roundoff;
         # leave the legacy full-frame scheduling contract unchanged.
@@ -603,7 +615,40 @@ class TriggerEngine:
         record = self.candidates.observe(now, self._sample)
         if record is not None:
             self.events.append(("vs_candidate", record))
+        if not self.triggered:
+            # The result screen is read only on ticks without a VS fire; an own
+            # VS fire re-arms the reader (a pending battle is then missed).
+            self._read_result(bgr, now)
         return action
+
+    def _own_battle(self, bgr, rect, layout, now) -> None:
+        """A VS fire: record its kind; own battles get the rank check and arm
+        the result reader. Spectated battles never do."""
+        self.triggered = True
+        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
+        if self.triggered_kind != "battle":
+            return
+        try:
+            self.triggered_rank = check_rank(bgr, rect, Badge(**layout["badge"]), self.rank_templates)
+        except Exception:  # predictions must never stop opponent monitoring
+            self.triggered_rank = NO_RANK
+        self.result_reader.arm(now)
+
+    def _read_result(self, bgr, now) -> None:
+        if not self.result_reader.armed:
+            return
+        try:
+            self.prediction_report = self.result_reader.process(bgr, self.geometry.rect, now)
+        except Exception:  # predictions must never stop opponent monitoring
+            self.result_reader.disarm()
+            self.prediction_report = None
+
+    def take_prediction_result(self) -> tuple[dict[str, Any], str] | None:
+        """`(report, endReason)` once per read result screen."""
+        report, self.prediction_report = self.prediction_report, None
+        if report is None:
+            return None
+        return report, self.result_reader.diagnostics["endReason"]
 
     def _candidate(self, bgr, now, layout, score, *, matched=False, fired=False, kind_ignored=False, code=None):
         """Candidate evidence of this frame, or None when it shows no VS."""
@@ -673,8 +718,7 @@ class TriggerEngine:
                     self.matchers = {item["layoutId"]: self.matchers[item["layoutId"]] for item in self.geometry.layouts
                                      if item["layoutId"] in self.matchers}
                     if fired:
-                        self.triggered = True
-                        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
+                        self._own_battle(confirmation, confirmation_rect, layout, now)
                     self._sample = self._candidate(bgr, now, layout, None, matched=True, fired=fired, code="LAYOUT_LEARNED")
                     if fired:
                         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
@@ -708,8 +752,7 @@ class TriggerEngine:
         self._sample = self._candidate(bgr, now, layout, evidence, matched=self.last_match.matched, fired=fired)
         if not fired:
             return None
-        self.triggered = True
-        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
+        self._own_battle(bgr, rect, layout, now)
         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
         return encode_action_png(crop(bgr, data_rect), self.limits)
 
