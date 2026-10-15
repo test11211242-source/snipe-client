@@ -238,8 +238,9 @@ only status and HTTP status or reason, never nickname text or pixels; saving abo
 checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
 The renderer follows the minimal user-facing wording in M9 specification §1.3.
 Predictions follow server state and never start, restart or stop monitoring. Readiness requires
-a running, unminimised game-relative own-battle profile; result setup is not required until C3.
-Until C3 adds detection, every result is settled manually and VS rank is `unknown`.
+a running, unminimised game-relative own-battle profile; result reading needs no extra setup
+(bundled shape templates, `python/README.md`). An unreadable result is `unknown` and is settled
+manually.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -439,8 +440,8 @@ The main-only prediction coordinator sends a heartbeat every 30 seconds and imme
 monitor/profile changes while signed in as a streamer. Own-battle VS events use their shared
 trigger UUID as `battleId` and send kind, rank and rank evidence to `/predictions/battle-start`.
 Spectate and full-frame events are never forwarded. The old full-frame result matcher and
-prediction image uploads are removed. A strict `prediction_result` JSON event contract is
-reserved for C3; C1 does not produce result events. Interrupted/minimised monitoring marks
+prediction image uploads are removed. The worker emits one strict `prediction_result` JSON
+event per read result screen of an own battle (no images). Interrupted/minimised monitoring marks
 the last own battle as having a gap. Network failures get one retry after two seconds;
 outcomes are logged as codes, not user data. The server owns voting timers and settlement.
 
@@ -560,7 +561,7 @@ flushed again later if Windows cancels logoff and the user continues working.
 Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
 the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
 and logs only the error type; it does not invalidate the capture-profile migration. Nickname
-confirmation/action share their trigger UUID. Future `prediction_result` events carry the
+confirmation/action share their trigger UUID. `prediction_result` events carry the
 own-battle `battleId` explicitly; event-envelope IDs are not battle IDs.
 
 ## v1 scope and future work

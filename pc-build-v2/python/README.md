@@ -155,21 +155,29 @@ normal or spectate setups, missing learning events/actions, or cross-kind fires
 fail the command with a nonzero exit. The 17 A1 distortion flags do not change this
 runtime matrix.
 
-### Predictions C3 detectors (not wired to the monitor yet)
+### Predictions C3 detectors
 
 Shape only: every comparison uses the doubled-angle edge-orientation field
 (`geometry/shape_match.py`), never colour or brightness. Positions are interface
 units of the M9 game rectangle, `U = min(height, width × 16/9)`.
 
+Runtime wiring (game-relative profiles only): on an own-battle VS fire
+(`kind == "battle"`) `TriggerEngine` runs `check_rank` on the trigger frame and
+arms its `ResultReader`; the `triggered` event carries `rank`/`rankEvidence`
+(`"unknown"`/`null` for spectate and full-frame fires). On ticks without a VS fire
+the armed reader reads the result screen; `monitor_engine.FrameEvents` turns a
+report into one `prediction_result {battleId, gap, outcome, evidence}`, where
+`battleId` is the last own-battle `triggerId` and `gap` is set if the source was
+minimised since that VS or the frames paused mid-read. Prediction failures never
+stop the opponent monitor.
+
 - `geometry/rank_line.py` `check_rank(frame, gameRect, badge, RankTemplates.load())`
-  reads the opponent and own rank lines on the own-battle VS trigger frame and
-  returns `{"rank", "rankEvidence": {"opponent", "own"}}` for `triggered`.
-- `result_reader.py` `ResultReader`: `arm(now)` on each own-battle VS, then
-  `process(frame, gameRect, now)` every tick; it returns the `prediction_result`
-  body without `battleId`/`gap` once per armed battle, `finish(now)` when capture
-  stops mid-burst. Idle ticks check only the small result-«vs» band; a burst reads
-  the pill and six crown slots until the «vs» moves up (shift), is missing for
-  0.6 s, or 3 s pass.
+  reads the opponent and own rank lines and returns
+  `{"rank", "rankEvidence": {"opponent", "own"}}`.
+- `result_reader.py` `ResultReader`: armed from VS + 20 s to VS + 7 min. Idle ticks
+  check only the small result-«vs» band; a burst reads the pill and six crown
+  slots until the «vs» moves up (shift), is missing for 0.6 s, the frames pause,
+  or 3 s pass.
 - `prediction_values.py` holds every wire value, matching the server validation.
 - `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
   orientation fields only (no pixels, no names), generated once by
@@ -178,8 +186,16 @@ units of the M9 game rectangle, `U = min(height, width × 16/9)`.
 - `tools/m9_replay.py c3 --manifest <external.json> --out <external-dir>` (manifest
   format in `tools/c3_replay.py`) replays end-of-battle clips at 10 FPS in all six
   sampling phases (optionally also downscaled as smaller captures, judged on the
-  full-size clip's timing) and the M9 VS recordings; `CR_C3_REPLAY_MANIFEST`
-  enables the matching `replay` test.
+  full-size clip's timing) and the M9 VS recordings. Its wired group runs an own
+  and a spectate VS recording, then each end clip, through `TriggerEngine` and
+  `FrameEvents`; every event passes `encode_event`, and the image-free events are
+  written to `wired-events.jsonl`; `tests/monitor-events-replay.test.ts` parses
+  them with the TypeScript monitor contract when `CR_C3_EVENTS_JSONL` names that
+  file. `CR_C3_REPLAY_MANIFEST` enables the matching Python `replay` test. The
+  runtime and boundary replays also run through
+  `FrameEvents` (every event validated); the runtime acceptance adds that VS-only
+  recordings emit no `prediction_result`, only own-battle fires carry rank
+  evidence, and Trainer Cheddar battles are never `pol`.
 
 ### Review fixes
 

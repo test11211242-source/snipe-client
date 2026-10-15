@@ -35,7 +35,7 @@ from geometry.result_screen import (VS_FIRE_T, ResultTemplates, count_crowns, cr
 from geometry.shape_match import ui_unit
 from geometry.vs_finder import MATCH_T, search
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
-from geometry.zones import Badge, layout_kind
+from geometry.zones import Badge, layout_kind, regions
 from prediction_values import rank_from_lines
 from result_reader import ResultReader
 
@@ -316,6 +316,180 @@ def _evaluate_end(item: dict[str, Any], expected: dict[str, Any]) -> dict[str, A
             "signToShiftS": [min(sign_margins), max(sign_margins)] if sign_margins else None}
 
 
+# Wired runtime: a profile with the VS recording's setup layout plus a layout
+# transplanted (in interface units) to the end clip's game; the VS recording,
+# then the end clip 40 s later, run through the worker's FrameEvents.
+WIRED_PREFIX = {"own": "windowed_1080x1920", "spectate": "spectate_1"}
+WIRED_END_START_S = 40.0
+WIRED_HOLD_S = 1.0
+
+
+def _units_badge(badge: dict[str, float], aspect: float, target: float) -> dict[str, float]:
+    """The same badge in interface units, expressed in another game aspect."""
+    unit, target_unit = min(1.0, aspect * 16 / 9), min(1.0, target * 16 / 9)
+    return Badge(0.5 + (badge["cx"] - 0.5) * aspect / unit * target_unit / target,
+                 0.5 + (badge["cy"] - 0.5) / unit * target_unit,
+                 badge["width"] * aspect / unit * target_unit / target,
+                 badge["height"] / unit * target_unit).to_dict()
+
+
+def _transplanted_layout(layout: dict[str, Any], game, key: str) -> dict[str, Any]:
+    import uuid
+    badge = _units_badge(layout["badge"], layout["gameAspect"], game.aspect)
+    trigger = OrientationTrigger.from_dict(layout["trigger"])
+    trigger.badge = Badge(**badge)
+    zones = regions(Badge(**badge), game.aspect)
+    return {**layout, "layoutId": str(uuid.uuid5(uuid.NAMESPACE_URL, "cr-tools-c3-wired:" + key)),
+            "layoutSource": "learned", "gameAspect": game.aspect, "windowChrome": game.chrome,
+            "regions": {"trigger": zones["trigger"].to_dict(), "nicknameRegion": zones["nickname"].to_dict(),
+                        "topLeftEvidenceRegion": zones["topLeftEvidence"].to_dict()},
+            "trigger": trigger.to_dict(), "badge": badge}
+
+
+def wired_prefixes(vs_manifest: Path, keys: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Setup layouts of the prefix VS recordings (M9 replay setup path)."""
+    from tools.m9_replay import _runtime_profile, decode
+    records = {r["key"]: r for r in json.loads(vs_manifest.read_text(encoding="utf-8"))["recordings"]}
+    prefixes = {}
+    for role, key in keys.items():
+        path = vs_manifest.parent / records[key]["path"]
+        layout, setup = _runtime_profile(decode(path), records[key])
+        if layout is None:
+            raise ValueError(f"Wired prefix setup failed: {setup.get('code')}")
+        prefixes[role] = {"key": key, "path": str(path), "layout": layout}
+    return prefixes
+
+
+def _ticks(path: Path):
+    """(time, frame) at the production 0.1 s sampling, streamed."""
+    capture = cv2.VideoCapture(str(path))
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    try:
+        index, next_time = 0, 0.0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            if index / fps + 1e-6 >= next_time:
+                yield round(next_time, 1), frame
+                next_time += TICK
+            index += 1
+    finally:
+        capture.release()
+
+
+def replay_wired_end_clip(path: Path, record: dict[str, Any], prefixes: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Own and spectate prefixes × six phases through TriggerEngine + FrameEvents;
+    every event passes `encode_event`; image-free events are returned whole."""
+    import uuid
+    from tools.m9_replay import REPLAY_TIMESTAMP, _runtime_payload
+    from monitor_engine import FrameEvents
+    from monitor_protocol import encode_event, validate_start_payload
+    from trigger_engine import TriggerEngine
+    fps, _, _ = _info(path)
+    capture = cv2.VideoCapture(str(path))
+    count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    sampled = []
+    for index in np.linspace(0, count - 2, 8).round().astype(int):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+        ok, frame = capture.read()
+        if ok:
+            sampled.append(frame)
+    capture.release()
+    game = detect(sampled)
+    runs: dict[tuple[str, int], dict[str, Any]] = {}
+    for role, prefix in prefixes.items():
+        payload = _runtime_payload(prefix["layout"], learning=False)
+        payload["primary"]["layouts"].append(_transplanted_layout(prefix["layout"], game, record["key"] + role))
+        payload = validate_start_payload(payload)
+        for phase in range(PHASES):
+            runs[(role, phase)] = {"frames": FrameEvents(TriggerEngine(payload)), "events": [], "sequence": 0,
+                                   "session": str(uuid.uuid4()), "ms": []}
+
+    def feed(run, frame, now, segment):
+        started = time.perf_counter()
+        emitted = run["frames"].process(frame, now, REPLAY_TIMESTAMP, str(uuid.uuid4()))
+        run["ms"].append((time.perf_counter() - started) * 1000)
+        for event_type, event_payload in emitted:
+            run["sequence"] += 1
+            line = encode_event(run["session"], run["sequence"], event_type, event_payload)
+            if event_type in ("triggered", "prediction_result"):
+                entry = {"segment": segment, "t": round(now, 3), "event": json.loads(line)}
+                if event_type == "prediction_result":
+                    diagnostics = run["frames"].engine.result_reader.diagnostics
+                    trace = diagnostics["trace"]
+                    entry["diagnostics"] = {
+                        "endReason": diagnostics["endReason"],
+                        "startS": round(diagnostics["startS"] - WIRED_END_START_S, 3),
+                        "lastReadS": round(diagnostics["startS"] - WIRED_END_START_S + trace[-1][0], 3)
+                        if trace else None}
+                run["events"].append(entry)
+
+    for role, prefix in prefixes.items():
+        for now, frame in _ticks(Path(prefix["path"])):
+            for phase in range(PHASES):
+                feed(runs[(role, phase)], frame, now, "vs")
+    step = round(fps * TICK)
+    last = None
+    for index, frame in _frames(path):
+        phase = index % step
+        last = frame
+        if phase < PHASES:
+            for role in prefixes:
+                feed(runs[(role, phase)], frame, WIRED_END_START_S + index / fps, "end")
+                runs[(role, phase)]["last"] = WIRED_END_START_S + index / fps
+    # Some clips stop < 0.6 s after the shift; the real screen stays, so the
+    # last frame is held for WIRED_HOLD_S (the worker sends no report on stop).
+    for run in runs.values():
+        for tick in range(1, round(WIRED_HOLD_S / TICK) + 1):
+            feed(run, last, run["last"] + tick * TICK, "end")
+    cells = []
+    for (role, phase), run in runs.items():
+        events = run["events"]
+        battle = [e["event"]["payload"] for e in events if e["segment"] == "vs" and e["event"]["type"] == "triggered"]
+        results = [e for e in events if e["event"]["type"] == "prediction_result"]
+        cells.append({
+            "role": role, "phase": phase, "gameAspect": round(game.aspect, 4),
+            "vsFires": [{"kind": p["kind"], "rank": p["rank"], "rankEvidence": p["rankEvidence"]} for p in battle],
+            "endFires": sum(e["segment"] == "end" and e["event"]["type"] == "triggered" for e in events),
+            "results": [{**e["diagnostics"],
+                         "battleIdIsOwnVs": e["event"]["payload"]["battleId"] in
+                         [p["triggerId"] for p in battle if p["kind"] == "battle"],
+                         **{k: e["event"]["payload"][k] for k in ("gap", "outcome", "evidence")}} for e in results],
+            "msMedian": round(float(np.median(run["ms"])), 2), "msP95": round(float(np.percentile(run["ms"], 95)), 2),
+            "protocolEvents": [e["event"] for e in events],
+        })
+    return {"cells": cells}
+
+
+def _evaluate_wired(item: dict[str, Any], expected: dict[str, Any], truth: dict[str, Any]) -> dict[str, Any]:
+    """Truth (onset/shift) comes from the independent 60 FPS pass of the clip."""
+    own = [cell for cell in item["cells"] if cell["role"] == "own"]
+    spectate = [cell for cell in item["cells"] if cell["role"] == "spectate"]
+    onset, shift = truth["onset"], truth["shift"]
+    ok_own = sum(
+        len(cell["results"]) == 1 and cell["results"][0]["outcome"] == expected["outcome"]
+        and cell["results"][0]["battleIdIsOwnVs"] and cell["results"][0]["gap"] is False
+        and cell["results"][0]["evidence"]["crowns"]["top"] in (None, expected["crowns"][0])
+        and cell["results"][0]["evidence"]["crowns"]["bottom"] in (None, expected["crowns"][1])
+        and onset - 0.1 <= cell["results"][0]["startS"] <= shift
+        and any(fire["kind"] == "battle" and fire["rankEvidence"] is not None for fire in cell["vsFires"])
+        for cell in own)
+    reads = [r for cell in own for r in cell["results"] if r["lastReadS"] is not None]
+    return {"ownCorrect": ok_own, "ownRuns": len(own),
+            "readAfterShift": sum(r["lastReadS"] > shift + 1e-6 for r in reads),
+            "lastReadBeforeShiftS": [round(min(shift - r["lastReadS"] for r in reads), 3),
+                                     round(max(shift - r["lastReadS"] for r in reads), 3)] if reads else None,
+            "fireDelayS": [round(min(r["startS"] for r in reads) - onset, 3),
+                           round(max(r["startS"] for r in reads) - onset, 3)] if reads else None,
+            "spectateResults": sum(len(cell["results"]) for cell in spectate),
+            "spectateRanked": sum(fire["rankEvidence"] is not None for cell in spectate for fire in cell["vsFires"]),
+            "spectateVsFires": sum(len(cell["vsFires"]) for cell in spectate),
+            "endFires": sum(cell["endFires"] for cell in item["cells"]),
+            "endReasons": sorted({r["endReason"] for cell in own for r in cell["results"]}),
+            "tickMsP95Max": max(cell["msP95"] for cell in item["cells"])}
+
+
 def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
     output = output.resolve()
     if any((parent / ".git").exists() for parent in (output, *output.parents)):
@@ -324,7 +498,10 @@ def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
     base = manifest.parent
     vs_manifest = base / document["vsManifest"] if document.get("vsManifest") else None
     vs_records = json.loads(vs_manifest.read_text(encoding="utf-8"))["recordings"] if vs_manifest else []
-    result: dict[str, Any] = {"mode": "c3", "tickS": TICK, "phases": PHASES, "results": {}, "vs": {}, "stills": {}}
+    result: dict[str, Any] = {"mode": "c3", "tickS": TICK, "phases": PHASES, "results": {}, "vs": {}, "stills": {},
+                              "wired": {}}
+    prefixes = wired_prefixes(vs_manifest, document.get("wired", WIRED_PREFIX)) if vs_manifest else {}
+    protocol_events: list[dict[str, Any]] = []
     with ProcessPoolExecutor(max_workers=6) as pool:
         scales = sorted(document.get("scales", [1.0]), key=lambda value: value != 1.0)
         if scales[0] != 1.0:
@@ -333,6 +510,8 @@ def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
                                                scale)
                 for r in document["results"] for scale in scales}
         vss = {r["key"]: pool.submit(replay_vs_clip, vs_manifest.parent / r["path"], r) for r in vs_records}
+        wired = {r["key"]: pool.submit(replay_wired_end_clip, base / r["path"], r, prefixes)
+                 for r in document["results"]} if prefixes else {}
         for record in document["results"]:
             for scale in scales:
                 key = record["key"] if scale == 1.0 else f"{record['key']}@{scale:g}"
@@ -347,6 +526,15 @@ def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
                 print(key, json.dumps(item["evaluation"]), flush=True)
         for record in vs_records:
             result["vs"][record["key"]] = vss[record["key"]].result()
+        for record in document["results"]:
+            if record["key"] not in wired:
+                continue
+            item = wired[record["key"]].result()
+            for cell in item["cells"]:
+                protocol_events += cell.pop("protocolEvents")
+            item["evaluation"] = _evaluate_wired(item, record, result["results"][record["key"]]["truth"])
+            result["wired"][record["key"]] = item
+            print("wired", record["key"], json.dumps(item["evaluation"]), flush=True)
     for still in document.get("stills", []):
         cell = replay_still(base / still["path"])
         # Stills are single mid-animation frames: only the pill is judged.
@@ -355,6 +543,9 @@ def c3_replay(manifest: Path, output: Path) -> dict[str, Any]:
     result["acceptance"] = _acceptance(result, document)
     output.mkdir(parents=True, exist_ok=True)
     (output / "results.json").write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
+    # Image-free protocol events of the wired runs, for the TypeScript contract check.
+    (output / "wired-events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in protocol_events),
+                                               encoding="utf-8")
     print(json.dumps(result["acceptance"], indent=1))
     return result
 
@@ -392,7 +583,18 @@ def _acceptance(result: dict[str, Any], document: dict[str, Any]) -> dict[str, A
         "stillsVsSilent": all(still.get("sign") or (result["stills"][still["key"]]["vs"] or 0) < VS_FIRE_T
                               for still in document.get("stills", [])),
     }
+    wired = [item["evaluation"] for item in result["wired"].values()]
+    if document.get("vsManifest"):
+        checks.update({
+            "wiredOwnResultCorrect": len(wired) == len(document["results"])
+            and all(e["ownCorrect"] == e["ownRuns"] == PHASES for e in wired),
+            "wiredSpectateNeverArmsOrRanks": all(e["spectateResults"] == 0 and e["spectateRanked"] == 0
+                                                 and e["spectateVsFires"] > 0 for e in wired),
+            "wiredNoVsFireOnResults": all(e["endFires"] == 0 for e in wired),
+            "wiredReadBeforeShift": all(e["readAfterShift"] == 0 for e in wired),
+        })
     return {"passed": all(checks.values()), "checks": checks,
             "unknownRuns": sum(e["unknown"] for e in evaluation), "runs": PHASES * len(evaluation),
             "spectateProfileFiresOnResults": spectate_fires,
-            "rank": {"samples": rank_total, "wrong": rank_wrong, "unknown": rank_unknown}}
+            "rank": {"samples": rank_total, "wrong": rank_wrong, "unknown": rank_unknown},
+            "wiredRuns": sum(e["ownRuns"] * 2 for e in wired)}

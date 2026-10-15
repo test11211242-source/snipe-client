@@ -9,3 +9,5 @@ package-lock.json
 published
 resources/python-runtime
 resources/runtime-integrity.json
+python/assets/result_screen_v1.json
+python/assets/pol_rank_v1.json
