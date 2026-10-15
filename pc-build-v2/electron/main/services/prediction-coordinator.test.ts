@@ -591,6 +591,48 @@ describe('PredictionCoordinator retry and logging', () => {
     },
   )
 
+  it.each(['battle-start', 'battle-result'] as const)(
+    'retries idempotent %s once on HTTP 5xx',
+    async (suffix) => {
+      for (const statusCode of [500, 502, 503, 504, 599]) {
+        const test = harness()
+        await flush()
+        test.request.mockResolvedValueOnce(failure('SERVER_ERROR', statusCode))
+        if (suffix === 'battle-start') test.battle()
+        else test.result()
+        await flush()
+        expect(test.calls(suffix)).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(1_999)
+        expect(test.calls(suffix)).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(test.calls(suffix)).toHaveLength(2)
+        expect(test.calls(suffix)[1]?.body).toEqual(test.calls(suffix)[0]?.body)
+        await test.coordinator.shutdown()
+      }
+    },
+  )
+
+  it.each(['settings', 'heartbeat', 'current/battle', 'current/cancel'] as const)(
+    'does not broaden %s retries to HTTP 5xx',
+    async (suffix) => {
+      const test = harness()
+      await flush()
+      const before = test.calls(suffix).length
+      test.request.mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+      if (suffix === 'heartbeat') test.coordinator.notifyContextChanged()
+      else {
+        const command =
+          suffix === 'settings'
+            ? test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+            : suffix === 'current/battle'
+              ? test.coordinator.manualBattle(1, 'win')
+              : test.coordinator.cancel(1)
+        await expect(command).rejects.toMatchObject({ code: 'SERVER_ERROR' })
+      }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(test.calls(suffix)).toHaveLength(before + 1)
+    },
+  )
   it('retries transport timeouts once, then releases the queue after a second failure', async () => {
     const test = harness()
     await flush()
@@ -613,7 +655,6 @@ describe('PredictionCoordinator retry and logging', () => {
     ['UNAUTHORIZED', 401],
     ['FORBIDDEN', 403],
     ['VALIDATION_FAILED', 422],
-    ['SERVER_ERROR', 503],
     ['INVALID_RESPONSE', 200],
   ] as const)(
     'does not retry %s even when marked retryable',

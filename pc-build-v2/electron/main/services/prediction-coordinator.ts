@@ -66,7 +66,7 @@ type Operation =
  * server applies idempotently. `none` never repeats: a lost manual-settle response
  * may already have advanced a streak, so a resend could count the battle twice.
  */
-type RetryPolicy = 'network' | 'none'
+type RetryPolicy = 'network' | 'battle_event' | 'none'
 
 export interface PredictionReadiness {
   ready: boolean
@@ -278,7 +278,7 @@ export class PredictionCoordinator {
       this.log('battle_start', { code: 'skipped', reason: 'not_own_battle' })
       return
     }
-    // The server deduplicates on battleId, so the network retry cannot double count.
+    // The server deduplicates by battleId, including uncertain HTTP 5xx responses.
     this.enqueue('battle_start', (context) =>
       this.request(
         context,
@@ -292,7 +292,7 @@ export class PredictionCoordinator {
           rank: event.rank,
           rankEvidence: event.rankEvidence,
         },
-        'network',
+        'battle_event',
       ),
     )
   }
@@ -306,7 +306,7 @@ export class PredictionCoordinator {
         '/api/streamer/predictions/battle-result',
         BattleResultResponseSchema,
         event,
-        'network',
+        'battle_event',
       ),
     )
   }
@@ -340,7 +340,7 @@ export class PredictionCoordinator {
     body: unknown,
     retry: RetryPolicy,
   ): Promise<T> {
-    const attempts = retry === 'network' ? 2 : 1
+    const attempts = retry === 'none' ? 1 : 2
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (!this.isCurrent(context)) {
         this.log(operation, { code: 'AUTH_CANCELLED', attempt })
@@ -392,7 +392,14 @@ export class PredictionCoordinator {
       this.log(operation, { code, attempt, ...(status === undefined ? {} : { status }) })
       if (
         attempt === attempts ||
-        (code !== 'NETWORK_UNAVAILABLE' && code !== 'REQUEST_TIMEOUT')
+        (code !== 'NETWORK_UNAVAILABLE' &&
+          code !== 'REQUEST_TIMEOUT' &&
+          !(
+            retry === 'battle_event' &&
+            status !== undefined &&
+            status >= 500 &&
+            status <= 599
+          ))
       )
         throw new ApplicationError(code, 'Prediction request failed')
       await this.retryDelay(context.signal)

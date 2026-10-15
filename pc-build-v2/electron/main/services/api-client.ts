@@ -243,6 +243,8 @@ export class ApiClient {
       const declaredLength = Number(response.headers.get('content-length'))
       if (Number.isFinite(declaredLength) && declaredLength > this.maxJsonBytes) {
         await response.body?.cancel().catch(() => undefined)
+        if (response.status >= 500 && response.status <= 599)
+          return { ok: false, error: statusError(response.status, null, request.path) }
         return {
           ok: false,
           error: createApiError(
@@ -255,6 +257,8 @@ export class ApiClient {
 
       const text = await readBoundedBody(response, this.maxJsonBytes)
       if (text === null) {
+        if (response.status >= 500 && response.status <= 599)
+          return { ok: false, error: statusError(response.status, null, request.path) }
         return {
           ok: false,
           error: createApiError(
@@ -270,6 +274,8 @@ export class ApiClient {
         try {
           json = JSON.parse(text) as unknown
         } catch {
+          if (response.status >= 500 && response.status <= 599)
+            return { ok: false, error: statusError(response.status, null, request.path) }
           return {
             ok: false,
             error: createApiError(

@@ -83,6 +83,49 @@ describe('ApiClient', () => {
     ).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_RESPONSE' } })
   })
 
+  it.each([500, 502, 503, 504])(
+    'preserves HTTP %s for idempotent retries when its body is not JSON',
+    async (status) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response('Internal Server Error', { status }))
+      const client = new ApiClient(createProductionServerConfig(), fetchMock, logger)
+      await expect(
+        client.request({
+          method: 'POST',
+          path: '/api/streamer/predictions/battle-start',
+          schema,
+        }),
+      ).resolves.toMatchObject({ ok: false, error: { code: 'SERVER_ERROR', status } })
+    },
+  )
+
+  it.each([true, false])(
+    'preserves bounded HTTP 5xx when the response is oversized (declared=%s)',
+    async (declared) => {
+      const response = new Response('x'.repeat(200), {
+        status: 503,
+        ...(declared ? { headers: { 'content-length': '9999' } } : {}),
+      })
+      const client = new ApiClient(
+        createProductionServerConfig(),
+        vi.fn<typeof fetch>().mockResolvedValue(response),
+        logger,
+        100,
+      )
+      await expect(
+        client.request({
+          method: 'POST',
+          path: '/api/streamer/predictions/battle-result',
+          schema,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'SERVER_ERROR', status: 503 },
+      })
+    },
+  )
+
   it('aborts requests at the configured deadline', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(

@@ -456,8 +456,10 @@ prediction image uploads are removed. The worker emits one strict `prediction_re
 event per read result screen of an own battle (no images), with `battleId`, `gap`, `outcome`
 and evidence containing nullable crown counts `crowns:{top,bottom}` (0–3), `deltaSign` and
 `deltaIcon`. Interrupted/minimised monitoring marks the last own battle as having a gap.
-Heartbeat, VS and result network failures get one retry after two seconds; outcomes are
-logged as codes, not user data. The server owns voting timers and settlement.
+Heartbeat, VS and result network failures get one retry after two seconds. Idempotent
+VS/result reports also retry once on HTTP 5xx, including non-JSON server errors; manual
+actions never do. Outcomes are logged as codes, not user data. The server owns voting
+timers and settlement.
 
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
 schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake
