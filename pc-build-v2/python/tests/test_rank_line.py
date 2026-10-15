@@ -84,3 +84,22 @@ def test_empty_lines_are_not_pol() -> None:
 def test_zone_outside_the_frame_is_unknown() -> None:
     result = rl.check_rank(np.zeros((40, 40, 3), np.uint8), (0, 0, 40, 40), Badge(.5, .43, .22, .15), templates())
     assert result["rank"] == "unknown"
+
+
+# Review M-10: no own PoL VS is recorded. On spectate clips the bottom
+# player's rank icons are centred 3.33-3.34 uh below the badge centre; own-battle
+# names sit up to ~0.1 uh higher than the spectate names. The own zone is centred
+# on the icons, so the line still reads when it sits higher (the old zone,
+# 3.05-3.70 uh, lost it at -0.13 uh) or lower.
+@pytest.mark.parametrize("offset", [-0.14, 0.0, 0.12])
+def test_own_zone_reads_the_line_around_the_measured_icon_position(offset: float) -> None:
+    rng = np.random.default_rng(5)
+    frame = cv2.resize(rng.integers(90, 110, (60, 34, 3), dtype=np.uint8), (1080, 1920),
+                       interpolation=cv2.INTER_LINEAR)
+    uh = BADGE.width * RECT[2] / RECT[3]
+    height = round(0.055 * 1920)                                   # league badge, 9:16
+    x0, x1, _, _ = rl.zones(BADGE, RECT[2] / RECT[3])["own"]
+    top = round((BADGE.cy + (3.335 + offset) * uh) * 1920) - height // 2
+    left = round((x0 + 0.75 * (x1 - x0)) * 1080) - height // 2
+    frame[top:top + height, left:left + height] = cv2.resize(shield(), (height, height))
+    assert rl.check_rank(frame, RECT, BADGE, templates())["rankEvidence"]["own"] == "league"

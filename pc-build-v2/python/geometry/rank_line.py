@@ -32,9 +32,13 @@ RANK_SCALES = (0.9, 1.0, 1.1)
 OPPONENT_X = (0.0, 0.45)
 OPPONENT_Y = (0.40, 1.0)
 # Own line: mirrored about the badge centre; below the own name, in
-# badge-height units uh = badge.width × aspect (measured on the bottom player
-# of the spectate clips; own-battle VS shows the own name at the same offset).
-OWN_Y = (3.05, 3.70)
+# badge-height units uh = badge.width × aspect. Centred on the rank icons of
+# the bottom player on the spectate clips (icon centre 3.33-3.34 uh, icon
+# ≈0.45 uh tall), so the line may sit ±0.1 uh off and still be read. Own-battle
+# VS (5 Cheddar recordings, 4 formats) shows the own name at the same offset
+# as the spectate bottom name (≈3.0 uh) within that slack; no own PoL VS has
+# been recorded yet (review M-10).
+OWN_Y = (3.00, 3.65)
 # Owner VS clips at RANK_PX: medal lines 0.78+, league lines 0.80+; lines
 # without a rank icon reach medal 0.52 / league 0.53 (name glyphs, sparkles,
 # the Ultimate Champion league-7 badge against leagues 1-6).
