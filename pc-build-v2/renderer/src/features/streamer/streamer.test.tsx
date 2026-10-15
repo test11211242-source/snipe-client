@@ -213,6 +213,22 @@ describe('predictions', () => {
     )
     expect(await screen.findByRole('button', { name: /Включить прогнозы/ })).toBeVisible()
   })
+
+  it('says so, and still offers to stop, while the result trigger is suspended', async () => {
+    mountStream(
+      { name: 'stream', section: 'predictions' },
+      {
+        view: (view) => {
+          view.predictions.active = true
+          view.predictions.runtimeState = 'suspended'
+        },
+      },
+    )
+    expect(await screen.findByText('Приостановлены')).toBeVisible()
+    expect(screen.getByText('Прогнозы приостановлены')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Смешанный' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Выключить прогнозы/ })).toBeEnabled()
+  })
 })
 
 describe('chat', () => {

@@ -14,7 +14,14 @@ import {
   type MonitorSession,
   type DeckMode,
 } from '../../../shared/models/monitor'
-import { MonitorStartPayloadSchema } from '../../../shared/contracts/monitor-protocol'
+import {
+  MonitorStartPayloadSchema,
+  type GameLayoutWire,
+  type MonitorGeometryEvent,
+  type MonitorLearningEvent,
+  type MonitorLayoutLearnedEvent,
+  type MonitorPredictionStateEvent,
+} from '../../../shared/contracts/monitor-protocol'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import {
   DEFAULT_MONITOR_PREFERENCES,
@@ -37,6 +44,13 @@ import {
   type MonitorJournalRepository,
 } from '../infrastructure/monitor-journal-repository'
 
+type LearnedLayoutHandler = (
+  userId: string,
+  profileId: string,
+  calibrationId: string,
+  layout: GameLayoutWire,
+) => Promise<number>
+
 interface SearchAction extends MonitorAction {
   triggerId: string
   deckMode: DeckMode
@@ -50,6 +64,16 @@ const RECOVERABLE_SOURCE_CODES: Readonly<Record<string, true>> = {
   CAPTURE_NO_FRAME: true,
 }
 const SOURCE_RECOVERY_DELAYS = [1_000, 2_000, 5_000, 10_000] as const
+/**
+ * A crashed or internally failed worker is restarted on the same backoff ladder, at most
+ * WORKER_RESTART_LIMIT times per WORKER_RESTART_WINDOW_MS; beyond that the run fails.
+ */
+const WORKER_RESTART_CODES: Readonly<Record<string, true>> = {
+  MONITOR_PROCESS_EXITED: true,
+  MONITOR_INTERNAL_FAILED: true,
+}
+const WORKER_RESTART_LIMIT = 3
+const WORKER_RESTART_WINDOW_MS = 10 * 60_000
 
 const EMPTY_STATS: MonitorSessionStats = Object.freeze({
   triggers: 0,
@@ -118,9 +142,12 @@ export class MonitorSupervisor {
   readonly #viewListeners = new Set<(view: MonitorView) => void>()
   #recoveryTimer: ReturnType<typeof setTimeout> | null = null
   #recoveryAttempt = 0
+  /** Times (ms) of automatic worker restarts inside the current restart window. */
+  #workerRestarts: number[] = []
   #bindingFingerprint: string | null = null
   #profileId: string | null = null
   #calibrationRevision: number | null = null
+  #learningFailure: MonitorLearningEvent['payload'] | null = null
   #lastTriggerId: string | null = null
   #retry: { action: SearchAction; attemptId: string; expiresAt: number } | null = null
   #retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -130,6 +157,10 @@ export class MonitorSupervisor {
   #journalWrite: Promise<void> | null = null
   #sessionTags = new Map<string, number>()
   #sessionRepeats = new Set<string>()
+  #learnedLayoutHandler: LearnedLayoutHandler | null = null
+  readonly #predictionStateListeners = new Set<
+    (state: MonitorPredictionStateEvent['payload']['state']) => void | Promise<void>
+  >()
 
   constructor(
     private readonly auth: AuthSession,
@@ -140,6 +171,10 @@ export class MonitorSupervisor {
     private readonly ocr: OcrApiClient,
     private readonly now: () => Date = () => new Date(),
     private readonly journalRepository?: MonitorJournalRepository,
+    private readonly logger?: {
+      info: (message: string, context?: unknown) => void
+      warn: (message: string, context?: unknown) => void
+    },
   ) {
     this.#userContextId = this.auth.getView().user?.id ?? null
   }
@@ -194,6 +229,19 @@ export class MonitorSupervisor {
   subscribeViews(listener: (view: MonitorView) => void): () => void {
     this.#viewListeners.add(listener)
     return () => this.#viewListeners.delete(listener)
+  }
+
+  setLearnedLayoutHandler(handler: LearnedLayoutHandler): void {
+    this.#learnedLayoutHandler = handler
+  }
+
+  subscribePredictionStates(
+    listener: (
+      state: MonitorPredictionStateEvent['payload']['state'],
+    ) => void | Promise<void>,
+  ): () => void {
+    this.#predictionStateListeners.add(listener)
+    return () => this.#predictionStateListeners.delete(listener)
   }
 
   async getHistory(offset = 0, limit = 50): Promise<MonitorResult[]> {
@@ -355,6 +403,7 @@ export class MonitorSupervisor {
       session: null,
       summary: null,
       historyError: null,
+      geometry: null,
     })
     return true
   }
@@ -379,6 +428,7 @@ export class MonitorSupervisor {
     const generation = ++this.#generation
     this.#runController.abort()
     this.#runController = new AbortController()
+    this.#learningFailure = null
     this.#pendingAction = null
     this.#ocrActive = false
     const session = this.#view.session
@@ -391,6 +441,7 @@ export class MonitorSupervisor {
     const startedAt = continuing ? session.startedAt : this.now().toISOString()
     this.transition('PREFLIGHT', {
       error: null,
+      geometry: null,
       runIntent: true,
       startedAt,
       ...(continuing
@@ -439,7 +490,8 @@ export class MonitorSupervisor {
     ++this.#stopIntentGeneration
     this.cancelRecovery()
     this.clearRetry()
-    this.patch({ runIntent: false, search: null })
+    this.patch({ runIntent: false, search: null, geometry: null, sourceMinimized: false })
+    this.#workerRestarts = []
     if (reason !== null) this.finalizeSession(reason)
     if (this.#stopPromise !== null) return this.#stopPromise
     if (this.#view.state === 'STOPPED') {
@@ -537,16 +589,23 @@ export class MonitorSupervisor {
           'CAPTURE_NOT_CONFIGURED',
           'Configure a capture profile',
         )
+      const activeCalibration = active.profile.configuration.calibration
+      // Same-calibration game-relative recovery intentionally reloads the latest
+      // source and zones; only a new profile/calibration invalidates its binding.
+      const bindingFingerprint =
+        activeCalibration.coordinateSpace === 'game_relative'
+          ? `game:${active.profile.profileId}:${activeCalibration.calibrationId}`
+          : active.profile.configuration.fingerprint
       if (
         this.#bindingFingerprint !== null &&
-        this.#bindingFingerprint !== active.profile.configuration.fingerprint
+        this.#bindingFingerprint !== bindingFingerprint
       ) {
         throw new ApplicationError(
           'CAPTURE_CALIBRATION_INVALID',
           'The capture profile changed during recovery',
         )
       }
-      this.#bindingFingerprint = active.profile.configuration.fingerprint
+      this.#bindingFingerprint = bindingFingerprint
       this.#profileId = active.profile.profileId
       this.#calibrationRevision = active.profile.configuration.calibration.revision
       if (this.#view.session !== null && this.#view.session.initialProfileId === null) {
@@ -571,15 +630,64 @@ export class MonitorSupervisor {
         },
       })
       this.transition('STARTING')
+      const calibration = resolved.configuration.calibration
+      const profileId = active.profile.profileId
+      const calibrationId = calibration.calibrationId
+      const primary =
+        calibration.coordinateSpace === 'game_relative'
+          ? {
+              kind: 'game_relative' as const,
+              profileCalibrationId: calibrationId,
+              layouts: calibration.layouts.map((layout) => ({
+                layoutId: layout.layoutId,
+                layoutSource: layout.layoutSource,
+                calibratedAt: layout.calibratedAt,
+                gameAspect: layout.gameAspect,
+                windowChrome: layout.windowChrome,
+                regions: {
+                  trigger: layout.triggerRegion,
+                  nicknameRegion: layout.nicknameRegion,
+                  topLeftEvidenceRegion: layout.topLeftEvidenceRegion,
+                },
+                trigger: layout.trigger,
+                badge:
+                  layout.trigger.kind === 'vs_edge_orientation'
+                    ? layout.trigger.badge
+                    : null,
+                zonesOrigin: {
+                  nickname:
+                    layout.provenance.nickname.origin === 'auto' ? 'auto' : 'manual',
+                  topLeftEvidence:
+                    layout.provenance.topLeftEvidence.origin === 'auto'
+                      ? 'auto'
+                      : 'manual',
+                },
+              })),
+              learning: {
+                enabled: true,
+                maxLayouts: 4,
+              },
+            }
+          : {
+              kind: 'full_frame' as const,
+              configuredFrameSize: calibration.referenceFrameSize,
+              regions: {
+                trigger: calibration.triggerRegion,
+                nicknameRegion: calibration.nicknameRegion,
+                topLeftEvidenceRegion: calibration.topLeftEvidenceRegion,
+              },
+              triggerProfile: calibration.triggerProfile,
+            }
+      this.patch({
+        geometry:
+          primary.kind === 'game_relative'
+            ? { state: 'locating', aspectLabel: null, learningFailure: null }
+            : null,
+        sourceMinimized: false,
+      })
       const payload = MonitorStartPayloadSchema.parse({
         selector: resolved.selector,
-        configuredFrameSize: resolved.configuration.calibration.referenceFrameSize,
-        regions: {
-          trigger: resolved.configuration.calibration.triggerRegion,
-          nicknameRegion: resolved.configuration.calibration.nicknameRegion,
-          topLeftEvidenceRegion: resolved.configuration.calibration.topLeftEvidenceRegion,
-        },
-        triggerProfile: resolved.configuration.calibration.triggerProfile,
+        primary,
         capturePolicy: 'immediate_nickname',
         limits: {
           fps: 10,
@@ -607,6 +715,48 @@ export class MonitorSupervisor {
           this.acceptAction(generation, userId, contextGeneration, action),
         onPredictionResult: (action) =>
           this.acceptPredictionResult(generation, userId, contextGeneration, action),
+        onGeometry: (geometry) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            this.acceptGeometry(geometry)
+        },
+        onLearning: (learning) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            this.acceptLearning(learning)
+        },
+        onLayoutLearned: (learned) => {
+          if (
+            primary.kind === 'game_relative' &&
+            this.isRuntimeCurrent(generation, userId, contextGeneration)
+          )
+            void this.acceptLearnedLayout(
+              generation,
+              userId,
+              contextGeneration,
+              profileId,
+              calibrationId,
+              learned,
+            )
+        },
+        onPredictionState: ({ state }) => {
+          if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
+          for (const listener of this.#predictionStateListeners) {
+            try {
+              void Promise.resolve(listener(state)).catch(() => undefined)
+            } catch {
+              // One-way prediction notifications cannot stop opponent monitoring.
+            }
+          }
+        },
+        onSourceState: ({ minimized }) => {
+          if (this.isRuntimeCurrent(generation, userId, contextGeneration))
+            this.patch({ sourceMinimized: minimized })
+        },
         onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
         onExit: (error) => {
           if (error !== null) this.failRun(generation, userId, contextGeneration, error)
@@ -644,6 +794,86 @@ export class MonitorSupervisor {
       this.finalizeSession('failed')
     }
     return this.#view
+  }
+
+  private acceptGeometry(geometry: MonitorGeometryEvent['payload']): void {
+    const state = geometry.state === 'aspect_unknown' ? 'learning' : geometry.state
+    if (state === 'armed') this.#learningFailure = null
+    this.patch({
+      geometry: {
+        state: this.#learningFailure !== null ? 'learning_failed' : state,
+        aspectLabel:
+          geometry.gameAspect === null
+            ? null
+            : `9:${Number((9 / geometry.gameAspect).toFixed(1))}`,
+        learningFailure: this.#learningFailure?.reason ?? null,
+      },
+    })
+  }
+
+  private acceptLearning(learning: MonitorLearningEvent['payload']): void {
+    // Python emits waiting_vs only when it actually starts a fresh episode.
+    if (learning.status === 'waiting_vs') this.#learningFailure = null
+    else if (learning.status === 'failed') this.#learningFailure = learning
+    this.patch({
+      geometry: {
+        state: this.#learningFailure !== null ? 'learning_failed' : 'learning',
+        aspectLabel: this.#view.geometry?.aspectLabel ?? null,
+        learningFailure: this.#learningFailure?.reason ?? null,
+      },
+    })
+  }
+
+  private async acceptLearnedLayout(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    profileId: string,
+    calibrationId: string,
+    learned: MonitorLayoutLearnedEvent['payload'],
+  ): Promise<void> {
+    if (learned.calibrationId !== calibrationId) {
+      this.logger?.warn('Learned layout not saved', {
+        code: 'LAYOUT_STALE',
+        profileId,
+        calibrationId,
+        layoutId: learned.layout.layoutId,
+      })
+      return
+    }
+    let revision: number
+    try {
+      if (this.#learnedLayoutHandler === null)
+        throw new ApplicationError('LAYOUT_SAVE_FAILED', 'Layout storage unavailable')
+      revision = await this.#learnedLayoutHandler(
+        userId,
+        profileId,
+        calibrationId,
+        learned.layout,
+      )
+    } catch (error) {
+      const code = error instanceof ApplicationError ? error.code : 'LAYOUT_SAVE_FAILED'
+      this.logger?.warn('Learned layout not saved', {
+        code,
+        profileId,
+        calibrationId,
+        layoutId: learned.layout.layoutId,
+      })
+      if (
+        code !== 'LAYOUT_STALE' &&
+        code !== 'LAYOUT_LIMIT' &&
+        this.isRuntimeCurrent(generation, userId, contextGeneration)
+      )
+        this.patch({
+          error: publicError(
+            new ApplicationError('LAYOUT_SAVE_FAILED', 'Layout storage failed'),
+          ),
+        })
+      return
+    }
+    if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
+    this.#calibrationRevision = revision
+    if (this.#view.error?.code === 'LAYOUT_SAVE_FAILED') this.patch({ error: null })
   }
 
   private acceptAction(
@@ -973,14 +1203,20 @@ export class MonitorSupervisor {
     ) {
       return
     }
-    if (RECOVERABLE_SOURCE_CODES[error.code] && this.#view.runIntent) {
+    if (
+      this.#view.runIntent &&
+      (RECOVERABLE_SOURCE_CODES[error.code] || this.takeWorkerRestart(error.code))
+    ) {
       ++this.#generation
       this.#runController.abort()
       this.#ocrController?.abort()
       this.#pendingAction = null
       this.#ocrActive = false
       this.clearRetry()
-      this.waitForSource(publicError(error))
+      this.waitForSource(
+        publicError(error),
+        RECOVERABLE_SOURCE_CODES[error.code] ? 'source' : 'worker',
+      )
       void this.process.stop()
       return
     }
@@ -992,6 +1228,21 @@ export class MonitorSupervisor {
     this.clearRetry()
     this.finalizeSession('failed')
     void this.process.stop()
+  }
+
+  private takeWorkerRestart(code: string): boolean {
+    if (!WORKER_RESTART_CODES[code]) return false
+    const now = this.now().getTime()
+    this.#workerRestarts = this.#workerRestarts.filter(
+      (at) => now - at < WORKER_RESTART_WINDOW_MS,
+    )
+    if (this.#workerRestarts.length >= WORKER_RESTART_LIMIT) return false
+    this.#workerRestarts.push(now)
+    this.logger?.warn('Monitor worker restarted', {
+      code,
+      restarts: this.#workerRestarts.length,
+    })
+    return true
   }
 
   private assertCurrent(
@@ -1029,6 +1280,17 @@ export class MonitorSupervisor {
     )
   }
 
+  private isRuntimeCurrent(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+  ): boolean {
+    return (
+      this.isCurrent(generation, userId, contextGeneration) &&
+      ['STARTING', 'READY'].includes(this.#view.state)
+    )
+  }
+
   private isUserContextCurrent(
     userId: string | null,
     contextGeneration: number,
@@ -1051,12 +1313,23 @@ export class MonitorSupervisor {
     this.#recoveryTimer = null
   }
 
-  private waitForSource(error: MonitorView['error']): void {
+  private waitForSource(
+    error: MonitorView['error'],
+    recovery: 'source' | 'worker' = 'source',
+  ): void {
     this.cancelRecovery()
+    // One line per recovery episode; the retries that follow are not logged.
+    if (this.#recoveryAttempt === 0)
+      this.logger?.info('Monitor waiting for source', {
+        code: error?.code ?? null,
+        kind: recovery,
+      })
     this.transition('WAITING_SOURCE', {
       error,
       search: null,
       readiness: { ...this.#view.readiness, sourceAvailable: false },
+      sourceMinimized: false,
+      recovery,
     })
     const generation = this.#generation
     const delay = SOURCE_RECOVERY_DELAYS[this.#recoveryAttempt++] ?? 15_000
@@ -1204,7 +1477,10 @@ export class MonitorSupervisor {
     if (!TRANSITIONS[this.#view.state].includes(state)) {
       throw new Error(`Invalid monitor transition: ${this.#view.state} -> ${state}`)
     }
-    this.patch({ ...patch, state })
+    // A recovery lasts only through its own attempt (see MonitorView.recovery).
+    const attempt =
+      state === 'WAITING_SOURCE' || state === 'PREFLIGHT' || state === 'STARTING'
+    this.patch({ ...(attempt ? {} : { recovery: null }), ...patch, state })
   }
 
   private patch(patch: Partial<MonitorView>): void {
@@ -1235,6 +1511,7 @@ export class MonitorSupervisor {
       session: null,
       summary: null,
       historyError: null,
+      geometry: null,
     })
   }
 }

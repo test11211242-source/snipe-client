@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { MonitorLearningCodeSchema } from '../contracts/monitor-protocol'
+
 export const MonitorStateSchema = z.enum([
   'STOPPED',
   'PREFLIGHT',
@@ -150,6 +152,21 @@ export const MonitorSessionSchema = z
   })
   .strict()
 
+export const MonitorGeometrySchema = z
+  .object({
+    state: z.enum([
+      'locating',
+      'armed',
+      'no_game',
+      'aspect_mismatch',
+      'learning',
+      'learning_failed',
+    ]),
+    aspectLabel: z.string().min(1).max(80).nullable(),
+    learningFailure: MonitorLearningCodeSchema.nullable(),
+  })
+  .strict()
+
 export const MonitorViewSchema = z
   .object({
     seq: z.number().int().nonnegative().default(0),
@@ -165,6 +182,15 @@ export const MonitorViewSchema = z
     session: MonitorSessionSchema.nullable().default(null),
     summary: MonitorSessionSchema.nullable().default(null),
     historyError: MonitorPublicErrorSchema.nullable().default(null),
+    geometry: MonitorGeometrySchema.nullable().default(null),
+    /** The running window source is minimised: analysis is paused until it is restored. */
+    sourceMinimized: z.boolean().default(false),
+    /**
+     * Automatic recovery in flight: `source` waits for a lost game window, `worker`
+     * restarts a failed worker. Set on WAITING_SOURCE and kept through the attempt's
+     * PREFLIGHT/STARTING; any other state clears it.
+     */
+    recovery: z.enum(['source', 'worker']).nullable().default(null),
   })
   .strict()
 
@@ -176,3 +202,20 @@ export type MonitorSessionStats = z.infer<typeof MonitorSessionStatsSchema>
 export type MonitorView = z.infer<typeof MonitorViewSchema>
 export type MonitorSession = z.infer<typeof MonitorSessionSchema>
 export type MonitorSearch = z.infer<typeof MonitorSearchSchema>
+
+/**
+ * The state every surface (main window, tray, overlay) presents. Recovery never flaps:
+ * a source retry stays «waiting for the game window» through its PREFLIGHT/STARTING, and
+ * a worker restart reads as a start, never as a lost window.
+ */
+export function presentedMonitorState(
+  view: Pick<MonitorView, 'state' | 'recovery'>,
+): MonitorState {
+  if (
+    view.recovery === 'source' &&
+    (view.state === 'PREFLIGHT' || view.state === 'STARTING')
+  )
+    return 'WAITING_SOURCE'
+  if (view.recovery === 'worker' && view.state === 'WAITING_SOURCE') return 'STARTING'
+  return view.state
+}

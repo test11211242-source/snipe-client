@@ -3,10 +3,12 @@ import { z } from 'zod'
 import {
   CapturePreferenceSchema,
   CaptureProfileCollectionSchema,
+  CaptureConfigurationSchema,
+  FullFrameCalibrationSchema,
+  CaptureProfileSchema,
   NormalizedRectSchema,
   PixelSizeSchema,
   TriggerProfileSchema,
-  type LayoutCalibration,
   type NormalizedRegions,
   type PixelSize,
   type TriggerProfile,
@@ -54,6 +56,60 @@ export const LegacyCaptureCollectionSchema = z
   })
   .strict()
 
+/** Exact rollback v4 schemas: no game-relative fields or newer versions accepted. */
+export const V4LayoutCalibrationSchema = FullFrameCalibrationSchema.extend({
+  schemaVersion: z.literal(1),
+})
+export const V4CaptureConfigurationSchema = CaptureConfigurationSchema.extend({
+  schemaVersion: z.literal(2),
+  calibration: V4LayoutCalibrationSchema,
+})
+export const V4CaptureCollectionSchema = z
+  .object({
+    ...CaptureProfileCollectionSchema.shape,
+    schemaVersion: z.literal(3),
+    profiles: z
+      .array(
+        CaptureProfileSchema.extend({
+          configuration: V4CaptureConfigurationSchema,
+        }),
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict()
+  .superRefine((collection, context) => {
+    const ids = new Set<string>()
+    const names = new Set<string>()
+    for (const [index, profile] of collection.profiles.entries()) {
+      const name = profile.profileName.toLowerCase()
+      if (ids.has(profile.profileId) || names.has(name)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['profiles', index],
+          message: 'Duplicate capture profile',
+        })
+      }
+      ids.add(profile.profileId)
+      names.add(name)
+      if (profile.configuration.userId !== collection.userId) {
+        context.addIssue({
+          code: 'custom',
+          path: ['profiles', index, 'configuration', 'userId'],
+          message: 'Capture user does not match',
+        })
+      }
+    }
+    if (!ids.has(collection.activeProfileId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['activeProfileId'],
+        message: 'Active capture profile does not exist',
+      })
+    }
+  })
+export type V4CaptureCollection = z.infer<typeof V4CaptureCollectionSchema>
+export type V4CaptureProfile = V4CaptureCollection['profiles'][number]
 export function assertLegacyFingerprint(value: { fingerprint: string }): void {
   const { fingerprint, ...unsigned } = value
   if (
@@ -71,10 +127,10 @@ export function createLayoutCalibration(
   triggerProfile: TriggerProfile,
   calibratedAt: string,
   origin: 'manual' | 'imported',
-): LayoutCalibration {
+): z.infer<typeof FullFrameCalibrationSchema> {
   const provenance = { origin, confidence: null, analyzerVersion: null }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     calibrationId: id,
     revision,
     referenceFrameSize: frameSize,

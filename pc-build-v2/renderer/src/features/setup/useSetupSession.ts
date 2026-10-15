@@ -3,7 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SetupCommand } from '../../../../shared/contracts/capture-ipc'
 import type { NormalizedRect, RegionKind } from '../../../../shared/models/capture'
 import type { SetupSessionView } from '../../../../shared/models/setup'
-import { commandErrorMessage, isStaleCause, viewErrorMessage } from './errors'
+import {
+  commandErrorCode,
+  commandErrorMessage,
+  isStaleCause,
+  viewErrorMessage,
+} from './errors'
 
 const FINAL = ['COMMITTED', 'CANCELLED', 'FAILED'] as const
 const TRANSIENT = ['CREATED', 'CAPTURING', 'SAVING'] as const
@@ -30,6 +35,8 @@ export interface SetupSession {
   busy: boolean
   /** Renderer-side failure text, or the text of main's error on the view. */
   error: string | null
+  /** Machine-readable code of the same command or view failure. */
+  errorCode: string | null
   /** Latest accepted view; valid right after an awaited command. */
   latest: () => SetupSessionView | null
   /** Takes over a session main already has (new start or resumed) and loads its frame. */
@@ -46,6 +53,10 @@ export interface SetupSession {
   review: () => Promise<SetupSessionView | null>
   commit: () => Promise<SetupSessionView | null>
   retrySync: () => Promise<SetupSessionView | null>
+  /** Starts the automatic wait again after a failed attempt (`DETECTING` + `failed`). */
+  retryDetection: () => Promise<SetupSessionView | null>
+  /** Leaves automatic setup for the manual editor; main freezes or reuses a frame. */
+  switchToManual: () => Promise<SetupSessionView | null>
   /** Cancels or closes the session. `true` when it is over (or already gone). */
   end: () => Promise<boolean>
   clearError: () => void
@@ -63,6 +74,7 @@ export function useSetupSession(): SetupSession {
   const [frameFailed, setFrameFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [commandError, setCommandError] = useState<string | null>(null)
+  const [commandCode, setCommandCode] = useState<string | null>(null)
   // What to say when main reports an error code the UI has no wording for.
   const [stepFallback, setStepFallback] = useState(STEP_FAILED)
   const viewRef = useRef<SetupSessionView | null>(null)
@@ -130,6 +142,7 @@ export function useSetupSession(): SetupSession {
   const adopt = useCallback(
     async (next: SetupSessionView): Promise<void> => {
       setCommandError(null)
+      setCommandCode(null)
       await accept(next)
     },
     [accept],
@@ -173,6 +186,7 @@ export function useSetupSession(): SetupSession {
       busyRef.current = true
       setBusy(true)
       setCommandError(null)
+      setCommandCode(null)
       setStepFallback(viewFailure)
       const request = command(current)
       try {
@@ -187,6 +201,7 @@ export function useSetupSession(): SetupSession {
         ) {
           if (alive.current) {
             setCommandError(STALE_TEXT)
+            setCommandCode(null)
             void refresh()
           }
           return null
@@ -196,6 +211,7 @@ export function useSetupSession(): SetupSession {
       } catch (cause) {
         if (alive.current) {
           setCommandError(commandErrorMessage(cause, failure))
+          setCommandCode(commandErrorCode(cause))
           if (isStaleCause(cause)) void refresh()
         }
         return null
@@ -248,6 +264,22 @@ export function useSetupSession(): SetupSession {
       ),
     [run],
   )
+  const retryDetection = useCallback(
+    () =>
+      run(
+        (request) => window.crTools.setup.retryDetection(request),
+        'Не удалось начать заново. Повторите.',
+      ),
+    [run],
+  )
+  const switchToManual = useCallback(
+    () =>
+      run(
+        (request) => window.crTools.setup.switchToManual(request),
+        'Не удалось открыть ручную настройку. Повторите.',
+      ),
+    [run],
+  )
 
   const end = useCallback(async (): Promise<boolean> => {
     const current = viewRef.current
@@ -256,6 +288,7 @@ export function useSetupSession(): SetupSession {
     busyRef.current = true
     setBusy(true)
     setCommandError(null)
+    setCommandCode(null)
     try {
       const request = command(current)
       if (isFinalState(current.state)) await window.crTools.setup.close(request)
@@ -270,10 +303,12 @@ export function useSetupSession(): SetupSession {
       } catch {
         return true
       }
-      if (alive.current)
+      if (alive.current) {
         setCommandError(
           commandErrorMessage(cause, 'Не удалось закрыть настройку. Повторите попытку.'),
         )
+        setCommandCode(commandErrorCode(cause))
+      }
       return false
     } finally {
       busyRef.current = false
@@ -281,8 +316,12 @@ export function useSetupSession(): SetupSession {
     }
   }, [])
 
-  // States main moves out of on its own (frame capture, saving): follow them.
-  const transient = view !== null && (TRANSIENT as readonly string[]).includes(view.state)
+  // States main moves out of on its own (frame capture, saving, the automatic wait): follow
+  // them. A failed wait is final until the user retries, so it needs no polling.
+  const transient =
+    view !== null &&
+    ((TRANSIENT as readonly string[]).includes(view.state) ||
+      (view.state === 'DETECTING' && view.detection?.status !== 'failed'))
   useEffect(() => {
     if (!transient) return undefined
     const timer = setInterval(() => {
@@ -292,10 +331,14 @@ export function useSetupSession(): SetupSession {
   }, [transient, refresh])
 
   const latest = useCallback(() => viewRef.current, [])
-  const clearError = useCallback(() => setCommandError(null), [])
+  const clearError = useCallback(() => {
+    setCommandError(null)
+    setCommandCode(null)
+  }, [])
   const error =
     commandError ??
     (view?.error == null ? null : (viewErrorMessage(view.error) ?? stepFallback))
+  const errorCode = commandError !== null ? commandCode : (view?.error?.code ?? null)
 
   return useMemo(
     () => ({
@@ -304,6 +347,7 @@ export function useSetupSession(): SetupSession {
       frameFailed,
       busy,
       error,
+      errorCode,
       latest,
       adopt,
       resume,
@@ -314,6 +358,8 @@ export function useSetupSession(): SetupSession {
       review,
       commit,
       retrySync,
+      retryDetection,
+      switchToManual,
       end,
       clearError,
     }),
@@ -323,6 +369,7 @@ export function useSetupSession(): SetupSession {
       frameFailed,
       busy,
       error,
+      errorCode,
       latest,
       adopt,
       resume,
@@ -333,6 +380,8 @@ export function useSetupSession(): SetupSession {
       review,
       commit,
       retrySync,
+      retryDetection,
+      switchToManual,
       end,
       clearError,
     ],

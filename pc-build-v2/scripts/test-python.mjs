@@ -3,12 +3,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
+import { pythonTestExecutable as python } from './python-test-interpreter.mjs'
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const python = join(
-  root,
-  '.venv',
-  process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
-)
 if (!existsSync(python)) {
   console.log('Creating the isolated Python test environment (.venv).')
   const setup = spawnSync(
@@ -34,9 +31,13 @@ if (dependencies.status !== 0) {
   )
   if (install.status !== 0) process.exit(install.status ?? 1)
 }
-const result = spawnSync(python, ['-m', 'pytest', 'tests', ...process.argv.slice(2)], {
-  cwd: join(root, 'python'),
-  stdio: 'inherit',
-})
+const result = spawnSync(
+  python,
+  ['-m', 'pytest', 'tests', '-m', 'not replay', ...process.argv.slice(2)],
+  {
+    cwd: join(root, 'python'),
+    stdio: 'inherit',
+  },
+)
 if (result.error) console.error('The isolated Python test interpreter could not start.')
 process.exit(result.status ?? 1)

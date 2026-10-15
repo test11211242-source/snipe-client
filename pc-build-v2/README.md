@@ -118,9 +118,20 @@ settings. Logout/user switches fence pending loads. Monitor stderr is drained as
 rate-limited diagnostic counters and never terminates capture by lifetime volume;
 stdout remains a strict protocol. Metadata helper failures are reported separately
 from absent/ambiguous sources, without relaxing exact identity matching.
-Individual unverifiable windows remain disabled; a bound window that closes during
+Window identity, display device names and window previews come from
+`python/capture_sources.py` (plain ctypes, one short process per request, no PowerShell).
+Identity is cached per HWND and title, the display topology until Electron reports a
+display change. The picker list waits at most 1.5 s for these helpers: windows the helper
+could not check in time are listed unverified and verified again on selection, so a slow
+helper never fails the list. Previews stream window by window (DWM `PrintWindow`);
+windows the helper cannot draw fall back to one Electron thumbnail batch.
+Individual unidentifiable windows remain disabled; a bound window that closes during
 metadata lookup is not-found. A display-helper failure leaves windows in the picker
-and disables unverifiable displays. Recovery never relaxes exact title/executable
+and disables unverifiable displays. Monitor start and recovery first check the saved
+HWND alone (its owner process via `GetWindowThreadProcessId`, which is 0 for a closed
+handle, and that process's executable; one helper call) and
+bind it without listing windows; only a closed, reused or unverifiable handle falls back
+to the full list. Recovery never relaxes exact title/executable
 identity or calibrated fixed-ROI matching.
 
 Sanitized asynchronous diagnostics rotate under `userData/logs` (five files of at
@@ -137,14 +148,27 @@ and can be retried later, distinct from game API outages. Codes, not HTTP status
 identify account causes; raw server responses never reach the old form's messages.
 
 Capture configuration is separate and per server user under
-`userData/capture-profiles.v4/` (collection schema 3, configuration schema 2).
-It separates private `SourceBinding` identity from `LayoutCalibration`, with semantic
-nickname/evidence/trigger regions, structural templates, revision and fingerprint.
-V3 collection and legacy single-config imports preserve IDs, names, timestamps,
-active profile, geometry and template quality; old files remain untouched. Imports
-have unknown viewport/layout and null whole-layout confidence, not fabricated
-automatic-calibration quality. Prediction result references migrate only from the
-exact validated old profile revision/fingerprint. No migration contacts the server.
+`userData/capture-profiles.v5/` (collection schema 4, configuration schema 3,
+calibration schema 2). Private `SourceBinding` identity is separate from either
+full-frame calibration or up to four game-relative layouts. V4 profiles migrate
+field-for-field except schema versions/fingerprints; V3 collection and legacy
+single-config imports preserve IDs, names, timestamps, active profile, geometry,
+and template quality. Old capture and prediction-result roots remain untouched.
+Imports use strict schemas and exact validated old fingerprints, with resumable
+results-first then atomic capture rename; no migration contacts the server.
+Game-relative result zones bind to profile/calibration identity, so learned-layout
+append requires only one atomic capture write and no monitor restart or result
+rewrite. Full-frame result zones retain revision/fingerprint binding. Every setup
+or recalibration creates a fresh calibration identity. Only the oldest learned
+layout may be evicted; setup layouts and transferred manual-zone provenance survive.
+Game-relative recovery intentionally reloads current source/zones under the same
+calibration identity. Every game-relative profile receives learning events:
+structural-only profiles report that manual recalibration is required, without VS
+finder work. Learning failures remain visible through subsequent rejected screens
+and temporary geometry loss until a saved layout arms or a new episode begins.
+Saved-layout matches and missing-game states discard old pre-VS evidence. A learned
+append returns its persisted calibration revision for later search/result records;
+stale append logs include profile, calibration and layout identifiers.
 There are no screenshots, RGB templates, tokens or full executable paths on disk.
 A saved HWND is a private binding hint, never a renderer source identifier.
 Setup atomically saves the canonical local model before posting its schema-version 2
@@ -171,6 +195,51 @@ bounded lazy previews. It captures a canonical frame before entering the main wi
 full-window editor. Pointer and numeric coordinates share a letterboxed contain transform;
 the staged regions are trigger, opponent nickname, and top-left evidence before
 analysis/review/commit. These semantic names are also used by the setup DTO and commands.
+
+New capture profiles and recalibrations are always game-relative.
+`startCaptureSetup.mode` explicitly selects `manual` or `auto`. The automatic main-process
+flow is available through the preload contract; its renderer screens are a separate session.
+Prepared capture waits up to 2.5 seconds for eight real history samples spaced at least
+0.3 seconds apart before freezing, including immediate prepare → freeze on a retake.
+Publication or source closure wakes the wait. A static or rarely redrawing WGC window
+can still time out with `insufficient_frames`; frames are never duplicated to invent
+geometry. Freeze returns the detected game rectangle and color-independent window-chrome
+templates. Missing or unreliable geometry ends setup with
+`SETUP_GAME_NOT_FOUND` and requires a new frame; it never creates a full-frame fallback.
+Session regions remain frame-normalized for the editor; pointer drawing, moving, corner
+resizing and keyboard editing stay inside the game outline. Main still rejects regions
+outside the game with `SETUP_REGION_INVALID`, shown as «Отметьте область внутри игры»,
+then commits one protected `setup` layout in game fractions. Analyzer protocol 2 receives
+the game rectangle and chooses VS edge orientation when the marked trigger contains a
+recognized badge, otherwise the structural trigger. Both cases retain the legacy structural
+analysis for the unchanged server projection, derived from the saved setup layout.
+The renderer contract includes `game`, `regionOrigins`, and `triggerKind`; game outlines,
+VS-specific review text and frame-retry actions are separate UI-session work. Existing
+migrated full-frame profiles and full-frame prediction-result setup remain unchanged.
+
+Automatic setup transfers ownership of the warm capture process to a `DETECTING` session.
+Prepared-capture protocol 2 analyzes the latest live frame at up to 10 fps for a real
+60-second deadline, supplies bounded JPEG previews at most once per second, and confirms
+VS with pre-onset evidence and a following-frame self-check. Success enters `SELECTING`
+with the confirmation PNG, frame-normalized zones, automatic provenance, orientation
+trigger and structural/legacy compatibility analysis. No timeout or weak detection is
+treated as success. Failed analysis can retry the same live source or switch to the manual
+editor using the candidate frame, otherwise a fresh freeze. Source/session/auth generation
+checks fence asynchronous results; success, closing or saving releases the live process.
+Window minimization lasting at least one second returns `AUTO_SOURCE_LOST`; a static
+screen alone does not. An internal worker death stays a generic automatic failure,
+not a claim that the game window was closed. Choose the window again to re-prepare it.
+The optional `/api/ocr/setup-name-check` request uses only an in-memory nickname PNG from
+that same confirmation frame, once per successful detection. Its ten-second deadline,
+offline/provider errors and every non-200 response (including old-server 404) produce only
+unavailable diagnostics; saving never waits for it. Detection codes, phases, confidence
+and name-check results are diagnostic-only. One `setup.name_check` main-log record carries
+only status and HTTP status or reason, never nickname text or pixels; saving aborts pending
+checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
+The renderer follows the minimal user-facing wording in M9 specification §1.3.
+While the prediction-result trigger has an aspect mismatch, new battle starts are not
+enqueued or sent; already-open predictions retain their existing result-resolution path.
+The suspension state also covers a mismatch that began before predictions were enabled.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -224,13 +293,30 @@ source images or raw OCR/model responses.
 
 The private monitor protocol is JSON-lines version 3. Main sends one validated start
 command and an eventual stop command. Python emits monotonic, session-bound `ready`,
-`triggered`, `action`, prediction, diagnostic, `fatal` and `stopped` events with trigger IDs.
+`triggered`, `action`, prediction, diagnostic, `source_state`, `fatal` and `stopped` events
+with trigger IDs. Diagnostics are sent only when a profile's match state (matcher, matched,
+reason) changes. Game-relative profiles also send one `vs_candidate` record per VS
+candidate or near miss (orientation score ≥ 0.30, or a learning decision), logged as
+`VS candidate`: the best score, state, game rectangle, game/layout aspects, layout kind,
+frames, seconds since the last fire, and why it did not fire (`fired`, `cooldown`,
+`rearm`, `confirm`, `kind`, `learning`, `aspect`, `score`); a mismatched game is scored
+with its closest layout for this record only. The worker writes at most one per episode,
+one per second and 20 per minute, counting dropped ones in the next. Main also logs
+geometry state changes (`Monitor geometry`, not rectangle jitter), learning events,
+learned layouts, `source_state` changes and the start of each source/worker recovery.
+For a window source the worker polls `IsIconic` every 0.5 s after
+readiness: while the window is minimised it skips analysis and reports
+`source_state {minimized}` on each change; the command bar then says «Окно игры закрыто
+или свёрнуто» until the window is restored.
 Action PNG base64 exists only on the private pipe and is decoded immediately in main,
 never logged or sent to a renderer. Worker readiness
 has a 15-second deadline, allowing the worker's 7-second no-frame deadline plus
 an 8-second cold-start margin; stop is graceful first and then uses Windows process-tree
 termination. Stdout lines, stderr diagnostics, image dimensions/bytes, event ordering, and
-session generations are bounded and validated.
+session generations are bounded and validated. `MONITOR_PROCESS_EXITED` and
+`MONITOR_INTERNAL_FAILED` restart the worker on the source-recovery ladder, at most three
+times per ten minutes; beyond that the run fails. Every Python worker runs with one
+OpenCV thread and `OPENBLAS_NUM_THREADS`/`OMP_NUM_THREADS`/`MKL_NUM_THREADS` = 1.
 
 The local Trigger V3 engine checks color-independent structural maps at 10 FPS and uses
 bounded edge/orientation correlation with ORB alignment only when the analyzed template

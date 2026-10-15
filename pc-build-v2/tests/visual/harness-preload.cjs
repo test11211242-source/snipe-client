@@ -192,6 +192,7 @@ const monitor = {
   session: null,
   summary: fixture.summary ? expandSummary(fixture.summary) : null,
   historyError: null,
+  geometry: fixture.geometry ?? null,
 }
 const roles = fixture.player ? ['user'] : ['user', 'streamer']
 const data = {
@@ -258,6 +259,7 @@ const widgetView = (spec) => {
     monitorError: spec.monitorError ?? null,
     runIntent: spec.runIntent ?? true,
     search: spec.search ? expandSearch(spec.search) : null,
+    sourceMinimized: spec.sourceMinimized === true,
     scale: Math.max(0.86, Math.min(1.5, width / 360)),
   }
 }
@@ -611,6 +613,31 @@ const emptyRegions = {
   resultTrigger: null,
   resultData: null,
 }
+// `setup.game: true`: main found the game in the frozen frame (portrait area of the stand-in).
+const gameFx = () => ({
+  viewport: { x: 437.5 / 1280, y: 0, width: 405 / 1280, height: 1 },
+  aspect: 0.5625,
+  source: 'freeze',
+})
+const runningDetectionFx = (startedAgoMs) => ({
+  status: 'running',
+  phase: 'waiting_vs',
+  startedAt: new Date(Date.now() - startedAgoMs).toISOString(),
+  deadlineAt: new Date(Date.now() - startedAgoMs + 60_000).toISOString(),
+  game: null,
+  failure: null,
+  frameAvailable: false,
+  nameCheck: { status: 'pending', text: null },
+})
+const detectingSession = (name, patch) =>
+  makeSession('capture', name, {
+    generation: 0,
+    state: 'DETECTING',
+    frameSize: null,
+    game: null,
+    detection: runningDetectionFx(13_000),
+    ...patch,
+  })
 const makeSession = (kind, name, patch = {}) => ({
   kind,
   sessionId: uuid(901),
@@ -624,6 +651,9 @@ const makeSession = (kind, name, patch = {}) => ({
   profileId: uuid(7),
   profileName: name,
   frameSize: { width: 1280, height: 720 },
+  game: setupFx.game && kind === 'capture' ? gameFx() : null,
+  triggerKind: null,
+  regionOrigins: null,
   regions: { ...emptyRegions },
   triggerProfile: null,
   error: null,
@@ -655,6 +685,41 @@ const initialSession = () => {
         resultData: REGIONS.resultData,
       },
     })
+  if (mode === 'detecting') return detectingSession('Ноутбук', {})
+  if (mode === 'detectFailed')
+    return detectingSession('Ноутбук', {
+      generation: 1,
+      detection: {
+        ...runningDetectionFx(60_000),
+        status: 'failed',
+        failure: { code: setupFx.autoCode ?? 'AUTO_VS_TIMEOUT' },
+      },
+    })
+  if (mode === 'detected')
+    return makeSession('capture', 'Ноутбук', {
+      generation: 2,
+      game: { ...gameFx(), source: 'auto' },
+      regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
+      triggerKind: 'vs_edge_orientation',
+      triggerOutline: [
+        [gameX(0.36), 0.425],
+        [gameX(0.5), 0.415],
+        [gameX(0.64), 0.425],
+        [gameX(0.62), 0.5],
+        [gameX(0.5), 0.565],
+        [gameX(0.38), 0.5],
+      ],
+      regions: { ...emptyRegions, ...capture },
+      triggerProfile: triggerProfileFx('high'),
+      detection: {
+        ...runningDetectionFx(5_000),
+        status: 'succeeded',
+        phase: null,
+        game: { viewport: gameFx().viewport, aspect: 0.5625 },
+        frameAvailable: true,
+        nameCheck: { status: 'trainer', text: 'Тренер Чеддер' },
+      },
+    })
   if (mode === 'failed')
     return makeSession('capture', 'Ноутбук', {
       state: 'FAILED',
@@ -664,6 +729,7 @@ const initialSession = () => {
   return null
 }
 let session = initialSession()
+let startedOnce = false
 const frameScene = () =>
   session && session.kind === 'predictionResult' ? 'result' : 'vs'
 const bump = (patch) => {
@@ -749,6 +815,39 @@ const setupApi = {
     requireSession(payload) ?? Promise.resolve(bump({ state: 'CANCELLED' })),
   close: (payload) => requireSession(payload) ?? Promise.resolve(session),
   finish: fail,
+  // Automatic setup (M9 B3): the stand-in window picture, a retry and the manual switch.
+  getDetectionPreview: async (payload) => {
+    const refused = requireSession({ ...payload, generation: session?.generation })
+    if (refused !== null) return refused
+    const blob = await new Promise((resolve) =>
+      sceneFrame('menu', 640, 360).toBlob(resolve, 'image/jpeg', 0.7),
+    )
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    return {
+      width: 640,
+      height: 360,
+      mimeType: 'image/jpeg',
+      byteLength: bytes.byteLength,
+      bytes,
+    }
+  },
+  retryDetection: (payload) =>
+    requireSession(payload) ??
+    Promise.resolve(bump({ detection: runningDetectionFx(0) })),
+  switchToManual: (payload) =>
+    requireSession(payload) ??
+    Promise.resolve(
+      bump({
+        state: 'SELECTING',
+        frameSize: { width: 1280, height: 720 },
+        game: gameFx(),
+        regionOrigins: {
+          trigger: 'manual',
+          nickname: 'manual',
+          topLeftEvidence: 'manual',
+        },
+      }),
+    ),
   startResult: () => {
     session = makeSession('predictionResult', 'Основной')
     return Promise.resolve(session)
@@ -821,14 +920,19 @@ const sview = {
     polling: sx.twitch === 'pending',
   },
   predictions: {
-    active: sx.predictions === 'active',
-    state: sx.predictions === 'active' ? 'active' : 'stopped',
+    active: sx.predictions === 'active' || sx.predictions === 'suspended',
+    state:
+      sx.predictions === 'active' || sx.predictions === 'suspended'
+        ? 'active'
+        : 'stopped',
     runtimeState:
       sx.predictions === 'active'
         ? 'active'
-        : sx.predictions === 'failed'
-          ? 'failed'
-          : 'stopped',
+        : sx.predictions === 'suspended'
+          ? 'suspended'
+          : sx.predictions === 'failed'
+            ? 'failed'
+            : 'stopped',
     settings: {
       predictionType: 'win_lose',
       predictionWindow: 120,
@@ -1127,15 +1231,23 @@ contextBridge.exposeInMainWorld('crTools', {
         : { ok: true, preparation: { sourceKey, revision, preparationId: uuid(902) } },
     ),
   releaseCaptureSource: ok({ released: true }),
-  startCaptureSetup: ({ profileId, profileName }) => {
-    session =
-      setupFx.start === 'failed'
-        ? makeSession('capture', profileName, {
-            state: 'FAILED',
-            frameSize: null,
-            error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
-          })
-        : makeSession('capture', profileName, { profileId: profileId ?? uuid(7) })
+  startCaptureSetup: ({ mode, profileId, profileName }) => {
+    if (mode === 'auto') {
+      session = detectingSession(profileName, { profileId: profileId ?? uuid(7) })
+      return Promise.resolve(session)
+    }
+    if (mode !== 'manual') return Promise.reject(new Error('Unknown setup mode'))
+    // `start: 'failed-once'`: only the first frozen frame fails (a retake then works).
+    const failing =
+      setupFx.start === 'failed' || (setupFx.start === 'failed-once' && !startedOnce)
+    startedOnce = true
+    session = failing
+      ? makeSession('capture', profileName, {
+          state: 'FAILED',
+          frameSize: null,
+          error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
+        })
+      : makeSession('capture', profileName, { profileId: profileId ?? uuid(7) })
     return Promise.resolve(session)
   },
   renameCaptureProfile: renameProfile,

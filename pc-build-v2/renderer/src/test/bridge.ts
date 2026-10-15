@@ -131,6 +131,9 @@ export interface Bridge {
       | 'review'
       | 'commit'
       | 'retrySync'
+      | 'retryDetection'
+      | 'switchToManual'
+      | 'getDetectionPreview'
       | 'cancel'
       | 'close',
       AsyncMock
@@ -249,6 +252,9 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
       startResult: vi.fn(),
       getSession: vi.fn(() => Promise.reject(new Error('No setup is active'))),
       getFrame: vi.fn(),
+      retryDetection: vi.fn(),
+      switchToManual: vi.fn(),
+      getDetectionPreview: vi.fn(),
       setRegion: vi.fn(),
       finish: vi.fn(),
       analyzeTrigger: vi.fn(),

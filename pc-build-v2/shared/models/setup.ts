@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
 import { PublicErrorSchema } from '../errors/application-error'
+import { GameAspectSchema } from '../contracts/game-aspect'
+import { AutoSetupCodeSchema } from '../contracts/auto-setup'
 import {
   CapturePreferenceSchema,
   CaptureProfileIdSchema,
@@ -9,12 +11,14 @@ import {
   NormalizedRegionsSchema,
   PixelSizeSchema,
   RegionKindSchema,
+  ShieldOutlineSchema,
   TriggerProfileSchema,
 } from './capture'
 
 export const SetupStateSchema = z.enum([
   'CREATED',
   'CAPTURING',
+  'DETECTING',
   'SELECTING',
   'ANALYZING',
   'REVIEW',
@@ -34,6 +38,29 @@ export const SetupSaveOutcomeSchema = z
   .strict()
 export type SetupRuntimeOutcome = z.infer<typeof SetupSaveOutcomeSchema>['runtime']
 
+export const SetupNameCheckSchema = z
+  .object({
+    status: z.enum(['pending', 'trainer', 'not_trainer', 'unavailable', 'skipped']),
+    text: z.string().max(1000).nullable(),
+  })
+  .strict()
+
+export const SetupDetectionSchema = z
+  .object({
+    status: z.enum(['running', 'succeeded', 'failed']),
+    phase: z.enum(['locating_game', 'waiting_vs', 'verifying']).nullable(),
+    startedAt: z.iso.datetime(),
+    deadlineAt: z.iso.datetime(),
+    game: z
+      .object({ viewport: NormalizedRectSchema, aspect: GameAspectSchema })
+      .strict()
+      .nullable(),
+    failure: z.object({ code: AutoSetupCodeSchema }).strict().nullable(),
+    frameAvailable: z.boolean(),
+    nameCheck: SetupNameCheckSchema,
+  })
+  .strict()
+
 export const SetupSessionViewSchema = z
   .object({
     kind: z.enum(['capture', 'predictionResult']).default('capture'),
@@ -44,6 +71,29 @@ export const SetupSessionViewSchema = z
     profileId: CaptureProfileIdSchema.nullable().default(null),
     profileName: CaptureProfileNameSchema.nullable().default(null),
     frameSize: PixelSizeSchema.nullable(),
+    detection: SetupDetectionSchema.nullable().default(null),
+    game: z
+      .object({
+        viewport: NormalizedRectSchema,
+        aspect: GameAspectSchema,
+        source: z.enum(['auto', 'freeze']),
+      })
+      .strict()
+      .nullable(),
+    regionOrigins: z
+      .object({
+        trigger: z.enum(['auto', 'manual']),
+        nickname: z.enum(['auto', 'manual']),
+        topLeftEvidence: z.enum(['auto', 'manual']),
+      })
+      .strict()
+      .nullable(),
+    triggerKind: z.enum(['vs_edge_orientation', 'structural']).nullable(),
+    /**
+     * Outline of the VS silhouette the runtime compares, as frame fractions. Present only
+     * with `vs_edge_orientation`; display-only and never saved.
+     */
+    triggerOutline: ShieldOutlineSchema.nullable().default(null),
     regions: z
       .object({
         trigger: NormalizedRectSchema.nullable(),
@@ -143,4 +193,5 @@ export type SetupState = z.infer<typeof SetupStateSchema>
 export type SetupSessionView = z.infer<typeof SetupSessionViewSchema>
 export type SetupFrame = z.infer<typeof SetupFrameSchema>
 export type LegacyOcrRegions = z.infer<typeof LegacyOcrRegionsSchema>
+export type SetupNameCheck = z.infer<typeof SetupNameCheckSchema>
 export { NormalizedRegionsSchema, RegionKindSchema }

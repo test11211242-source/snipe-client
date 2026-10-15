@@ -12,6 +12,7 @@ import {
 import { MonitorViewSchema } from '../models/monitor'
 import { SetupFrameSchema, SetupSessionViewSchema } from '../models/setup'
 import { PublicErrorSchema } from '../errors/application-error'
+import { DetectionPreviewSchema } from './auto-setup'
 
 export const MAIN_CAPTURE_IPC_CHANNELS = Object.freeze({
   listSources: 'capture:list-sources',
@@ -32,6 +33,9 @@ export const SETUP_IPC_CHANNELS = Object.freeze({
   startResult: 'setup:start-result',
   getSession: 'setup:get-session',
   getFrame: 'setup:get-frame',
+  retryDetection: 'setup:retry-detection',
+  switchToManual: 'setup:switch-to-manual',
+  getDetectionPreview: 'setup:get-detection-preview',
   setRegion: 'setup:set-region',
   finish: 'setup:finish',
   analyzeTrigger: 'setup:analyze-trigger',
@@ -115,6 +119,7 @@ export const CapturePreparationResponseSchema = z.discriminatedUnion('ok', [
 export const ReleasePreparationResultSchema = z.object({ released: z.boolean() }).strict()
 export const StartSetupPayloadSchema = z
   .object({
+    mode: z.enum(['manual', 'auto']),
     preparationId: z.uuid(),
     profileId: CaptureProfileIdSchema.nullable(),
     profileName: CaptureProfileNameSchema,
@@ -144,7 +149,13 @@ export const SetRegionPayloadSchema = SetupCommandSchema.extend({
   rect: NormalizedRectSchema,
 }).strict()
 export const SetupSessionResultSchema = SetupSessionViewSchema
+export const RetryDetectionResponseSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), session: SetupSessionResultSchema }).strict(),
+  z.object({ ok: z.literal(false), error: PublicErrorSchema }).strict(),
+])
 export const SetupFrameResultSchema = SetupFrameSchema
+export const DetectionPreviewPayloadSchema = z.object({ sessionId: z.uuid() }).strict()
+export const DetectionPreviewResultSchema = DetectionPreviewSchema.nullable()
 
 export type PreviewPayload = z.infer<typeof PreviewPayloadSchema>
 export type CapturePreparationResult = z.infer<typeof CapturePreparationResultSchema>
@@ -157,3 +168,4 @@ export type RebindCaptureProfilePayload = z.infer<
 >
 export type SetupCommand = z.infer<typeof SetupCommandSchema>
 export type SetRegionPayload = z.infer<typeof SetRegionPayloadSchema>
+export type DetectionPreviewPayload = z.infer<typeof DetectionPreviewPayloadSchema>

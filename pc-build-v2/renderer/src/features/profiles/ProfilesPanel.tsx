@@ -4,6 +4,7 @@ import {
   MAX_CAPTURE_PROFILES,
   type CaptureProfileSummary,
 } from '../../../../shared/models/capture'
+import { presentedMonitorState } from '../../../../shared/models/monitor'
 import { useRouter, type SetupIntent } from '../../app/router'
 import { Button, ConfirmDialog, Icon, Panel, State, useToast } from '../../ui'
 import { useRole } from '../auth'
@@ -34,7 +35,8 @@ export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [dialog, setDialog] = useState<Dialog | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const waiting = monitor.value?.state === 'WAITING_SOURCE'
+  const waiting =
+    monitor.value !== null && presentedMonitorState(monitor.value) === 'WAITING_SOURCE'
   const list = value?.profiles ?? []
   const count = list.length
   const full = count >= MAX_CAPTURE_PROFILES

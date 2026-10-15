@@ -28,6 +28,7 @@ import { H2HService } from './services/h2h-service'
 import { ApiAuthSessionRevoker } from './services/auth-session-revoker'
 import { CaptureService } from './services/capture-service'
 import { CaptureSourceRegistry } from './services/capture-source-registry'
+import { createCaptureSourceHelpers } from './services/capture-source-helper'
 import { ElectronCaptureSourceProvider } from './services/electron-capture-source-provider'
 import { PythonWorkerService } from './services/python-worker-service'
 import { SetupSessionService } from './services/setup-session-service'
@@ -122,15 +123,19 @@ const settingsRepository = new SettingsRepository(
 )
 const settings = new AppSettingsController(settingsRepository, app, logger)
 const predictionResults = new PredictionResultConfigurationRepository(
-  join(app.getPath('userData'), 'prediction-result-config.v4'),
+  join(app.getPath('userData'), 'prediction-result-config.v5'),
   nodePredictionResultFileSystem,
-  join(app.getPath('userData'), 'prediction-result-config.v3'),
+  [
+    join(app.getPath('userData'), 'prediction-result-config.v4'),
+    join(app.getPath('userData'), 'prediction-result-config.v3'),
+  ],
   logger,
 )
 const captureConfigurations = new CaptureConfigurationRepository(
-  join(app.getPath('userData'), 'capture-profiles.v4'),
+  join(app.getPath('userData'), 'capture-profiles.v5'),
   nodeCaptureConfigurationFileSystem,
   {
+    previousDirectory: join(app.getPath('userData'), 'capture-profiles.v4'),
     legacyDirectory: join(app.getPath('userData'), 'capture-profiles.v3'),
     migratePredictionReference: (...args) =>
       predictionResults.migrateCaptureReference(...args),
@@ -158,7 +163,14 @@ const capture = new CaptureService(
   join(pythonRoot, 'analyze_trigger.py'),
 )
 const captureSources = new CaptureSourceRegistry(
-  new ElectronCaptureSourceProvider(undefined, undefined, logger),
+  new ElectronCaptureSourceProvider({
+    ...createCaptureSourceHelpers({
+      executable: pythonExecutable,
+      scriptPath: join(pythonRoot, 'capture_sources.py'),
+      beforeSpawn: verifyRuntime,
+    }),
+    logger,
+  }),
 )
 const preparedCaptureProcess = new PreparedCaptureProcessService(
   pythonExecutable,
@@ -182,6 +194,7 @@ const targetResolver = new CaptureTargetResolver(
   captureConfigurations,
   captureSources,
 )
+const ocr = new OcrApiClient(globalThis.fetch, auth, server, logger)
 const setup = new SetupSessionService(
   capture,
   captureConfigurations,
@@ -191,6 +204,8 @@ const setup = new SetupSessionService(
   predictionResults,
   authenticatedApi,
   targetResolver,
+  ocr,
+  logger,
 )
 const monitorProcess = new MonitorProcessService(
   pythonExecutable,
@@ -201,7 +216,6 @@ const monitorProcess = new MonitorProcessService(
   undefined,
   verifyRuntime,
 )
-const ocr = new OcrApiClient(globalThis.fetch, auth, server, logger)
 const monitor = new MonitorSupervisor(
   auth,
   captureConfigurations,
@@ -211,6 +225,7 @@ const monitor = new MonitorSupervisor(
   ocr,
   undefined,
   new MonitorJournalRepository(join(app.getPath('userData'), 'monitor-journal.v1')),
+  logger,
 )
 const predictionPreferences = new PredictionPreferencesRepository(
   join(app.getPath('userData'), 'prediction-preferences.v1'),
@@ -228,6 +243,7 @@ const predictions = new PredictionCoordinator(
       throw new Error('Capture profile service is unavailable')
     return captureProfiles.runCaptureCommit(operation)
   },
+  logger,
 )
 captureProfiles = new CaptureProfileService(
   auth,
@@ -236,6 +252,9 @@ captureProfiles = new CaptureProfileService(
   monitor,
   () => predictions.state,
   predictionResults,
+)
+monitor.setLearnedLayoutHandler((userId, profileId, calibrationId, layout) =>
+  captureProfiles.appendLearnedLayout(userId, profileId, calibrationId, layout),
 )
 setup.configureCaptureProfileLifecycle(
   () => captureProfiles.assertCanChangeProfile(),

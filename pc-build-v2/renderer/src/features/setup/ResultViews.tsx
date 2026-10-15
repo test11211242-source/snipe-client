@@ -1,10 +1,9 @@
 import type { SetupSessionView } from '../../../../shared/models/setup'
-import { Banner, Button, Icon, Progress, cx, type IconName } from '../../ui'
+import { Banner, Button, Icon, cx, type IconName } from '../../ui'
 import { FrameStage, type StageBox } from './FrameStage'
 import { saveRetryable } from './errors'
-import { projectInnerRect } from './geometry'
 import { describeOutcome } from './outcome'
-import { regionsOf, triggerRegionOf } from './regions'
+import { regionsOf } from './regions'
 import styles from './Setup.module.css'
 import type { SetupSession } from './useSetupSession'
 
@@ -16,7 +15,7 @@ const TONE_ICON: Record<'ok' | 'warn' | 'danger' | 'neutral' | 'info', IconName>
   info: 'info',
 }
 
-function Badge({
+export function Badge({
   tone,
   icon,
 }: {
@@ -38,29 +37,25 @@ function Badge({
 }
 
 /**
- * The analyzed trigger and the regions about to be saved. The trigger was analyzed by the
- * real analyzer in main; the quality shown is its own grade and score.
+ * The last look before saving: the frame with the drawn zones (and the game outline when
+ * main found the game) and the buttons. Analyzer details stay out of the interface. With
+ * `auto` this is the success screen of automatic setup: «Готово» above the frame and
+ * «Поправить вручную» instead of going back to a step the user never visited.
  */
 export function CheckStep({
   session,
   view,
   frameUrl,
   onBack,
+  auto = false,
 }: {
   session: SetupSession
   view: SetupSessionView
   frameUrl: string | null
   onBack: () => void
+  auto?: boolean
 }): React.JSX.Element {
   const defs = regionsOf(view.kind)
-  const profile = view.triggerProfile
-  const trigger = view.regions[triggerRegionOf(view.kind)]
-  const inner =
-    trigger === null || profile === null
-      ? null
-      : projectInnerRect(trigger, profile.innerRect)
-  const medium = profile?.quality.grade === 'medium'
-  const score = Math.round((profile?.quality.score ?? 0) * 100)
   const result = view.kind === 'predictionResult'
   const inReview = view.state === 'REVIEW'
   const retryable = saveRetryable(view.error?.code)
@@ -78,103 +73,47 @@ export function CheckStep({
     rect: view.regions[def.id],
     active: false,
     labelBelow: def.labelBelow,
+    outline: def.id === 'trigger' ? view.triggerOutline : null,
   }))
 
   return (
     <>
-      <div className={styles['split']}>
-        <div className={styles['bezel']}>
-          <div className={styles['bezelBar']}>
-            <i className={styles['bezelDot']} />
-            <i className={styles['bezelDot']} />
-            <i className={styles['bezelDot']} />
-            <span className={styles['bezelTitle']}>
-              {view.source.label} — кадр с отмеченными областями
-            </span>
-          </div>
-          {frameUrl !== null && frameSize !== null ? (
-            <FrameStage
-              badge="Триггер проверен"
-              boxes={boxes}
-              draft={null}
-              editable={false}
-              frameSize={frameSize}
-              frameUrl={frameUrl}
-              inner={inner}
-              onDraft={() => undefined}
-            />
-          ) : null}
+      <div className={cx(styles['split'], styles['splitSingle'])}>
+        <div className={styles['checkWrap']}>
+          {auto ? <h1 className={styles['doneTitle']}>Готово</h1> : null}
+          <section aria-label="Проверка" className={styles['bezel']}>
+            {auto ? null : <h1 className="sr-only">Проверьте области</h1>}
+            <div className={styles['bezelBar']}>
+              <i className={styles['bezelDot']} />
+              <i className={styles['bezelDot']} />
+              <i className={styles['bezelDot']} />
+              <span className={styles['bezelTitle']}>{view.source.label}</span>
+            </div>
+            {frameUrl !== null && frameSize !== null ? (
+              <FrameStage
+                boxes={boxes}
+                draft={null}
+                editable={false}
+                frameSize={frameSize}
+                frameUrl={frameUrl}
+                gameViewport={view.game?.viewport ?? null}
+                inset={24}
+                onDraft={() => undefined}
+              />
+            ) : null}
+            {session.error === null ? null : (
+              <div className={cx(styles['alert'], styles['bezelAlert'])}>
+                <Banner icon="alert" live title="Не получилось" tone="danger">
+                  {session.error}
+                </Banner>
+              </div>
+            )}
+          </section>
         </div>
-        <section aria-label="Проверка" className={styles['panel']}>
-          <Badge icon={medium ? 'alert' : 'check'} tone={medium ? 'warn' : 'ok'} />
-          <h1 className={styles['h2']}>
-            {medium ? 'Триггер найден, но качество среднее' : 'Триггер проверен'}
-          </h1>
-          <p className={styles['p']}>
-            {medium
-              ? 'Мониторинг может изредка пропускать начало боя. Сохранить можно, но лучше поправить области.'
-              : result
-                ? 'Проверьте области и сохраните: прогнозы смогут закрываться по итогу боя.'
-                : 'Проверьте области и сохраните профиль.'}
-          </p>
-          <div className={styles['sum']}>
-            <SummaryRow icon="check" title="Источник" value={view.source.label} />
-            <SummaryRow
-              icon="check"
-              title="Размер кадра"
-              value={frameSize === null ? '' : `${frameSize.width} × ${frameSize.height}`}
-            />
-            <SummaryRow
-              icon={medium ? 'alert' : 'check'}
-              title="Триггер"
-              tone={medium ? 'warn' : 'ok'}
-              value={medium ? 'качество среднее' : 'качество высокое'}
-            />
-            <SummaryRow
-              icon="check"
-              title="Области"
-              value={`${defs.length} из ${defs.length} отмечены вручную`}
-            />
-          </div>
-          <div className={styles['conf']}>
-            <div className={styles['confTop']}>
-              <span>Качество триггера</span>
-              <b>{score}%</b>
-            </div>
-            <Progress
-              label="Качество триггера"
-              tone={medium ? 'warn' : 'ok'}
-              value={score}
-            />
-          </div>
-          {medium ? (
-            <ul className={styles['tips']}>
-              <li className={styles['tip']}>
-                <span className={styles['tipIcon']}>
-                  <Icon name="info" size={14} />
-                </span>
-                Повторите настройку, когда на экране нет лишних окон и подсказок.
-              </li>
-              <li className={styles['tip']}>
-                <span className={styles['tipIcon']}>
-                  <Icon name="info" size={14} />
-                </span>
-                Или поправьте рамку триггера — проверка выполнится заново.
-              </li>
-            </ul>
-          ) : null}
-          {session.error === null ? null : (
-            <div className={styles['alert']}>
-              <Banner icon="alert" live title="Не получилось" tone="danger">
-                {session.error}
-              </Banner>
-            </div>
-          )}
-        </section>
       </div>
       <div className={styles['foot']}>
         <Button disabled={busy || inReview} onClick={onBack} variant="ghost">
-          Поправить области
+          {auto ? 'Поправить вручную' : 'Поправить области'}
         </Button>
         <div className={styles['footRight']}>
           {inReview && !retryable ? null : (
@@ -187,10 +126,10 @@ export function CheckStep({
             >
               {inReview
                 ? 'Повторить сохранение'
-                : result
-                  ? 'Сохранить зоны'
-                  : medium
-                    ? 'Всё равно сохранить профиль'
+                : auto
+                  ? 'Сохранить'
+                  : result
+                    ? 'Сохранить зоны'
                     : 'Сохранить профиль'}
             </Button>
           )}
@@ -295,47 +234,67 @@ export function OutcomeView({
   )
 }
 
-/** The session ended without a saved result: failed capture or cancelled by main. */
+/**
+ * The session ended without a saved result: failed capture or cancelled by main. With
+ * `title` the heading says it all (no paragraph) and `secondary` stands in for «Закрыть».
+ */
 export function FailureView({
   view,
   message,
+  title = 'Настройка не завершена',
+  note = null,
   onRetry,
   retryLabel,
+  secondary = null,
   onClose,
   busy,
 }: {
   view: SetupSessionView | null
-  message: string
+  message: string | null
+  title?: string
+  /** Why the last attempt to recover did not work. */
+  note?: string | null
   onRetry: (() => void) | null
   retryLabel: string
+  secondary?: { label: string; onClick: () => void } | null
   onClose: () => void
   busy: boolean
 }): React.JSX.Element {
   const notSaved = view?.saveOutcome?.local === 'failed'
   return (
     <div className={styles['full']}>
-      <section
-        aria-label="Настройка не завершена"
-        className={cx(styles['panel'], styles['narrow'])}
-      >
+      <section aria-label={title} className={cx(styles['panel'], styles['narrow'])}>
         <Badge icon="alert" tone="warn" />
-        <h1 className={styles['h2']}>Настройка не завершена</h1>
-        <p className={styles['p']}>{message}</p>
+        <h1 className={styles['h2']}>{title}</h1>
+        {message === null ? null : <p className={styles['p']}>{message}</p>}
         {notSaved ? (
           <Banner icon="alert" title="Не сохранено" tone="warn">
             Настройка не сохранена на этом компьютере; серверная проекция не изменена.
           </Banner>
         ) : null}
+        {note === null ? null : (
+          <div className={styles['alert']}>
+            <Banner icon="alert" live title="Не получилось" tone="danger">
+              {note}
+            </Banner>
+          </div>
+        )}
         <div className={cx(styles['actions'], styles['actionsStart'])}>
           {onRetry === null ? null : (
-            <Button disabled={busy} onClick={onRetry} variant="primary">
+            <Button disabled={busy} loading={busy} onClick={onRetry} variant="primary">
               <Icon name="refresh" size={15} />
               {retryLabel}
             </Button>
           )}
-          <Button disabled={busy} onClick={onClose}>
-            Закрыть
-          </Button>
+          {secondary === null ? (
+            <Button disabled={busy} onClick={onClose}>
+              Закрыть
+            </Button>
+          ) : (
+            <Button disabled={busy} onClick={secondary.onClick}>
+              {secondary.label}
+            </Button>
+          )}
         </div>
       </section>
     </div>

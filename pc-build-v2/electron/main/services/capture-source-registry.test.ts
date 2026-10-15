@@ -5,6 +5,7 @@ import type {
   CaptureSourceProvider,
   ElectronCaptureSource,
   ElectronDisplayInfo,
+  SourcePreviewImage,
 } from './capture-source-registry'
 import {
   CaptureSourceRegistry,
@@ -16,13 +17,12 @@ function required<T>(value: T | undefined): T {
   return value
 }
 
-function thumbnail(bytes = Buffer.from('png')) {
-  return {
-    isEmpty: () => false,
-    getSize: () => ({ width: 320, height: 180 }),
-    toPNG: () => bytes,
-    toJPEG: () => bytes,
-  }
+function image(
+  sourceId: string,
+  name: string,
+  jpeg = Buffer.from('jpg'),
+): SourcePreviewImage {
+  return { sourceId, name, size: { width: 320, height: 180 }, jpeg }
 }
 
 function source(
@@ -35,7 +35,6 @@ function source(
     id,
     name,
     displayId,
-    thumbnail: thumbnail(),
     ...(ownerProcessId === undefined ? {} : { ownerProcessId }),
   }
 }
@@ -69,14 +68,19 @@ describe('CaptureSourceRegistry', () => {
       code: 'SOURCE_NOT_FOUND',
     })
   })
-  it('returns selectable sources before previews and coalesces preview loads without changing keys', async () => {
-    let finishPreviews!: (sources: ElectronCaptureSource[]) => void
-    const sources = [source('window:12:0', 'Game', '', 20)]
-    const previews = vi.fn(
-      () =>
-        new Promise<ElectronCaptureSource[]>((resolve) => {
-          finishPreviews = resolve
-        }),
+
+  it('returns selectable sources before previews and streams previews progressively without changing keys', async () => {
+    const sources = [
+      source('window:12:0', 'Game', '', 20),
+      source('window:13:0', 'Chat', '', 20),
+    ]
+    let deliver!: (image: SourcePreviewImage) => void
+    const finished = Promise.withResolvers<undefined>()
+    const previews = vi.fn<NonNullable<CaptureSourceProvider['previews']>>(
+      (_request, onPreview) => {
+        deliver = onPreview
+        return finished.promise
+      },
     )
     const provider: CaptureSourceProvider = {
       currentProcessId: 1,
@@ -85,32 +89,71 @@ describe('CaptureSourceRegistry', () => {
       ownWindowHandles: () => new Set(),
       displays: vi.fn().mockResolvedValue([]),
     }
-    const registry = new CaptureSourceRegistry(provider)
+    const registry = new CaptureSourceRegistry(provider, 30_000, Date.now, 0)
     const listed = await registry.enumerate()
     expect(previews).not.toHaveBeenCalled()
     expect(listed.sources[0]?.preview).toBeNull()
-    const loading = registry.loadPreviews(listed.revision)
-    expect(registry.loadPreviews(listed.revision)).toBe(loading)
+    const first = registry.loadPreviews(listed.revision)
+    expect(previews).toHaveBeenCalledOnce()
+    expect(previews.mock.calls[0]?.[0]).toEqual({
+      windowSourceIds: ['window:12:0', 'window:13:0'],
+      screens: false,
+      size: { width: 360, height: 203 },
+    })
     await expect(
       registry.resolve(required(listed.sources[0]).sourceKey, listed.revision),
     ).resolves.toMatchObject({ selector: { kind: 'window', windowHwnd: '12' } })
-    finishPreviews(sources)
-    const completed = await loading
-    expect(completed.sources[0]?.sourceKey).toBe(listed.sources[0]?.sourceKey)
-    expect(completed.sources[0]?.preview?.dataUrl).toBe('data:image/jpeg;base64,cG5n')
+    deliver(image('window:12:0', 'Game'))
+    const partial = await first
+    expect(partial.previewsPending).toBe(true)
+    expect(partial.sources[0]?.sourceKey).toBe(listed.sources[0]?.sourceKey)
+    expect(partial.sources[0]?.preview?.dataUrl).toBe('data:image/jpeg;base64,anBn')
+    expect(partial.sources[1]?.preview).toBeNull()
+
+    const second = registry.loadPreviews(listed.revision)
+    deliver(image('window:13:0', 'Renamed chat'))
+    deliver(image('window:13:0', 'Chat'))
+    finished.resolve(undefined)
+    const completed = await second
+    expect(completed.sources[1]?.preview).not.toBeNull()
+    await expect(registry.loadPreviews(listed.revision)).resolves.toMatchObject({
+      previewsPending: false,
+    })
     expect(previews).toHaveBeenCalledOnce()
   })
 
-  it('rejects a late preview response for a replaced source list', async () => {
-    let finishPreviews!: (sources: ElectronCaptureSource[]) => void
-    const sources = [source('window:12:0', 'Game')]
+  it('drops a window preview taken under another title and ends when previews fail', async () => {
+    const registry = new CaptureSourceRegistry(
+      {
+        currentProcessId: 1,
+        enumerate: () => Promise.resolve([source('window:12:0', 'Game')]),
+        previews: (_request, onPreview) => {
+          onPreview(image('window:12:0', 'Other title'))
+          return Promise.reject(new Error('helper failed'))
+        },
+        ownWindowHandles: () => new Set(),
+        displays: () => Promise.resolve([]),
+      },
+      30_000,
+      Date.now,
+      0,
+    )
+    const listed = await registry.enumerate()
+    await expect(registry.loadPreviews(listed.revision)).resolves.toMatchObject({
+      previewsPending: false,
+      sources: [{ preview: null, captureSupported: true }],
+    })
+  })
+
+  it('rejects a waiting preview request for a replaced source list', async () => {
+    let deliver!: (image: SourcePreviewImage) => void
     const registry = new CaptureSourceRegistry({
       currentProcessId: 1,
-      enumerate: () => Promise.resolve(sources),
-      previews: () =>
-        new Promise((resolve) => {
-          finishPreviews = resolve
-        }),
+      enumerate: () => Promise.resolve([source('window:12:0', 'Game')]),
+      previews: (_request, onPreview) => {
+        deliver = onPreview
+        return new Promise(() => undefined)
+      },
       ownWindowHandles: () => new Set(),
       displays: () => Promise.resolve([]),
     })
@@ -120,11 +163,48 @@ describe('CaptureSourceRegistry', () => {
       code: 'CAPTURE_SOURCE_STALE',
     })
     const second = await registry.enumerate()
-    finishPreviews(sources)
     await rejected
+    deliver(image('window:12:0', 'Game'))
     expect(second.sources[0]?.preview).toBeNull()
   })
 
+  it('lists a window the metadata helper could not check and verifies it on selection', async () => {
+    const enumerate = vi.fn().mockResolvedValue([source('window:12:0', 'Game')])
+    const resolveWindow = vi.fn().mockResolvedValue({
+      ...source('window:12:0', 'Game', '', 20),
+      executableLabel: 'Game.exe',
+    })
+    const registry = new CaptureSourceRegistry({
+      currentProcessId: 1,
+      enumerate,
+      resolveWindow,
+      ownWindowHandles: () => new Set(),
+      displays: () => Promise.resolve([]),
+    })
+    const listed = await registry.enumerate()
+    expect(enumerate).toHaveBeenCalledWith({ metadataWaitMs: 1_500 })
+    const item = required(listed.sources[0])
+    expect(item).toMatchObject({ captureSupported: true, detail: null })
+    await expect(
+      registry.resolve(item.sourceKey, listed.revision),
+    ).resolves.toMatchObject({
+      selector: { kind: 'window', windowHwnd: '12' },
+      preference: { executableLabel: 'Game.exe', windowHwnd: '12' },
+    })
+    expect(resolveWindow).toHaveBeenCalledWith('12')
+
+    resolveWindow.mockResolvedValue({
+      ...source('window:12:0', 'Game', '', 1),
+      executableLabel: 'CR Tools.exe',
+    })
+    const relisted = await registry.enumerate()
+    const own = required(relisted.sources[0])
+    await expect(
+      registry.resolve(own.sourceKey, relisted.revision),
+    ).rejects.toMatchObject({
+      code: 'CAPTURE_SOURCE_STALE',
+    })
+  })
   it('does not run the display helper when resolving a saved window', async () => {
     const displays = vi.fn().mockRejectedValue(new Error('slow helper unavailable'))
     const registry = new CaptureSourceRegistry({
@@ -197,11 +277,11 @@ describe('CaptureSourceRegistry', () => {
 
   it('keeps an expired snapshot usable after live identity validation', async () => {
     let now = 100
-    const enumerateSizes: { width: number; height: number }[] = []
+    const enumerateOptions: unknown[] = []
     const provider: CaptureSourceProvider = {
       currentProcessId: 1,
-      enumerate: (size) => {
-        enumerateSizes.push(size)
+      enumerate: (options) => {
+        enumerateOptions.push(options)
         return Promise.resolve([
           {
             ...source('window:12:0', 'Game', '', 20),
@@ -215,7 +295,7 @@ describe('CaptureSourceRegistry', () => {
     const snapshot = await registry.enumerate()
     const item = required(snapshot.sources[0])
     expect(item.preview).toBeNull()
-    expect(enumerateSizes).toEqual([{ width: 0, height: 0 }])
+    expect(enumerateOptions).toEqual([{ metadataWaitMs: 1_500 }])
     await expect(registry.resolve(item.sourceKey, '0'.repeat(32))).rejects.toMatchObject({
       code: 'CAPTURE_SOURCE_STALE',
     })
@@ -225,10 +305,7 @@ describe('CaptureSourceRegistry', () => {
     ).resolves.toMatchObject({
       selector: { kind: 'window', windowHwnd: '12' },
     })
-    expect(enumerateSizes).toEqual([
-      { width: 0, height: 0 },
-      { width: 0, height: 0 },
-    ])
+    expect(enumerateOptions).toEqual([{ metadataWaitMs: 1_500 }, undefined])
   })
 
   it('rejects an expired window snapshot when HWND ownership changes', async () => {
@@ -280,13 +357,11 @@ describe('CaptureSourceRegistry', () => {
   it('keeps a source usable when its preview is oversized', async () => {
     const provider: CaptureSourceProvider = {
       currentProcessId: 1,
-      enumerate: () =>
-        Promise.resolve([
-          {
-            ...source('window:12:0', 'Game'),
-            thumbnail: thumbnail(Buffer.alloc(512 * 1024 + 1)),
-          },
-        ]),
+      enumerate: () => Promise.resolve([source('window:12:0', 'Game')]),
+      previews: (_request, onPreview) => {
+        onPreview(image('window:12:0', 'Game', Buffer.alloc(512 * 1024 + 1)))
+        return Promise.resolve()
+      },
       ownWindowHandles: () => new Set(),
       displays: () => Promise.resolve([]),
     }
@@ -297,6 +372,7 @@ describe('CaptureSourceRegistry', () => {
       captureSupported: true,
       preview: null,
     })
+    expect(snapshot.previewsPending).toBe(false)
   })
 
   it('parses HWND candidates without JavaScript number conversion', () => {
@@ -370,6 +446,61 @@ describe('CaptureSourceRegistry', () => {
         windowHwnd: '13',
       }),
     ).resolves.toEqual({ kind: 'window', windowHwnd: '13' })
+  })
+
+  it('binds a live saved HWND of the same executable without listing windows', async () => {
+    const enumerate = vi
+      .fn()
+      .mockResolvedValue([
+        { ...source('window:77:0', 'Clash Royale'), executableLabel: 'Game.exe' },
+      ])
+    const checkWindow = vi
+      .fn<NonNullable<CaptureSourceProvider['checkWindow']>>()
+      .mockResolvedValue({ ownerProcessId: 20, executableLabel: 'Game.exe' })
+    const ownHandles = new Set<string>()
+    const registry = new CaptureSourceRegistry({
+      currentProcessId: 1,
+      enumerate,
+      checkWindow,
+      ownWindowHandles: () => ownHandles,
+      displays: () => Promise.resolve([]),
+    })
+    const preference = {
+      kind: 'window' as const,
+      label: 'Clash Royale',
+      titleHint: 'Clash Royale',
+      executableLabel: 'Game.exe',
+      windowHwnd: '12',
+    }
+    await expect(registry.resolvePreference(preference)).resolves.toEqual({
+      kind: 'window',
+      windowHwnd: '12',
+    })
+    expect(checkWindow).toHaveBeenCalledWith('12')
+    expect(enumerate).not.toHaveBeenCalled()
+
+    // Closed, reused by another executable, our own window, or a failed check: the full
+    // list decides and can rebind the reopened game by its exact title.
+    for (const outcome of [
+      Promise.resolve(undefined),
+      Promise.resolve({ ownerProcessId: 30, executableLabel: 'Other.exe' }),
+      Promise.resolve({ ownerProcessId: 1, executableLabel: 'Game.exe' }),
+      Promise.reject(new Error('helper failed')),
+    ]) {
+      outcome.catch(() => undefined)
+      checkWindow.mockReturnValueOnce(outcome)
+      await expect(registry.resolvePreference(preference)).resolves.toEqual({
+        kind: 'window',
+        windowHwnd: '77',
+      })
+    }
+    ownHandles.add('12')
+    await expect(registry.resolvePreference(preference)).resolves.toEqual({
+      kind: 'window',
+      windowHwnd: '77',
+    })
+    expect(checkWindow).toHaveBeenCalledTimes(5)
+    expect(enumerate).toHaveBeenCalledTimes(5)
   })
 
   it('fails closed for stale or unmapped durable displays', async () => {

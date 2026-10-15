@@ -16,6 +16,7 @@ export class NotificationService {
     private readonly create: (options: {
       title: string
       body: string
+      silent?: boolean
     }) => NativeNotification,
     private readonly enabled: () => boolean = () => true,
   ) {}

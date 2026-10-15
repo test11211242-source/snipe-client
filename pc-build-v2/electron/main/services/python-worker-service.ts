@@ -4,6 +4,7 @@ import type { EventEmitter } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
+import { pythonWorkerEnvironment } from './python-environment'
 
 export interface WorkerChild extends EventEmitter {
   stdin: Writable
@@ -183,7 +184,7 @@ export class PythonWorkerService {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, CR_TOOLS_REQUEST_ID: requestId },
+        env: pythonWorkerEnvironment({ CR_TOOLS_REQUEST_ID: requestId }),
       })
       const stdout: Buffer[] = []
       const stderr: Buffer[] = []

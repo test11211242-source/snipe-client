@@ -1,6 +1,6 @@
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { WIDGET_IPC_CHANNELS } from '../../../shared/contracts/widget-ipc'
-import type { MonitorResult } from '../../../shared/models/monitor'
+import { presentedMonitorState, type MonitorResult } from '../../../shared/models/monitor'
 import {
   WIDGET_COMPACT_MIN_WIDTH,
   WIDGET_COMPACT_MAX_WIDTH,
@@ -9,6 +9,7 @@ import {
   WidgetSettingsSchema,
   WidgetStatusSchema,
   WidgetViewSchema,
+  widgetScale,
   type WidgetBounds,
   type WidgetResult,
   type WidgetSettings,
@@ -130,11 +131,12 @@ export class WidgetController {
       settings,
       visible: this.windows.isWidgetVisible(),
       result: projectResult(this.monitor.getLatestResult()),
-      monitorState: monitor.state,
+      monitorState: presentedMonitorState(monitor),
       monitorError: monitor.error,
       runIntent: monitor.runIntent,
       search: monitor.search,
-      scale: Math.max(0.86, Math.min(1.5, settings.bounds.width / 360)),
+      sourceMinimized: monitor.sourceMinimized,
+      scale: widgetScale(settings.bounds.width),
     })
   }
 
@@ -209,6 +211,10 @@ export class WidgetController {
             }
           : current.bounds,
       })
+      // Content height is window geometry, not a user choice: fit the window now, so new
+      // content (a found deck after waiting) is not cut off for the length of the disk write.
+      if (Object.keys(settingsPatch).length === 0)
+        this.windows.applyWidgetSettings(settings)
       const saved = await this.repository.save(userId, settings)
       this.assertSession(userId, generation)
 

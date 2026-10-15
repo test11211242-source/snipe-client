@@ -540,8 +540,12 @@ export class WindowCoordinator {
     const registered = this.#registry.get('widget')
     if (registered === undefined || registered.window.isDestroyed()) return
     const window = registered.window
-    window.setAlwaysOnTop(settings.alwaysOnTop, 'normal')
-    if (settings.alwaysOnTop && window.isVisible()) window.moveTop()
+    // Only pinning raises the overlay. Re-asserting topmost on every content-height or
+    // settings apply reordered a pinned overlay above windows the user had just brought up.
+    if (window.isAlwaysOnTop() !== settings.alwaysOnTop) {
+      window.setAlwaysOnTop(settings.alwaysOnTop, 'normal')
+      if (settings.alwaysOnTop && window.isVisible()) window.moveTop()
+    }
     window.setMovable(!settings.locked)
     window.setResizable(!settings.locked)
     window.setAspectRatio(0)

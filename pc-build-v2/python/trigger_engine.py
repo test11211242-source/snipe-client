@@ -13,6 +13,12 @@ import numpy as np
 
 from analyze_trigger import ANALYZER_VERSION, structural_maps
 from monitor_protocol import MonitorProtocolError, validate_ratio
+from game_geometry import GameGeometry
+from layout_learning import LayoutLearning
+from geometry.aspect import aspect_gap
+from geometry.game_rect import pixel_rect
+from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
+from geometry.zones import Badge, layout_kind
 from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
@@ -247,11 +253,12 @@ class TriggerProfile:
 class MatchResult:
     matched: bool
     score: float
-    support: float
-    orientation: float
-    correlation: float
-    orb_inliers: int
+    support: float | None
+    orientation: float | None
+    correlation: float | None
+    orb_inliers: int | None
     reason: str
+    matcher: str = "structural"
 
 
 def _decode_template(encoded: Any, name: str) -> np.ndarray:
@@ -334,8 +341,12 @@ class TemporalGate:
         self.release_frames = 0
         self.armed = True
         self.last_trigger_time = -math.inf
+        # Why the last matched frame did not fire: "rearm" (no release since
+        # the previous fire), "cooldown" or "confirm" (more frames needed).
+        self.blocked: str | None = None
 
     def observe(self, matched: bool, now: float) -> bool:
+        self.blocked = None
         if not matched:
             self.confirmations = 0
             if not self.armed:
@@ -345,15 +356,100 @@ class TemporalGate:
             return False
         self.release_frames = 0
         if not self.armed or now - self.last_trigger_time < self.cooldown_seconds:
+            self.blocked = "rearm" if not self.armed else "cooldown"
             self.confirmations = 0
             return False
         self.confirmations += 1
         if self.confirmations < self.confirmations_needed:
+            self.blocked = "confirm"
             return False
         self.confirmations = 0
         self.armed = False
         self.last_trigger_time = now
         return True
+
+
+# A non-VS frame scores at most ~0.2 in the owner replays; 0.3 marks a candidate.
+CANDIDATE_T = 0.30
+# Diagnostics score a mismatched game with the closest layout only this close.
+SHADOW_ASPECT_TOL = 0.15
+
+
+class VsCandidateLog:
+    """One compact record per VS candidate or near miss (intermittent-miss
+    diagnostics): the best score, the geometry it was evaluated on and why it
+    did not fire. Bounded to one record per episode, one per second and
+    twenty per minute; dropped records are counted in the next one."""
+
+    END_FRAMES = 3
+    MAX_SECONDS = 4.0
+    MIN_INTERVAL = 1.0
+    PER_MINUTE = 20
+
+    def __init__(self):
+        self.episode: dict[str, Any] | None = None
+        self.quiet = 0
+        self.emitted: list[float] = []
+        self.suppressed = 0
+
+    def observe(self, now: float, sample: dict[str, Any] | None) -> dict[str, Any] | None:
+        """`sample` is None for a frame without candidate evidence."""
+        if sample is not None:
+            if self.episode is None:
+                # Seconds since the previous fire when this candidate began (cooldown evidence).
+                self.episode = {"start": now, "frames": 0, "matched": 0, "best": None, "blocked": set(),
+                                "fired": False, "kindIgnored": False, "code": None, "sinceFireS": sample["sinceFireS"]}
+            episode = self.episode
+            self.quiet = 0
+            episode["frames"] += 1
+            episode["matched"] += bool(sample["matched"])
+            episode["fired"] |= sample["fired"]
+            episode["kindIgnored"] |= sample["kindIgnored"]
+            episode["code"] = sample["code"] or episode["code"]
+            if sample["blocked"]:
+                episode["blocked"].add(sample["blocked"])
+            best = episode["best"]
+            if best is None or (sample["score"] is not None and (best["score"] is None or sample["score"] > best["score"])):
+                episode["best"] = sample
+            if now - episode["start"] < self.MAX_SECONDS:
+                return None
+        elif self.episode is None:
+            return None
+        else:
+            self.quiet += 1
+            if self.quiet < self.END_FRAMES:
+                return None
+        episode, self.episode, self.quiet = self.episode, None, 0
+        self.emitted = [moment for moment in self.emitted if now - moment < 60]
+        if (self.emitted and now - self.emitted[-1] < self.MIN_INTERVAL) or len(self.emitted) >= self.PER_MINUTE:
+            self.suppressed += 1
+            return None
+        self.emitted.append(now)
+        best, suppressed, self.suppressed = episode["best"], self.suppressed, 0
+        return {"reason": self._reason(episode), "state": best["state"],
+                "score": None if best["score"] is None else round(best["score"], 4),
+                "frames": episode["frames"], "matchedFrames": episode["matched"],
+                "sinceFireS": episode["sinceFireS"], "frameWidth": best["frameWidth"], "frameHeight": best["frameHeight"],
+                "gameRect": best["gameRect"], "gameAspect": best["gameAspect"], "layoutAspect": best["layoutAspect"],
+                "kind": best["kind"], "learnedLayout": best["learnedLayout"], "code": episode["code"],
+                "suppressed": suppressed}
+
+    @staticmethod
+    def _reason(episode: dict[str, Any]) -> str:
+        if episode["fired"]:
+            return "fired"
+        for blocked in ("cooldown", "rearm", "confirm"):
+            if blocked in episode["blocked"]:
+                return blocked
+        if episode["kindIgnored"]:
+            return "kind"
+        best = episode["best"]
+        # Learning, when enabled, owns an unknown aspect; otherwise it stays blocked.
+        if best["state"] == "aspect_unknown" and best["learningEnabled"]:
+            return "learning"
+        if best["state"] in ("aspect_mismatch", "aspect_unknown"):
+            return "aspect"
+        return "score"
 
 
 def _bounded_int(value: Any, minimum: int, maximum: int, name: str) -> int:
@@ -402,8 +498,10 @@ def encode_action_png(image: np.ndarray, limits: dict[str, Any]) -> tuple[bytes,
                 interpolation=cv2.INTER_AREA,
             )
         )
+        # Level 1: this runs before `triggered` is sent; level 9 cost 77–304 ms for ~20%
+        # smaller files, far below the byte cap that the scale search still enforces.
         ok, encoded = cv2.imencode(
-            ".png", candidate, [cv2.IMWRITE_PNG_COMPRESSION, 9]
+            ".png", candidate, [cv2.IMWRITE_PNG_COMPRESSION, 1]
         )
         if not ok:
             raise RuntimeError("action image could not be encoded")
@@ -431,9 +529,22 @@ def encode_action_png(image: np.ndarray, limits: dict[str, Any]) -> tuple[bytes,
 
 class TriggerEngine:
     def __init__(self, payload: dict[str, Any]):
-        self.profile = TriggerProfile(payload["triggerProfile"])
-        self.trigger_ratio = payload["regions"]["trigger"]
-        self.data_ratio = payload["regions"]["nicknameRegion"]
+        self.primary = payload["primary"]
+        self.kind = self.primary["kind"]
+        self.events = []
+        self.geometry = None
+        self.learner = None
+        self.matchers = {}
+        if self.kind == "full_frame":
+            self.profile = TriggerProfile(self.primary["triggerProfile"])
+            self.trigger_ratio = self.primary["regions"]["trigger"]
+            self.data_ratio = self.primary["regions"]["nicknameRegion"]
+        else:
+            layouts = list(self.primary["layouts"])
+            self.geometry = GameGeometry(layouts)
+            self.learner = LayoutLearning(layouts, self.primary["learning"]["enabled"])
+            for layout in layouts:
+                self._matcher(layout)
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
@@ -442,20 +553,28 @@ class TriggerEngine:
         )
         self.triggered = False
         self.last_match: MatchResult | None = None
+        self.candidates = VsCandidateLog()
+        self._sample: dict[str, Any] | None = None
         self.configured_aspect = (
-            payload["configuredFrameSize"]["width"]
-            / payload["configuredFrameSize"]["height"]
+            self.primary["configuredFrameSize"]["width"] / self.primary["configuredFrameSize"]["height"]
+            if self.kind == "full_frame" else None
         )
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
-        if now - self.last_frame_time < self.frame_interval:
+        # Game-relative ticks also feed the 5-Hz evidence/finder clock. Accept
+        # exact 10-Hz timestamps despite binary-float subtraction roundoff;
+        # leave the legacy full-frame scheduling contract unchanged.
+        interval = self.frame_interval - (1e-9 if self.kind == "game_relative" else 0)
+        if now - self.last_frame_time < interval:
             return None
         self.last_frame_time = now
         bgr = ensure_bgr(frame)
         frame_height, frame_width = bgr.shape[:2]
         if frame_width <= 0 or frame_height <= 0 or frame_width * frame_height > 20_000_000:
             raise InvalidFrameError("capture frame dimensions are invalid")
+        if self.kind == "game_relative":
+            return self._process_game(bgr, now)
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
             raise GeometryChangedError("capture source aspect ratio changed")
@@ -467,6 +586,132 @@ class TriggerEngine:
         self.triggered = True
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def _matcher(self, layout):
+        layout_id = layout["layoutId"]
+        if layout_id not in self.matchers:
+            trigger = layout["trigger"]
+            self.matchers[layout_id] = (OrientationTrigger.from_dict(trigger) if trigger["kind"] == "vs_edge_orientation"
+                                        else TriggerProfile(trigger["profile"]))
+        return self.matchers[layout_id]
+
+    def _process_game(self, bgr, now):
+        self._sample = None
+        action = self._process_game_frame(bgr, now)
+        record = self.candidates.observe(now, self._sample)
+        if record is not None:
+            self.events.append(("vs_candidate", record))
+        return action
+
+    def _candidate(self, bgr, now, layout, score, *, matched=False, fired=False, kind_ignored=False, code=None):
+        """Candidate evidence of this frame, or None when it shows no VS."""
+        if not (fired or kind_ignored or code or (score is not None and score >= CANDIDATE_T)):
+            return None
+        geometry, rect = self.geometry, self.geometry.rect
+        badge = layout.get("badge") if layout is not None else None
+        since = now - self.gate.last_trigger_time
+        return {"state": "armed" if geometry.state == "armed_provisional" else geometry.state,
+                "score": score, "matched": matched, "fired": fired, "blocked": self.gate.blocked,
+                "kindIgnored": kind_ignored, "code": code,
+                "sinceFireS": round(since, 1) if math.isfinite(since) else None,
+                "frameWidth": bgr.shape[1], "frameHeight": bgr.shape[0],
+                "gameRect": pixel_rect(rect) if rect is not None else None,
+                "gameAspect": round(rect[2] / rect[3], 4) if rect is not None else None,
+                "layoutAspect": round(layout["gameAspect"], 4) if layout is not None else None,
+                "kind": layout_kind(Badge(**badge)) if badge else None,
+                "learnedLayout": layout is not None and layout["layoutSource"] == "learned",
+                "learningEnabled": self.learner.enabled}
+
+    def _shadow_score(self, bgr):
+        """Score the closest-aspect layout on a mismatched game, for diagnostics
+        only: it never arms, fires or fails the monitor."""
+        rect = self.geometry.rect
+        layouts = [layout for layout in self.geometry.layouts if layout["trigger"]["kind"] == "vs_edge_orientation"]
+        if rect is None or not layouts:
+            return None, None
+        aspect = rect[2] / rect[3]
+        layout = min(layouts, key=lambda item: aspect_gap(aspect, item["gameAspect"]))
+        if aspect_gap(aspect, layout["gameAspect"]) > SHADOW_ASPECT_TOL:
+            return layout, None
+        try:
+            return layout, self._matcher(layout).score(bgr, rect)
+        except ValueError:  # the saved badge crop does not fit this game shape
+            return layout, None
+
+    def _process_game_frame(self, bgr, now):
+        self.last_match = None
+        self.geometry.process(bgr, now)
+        event = self.geometry.event(now)
+        if event is not None:
+            self.events.append(("geometry", event))
+        layout, rect = self.geometry.layout, self.geometry.rect
+        if layout is None or rect is None:
+            self.gate.observe(False, now)
+            state = self.geometry.state
+            code, kind_ignored = None, False
+            if state == "aspect_unknown":
+                learned = self.learner.process(bgr, now, self.geometry)
+                learning_events = self.learner.take_events()
+                self.events.extend(learning_events)
+                kind_ignored = self.learner.ignored_kind
+                code = next((payload["reason"] for kind, payload in learning_events
+                             if kind == "learning" and payload["status"] == "rejected"), None)
+                if learned is not None:
+                    layout, wire, confirmation, confirmation_rect = learned
+                    self._matcher(layout)
+                    self.geometry.layout = layout
+                    self.geometry.state = "armed" if self.geometry.frames >= 20 else "armed_provisional"
+                    self.geometry.mismatch_frames = 0
+                    # Finder confirmation is three consecutive frames, stricter than the gate.
+                    self.gate.observe(True, now)
+                    fired = self.gate.observe(True, now)
+                    self.events.append(("layout_learned", {"calibrationId": self.primary["profileCalibrationId"],
+                                                          "layout": wire, "triggerId": None}))
+                    self.learner.reset()
+                    self.matchers = {item["layoutId"]: self.matchers[item["layoutId"]] for item in self.geometry.layouts
+                                     if item["layoutId"] in self.matchers}
+                    if fired:
+                        self.triggered = True
+                    self._sample = self._candidate(bgr, now, layout, None, matched=True, fired=fired, code="LAYOUT_LEARNED")
+                    if fired:
+                        data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
+                        return encode_action_png(crop(confirmation, data_rect), self.limits)
+                    return None
+            elif self.geometry.state == "aspect_mismatch":
+                self.learner.buffer(bgr, now, self.geometry)
+            elif self.geometry.state == "no_game":
+                self.learner.clear_evidence()
+            if state in ("aspect_mismatch", "aspect_unknown"):
+                shadow, score = self._shadow_score(bgr)
+                self._sample = self._candidate(bgr, now, shadow, score, kind_ignored=kind_ignored, code=code)
+            return None
+        if self.learner.active:
+            self.learner.reset()
+        else:
+            self.learner.clear_evidence()
+        matcher = self._matcher(layout)
+        if layout["trigger"]["kind"] == "vs_edge_orientation":
+            score = matcher.score(bgr, rect)
+            self.last_match = MatchResult(score >= ORIENT_T, score, None, None, None, None,
+                                          "pass" if score >= ORIENT_T else "structure_below_threshold", "vs_orientation")
+        else:
+            outer = ratio_rect(layout["regions"]["trigger"], bgr.shape[1], bgr.shape[0], rect)
+            inner = ratio_rect(matcher.inner_ratio, bgr.shape[1], bgr.shape[0], outer)
+            self.last_match = matcher.evaluate(crop(bgr, inner))
+        fired = self.gate.observe(self.last_match.matched, now)
+        orientation = layout["trigger"]["kind"] == "vs_edge_orientation"
+        # Structural scores have their own scale: only their matches are candidates.
+        evidence = self.last_match.score if orientation or self.last_match.matched else None
+        self._sample = self._candidate(bgr, now, layout, evidence, matched=self.last_match.matched, fired=fired)
+        if not fired:
+            return None
+        self.triggered = True
+        data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
+        return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def take_events(self):
+        events, self.events = self.events, []
+        return events
 
     def take_triggered(self) -> bool:
         triggered = self.triggered
@@ -487,6 +732,8 @@ class PredictionTriggerEngine:
         self.gate = TemporalGate(2, 60.0)
         self.last_match: MatchResult | None = None
         self.configured_aspect = value["configuredFrameSize"]["width"] / value["configuredFrameSize"]["height"]
+        self.state = "active"
+        self.events = []
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         if now - self.last_frame_time < self.frame_interval:
@@ -496,7 +743,15 @@ class PredictionTriggerEngine:
         frame_height, frame_width = bgr.shape[:2]
         actual_aspect = frame_width / frame_height
         if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            raise GeometryChangedError("prediction capture aspect ratio changed")
+            if self.state != "aspect_mismatch":
+                self.state = "aspect_mismatch"
+                self.events.append(("prediction_state", {"state": self.state}))
+            self.last_match = None
+            self.gate.confirmations = 0
+            return None
+        if self.state != "active":
+            self.state = "active"
+            self.events.append(("prediction_state", {"state": self.state}))
         outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
         self.last_match = self.profile.evaluate(crop(bgr, inner))
@@ -504,3 +759,7 @@ class PredictionTriggerEngine:
             return None
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
+
+    def take_events(self):
+        events, self.events = self.events, []
+        return events

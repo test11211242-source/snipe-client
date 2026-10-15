@@ -19,6 +19,11 @@ export const WIDGET_COMPACT_MIN_WIDTH = 220
 export const WIDGET_COMPACT_MAX_WIDTH = 480
 export const WIDGET_COMPACT_DEFAULT_WIDTH = 300
 
+/** Overlay content scale (`--ow-k`) for a window width; main and the renderer must agree. */
+export function widgetScale(width: number): number {
+  return Math.max(0.86, Math.min(1.5, width / WIDGET_DECK_WIDTH))
+}
+
 export const WidgetBoundsSchema = z
   .object({
     x: z.number().int().min(-32_768).max(32_767).nullable(),
@@ -132,6 +137,8 @@ export const WidgetViewSchema = z
     monitorError: MonitorPublicErrorSchema.nullable().default(null),
     runIntent: z.boolean(),
     search: MonitorSearchSchema.nullable(),
+    /** The game window is minimised: analysis is paused until it is restored. */
+    sourceMinimized: z.boolean().default(false),
     scale: z.number().min(0.86).max(1.5),
   })
   .strict()

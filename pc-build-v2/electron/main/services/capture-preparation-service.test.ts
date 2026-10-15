@@ -99,4 +99,111 @@ describe('CapturePreparationService', () => {
     })
     expect(process.start).toHaveBeenCalledTimes(1)
   })
+
+  it('transfers live ownership once and fences old release and preparation shutdown', async () => {
+    const process = {
+      start: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'live', size: { width: 1280, height: 720 } }),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isAlive: vi.fn().mockReturnValue(true),
+      getSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+      analyze: vi.fn().mockResolvedValue({
+        result: { ok: false, code: 'AUTO_VS_TIMEOUT' },
+        frame: null,
+      }),
+      cancelAnalysis: vi.fn().mockResolvedValue(undefined),
+      freeze: vi.fn().mockResolvedValue({
+        size: { width: 1280, height: 720 },
+        png: Buffer.from('frame'),
+      }),
+    }
+    const service = new CapturePreparationService(
+      { resolve: vi.fn().mockResolvedValue(source) } as never,
+      process as never,
+    )
+    const prepared = await service.prepare(source.view.sourceKey, source.view.revision)
+    const { capture, source: transferred } = await service.takeLive(
+      prepared.preparationId,
+    )
+    expect(transferred).toEqual(source)
+    expect(capture.isAlive()).toBe(true)
+    expect(capture.getSize()).toEqual({ width: 1280, height: 720 })
+    await expect(service.takeLive(prepared.preparationId)).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_STALE',
+    })
+    await expect(service.release(prepared.sourceKey, prepared.revision)).resolves.toBe(
+      false,
+    )
+    await service.stop()
+    expect(process.stop).toHaveBeenCalledTimes(1) // Initial prepare only.
+    await expect(
+      service.prepare(prepared.sourceKey, prepared.revision),
+    ).rejects.toMatchObject({ code: 'CAPTURE_PREPARATION_OWNED' })
+    const onProgress = vi.fn()
+    const onPreview = vi.fn()
+    await capture.analyze(onProgress, onPreview)
+    expect(process.analyze).toHaveBeenCalledWith('live', onProgress, onPreview, undefined)
+    await capture.freeze()
+    expect(process.cancelAnalysis).toHaveBeenCalledWith('live')
+    expect(process.freeze).toHaveBeenCalledWith('live', undefined)
+    expect(capture.isAlive()).toBe(false)
+    expect(capture.getSize()).toBeNull()
+    await capture.stop()
+    expect(process.stop).toHaveBeenCalledTimes(1)
+    await expect(capture.freeze()).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_STALE',
+    })
+  })
+
+  it('stops a transferred capture by its session id and never touches its successor', async () => {
+    const process = {
+      start: vi
+        .fn()
+        .mockResolvedValueOnce({ sessionId: 'first' })
+        .mockResolvedValueOnce({ sessionId: 'second' }),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isAlive: vi.fn().mockReturnValue(true),
+      cancelAnalysis: vi.fn().mockResolvedValue(undefined),
+    }
+    const service = new CapturePreparationService(
+      { resolve: vi.fn().mockResolvedValue(source) } as never,
+      process as never,
+    )
+    const first = await service.prepare(source.view.sourceKey, source.view.revision)
+    const { capture } = await service.takeLive(first.preparationId)
+    await capture.stop()
+    expect(process.stop).toHaveBeenLastCalledWith('first')
+    expect(capture.isAlive()).toBe(false)
+    const next = await service.prepare(source.view.sourceKey, source.view.revision)
+    const calls = process.stop.mock.calls.length
+    await capture.stop()
+    await capture.cancelAnalysis()
+    expect(process.stop).toHaveBeenCalledTimes(calls)
+    expect(process.cancelAnalysis).not.toHaveBeenCalled()
+    await expect(service.takeLive(first.preparationId)).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_STALE',
+    })
+    await expect(service.takeLive(next.preparationId)).resolves.toMatchObject({ source })
+  })
+
+  it('rejects a lost prepared source without transferring it', async () => {
+    const process = {
+      start: vi.fn().mockResolvedValue({ sessionId: 'lost' }),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isAlive: vi.fn().mockReturnValue(false),
+    }
+    const service = new CapturePreparationService(
+      { resolve: vi.fn().mockResolvedValue(source) } as never,
+      process as never,
+    )
+    const prepared = await service.prepare(source.view.sourceKey, source.view.revision)
+    await expect(service.takeLive(prepared.preparationId)).rejects.toMatchObject({
+      code: 'CAPTURE_PREPARATION_STALE',
+    })
+    await expect(service.release(prepared.sourceKey, prepared.revision)).resolves.toBe(
+      true,
+    )
+    expect(process.stop).toHaveBeenCalledTimes(2)
+  })
 })

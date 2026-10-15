@@ -399,7 +399,11 @@ describe('StreamerService', () => {
       const active = {
         profile: {
           profileId,
-          configuration: { revision: 1, fingerprint: 'a'.repeat(64) },
+          configuration: {
+            revision: 1,
+            fingerprint: 'a'.repeat(64),
+            calibration: { coordinateSpace: 'full_frame_normalized' },
+          },
         },
       }
       const result = {
@@ -411,6 +415,36 @@ describe('StreamerService', () => {
       await test.service.refresh()
       expect(await test.service.getReadiness()).toMatchObject({
         captureConfigured: true,
+        resultZonesConfigured: matches,
+        activeProfileId: profileId,
+      })
+    },
+  )
+
+  it.each([true, false])(
+    'derives game-relative readiness from calibration identity after layout append: %s',
+    async (matches) => {
+      const profileId = '00000000-0000-4000-8000-000000000001'
+      const calibrationId = '00000000-0000-4000-8000-000000000010'
+      const active = {
+        profile: {
+          profileId,
+          configuration: {
+            revision: 4,
+            fingerprint: 'b'.repeat(64),
+            calibration: { coordinateSpace: 'game_relative', calibrationId },
+          },
+        },
+      }
+      const result = {
+        captureProfileId: profileId,
+        captureCalibrationId: matches ? calibrationId : profileId,
+        captureConfigurationRevision: 1,
+        captureConfigurationFingerprint: 'a'.repeat(64),
+      }
+      const test = harness(undefined, active, result)
+      await test.service.refresh()
+      expect(await test.service.getReadiness()).toMatchObject({
         resultZonesConfigured: matches,
         activeProfileId: profileId,
       })

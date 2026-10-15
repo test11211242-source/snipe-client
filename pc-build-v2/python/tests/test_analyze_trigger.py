@@ -74,3 +74,189 @@ def test_rejects_flat_regions_that_cannot_be_identified_without_color() -> None:
 def test_rect_must_be_inside_actual_frame() -> None:
     with pytest.raises(ProtocolError, match="exceeds"):
         validate_pixel_rect({"x": 190, "y": 0, "width": 20, "height": 20}, 200, 120)
+
+
+def test_manual_vs_is_recognized_only_inside_marked_area() -> None:
+    from analyze_trigger import analyze_vs
+    from synthetic_frames import arena
+
+    image, badge = arena()
+    game = {"x": 0, "y": 0, "width": 360, "height": 640}
+    outer = {"x": 120, "y": 215, "width": 120, "height": 120}
+    trigger, found, outline = analyze_vs(encode(image), outer, game)
+    assert trigger is not None
+    assert trigger["algorithm"] == "vs-orient-1"
+    assert "outline" not in trigger
+    assert found["cx"] == pytest.approx(badge.cx, abs=.006)
+    # The display outline hugs the badge: every point near its box, its bounds close to it.
+    assert outline is not None and 3 <= len(outline) <= 64
+    xs, ys = [point[0] for point in outline], [point[1] for point in outline]
+    left, right = badge.cx - badge.width / 2, badge.cx + badge.width / 2
+    top, bottom = badge.cy - badge.height / 2, badge.cy + badge.height / 2
+    margin = 0.1 * badge.width
+    assert left - margin <= min(xs) and max(xs) <= right + margin
+    assert top - margin <= min(ys) and max(ys) <= bottom + margin
+    assert max(xs) - min(xs) >= 0.8 * badge.width
+    assert analyze_vs(encode(image), {"x": 5, "y": 5, "width": 80, "height": 80}, game) == (None, None, None)
+    assert analyze_vs(encode(image), outer, None) == (None, None, None)
+    # The structural and legacy profiles remain built even for a recognized VS.
+    from analyze_trigger import analyze_result
+    profile, legacy = analyze_result(encode(image), outer)
+    assert profile["schemaVersion"] == 3
+    assert legacy is not None
+
+
+
+@pytest.mark.parametrize("height", [65, 89, 125], ids=["widest", "portrait", "narrowest"])
+def test_auto_badge_crop_at_smallest_supported_game_width_builds_both_profiles(height):
+    from analyze_trigger import analyze_result
+    from geometry.zones import regions
+    from synthetic_frames import arena, framed
+
+    # §3.1 permits width >= 50; these heights span its supported aspect range.
+    image, badge = arena(50, height)
+    frame, game = framed(image)
+    trigger = regions(badge, 50 / height)["trigger"]
+    left = round(trigger.x * 50)
+    top = round(trigger.y * height)
+    right = round((trigger.x + trigger.width) * 50)
+    bottom = round((trigger.y + trigger.height) * height)
+    outer = {"x": game[0] + left, "y": game[1] + top,
+             "width": right - left, "height": bottom - top}
+    assert 0 < outer["width"] <= 16 and 0 < outer["height"] <= 20
+    profile, legacy = analyze_result(encode(frame), outer)
+    assert profile["schemaVersion"] == 3
+    assert profile["quality"]["edgePixelCount"] >= 80
+    assert profile["quality"]["edgeCoverage"] >= .125
+    assert decode_map(profile["structureTemplateBase64"]).shape == (128, 128)
+    assert decode_map(profile["edgeTemplateBase64"]).shape == (128, 128)
+    assert legacy["normalizedTemplateSize"] == {"width": 128, "height": 128}
+    assert np.std(decode_map(legacy["templateGrayBase64"])) >= 4
+
+
+def test_analyzer_protocol_two_returns_new_nullable_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+
+    image, outer = coarse_selection()
+    incoming = io.BytesIO()
+    write_envelope(incoming, {"protocolVersion": 2, "requestId": "unit", "operation": "analyze_trigger",
+                              "outerRect": outer, "gameRect": None}, encode(image))
+    incoming.seek(0)
+    outgoing = io.BytesIO()
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "unit")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=0)
+    assert response.metadata["protocolVersion"] == 2
+    assert response.metadata["ok"]
+    assert response.metadata["vsOrientation"] is None
+    assert response.metadata["vsBadge"] is None
+    assert response.metadata["profile"]["schemaVersion"] == 3
+    assert response.metadata["legacyProfile"] is not None
+
+
+@pytest.mark.parametrize("stage", ["search", "build"])
+def test_optional_vs_geometry_failure_preserves_structural_profiles(monkeypatch, stage) -> None:
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+    from synthetic_frames import arena
+
+    image, _ = arena()
+    outer = {"x": 120, "y": 215, "width": 120, "height": 120}
+    game = {"x": 0, "y": 0, "width": 360, "height": 640}
+
+    def fail(*args, **kwargs):
+        raise ValueError("Orientation crop height outside 64..160")
+
+    if stage == "search":
+        monkeypatch.setattr(analyze_trigger, "search", fail)
+    else:
+        monkeypatch.setattr(analyze_trigger.OrientationTrigger, "build", fail)
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    write_envelope(incoming, {"protocolVersion": 2, "requestId": "unit", "operation": "analyze_trigger",
+                              "outerRect": outer, "gameRect": game}, encode(image))
+    incoming.seek(0)
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "unit")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=0).metadata
+    assert response["ok"]
+    assert response["profile"]["schemaVersion"] == 3
+    assert response["legacyProfile"] is not None
+    assert response["vsOrientation"] is None
+    assert response["vsBadge"] is None
+
+
+def test_optional_vs_classification_does_not_hide_protocol_errors() -> None:
+    from analyze_trigger import analyze_vs
+
+    image, outer = coarse_selection()
+    with pytest.raises(ProtocolError):
+        analyze_vs(encode(image), outer, {"x": -1, "y": 0, "width": 100, "height": 100})
+
+
+def test_crop_region_losslessly_preserves_selected_confirmation_pixels():
+    from analyze_trigger import crop_region
+    image = np.random.default_rng(19).integers(0, 256, (80, 120, 4), dtype=np.uint8)
+    png, width, height = crop_region(encode(image), {"x": 13, "y": 21, "width": 57, "height": 32})
+    crop = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+    assert (width, height) == (57, 32)
+    assert np.array_equal(crop, image[21:53, 13:70])
+
+
+@pytest.mark.parametrize("rect", [
+    {"x": -1, "y": 0, "width": 5, "height": 5},
+    {"x": 0, "y": 0, "width": 321, "height": 1},
+    {"x": 0, "y": 0, "width": 0, "height": 5},
+    {"x": 0, "y": 0, "width": True, "height": 5},
+    {"x": 0, "y": 0, "width": 5, "height": 5, "extra": 1},
+])
+def test_crop_region_rejects_invalid_rectangles(rect):
+    from analyze_trigger import crop_region
+    image, _ = coarse_selection()
+    with pytest.raises(ProtocolError):
+        crop_region(encode(image), rect)
+
+
+def test_crop_region_rejects_non_png_input():
+    from analyze_trigger import crop_region
+    image, outer = coarse_selection()
+    ok, jpeg = cv2.imencode(".jpg", image)
+    assert ok
+    with pytest.raises(ProtocolError):
+        crop_region(jpeg.tobytes(), outer)
+
+
+@pytest.mark.parametrize("changes", [{}, {"gameRect": None}, {"protocolVersion": 1}, {"unexpected": True}])
+def test_crop_region_protocol_is_strict_and_returns_png(monkeypatch, changes):
+    import io
+    import analyze_trigger
+    from protocol.framing import read_envelope, write_envelope
+    image, outer = coarse_selection()
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    metadata = {"protocolVersion": 2, "requestId": "crop", "operation": "crop_region", "outerRect": outer}
+    write_envelope(incoming, {**metadata, **changes}, encode(image))
+    incoming.seek(0)
+    monkeypatch.setenv("CR_TOOLS_REQUEST_ID", "crop")
+    monkeypatch.setattr(analyze_trigger.sys, "stdin", type("Stream", (), {"buffer": incoming})())
+    monkeypatch.setattr(analyze_trigger.sys, "stdout", type("Stream", (), {"buffer": outgoing})())
+    analyze_trigger.main()
+    outgoing.seek(0)
+    response = read_envelope(outgoing, max_binary_bytes=analyze_trigger.MAX_PNG_BYTES)
+    if changes:
+        assert not response.metadata["ok"]
+        assert response.metadata["error"]["code"] == "ANALYSIS_FAILED"
+        assert not response.binary
+    else:
+        assert response.metadata == {"protocolVersion": 2, "requestId": "crop", "ok": True,
+                                     "width": 240, "height": 180, "mimeType": "image/png",
+                                     "byteLength": len(response.binary)}
+        crop = cv2.imdecode(np.frombuffer(response.binary, np.uint8), cv2.IMREAD_UNCHANGED)
+        assert np.array_equal(crop, image[30:210, 40:280])

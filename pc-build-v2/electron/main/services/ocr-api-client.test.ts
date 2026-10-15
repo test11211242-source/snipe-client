@@ -203,3 +203,201 @@ describe('OcrApiClient', () => {
     })
   })
 })
+
+describe('setup name diagnostics', () => {
+  it.each([
+    [true, 'trainer'],
+    [false, 'not_trainer'],
+    [null, 'unavailable'],
+  ] as const)('posts exactly one image-only check for %s', async (isTrainer, status) => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ schema: 1, text: 'Trainer Cheddar', isTrainer }))
+    const log = logger()
+    const client = new OcrApiClient(
+      fetchImplementation,
+      { getAccessToken: vi.fn().mockResolvedValue('setup-token') },
+      createProductionServerConfig(),
+      log,
+    )
+    await expect(client.checkSetupName(png())).resolves.toEqual({
+      status,
+      text: 'Trainer Cheddar',
+      httpStatus: 200,
+    })
+    expect(fetchImplementation).toHaveBeenCalledTimes(1)
+    const call = fetchImplementation.mock.calls[0]
+    if (call === undefined) throw new Error('Missing setup-name request')
+    const [url, init] = call
+    expect(url).toBe('https://api.artcsworld.xyz/api/ocr/setup-name-check')
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer setup-token')
+    expect(init?.body).toBeInstanceOf(FormData)
+    const form = init?.body as FormData
+    expect([...form.keys()]).toEqual(['image'])
+    expect(await (form.get('image') as Blob).arrayBuffer()).toEqual(
+      Uint8Array.from(png()).buffer,
+    )
+    expect(log.debug).not.toHaveBeenCalled()
+    expect(log.warn).not.toHaveBeenCalled()
+  })
+
+  it.each([201, 400, 401, 403, 404, 429, 503])(
+    'makes every non-200 response unavailable without retry (%i)',
+    async (status) => {
+      const getAccessToken = vi.fn().mockResolvedValue('token')
+      const fetchImplementation = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          response({ detail: 'failure' }, status, { 'Retry-After': '60' }),
+        )
+      const client = new OcrApiClient(
+        fetchImplementation,
+        { getAccessToken },
+        createProductionServerConfig(),
+        logger(),
+      )
+      await expect(client.checkSetupName(png())).resolves.toEqual({
+        status: 'unavailable',
+        text: null,
+        httpStatus: status,
+        reason: 'http_error',
+      })
+      expect(fetchImplementation).toHaveBeenCalledTimes(1)
+      expect(getAccessToken).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each([
+    { schema: 2, text: null, isTrainer: null },
+    { schema: 1, text: 5, isTrainer: true },
+    { schema: 1, text: null, isTrainer: 'true' },
+    { schema: 1, text: null, isTrainer: null, extra: true },
+  ])('rejects malformed diagnostic response', async (body) => {
+    const client = new OcrApiClient(
+      vi.fn<typeof fetch>().mockResolvedValue(response(body)),
+      { getAccessToken: vi.fn().mockResolvedValue('token') },
+      createProductionServerConfig(),
+      logger(),
+    )
+    await expect(client.checkSetupName(png())).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      httpStatus: 200,
+      reason: 'invalid_response',
+    })
+  })
+
+  it('bounds the entire operation to ten real seconds even while token refresh stalls', async () => {
+    vi.useFakeTimers()
+    const fetchImplementation = vi.fn<typeof fetch>()
+    const { promise: token } = Promise.withResolvers<string | null>()
+    const client = new OcrApiClient(
+      fetchImplementation,
+      { getAccessToken: vi.fn(() => token) },
+      createProductionServerConfig(),
+      logger(),
+    )
+    const pending = client.checkSetupName(png())
+    await vi.advanceTimersByTimeAsync(10_000)
+    await expect(pending).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      reason: 'timeout',
+    })
+    expect(fetchImplementation).not.toHaveBeenCalled()
+  })
+
+  it('cancels and treats network errors, malformed JSON and oversize streams as unavailable', async () => {
+    for (const [fetchImplementation, reason, httpStatus] of [
+      [
+        vi.fn<typeof fetch>().mockRejectedValue(new Error('offline')),
+        'request_failed',
+        undefined,
+      ],
+      [
+        vi.fn<typeof fetch>().mockResolvedValue(new Response('not json')),
+        'invalid_response',
+        200,
+      ],
+      [
+        vi.fn<typeof fetch>().mockResolvedValue(
+          new Response('{}', {
+            headers: { 'Content-Length': String(1024 * 1024 + 1) },
+          }),
+        ),
+        'invalid_response',
+        200,
+      ],
+    ] as const) {
+      const client = new OcrApiClient(
+        fetchImplementation,
+        { getAccessToken: vi.fn().mockResolvedValue('token') },
+        createProductionServerConfig(),
+        logger(),
+      )
+      await expect(client.checkSetupName(png())).resolves.toEqual({
+        status: 'unavailable',
+        text: null,
+        reason,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+      })
+    }
+    const client = new OcrApiClient(
+      vi.fn<typeof fetch>(),
+      { getAccessToken: vi.fn().mockResolvedValue('token') },
+      createProductionServerConfig(),
+      logger(),
+    )
+    const controller = new AbortController()
+    controller.abort()
+    await expect(client.checkSetupName(png(), controller.signal)).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      reason: 'aborted',
+    })
+  })
+
+  it('reports invalid images and missing auth without sending a request', async () => {
+    const fetchImplementation = vi.fn<typeof fetch>()
+    const getAccessToken = vi.fn().mockResolvedValue(null)
+    const client = new OcrApiClient(
+      fetchImplementation,
+      { getAccessToken },
+      createProductionServerConfig(),
+      logger(),
+    )
+    await expect(client.checkSetupName(Buffer.from('not a PNG'))).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      reason: 'invalid_image',
+    })
+    expect(getAccessToken).not.toHaveBeenCalled()
+    await expect(client.checkSetupName(png())).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      reason: 'auth_unavailable',
+    })
+    expect(fetchImplementation).not.toHaveBeenCalled()
+  })
+
+  it('reports cancellation during a pending request without waiting for fetch', async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(
+      () => Promise.withResolvers<Response>().promise,
+    )
+    const client = new OcrApiClient(
+      fetchImplementation,
+      { getAccessToken: vi.fn().mockResolvedValue('token') },
+      createProductionServerConfig(),
+      logger(),
+    )
+    const controller = new AbortController()
+    const pending = client.checkSetupName(png(), controller.signal)
+    await vi.waitFor(() => expect(fetchImplementation).toHaveBeenCalledOnce())
+    controller.abort()
+    await expect(pending).resolves.toEqual({
+      status: 'unavailable',
+      text: null,
+      reason: 'aborted',
+    })
+  })
+})

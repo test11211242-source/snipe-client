@@ -7,7 +7,6 @@ import {
   moveRect,
   nudgeRect,
   pointerToNormalized,
-  projectInnerRect,
   rectFromPoints,
   rectToPixels,
   resizeCorner,
@@ -87,6 +86,50 @@ describe('setup region editing geometry', () => {
     expect(nudgeRect(rect, 'ArrowLeft', 0.5, true).width).toBe(MIN_REGION_SIDE)
   })
 
+  it('clamps drawing to the game viewport, including reverse and outside drags', () => {
+    const game = { x: 0.2, y: 0.2, width: 0.6, height: 0.6 }
+    expect(rectFromPoints({ x: 0, y: 0 }, { x: 1, y: 1 }, game)).toEqual({
+      x: 0.2,
+      y: 0.2,
+      width: 0.6000000000000001,
+      height: 0.6000000000000001,
+    })
+    expect(rectFromPoints({ x: 1, y: 1 }, { x: 0, y: 0 }, game)).toEqual(
+      rectFromPoints({ x: 0, y: 0 }, { x: 1, y: 1 }, game),
+    )
+    expect(rectFromPoints({ x: 0, y: 0 }, { x: 0.1, y: 0.1 }, game)).toBeNull()
+  })
+
+  it('keeps moves and every resize corner inside the game viewport', () => {
+    const game = { x: 0.1, y: 0.2, width: 0.7, height: 0.6 }
+    const inside = { x: 0.3, y: 0.4, width: 0.2, height: 0.1 }
+    expect(moveRect(inside, -5, -5, game)).toEqual({ ...inside, x: 0.1, y: 0.2 })
+    const moved = moveRect(inside, 5, 5, game)
+    expect(moved.x + moved.width).toBeCloseTo(0.8)
+    expect(moved.y + moved.height).toBeCloseTo(0.8)
+    for (const corner of ['nw', 'ne', 'sw', 'se'] as const) {
+      for (const point of [
+        { x: -1, y: -1 },
+        { x: 2, y: 2 },
+      ]) {
+        const resized = resizeCorner(inside, corner, point, game)
+        expect(resized.x).toBeGreaterThanOrEqual(game.x)
+        expect(resized.y).toBeGreaterThanOrEqual(game.y)
+        expect(resized.x + resized.width).toBeLessThanOrEqual(game.x + game.width)
+        expect(resized.y + resized.height).toBeLessThanOrEqual(game.y + game.height)
+      }
+    }
+  })
+
+  it('keeps keyboard moves and keyboard resizing inside the game viewport', () => {
+    const game = { x: 0.2, y: 0.2, width: 0.6, height: 0.6 }
+    const inside = { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }
+    expect(nudgeRect(inside, 'ArrowLeft', 1, false, game).x).toBe(0.2)
+    expect(nudgeRect(inside, 'ArrowUp', 1, false, game).y).toBe(0.2)
+    expect(nudgeRect(inside, 'ArrowRight', 1, true, game).width).toBe(0.5)
+    expect(nudgeRect(inside, 'ArrowDown', 1, true, game).height).toBe(0.5)
+  })
+
   it('hits corner handles before the body and misses outside', () => {
     const tolerance = { x: 0.02, y: 0.02 }
     expect(hitRect(rect, { x: 0.21, y: 0.31 }, tolerance)).toEqual({
@@ -99,15 +142,6 @@ describe('setup region editing geometry', () => {
     })
     expect(hitRect(rect, { x: 0.3, y: 0.35 }, tolerance)).toEqual({ kind: 'body' })
     expect(hitRect(rect, { x: 0.9, y: 0.9 }, tolerance)).toBeNull()
-  })
-
-  it('projects the inner structure rect into the outer region', () => {
-    expect(
-      projectInnerRect(
-        { x: 0.2, y: 0.2, width: 0.4, height: 0.4 },
-        { x: 0.25, y: 0.5, width: 0.5, height: 0.25 },
-      ),
-    ).toEqual({ x: 0.3, y: 0.4, width: 0.2, height: 0.1 })
   })
 
   it('formats pixel readouts and compares rects', () => {

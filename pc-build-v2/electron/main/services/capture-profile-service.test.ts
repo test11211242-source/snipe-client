@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { CaptureProfileCollectionStatus } from '../../../shared/models/capture'
+import type {
+  CaptureProfileCollectionStatus,
+  GameLayout,
+} from '../../../shared/models/capture'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { CaptureProfileService } from './capture-profile-service'
+import { monitorLearnedLayoutFixture } from '../../../tests/monitor-fixtures'
 
 const PRIMARY_ID = '00000000-0000-4000-8000-000000000001'
 const SECONDARY_ID = '00000000-0000-4000-8000-000000000002'
@@ -61,6 +65,16 @@ function harness(predictionState = 'stopped', resultRepository?: object) {
     duplicate: vi.fn(),
     delete: vi.fn(),
     rebind: vi.fn(),
+    appendLearnedLayout: vi
+      .fn<
+        (
+          userId: string,
+          profileId: string,
+          calibrationId: string,
+          layout: GameLayout,
+        ) => Promise<number>
+      >()
+      .mockResolvedValue(2),
   }
   const monitorView = {
     state: 'READY' as const,
@@ -221,7 +235,10 @@ describe('CaptureProfileService', () => {
     const { service, repository } = harness()
     repository.get.mockResolvedValue({
       configuration: {
-        calibration: { referenceFrameSize: { width: 1920, height: 1080 } },
+        calibration: {
+          coordinateSpace: 'full_frame_normalized',
+          referenceFrameSize: { width: 1920, height: 1080 },
+        },
       },
     })
 
@@ -241,6 +258,135 @@ describe('CaptureProfileService', () => {
     ).rejects.toMatchObject({ code: 'CAPTURE_PROFILE_GEOMETRY_MISMATCH' })
     expect(repository.rebind).not.toHaveBeenCalled()
   })
+
+  it('rebinds game-relative profiles across source aspect changes', async () => {
+    const test = harness()
+    test.repository.get.mockResolvedValue({
+      configuration: {
+        calibration: { coordinateSpace: 'game_relative', calibrationId: PRIMARY_ID },
+      },
+    })
+    await expect(
+      test.service.rebind(
+        SECONDARY_ID,
+        { kind: 'display', label: 'Screen', displayId: '1' },
+        { width: 1024, height: 768 },
+        1,
+      ),
+    ).resolves.toMatchObject({ profiles: { revision: 1 } })
+    expect(test.repository.rebind).toHaveBeenCalledWith(
+      'user-1',
+      SECONDARY_ID,
+      { kind: 'display', label: 'Screen', displayId: '1' },
+      1,
+      { width: 1024, height: 768 },
+    )
+  })
+
+  it('appends a learned layout while predictions run without rewriting result binding or restarting', async () => {
+    const results = {
+      load: vi.fn(),
+      save: vi.fn(),
+      delete: vi.fn(),
+    }
+    const test = harness('active', results)
+    const learned = monitorLearnedLayoutFixture()
+    await expect(
+      test.service.appendLearnedLayout('user-1', PRIMARY_ID, PRIMARY_ID, learned),
+    ).resolves.toBe(2)
+    expect(test.repository.appendLearnedLayout).toHaveBeenCalledWith(
+      'user-1',
+      PRIMARY_ID,
+      PRIMARY_ID,
+      expect.objectContaining({
+        layoutId: learned.layoutId,
+        layoutSource: 'learned',
+        calibratedAt: learned.calibratedAt,
+        provenance: {
+          trigger: { origin: 'auto', confidence: 0.9, analyzerVersion: 'vs-orient-1' },
+          nickname: { origin: 'auto', confidence: 0.9, analyzerVersion: 'm9-geom-1' },
+          topLeftEvidence: {
+            origin: 'auto',
+            confidence: 0.9,
+            analyzerVersion: 'm9-geom-1',
+          },
+          viewport: { origin: 'auto', confidence: 0.9, analyzerVersion: 'm9-geom-1' },
+        },
+      }),
+    )
+    expect(results.save).not.toHaveBeenCalled()
+    expect(test.monitor.restartIfActive).not.toHaveBeenCalled()
+    expect(test.monitor.invalidateCaptureTarget).not.toHaveBeenCalled()
+  })
+
+  it('persists transferred manual-zone provenance instead of reverting to auto', async () => {
+    const test = harness()
+    await test.service.appendLearnedLayout('user-1', PRIMARY_ID, PRIMARY_ID, {
+      ...monitorLearnedLayoutFixture(),
+      zonesOrigin: { nickname: 'manual', topLeftEvidence: 'manual' },
+    })
+    expect(
+      test.repository.appendLearnedLayout.mock.calls[0]?.[3].provenance,
+    ).toMatchObject({
+      nickname: { origin: 'manual', confidence: null, analyzerVersion: null },
+      topLeftEvidence: { origin: 'manual', confidence: null, analyzerVersion: null },
+    })
+  })
+
+  it('rejects learned layouts from a different signed-in user', async () => {
+    const test = harness()
+    await expect(
+      test.service.appendLearnedLayout(
+        'user-2',
+        PRIMARY_ID,
+        PRIMARY_ID,
+        monitorLearnedLayoutFixture(),
+      ),
+    ).rejects.toMatchObject({ code: 'LAYOUT_STALE' })
+    expect(test.repository.appendLearnedLayout).not.toHaveBeenCalled()
+  })
+
+  it.each(['LAYOUT_STALE', 'LAYOUT_LIMIT', 'LAYOUT_SAVE_FAILED'])(
+    'propagates %s without restarting monitoring',
+    async (code) => {
+      const test = harness()
+      test.repository.appendLearnedLayout.mockRejectedValue(
+        new ApplicationError(code, code),
+      )
+      await expect(
+        test.service.appendLearnedLayout(
+          'user-1',
+          PRIMARY_ID,
+          PRIMARY_ID,
+          monitorLearnedLayoutFixture(),
+        ),
+      ).rejects.toMatchObject({ code })
+      expect(test.monitor.restartIfActive).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([true, false])(
+    'projects calibration-bound resultConfigured after append: %s',
+    async (matches) => {
+      const results = {
+        load: vi.fn().mockResolvedValue({
+          captureProfileId: PRIMARY_ID,
+          captureCalibrationId: matches ? PRIMARY_ID : SECONDARY_ID,
+          captureConfigurationRevision: 1,
+          captureConfigurationFingerprint: 'old'.padEnd(64, '0'),
+        }),
+      }
+      const test = harness('stopped', results)
+      const listed = status()
+      listed.profiles = listed.profiles.map((profile) => ({
+        ...profile,
+        calibrationId: PRIMARY_ID,
+        configurationRevision: 4,
+      }))
+      test.repository.list.mockResolvedValue(listed)
+      expect((await test.service.getView()).profiles[0]?.resultConfigured).toBe(matches)
+    },
+  )
 })
 
 describe('review regression profile source projection', () => {

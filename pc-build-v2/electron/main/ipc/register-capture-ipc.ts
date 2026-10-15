@@ -12,10 +12,13 @@ import {
   CaptureProfilesResultSchema,
   CaptureStatusResultSchema,
   EmptyCapturePayloadSchema,
+  DetectionPreviewPayloadSchema,
+  DetectionPreviewResultSchema,
   MAIN_CAPTURE_IPC_CHANNELS,
   PreviewPayloadSchema,
   ReleasePreparationResultSchema,
   RebindCaptureProfilePayloadSchema,
+  RetryDetectionResponseSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
@@ -113,19 +116,37 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.startSetup, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
     const payload = StartSetupPayloadSchema.parse(rawPayload)
+    const target = {
+      profileId: payload.profileId ?? randomUUID(),
+      profileName: payload.profileName,
+      expectedRevision: payload.expectedRevision,
+    }
+    if (payload.mode === 'auto') {
+      const prepared = await dependencies.preparations.takeLive(payload.preparationId)
+      try {
+        return SetupSessionResultSchema.parse(
+          await dependencies.setup.startAuto(
+            prepared.source.selector,
+            prepared.source.preference,
+            prepared.capture,
+            target,
+          ),
+        )
+      } catch (error) {
+        await prepared.capture.stop()
+        throw error
+      }
+    }
     const prepared = await dependencies.preparations.freeze(payload.preparationId)
-    const view = await dependencies.setup.start(
-      prepared.source.selector,
-      prepared.source.preference,
-      'capture',
-      prepared.frame,
-      {
-        profileId: payload.profileId ?? randomUUID(),
-        profileName: payload.profileName,
-        expectedRevision: payload.expectedRevision,
-      },
+    return SetupSessionResultSchema.parse(
+      await dependencies.setup.start(
+        prepared.source.selector,
+        prepared.source.preference,
+        'capture',
+        prepared.frame,
+        target,
+      ),
     )
-    return SetupSessionResultSchema.parse(view)
   })
   ipcMain.handle(MAIN_CAPTURE_IPC_CHANNELS.getStatus, async (event, rawPayload) => {
     verify(event, dependencies.windows, 'main')
@@ -210,6 +231,38 @@ export function registerCaptureIpc(dependencies: CaptureIpcDependencies): () => 
     const payload = SetupCommandSchema.parse(rawPayload)
     return SetupFrameResultSchema.parse(
       dependencies.setup.getFrame(payload.sessionId, payload.generation),
+    )
+  })
+  ipcMain.handle(SETUP_IPC_CHANNELS.retryDetection, (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = SetupCommandSchema.parse(rawPayload)
+    try {
+      return RetryDetectionResponseSchema.parse({
+        ok: true,
+        session: dependencies.setup.retryDetection(payload.sessionId, payload.generation),
+      })
+    } catch (error) {
+      return RetryDetectionResponseSchema.parse({
+        ok: false,
+        error:
+          error instanceof ApplicationError
+            ? error.toPublicError()
+            : { code: 'SETUP_FAILED', message: 'Не получилось настроить автоматически' },
+      })
+    }
+  })
+  ipcMain.handle(SETUP_IPC_CHANNELS.switchToManual, async (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = SetupCommandSchema.parse(rawPayload)
+    return SetupSessionResultSchema.parse(
+      await dependencies.setup.switchToManual(payload.sessionId, payload.generation),
+    )
+  })
+  ipcMain.handle(SETUP_IPC_CHANNELS.getDetectionPreview, (event, rawPayload) => {
+    verify(event, dependencies.windows, 'main')
+    const payload = DetectionPreviewPayloadSchema.parse(rawPayload)
+    return DetectionPreviewResultSchema.parse(
+      dependencies.setup.getDetectionPreview(payload.sessionId),
     )
   })
   ipcMain.handle(SETUP_IPC_CHANNELS.setRegion, (event, rawPayload) => {

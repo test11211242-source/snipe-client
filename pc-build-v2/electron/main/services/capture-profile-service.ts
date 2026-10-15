@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
   CaptureProfileNameSchema,
+  GameLayoutSchema,
   CaptureProfilesViewSchema,
   CaptureStatusSchema,
   type CapturePreference,
@@ -28,6 +29,7 @@ import type { MonitorSupervisor } from './monitor-supervisor'
 import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
 
+import type { GameLayoutWire } from '../../../shared/contracts/monitor-protocol'
 const ACTIVE_MONITOR_STATES = [
   'PREFLIGHT',
   'STARTING',
@@ -91,6 +93,9 @@ export class CaptureProfileService {
               profileId: profile.profileId,
               configurationRevision: profile.configurationRevision,
               configurationFingerprint: profile.configurationFingerprint,
+              ...(profile.calibrationId === undefined
+                ? {}
+                : { calibrationId: profile.calibrationId }),
             })
         }),
       )
@@ -279,11 +284,16 @@ export class CaptureProfileService {
       const profile = await this.repository.get(userId, profileId)
       if (profile === null)
         throw this.publicFailure(new CaptureProfileNotFoundError(profileId))
+      const calibration = profile.configuration.calibration
       const configuredAspect =
-        profile.configuration.calibration.referenceFrameSize.width /
-        profile.configuration.calibration.referenceFrameSize.height
+        calibration.coordinateSpace === 'game_relative'
+          ? null
+          : calibration.referenceFrameSize.width / calibration.referenceFrameSize.height
       const nextAspect = frameSize.width / frameSize.height
-      if (Math.abs(nextAspect / configuredAspect - 1) > 0.02) {
+      if (
+        configuredAspect !== null &&
+        Math.abs(nextAspect / configuredAspect - 1) > 0.02
+      ) {
         throw new ApplicationError(
           'CAPTURE_PROFILE_GEOMETRY_MISMATCH',
           'The selected source has a different aspect ratio; configure its regions',
@@ -310,6 +320,51 @@ export class CaptureProfileService {
         await this.monitor.restartIfActive()
       }
       return this.result(context)
+    })
+  }
+
+  appendLearnedLayout(
+    userId: string,
+    profileId: string,
+    calibrationId: string,
+    layout: GameLayoutWire,
+  ): Promise<number> {
+    const context = this.requireAuthContext()
+    return this.serialized(async () => {
+      this.assertAuthContext(context)
+      if (context.userId !== userId) {
+        throw new ApplicationError(
+          'LAYOUT_STALE',
+          'The learned layout belongs to another user',
+        )
+      }
+      const { confidence, zonesOrigin, ...fields } = layout
+      const geometry = {
+        origin: 'auto' as const,
+        confidence,
+        analyzerVersion: 'm9-geom-1',
+      }
+      const learned = GameLayoutSchema.parse({
+        ...fields,
+        provenance: {
+          trigger: { ...geometry, analyzerVersion: 'vs-orient-1' },
+          nickname:
+            zonesOrigin.nickname === 'manual'
+              ? { origin: 'manual', confidence: null, analyzerVersion: null }
+              : { ...geometry },
+          topLeftEvidence:
+            zonesOrigin.topLeftEvidence === 'manual'
+              ? { origin: 'manual', confidence: null, analyzerVersion: null }
+              : { ...geometry },
+          viewport: { ...geometry },
+        },
+      })
+      return this.repository.appendLearnedLayout(
+        userId,
+        profileId,
+        calibrationId,
+        learned,
+      )
     })
   }
 

@@ -15,6 +15,7 @@ export const PredictionResultConfigurationSchema = z
     captureProfileId: CaptureProfileIdSchema,
     captureConfigurationRevision: z.number().int().positive(),
     captureConfigurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    captureCalibrationId: z.uuid().optional(),
     revision: z.number().int().positive(),
     committedAt: z.iso.datetime(),
     source: CapturePreferenceSchema,
@@ -46,10 +47,15 @@ export function predictionResultMatchesCapture(
     profileId: string
     configurationRevision: number
     configurationFingerprint: string
+    calibrationId?: string | undefined
   },
 ): boolean {
+  if (result.captureProfileId !== capture.profileId) return false
+  if (capture.calibrationId !== undefined) {
+    return result.captureCalibrationId === capture.calibrationId
+  }
   return (
-    result.captureProfileId === capture.profileId &&
+    result.captureCalibrationId === undefined &&
     result.captureConfigurationRevision === capture.configurationRevision &&
     result.captureConfigurationFingerprint === capture.configurationFingerprint
   )

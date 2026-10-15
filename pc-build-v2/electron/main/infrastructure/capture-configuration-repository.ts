@@ -10,6 +10,8 @@ import {
   CaptureProfileIdSchema,
   CaptureProfileNameSchema,
   MAX_CAPTURE_PROFILES,
+  GameLayoutSchema,
+  type GameLayout,
   type CaptureConfiguration,
   type CapturePreference,
   type PixelSize,
@@ -17,11 +19,14 @@ import {
   type CaptureProfileCollection,
   type CaptureProfileCollectionStatus,
 } from '../../../shared/models/capture'
+import { ApplicationError } from '../../../shared/errors/application-error'
+import { gameAspectsOverlap } from '../../../shared/contracts/game-aspect'
 import {
   assertLegacyFingerprint,
   createLayoutCalibration,
   LegacyCaptureCollectionSchema,
   LegacyCaptureConfigurationSchema,
+  V4CaptureCollectionSchema,
 } from './capture-profile-migration'
 
 export interface CaptureConfigurationFileSystem {
@@ -45,6 +50,8 @@ export const DEFAULT_CAPTURE_PROFILE_NAME = 'Основной'
 export interface CaptureConfigurationRepositoryOptions {
   /** Read-only rollback input; never removed or rewritten. */
   legacyDirectory?: string
+  /** Exact v4 collection input, retained for rollback. */
+  previousDirectory?: string
   migratePredictionReference?: (
     userId: string,
     profileId: string,
@@ -132,7 +139,7 @@ function legacyUserFileName(userId: string): string {
 }
 
 function profileUserFileName(userId: string): string {
-  return `${userFileStem(userId)}.profiles.v3.json`
+  return `${userFileStem(userId)}.profiles.v4.json`
 }
 
 export function migratedCaptureProfileId(userId: string): string {
@@ -255,6 +262,9 @@ function collectionStatus(
       updatedAt: profile.updatedAt,
       configurationRevision: profile.configuration.revision,
       configurationFingerprint: profile.configuration.fingerprint,
+      ...(profile.configuration.calibration.coordinateSpace === 'game_relative'
+        ? { calibrationId: profile.configuration.calibration.calibrationId }
+        : {}),
       committedAt: profile.configuration.committedAt,
       sourceKind: profile.configuration.sourceBinding.identity.kind,
       sourceLabel: profile.configuration.sourceBinding.identity.label,
@@ -271,7 +281,7 @@ export class CaptureConfigurationRepository {
   private readonly createProfileId: () => string
   private mutationQueue: Promise<void> = Promise.resolve()
 
-  /** All mutations are serialized; the v4 root is authoritative after import. */
+  /** All mutations are serialized; the v5 root is authoritative after import. */
   constructor(
     private readonly directory: string,
     private readonly fs: CaptureConfigurationFileSystem = nodeCaptureConfigurationFileSystem,
@@ -312,7 +322,7 @@ export class CaptureConfigurationRepository {
         )
         await this.writeCollection(
           signCollection({
-            schemaVersion: 3,
+            schemaVersion: 4,
             userId: validated.userId,
             revision: 1,
             activeProfileId: profileId,
@@ -531,12 +541,18 @@ export class CaptureConfigurationRepository {
         revision: profile.configuration.revision + 1,
         committedAt: this.timestamp(),
         sourceBinding: { identity: validatedSource, lastVerifiedAt: null },
-        calibration: {
-          ...profile.configuration.calibration,
-          referenceFrameSize:
-            frameSize ?? profile.configuration.calibration.referenceFrameSize,
-          validationStatus: 'needs_validation',
-        },
+        calibration:
+          profile.configuration.calibration.coordinateSpace === 'full_frame_normalized'
+            ? {
+                ...profile.configuration.calibration,
+                referenceFrameSize:
+                  frameSize ?? profile.configuration.calibration.referenceFrameSize,
+                validationStatus: 'needs_validation',
+              }
+            : {
+                ...profile.configuration.calibration,
+                validationStatus: 'needs_validation',
+              },
       })
       const profiles = [...collection.profiles]
       profiles[index] = {
@@ -573,6 +589,81 @@ export class CaptureConfigurationRepository {
     })
   }
 
+  async appendLearnedLayout(
+    userId: string,
+    profileId: string,
+    calibrationId: string,
+    layout: GameLayout,
+  ): Promise<number> {
+    const validatedLayout = GameLayoutSchema.parse(layout)
+    if (validatedLayout.layoutSource !== 'learned') {
+      throw new ApplicationError('LAYOUT_STALE', 'Only learned layouts can be appended')
+    }
+    return this.serialized(async () => {
+      const collection = await this.readOrMigrate(userId)
+      const index =
+        collection?.profiles.findIndex((profile) => profile.profileId === profileId) ?? -1
+      const profile = collection?.profiles[index]
+      const calibration = profile?.configuration.calibration
+      if (
+        collection === null ||
+        profile === undefined ||
+        calibration?.coordinateSpace !== 'game_relative' ||
+        calibration.calibrationId !== calibrationId ||
+        calibration.layouts.some(
+          (existing) =>
+            existing.layoutId === validatedLayout.layoutId ||
+            gameAspectsOverlap(existing.gameAspect, validatedLayout.gameAspect),
+        )
+      ) {
+        throw new ApplicationError(
+          'LAYOUT_STALE',
+          'The capture calibration or layout has changed',
+        )
+      }
+      const layouts = [...calibration.layouts]
+      if (layouts.length === 4) {
+        let oldest = -1
+        let oldestTimestamp = Infinity
+        for (const [candidateIndex, candidate] of layouts.entries()) {
+          if (candidate.layoutSource !== 'learned') continue
+          const timestamp = Date.parse(candidate.calibratedAt)
+          if (timestamp < oldestTimestamp) {
+            oldest = candidateIndex
+            oldestTimestamp = timestamp
+          }
+        }
+        if (oldest < 0)
+          throw new ApplicationError('LAYOUT_LIMIT', 'Setup layouts cannot be evicted')
+        layouts.splice(oldest, 1)
+      }
+      layouts.push(validatedLayout)
+      const configuration = signConfiguration({
+        schemaVersion: 3,
+        userId,
+        revision: profile.configuration.revision + 1,
+        committedAt: this.timestamp(),
+        sourceBinding: profile.configuration.sourceBinding,
+        calibration: { ...calibration, revision: calibration.revision + 1, layouts },
+      })
+      const profiles = [...collection.profiles]
+      profiles[index] = {
+        ...profile,
+        updatedAt: configuration.committedAt,
+        configuration,
+      }
+      await this.writeCollection(this.reviseCollection(collection, profiles))
+      return configuration.calibration.revision
+    }).catch((error: unknown) => {
+      if (error instanceof ApplicationError) throw error
+      throw new ApplicationError(
+        'LAYOUT_SAVE_FAILED',
+        'The learned layout could not be saved',
+        { cause: error },
+      )
+    })
+  }
+
   private async mutate(
     userId: string,
     expectedRevision: number | undefined,
@@ -594,7 +685,7 @@ export class CaptureConfigurationRepository {
     activeProfileId = collection.activeProfileId,
   ): CaptureProfileCollection {
     return signCollection({
-      schemaVersion: 3,
+      schemaVersion: 4,
       userId: collection.userId,
       revision: collection.revision + 1,
       activeProfileId,
@@ -617,6 +708,55 @@ export class CaptureConfigurationRepository {
         return collection
       } catch (error) {
         throw new CaptureProfileStoreCorruptError(userId, 'profile store', error)
+      }
+    }
+
+    const previousProfiles = await this.readOptional(
+      join(
+        this.options.previousDirectory ?? this.legacyDirectory,
+        `${userFileStem(userId)}.profiles.v3.json`,
+      ),
+    )
+    if (previousProfiles !== null) {
+      try {
+        const old = V4CaptureCollectionSchema.parse(JSON.parse(previousProfiles))
+        assertLegacyFingerprint(old)
+        if (old.userId !== userId) throw new Error('Previous capture user does not match')
+        const profiles = old.profiles.map((profile) => {
+          assertLegacyFingerprint(profile.configuration)
+          const { fingerprint: _fingerprint, ...unsigned } = profile.configuration
+          void _fingerprint
+          return {
+            ...profile,
+            configuration: signConfiguration({
+              ...unsigned,
+              schemaVersion: 3,
+              calibration: { ...unsigned.calibration, schemaVersion: 2 },
+            }),
+          }
+        })
+        const migrated = signCollection({
+          schemaVersion: 4,
+          userId,
+          revision: old.revision,
+          activeProfileId: old.activeProfileId,
+          profiles,
+        })
+        for (const [index, profile] of profiles.entries()) {
+          const previous = old.profiles[index]
+          if (previous === undefined) throw new Error('Missing migration source profile')
+          await this.options.migratePredictionReference?.(
+            userId,
+            profile.profileId,
+            previous.configuration.revision,
+            previous.configuration.fingerprint,
+            profile.configuration,
+          )
+        }
+        await this.writeCollection(migrated)
+        return migrated
+      } catch (error) {
+        throw new CaptureProfileStoreCorruptError(userId, 'legacy configuration', error)
       }
     }
 
@@ -677,7 +817,7 @@ export class CaptureConfigurationRepository {
         if (legacy.source.kind === 'window' && legacy.source.executableLabel === null)
           calibration.validationStatus = 'needs_validation'
         const configuration = signConfiguration({
-          schemaVersion: 2,
+          schemaVersion: 3,
           userId,
           revision: legacy.revision,
           committedAt: legacy.committedAt,
@@ -687,7 +827,7 @@ export class CaptureConfigurationRepository {
         return { ...profile, configuration }
       })
       const migrated = signCollection({
-        schemaVersion: 3,
+        schemaVersion: 4,
         userId,
         revision: old.revision,
         activeProfileId: old.activeProfileId,

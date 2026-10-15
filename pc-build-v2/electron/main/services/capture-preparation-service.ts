@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
+import type {
+  AnalysisProgress,
+  AnalysisResult,
+  DetectionPreview,
+} from '../../../shared/contracts/auto-setup'
 import { ApplicationError } from '../../../shared/errors/application-error'
+import type { PixelSize } from '../../../shared/models/capture'
 import type { ResolvedCaptureSource } from '../domain/capture-source'
 import type { CapturedFrame } from './capture-service'
 import type { CaptureSourceRegistry } from './capture-source-registry'
@@ -10,6 +16,19 @@ export interface CapturePreparationView {
   preparationId: string
   sourceKey: string
   revision: string
+}
+
+export interface LivePreparedCapture {
+  analyze(
+    onProgress: (progress: AnalysisProgress) => void,
+    onPreview: (preview: DetectionPreview) => void,
+    signal?: AbortSignal,
+  ): Promise<{ result: AnalysisResult; frame: CapturedFrame | null }>
+  cancelAnalysis(): Promise<void>
+  freeze(signal?: AbortSignal): Promise<CapturedFrame>
+  stop(): Promise<void>
+  isAlive(): boolean
+  getSize(): PixelSize | null
 }
 
 interface PreparedSource extends CapturePreparationView {
@@ -26,6 +45,7 @@ interface DesiredSource {
 export class CapturePreparationService {
   #prepared: PreparedSource | null = null
   #desired: DesiredSource | null = null
+  #liveSessionId: string | null = null
   #generation = 0
   #transition: Promise<void> = Promise.resolve()
 
@@ -35,6 +55,15 @@ export class CapturePreparationService {
   ) {}
 
   prepare(sourceKey: string, revision: string): Promise<CapturePreparationView> {
+    if (this.#liveSessionId !== null && this.process.isAlive(this.#liveSessionId)) {
+      return Promise.reject(
+        new ApplicationError(
+          'CAPTURE_PREPARATION_OWNED',
+          'Capture is owned by an active setup',
+        ),
+      )
+    }
+    this.#liveSessionId = null
     const desired = { generation: ++this.#generation, sourceKey, revision }
     this.#desired = desired
     // Readiness can block the transition queue, so interrupt the old worker now.
@@ -63,6 +92,80 @@ export class CapturePreparationService {
         revision,
       }
     })
+  }
+
+  takeLive(
+    preparationId: string,
+  ): Promise<{ source: ResolvedCaptureSource; capture: LivePreparedCapture }> {
+    const prepared = this.#prepared
+    if (
+      prepared?.preparationId !== preparationId ||
+      !this.process.isAlive(prepared.sessionId)
+    ) {
+      return Promise.reject(
+        new ApplicationError(
+          'CAPTURE_PREPARATION_STALE',
+          'The selected source is no longer prepared',
+        ),
+      )
+    }
+    this.#prepared = null
+    this.#desired = null
+    ++this.#generation
+    this.#liveSessionId = prepared.sessionId
+    let consumed = false
+    const assertOwned = (): void => {
+      if (consumed || this.#liveSessionId !== prepared.sessionId) {
+        throw new ApplicationError(
+          'CAPTURE_PREPARATION_STALE',
+          'Capture is no longer available',
+        )
+      }
+    }
+    const relinquish = (): void => {
+      consumed = true
+      if (this.#liveSessionId === prepared.sessionId) this.#liveSessionId = null
+    }
+    const capture: LivePreparedCapture = {
+      analyze: (onProgress, onPreview, signal) => {
+        assertOwned()
+        return this.process.analyze(prepared.sessionId, onProgress, onPreview, signal)
+      },
+      cancelAnalysis: () => {
+        if (consumed || this.#liveSessionId !== prepared.sessionId)
+          return Promise.resolve()
+        return this.process.cancelAnalysis(prepared.sessionId)
+      },
+      freeze: async (signal) => {
+        assertOwned()
+        await this.process.cancelAnalysis(prepared.sessionId)
+        assertOwned()
+        try {
+          return await this.process.freeze(prepared.sessionId, signal)
+        } finally {
+          relinquish()
+        }
+      },
+      stop: async () => {
+        if (consumed || this.#liveSessionId !== prepared.sessionId) return
+        // Keep ownership until the old process has closed, blocking a new preparation.
+        consumed = true
+        try {
+          await this.process.stop(prepared.sessionId)
+        } finally {
+          relinquish()
+        }
+      },
+      isAlive: () =>
+        !consumed &&
+        this.#liveSessionId === prepared.sessionId &&
+        this.process.isAlive(prepared.sessionId),
+      getSize: () =>
+        !consumed && this.#liveSessionId === prepared.sessionId
+          ? this.process.getSize(prepared.sessionId)
+          : null,
+    }
+    return Promise.resolve({ source: prepared.source, capture })
   }
 
   async freeze(
@@ -114,6 +217,7 @@ export class CapturePreparationService {
   }
 
   private async stopPrepared(): Promise<void> {
+    if (this.#liveSessionId !== null) return
     this.#prepared = null
     await this.process.stop()
   }

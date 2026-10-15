@@ -3,12 +3,20 @@ import { randomUUID } from 'node:crypto'
 
 import { ApplicationError } from '../../../shared/errors/application-error'
 import {
+  MONITOR_MAX_COMMAND_LINE_BYTES,
+  MONITOR_PROTOCOL_VERSION,
   MonitorProcessEventSchema,
   MonitorStartCommandSchema,
   MonitorStopCommandSchema,
   type MonitorProcessEvent,
   type MonitorStartPayload,
+  type MonitorGeometryEvent,
+  type MonitorLearningEvent,
+  type MonitorLayoutLearnedEvent,
+  type MonitorPredictionStateEvent,
+  type MonitorSourceStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
+import { pythonWorkerEnvironment } from './python-environment'
 
 // Python owns its 7-second no-frame deadline; allow 8 seconds for cold startup.
 const READY_TIMEOUT_MS = 15_000
@@ -86,6 +94,11 @@ export interface MonitorProcessListener {
   onTriggered: (timestamp: string, triggerId?: string) => void
   onAction: (action: MonitorAction) => void
   onPredictionResult: (action: MonitorAction) => void
+  onGeometry?: (payload: MonitorGeometryEvent['payload']) => void
+  onLearning?: (payload: MonitorLearningEvent['payload']) => void
+  onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
+  onPredictionState?: (payload: MonitorPredictionStateEvent['payload']) => void
+  onSourceState?: (payload: MonitorSourceStateEvent['payload']) => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
 }
@@ -99,6 +112,8 @@ interface OwnedProcess {
   stopping: boolean
   settled: boolean
   lastSequence: number
+  /** Last logged geometry state and layout; geometry lines are written on change only. */
+  loggedGeometry: string | null
   stdoutBuffer: Buffer
   stderrLineBytes: number
   stderrReportAt: number
@@ -234,13 +249,34 @@ export class MonitorProcessService {
       throw new ApplicationError('MONITOR_START_CANCELLED', 'Monitor start was cancelled')
     }
     const sessionId = randomUUID()
+    let commandLine: string
+    try {
+      commandLine = JSON.stringify(
+        MonitorStartCommandSchema.parse({
+          protocolVersion: MONITOR_PROTOCOL_VERSION,
+          sessionId,
+          sequence: 0,
+          type: 'start',
+          payload,
+        }),
+      )
+      if (Buffer.byteLength(commandLine, 'utf8') + 1 > MONITOR_MAX_COMMAND_LINE_BYTES) {
+        throw new ApplicationError(
+          'MONITOR_PROTOCOL_OVERSIZED',
+          'Monitor command line exceeded its limit',
+        )
+      }
+    } catch (error) {
+      if (this.#starting === starting) this.#starting = null
+      throw error
+    }
     let child: MonitorChild
     try {
       child = this.spawn(this.pythonExecutable, ['-B', this.scriptPath], {
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        env: pythonWorkerEnvironment({ PYTHONUNBUFFERED: '1' }),
       })
     } catch (cause) {
       if (this.#starting === starting) this.#starting = null
@@ -269,6 +305,7 @@ export class MonitorProcessService {
       stopping: false,
       settled: false,
       lastSequence: 0,
+      loggedGeometry: null,
       stdoutBuffer: Buffer.alloc(0),
       stderrLineBytes: 0,
       stderrReportAt: 0,
@@ -305,14 +342,7 @@ export class MonitorProcessService {
     child.on('close', owned.handlers.close)
 
     try {
-      const command = MonitorStartCommandSchema.parse({
-        protocolVersion: 3,
-        sessionId,
-        sequence: 0,
-        type: 'start',
-        payload,
-      })
-      child.stdin.write(`${JSON.stringify(command)}\n`)
+      child.stdin.write(`${commandLine}\n`)
       await readyPromise
       return sessionId
     } catch (error) {
@@ -355,7 +385,7 @@ export class MonitorProcessService {
     })
     try {
       const command = MonitorStopCommandSchema.parse({
-        protocolVersion: 3,
+        protocolVersion: MONITOR_PROTOCOL_VERSION,
         sessionId: owned.sessionId,
         sequence: owned.lastSequence + 1,
         type: 'stop',
@@ -461,6 +491,30 @@ export class MonitorProcessService {
       owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
+    } else if (event.type === 'vs_candidate') {
+      this.logger.info('VS candidate', event.payload)
+    } else if (event.type === 'geometry') {
+      this.logGeometry(owned, event.payload)
+      owned.listener.onGeometry?.(event.payload)
+    } else if (event.type === 'learning') {
+      this.logger.info('Monitor learning', {
+        status: event.payload.status,
+        code: event.payload.reason,
+        rejectedCount: event.payload.rejectedCount,
+      })
+      owned.listener.onLearning?.(event.payload)
+    } else if (event.type === 'layout_learned') {
+      this.logger.info('Monitor layout learned', {
+        gameAspect: event.payload.layout.gameAspect,
+        gameRect: event.payload.layout.referenceGameRect,
+        fired: event.payload.triggerId !== null,
+      })
+      owned.listener.onLayoutLearned?.(event.payload)
+    } else if (event.type === 'prediction_state') {
+      owned.listener.onPredictionState?.(event.payload)
+    } else if (event.type === 'source_state') {
+      this.logger.info('Monitor source state', { minimized: event.payload.minimized })
+      owned.listener.onSourceState?.(event.payload)
     } else if (event.type === 'action' || event.type === 'prediction_result') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)
@@ -502,6 +556,25 @@ export class MonitorProcessService {
       owned.listener.onFatal(error)
       void this.stop()
     }
+  }
+
+  /** One line per geometry state or layout change; rect jitter is not logged. */
+  private logGeometry(
+    owned: OwnedProcess,
+    geometry: MonitorGeometryEvent['payload'],
+  ): void {
+    const key = `${geometry.state}|${geometry.layoutId ?? ''}`
+    if (owned.loggedGeometry === key) return
+    owned.loggedGeometry = key
+    this.logger.info('Monitor geometry', {
+      state: geometry.state,
+      frameWidth: geometry.frameWidth,
+      frameHeight: geometry.frameHeight,
+      gameRect: geometry.gameRect,
+      gameAspect:
+        geometry.gameAspect === null ? null : Number(geometry.gameAspect.toFixed(4)),
+      hasLayout: geometry.layoutId !== null,
+    })
   }
 
   private handleStderr(owned: OwnedProcess, chunk: Buffer | string): void {

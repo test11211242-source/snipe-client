@@ -286,6 +286,10 @@
   padding: 0 var(--space-8);
 }
 
+.splitSingle {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .bezel {
   display: flex;
   flex-direction: column;
@@ -368,10 +372,33 @@
   box-shadow: var(--focus-ring);
 }
 
-.boxInner {
-  border-style: dashed;
-  border-color: var(--color-accent);
-  background: transparent;
+.gameOutline {
+  position: absolute;
+  border: 1px dashed var(--color-text);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.55);
+  pointer-events: none;
+}
+
+/* Passive trigger drawn as the compared silhouette: the box only anchors its label. */
+.boxShape {
+  border-color: transparent;
+}
+
+.shapeLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.shapeLine {
+  fill: var(--color-accent-soft);
+  stroke: var(--color-accent);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .boxLabel {
@@ -620,21 +647,8 @@
   text-align: right;
 }
 
-.conf {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.confTop {
-  display: flex;
-  justify-content: space-between;
-  color: var(--color-text-3);
-  font-size: var(--fs-xs);
-}
-
-.confTop b {
-  color: var(--color-text);
-  font-weight: var(--fw-semi);
+.bezelAlert {
+  padding-top: var(--space-3);
 }
 
 .tips {
@@ -721,6 +735,10 @@
     grid-template-columns: minmax(0, 1fr) 320px;
     gap: var(--space-6);
     padding: 0 var(--space-6);
+  }
+
+  .splitSingle {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .foot {
@@ -827,4 +845,77 @@
 
 .sumNeutral .sumIcon {
   color: var(--color-text-3);
+}
+
+/* ── automatic setup ───────────────────────────── */
+
+.checkWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.checkWrap > .bezel {
+  flex: 1;
+}
+
+.doneTitle {
+  margin: 0;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+.livePicture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.waitPanel {
+  justify-items: start;
+  gap: var(--space-6);
+}
+
+.ask {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+.ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+}
+
+.ringNum {
+  position: absolute;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semi);
+  font-variant-numeric: tabular-nums;
+}
+
+@container app (max-width: 719px) {
+  .checkWrap {
+    min-height: auto;
+  }
+
+  .checkWrap > .bezel {
+    flex: none;
+  }
+
+  .ask {
+    font-size: var(--fs-xl);
+  }
 }

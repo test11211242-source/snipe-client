@@ -143,6 +143,12 @@ describe('setup error wording', () => {
     expect(viewErrorMessage({ code: 'SOMETHING_NEW', message: 'x' })).toBeNull()
   })
 
+  it('uses the exact manual missing-game message without exposing internal text', () => {
+    expect(
+      viewErrorMessage({ code: 'SETUP_GAME_NOT_FOUND', message: 'private internals' }),
+    ).toBe('Не вижу игру в окне — сделайте кадр ещё раз')
+  })
+
   it('recognizes stale causes and retryable saves', () => {
     expect(isStaleCause(new Error('Setup command is stale'))).toBe(true)
     expect(isStaleCause(new Error('network'))).toBe(false)

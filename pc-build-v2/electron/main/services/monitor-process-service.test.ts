@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { MonitorStartPayload } from '../../../shared/contracts/monitor-protocol'
 import {
+  monitorGamePrimaryFixture,
+  monitorLearnedLayoutFixture,
+} from '../../../tests/monitor-fixtures'
+import {
   MonitorProcessService,
   type MonitorChild,
   type MonitorProcessListener,
@@ -13,31 +17,34 @@ import {
 function payload(): MonitorStartPayload {
   return {
     selector: { kind: 'window', windowHwnd: '123' },
-    configuredFrameSize: { width: 1920, height: 1080 },
-    regions: {
-      trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
-      nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
-      topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
-    },
-    triggerProfile: {
-      schemaVersion: 3,
-      analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
-      innerRect: { x: 0, y: 0, width: 1, height: 1 },
-      structureAlgorithm: 'max-channel-scharr-v1',
-      structureHash64: '0123456789abcdef',
-      matcherMode: 'edge',
-      normalizedTemplateSize: { width: 128, height: 128 },
-      structureTemplateBase64: 'AAAA',
-      edgeTemplateBase64: 'AAAA',
-      orientationTemplateBase64: 'AAAA',
-      quality: {
-        grade: 'medium',
-        score: 0.65,
-        edgePixelCount: 120,
-        edgeCoverage: 0.5,
-        keypointsCount: 0,
-        cropConfidence: 0,
-        cropAreaRatio: 1,
+    primary: {
+      kind: 'full_frame',
+      configuredFrameSize: { width: 1920, height: 1080 },
+      regions: {
+        trigger: { x: 0, y: 0, width: 0.2, height: 0.2 },
+        nicknameRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+        topLeftEvidenceRegion: { x: 0, y: 0, width: 1, height: 1 },
+      },
+      triggerProfile: {
+        schemaVersion: 3,
+        analyzer: { name: 'cr-tools-trigger-analyzer', version: '2.0.0' },
+        innerRect: { x: 0, y: 0, width: 1, height: 1 },
+        structureAlgorithm: 'max-channel-scharr-v1',
+        structureHash64: '0123456789abcdef',
+        matcherMode: 'edge',
+        normalizedTemplateSize: { width: 128, height: 128 },
+        structureTemplateBase64: 'AAAA',
+        edgeTemplateBase64: 'AAAA',
+        orientationTemplateBase64: 'AAAA',
+        quality: {
+          grade: 'medium',
+          score: 0.65,
+          edgePixelCount: 120,
+          edgeCoverage: 0.5,
+          keypointsCount: 0,
+          cropConfidence: 0,
+          cropAreaRatio: 1,
+        },
       },
     },
     capturePolicy: 'immediate_nickname',
@@ -79,7 +86,7 @@ class FakeChild extends EventEmitter implements MonitorChild {
   event(sequence: number, type: string, payloadValue: unknown): void {
     this.stdout.write(
       `${JSON.stringify({
-        protocolVersion: 3,
+        protocolVersion: 4,
         sessionId: this.command()['sessionId'],
         sequence,
         type,
@@ -99,6 +106,10 @@ function listener(): MonitorProcessListener {
     onTriggered: vi.fn(),
     onAction: vi.fn(),
     onPredictionResult: vi.fn(),
+    onGeometry: vi.fn(),
+    onLearning: vi.fn(),
+    onLayoutLearned: vi.fn(),
+    onPredictionState: vi.fn(),
     onFatal: vi.fn(),
     onExit: vi.fn(),
   }
@@ -265,10 +276,16 @@ describe('MonitorProcessService', () => {
       expect.objectContaining({ shell: false, windowsHide: true }),
     )
     expect(child.written.trim().split('\n')).toHaveLength(1)
-    expect(child.command()['protocolVersion']).toBe(3)
+    expect(child.command()['protocolVersion']).toBe(4)
     child.event(1, 'ready', { frameWidth: 1920, frameHeight: 1080 })
     await expect(started).resolves.toBe(child.command()['sessionId'])
     const stopped = monitor.stop()
+    const stopLine = child.written.trim().split('\n')[1]
+    if (stopLine === undefined) throw new Error('Missing stop command')
+    expect(JSON.parse(stopLine) as unknown).toMatchObject({
+      protocolVersion: 4,
+      type: 'stop',
+    })
     expect(child.written.trim().split('\n')).toHaveLength(2)
     child.emit('close', 0, null)
     await expect(stopped).resolves.toBeUndefined()
@@ -337,6 +354,7 @@ describe('MonitorProcessService', () => {
     image.writeUInt32BE(10, 20)
     child.event(2, 'diagnostic', {
       profile: 'primary',
+      matcher: 'structural',
       matched: false,
       score: 0.61,
       support: 0.65,
@@ -497,5 +515,292 @@ describe('MonitorProcessService', () => {
     const nextStart = monitor.start(payload(), listener())
     replacement.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
     await expect(nextStart).resolves.toBeDefined()
+  })
+
+  it('sends game-relative command layouts unchanged and forwards typed lifecycle events', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = listener()
+    const primary = monitorGamePrimaryFixture()
+    const started = monitored.value.start({ ...payload(), primary }, events)
+    expect(child.command()['payload']).toMatchObject({ primary })
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    const layout = primary.layouts[0]
+    if (layout === undefined) throw new Error('Missing game layout fixture')
+    const geometry = {
+      state: 'armed',
+      frameWidth: 1200,
+      frameHeight: 1600,
+      gameRect: { x: 0, y: 0, width: 1200, height: 1600 },
+      gameAspect: 0.75,
+      layoutId: layout.layoutId,
+    }
+    const learning = { status: 'waiting_vs', reason: null, rejectedCount: 0 }
+    const triggerId = '00000000-0000-4000-8000-000000000021'
+    const learned = {
+      calibrationId: primary.profileCalibrationId,
+      layout: monitorLearnedLayoutFixture(),
+      triggerId,
+    }
+    child.event(2, 'geometry', geometry)
+    child.event(3, 'learning', learning)
+    child.event(4, 'layout_learned', learned)
+    child.event(5, 'prediction_state', { state: 'aspect_mismatch' })
+    child.event(6, 'triggered', { timestamp: '2026-10-13T00:00:01.000Z', triggerId })
+    child.event(7, 'diagnostic', {
+      profile: 'primary',
+      matcher: 'vs_orientation',
+      matched: true,
+      score: 0.9,
+      support: null,
+      orientation: null,
+      correlation: null,
+      orbInliers: null,
+      reason: 'pass',
+    })
+    expect(events.onGeometry).toHaveBeenCalledWith(geometry)
+    expect(events.onLearning).toHaveBeenCalledWith(learning)
+    expect(events.onLayoutLearned).toHaveBeenCalledWith(learned)
+    expect(events.onPredictionState).toHaveBeenCalledWith({ state: 'aspect_mismatch' })
+    expect(events.onTriggered).toHaveBeenCalledWith('2026-10-13T00:00:01.000Z', triggerId)
+    expect(monitored.logger.info).toHaveBeenCalledWith(
+      'Trigger diagnostic',
+      expect.objectContaining({
+        matcher: 'vs_orientation',
+        support: null,
+      }),
+    )
+    expect(events.onFatal).not.toHaveBeenCalled()
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
+
+  it('logs one compact line per VS candidate and per geometry state change', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = listener()
+    const primary = monitorGamePrimaryFixture()
+    const started = monitored.value.start({ ...payload(), primary }, events)
+    child.event(1, 'ready', { frameWidth: 1080, frameHeight: 1920 })
+    await started
+    const candidate = {
+      reason: 'cooldown',
+      state: 'armed',
+      score: 0.9812,
+      frames: 18,
+      matchedFrames: 17,
+      sinceFireS: 11.4,
+      frameWidth: 1080,
+      frameHeight: 1920,
+      gameRect: { x: 0, y: 28, width: 1080, height: 1864 },
+      gameAspect: 0.5794,
+      layoutAspect: 0.5794,
+      kind: 'spectate',
+      learnedLayout: true,
+      code: null,
+      suppressed: 0,
+    }
+    child.event(2, 'vs_candidate', candidate)
+    const geometry = {
+      state: 'aspect_mismatch',
+      frameWidth: 1080,
+      frameHeight: 1920,
+      gameRect: { x: 0, y: 45, width: 1080, height: 1847 },
+      gameAspect: 0.584732,
+      layoutId: null,
+    }
+    child.event(3, 'geometry', geometry)
+    child.event(4, 'geometry', {
+      ...geometry,
+      gameRect: { x: 0, y: 28, width: 1080, height: 1864 },
+    })
+    child.event(5, 'learning', {
+      status: 'rejected',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 1,
+    })
+    child.event(6, 'source_state', { minimized: true })
+    const info = monitored.logger.info.mock.calls
+    expect(info).toContainEqual(['VS candidate', candidate])
+    expect(info.filter(([message]) => message === 'Monitor geometry')).toEqual([
+      [
+        'Monitor geometry',
+        {
+          state: 'aspect_mismatch',
+          frameWidth: 1080,
+          frameHeight: 1920,
+          gameRect: geometry.gameRect,
+          gameAspect: 0.5847,
+          hasLayout: false,
+        },
+      ],
+    ])
+    expect(info).toContainEqual([
+      'Monitor learning',
+      { status: 'rejected', code: 'LEARN_TRIGGER_WEAK', rejectedCount: 1 },
+    ])
+    expect(info).toContainEqual(['Monitor source state', { minimized: true }])
+    expect(events.onGeometry).toHaveBeenCalledTimes(2)
+    child.event(7, 'vs_candidate', { ...candidate, reason: 'late' })
+    expect(events.onFatal).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'MONITOR_PROTOCOL_INVALID' }),
+    )
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
+
+  it('accepts commands above the obsolete 256KiB cap and rejects above 1MiB before spawning', async () => {
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const monitor = new MonitorProcessService(
+      'python.exe',
+      'monitor_engine.py',
+      { info: vi.fn(), warn: vi.fn() },
+      spawn,
+      vi.fn().mockResolvedValue(undefined),
+    )
+    const primary = monitorGamePrimaryFixture()
+    const strip = {
+      length: 256 as const,
+      thickness: 192,
+      angleQ8Base64: Buffer.alloc(256 * 192).toString('base64'),
+      weightQ8Base64: Buffer.alloc(256 * 192, 255).toString('base64'),
+    }
+    const layout = primary.layouts[0]
+    if (layout === undefined) throw new Error('Missing game layout fixture')
+    layout.windowChrome = {
+      top: 192,
+      bottom: 192,
+      left: 192,
+      right: 192,
+      topEdges: strip,
+      bottomEdges: strip,
+      leftEdges: strip,
+      rightEdges: strip,
+    }
+    const started = monitor.start({ ...payload(), primary }, listener())
+    expect(Buffer.byteLength(child.written.trim(), 'utf8')).toBeGreaterThan(256 * 1024)
+    expect(Buffer.byteLength(child.written.trim(), 'utf8')).toBeLessThan(1024 * 1024)
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    const stopped = monitor.stop()
+    child.emit('close', 0, null)
+    await stopped
+    primary.layouts.push({
+      ...layout,
+      layoutId: '00000000-0000-4000-8000-000000000022',
+      layoutSource: 'learned',
+      gameAspect: 0.75,
+    })
+    await expect(
+      monitor.start({ ...payload(), primary }, listener()),
+    ).rejects.toMatchObject({
+      code: 'MONITOR_PROTOCOL_OVERSIZED',
+    })
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(child.written.trim().split('\n')).toHaveLength(2)
+  })
+
+  it('includes the JSONL newline in the 1MiB command limit', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const byteLength = vi.spyOn(Buffer, 'byteLength').mockReturnValue(1024 * 1024)
+    try {
+      await expect(monitored.value.start(payload(), listener())).rejects.toMatchObject({
+        code: 'MONITOR_PROTOCOL_OVERSIZED',
+      })
+      expect(child.written).toBe('')
+    } finally {
+      byteLength.mockRestore()
+    }
+  })
+
+  it('rejects malformed new events and events before ready without invoking their callbacks', async () => {
+    const earlyChild = new FakeChild()
+    const early = service(earlyChild)
+    const earlyEvents = listener()
+    const earlyStart = early.value.start(payload(), earlyEvents)
+    const earlyRejected = expect(earlyStart).rejects.toMatchObject({
+      code: 'MONITOR_PROTOCOL_ORDER',
+    })
+    earlyChild.event(1, 'prediction_state', { state: 'aspect_mismatch' })
+    await earlyRejected
+    expect(earlyEvents.onPredictionState).not.toHaveBeenCalled()
+    earlyChild.emit('close', 1, null)
+
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = listener()
+    const started = monitored.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    child.event(2, 'learning', {
+      status: 'failed',
+      reason: 'AUTO_GAME_NOT_FOUND',
+      rejectedCount: 0,
+    })
+    expect(events.onLearning).not.toHaveBeenCalled()
+    expect(events.onFatal).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'MONITOR_PROTOCOL_INVALID' }),
+    )
+    child.emit('close', 1, null)
+  })
+
+  it('allows A2 consumers to leave new event callbacks unset until A3', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = listener()
+    delete events.onGeometry
+    delete events.onLearning
+    delete events.onLayoutLearned
+    delete events.onPredictionState
+    const started = monitored.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    child.event(2, 'prediction_state', { state: 'active' })
+    child.event(3, 'learning', {
+      status: 'failed',
+      reason: 'LEARN_STRUCTURAL_TRIGGER',
+      rejectedCount: 0,
+    })
+    child.event(4, 'layout_learned', {
+      calibrationId: monitorGamePrimaryFixture().profileCalibrationId,
+      layout: monitorLearnedLayoutFixture(),
+      triggerId: null,
+    })
+    child.event(5, 'geometry', {
+      state: 'no_game',
+      frameWidth: 1200,
+      frameHeight: 1600,
+      gameRect: null,
+      gameAspect: null,
+      layoutId: null,
+    })
+    expect(events.onFatal).not.toHaveBeenCalled()
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
+  })
+
+  it('forwards window minimise and restore notifications to the listener', async () => {
+    const child = new FakeChild()
+    const monitored = service(child)
+    const events = { ...listener(), onSourceState: vi.fn() }
+    const started = monitored.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 1200, frameHeight: 1600 })
+    await started
+    child.event(2, 'source_state', { minimized: true })
+    child.event(3, 'source_state', { minimized: false })
+    expect(events.onSourceState.mock.calls).toEqual([
+      [{ minimized: true }],
+      [{ minimized: false }],
+    ])
+    expect(events.onFatal).not.toHaveBeenCalled()
+    const stopped = monitored.value.stop()
+    child.emit('close', 0, null)
+    await stopped
   })
 })

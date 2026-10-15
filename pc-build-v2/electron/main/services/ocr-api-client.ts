@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import { z } from 'zod'
+import type { SetupNameCheckResult } from './setup-session-service'
 import {
   MonitorResultSchema,
   type DeckMode,
@@ -12,6 +14,14 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_IMAGE_PIXELS = 20_000_000
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const OCR_TIMEOUT_MS = 150_000
+const SETUP_NAME_TIMEOUT_MS = 10_000
+const SetupNameResponseSchema = z
+  .object({
+    schema: z.literal(1),
+    text: z.string().max(1000).nullable(),
+    isTrainer: z.boolean().nullable(),
+  })
+  .strict()
 
 export interface OcrLogger {
   debug: (message: string, context?: unknown) => void
@@ -209,6 +219,108 @@ export class OcrApiClient {
     private readonly config: ServerConfig,
     private readonly logger: OcrLogger,
   ) {}
+
+  async checkSetupName(
+    image: Buffer,
+    signal?: AbortSignal,
+  ): Promise<SetupNameCheckResult> {
+    const unavailable = (reason: string, httpStatus?: number): SetupNameCheckResult => ({
+      status: 'unavailable',
+      text: null,
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      reason,
+    })
+    if (signal?.aborted) return unavailable('aborted')
+    const dimensions = pngDimensions(image)
+    if (
+      dimensions === null ||
+      dimensions.width <= 0 ||
+      dimensions.height <= 0 ||
+      dimensions.width > 8192 ||
+      dimensions.height > 8192 ||
+      dimensions.width * dimensions.height > MAX_IMAGE_PIXELS ||
+      image.byteLength > MAX_IMAGE_BYTES
+    ) {
+      return unavailable('invalid_image')
+    }
+    const controller = new AbortController()
+    let abortReason = 'aborted'
+    const cancel = (): void => controller.abort()
+    signal?.addEventListener('abort', cancel, { once: true })
+    const timer = setTimeout(() => {
+      abortReason = 'timeout'
+      cancel()
+    }, SETUP_NAME_TIMEOUT_MS)
+    const { promise: aborted, resolve: resolveAborted } =
+      Promise.withResolvers<SetupNameCheckResult>()
+    const abortListener = (): void => resolveAborted(unavailable(abortReason))
+    controller.signal.addEventListener('abort', abortListener, { once: true })
+    const request = async (): Promise<SetupNameCheckResult> => {
+      let httpStatus: number | undefined
+      let readingResponse = false
+      try {
+        const token = await this.auth.getAccessToken()
+        if (controller.signal.aborted) return unavailable(abortReason)
+        if (token === null) return unavailable('auth_unavailable')
+        const form = new FormData()
+        form.append(
+          'image',
+          new Blob([Uint8Array.from(image)], { type: 'image/png' }),
+          'setup.png',
+        )
+        const response = await this.fetchImplementation(
+          `${this.config.apiUrl}/api/ocr/setup-name-check`,
+          {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+              'X-Client-Platform': 'pc',
+            },
+            body: form,
+            signal: controller.signal,
+          },
+        )
+        httpStatus = response.status
+        if (httpStatus !== 200) {
+          await response.body?.cancel().catch(() => undefined)
+          return unavailable('http_error', httpStatus)
+        }
+        readingResponse = true
+        const text = await boundedText(response)
+        controller.signal.throwIfAborted()
+        if (text === null) return unavailable('invalid_response', httpStatus)
+        const parsed = SetupNameResponseSchema.safeParse(JSON.parse(text) as unknown)
+        if (!parsed.success) return unavailable('invalid_response', httpStatus)
+        return {
+          status:
+            parsed.data.isTrainer === null
+              ? 'unavailable'
+              : parsed.data.isTrainer
+                ? 'trainer'
+                : 'not_trainer',
+          text: safeText(parsed.data.text, 1000),
+          httpStatus,
+        }
+      } catch {
+        return unavailable(
+          controller.signal.aborted
+            ? abortReason
+            : readingResponse
+              ? 'invalid_response'
+              : 'request_failed',
+          httpStatus,
+        )
+      }
+    }
+    try {
+      return await Promise.race([request(), aborted])
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
+      controller.signal.removeEventListener('abort', abortListener)
+    }
+  }
 
   async process(request: OcrRequest): Promise<MonitorResult> {
     const dimensions = pngDimensions(request.image)

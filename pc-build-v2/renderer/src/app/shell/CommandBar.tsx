@@ -8,7 +8,7 @@ import {
   useMonitorView,
 } from '../../features/monitor'
 import { useProfiles } from '../../features/profiles'
-import { Banner, Dot, IconButton, Icon, RunButton, Spinner, cx } from '../../ui'
+import { Banner, Button, Dot, IconButton, Icon, RunButton, Spinner, cx } from '../../ui'
 import { useAppData } from '../appData'
 import { useRouter } from '../router'
 import { useTier } from '../useTier'
@@ -68,6 +68,20 @@ export function CommandBar({
   const { realtime } = useAppData()
   const hasProfiles = (profiles.value?.profiles.length ?? 0) > 0
   const phase = selectRunPhase(monitor.value, hasProfiles)
+  // Only a failed learning of the game's format is shown; every other geometry state is silent.
+  const active = profiles.value?.profiles.find((item) => item.isActive) ?? null
+  const revision = profiles.value?.revision ?? null
+  const recalibrate =
+    monitor.value?.geometry?.state === 'learning_failed' &&
+    active !== null &&
+    revision !== null
+      ? {
+          kind: 'recalibrate' as const,
+          profileId: active.profileId,
+          profileName: active.profileName,
+          expectedRevision: revision,
+        }
+      : null
   const stream = route.name === 'stream'
   const onSettings = route.name === 'settings'
   const reconnecting =
@@ -199,6 +213,23 @@ export function CommandBar({
           </Banner>
         </div>
       ) : null}
+      {recalibrate === null ? null : (
+        <div className={styles['reconnect']}>
+          <Banner
+            actions={
+              <Button
+                onClick={() => navigate({ name: 'setup', intent: recalibrate })}
+                size="sm"
+              >
+                Настроить
+              </Button>
+            }
+            icon="alert"
+            title="Настройте профиль заново"
+            tone="warn"
+          />
+        </div>
+      )}
       {monitor.actionError === null ? null : (
         <div className={styles['reconnect']}>
           <Banner

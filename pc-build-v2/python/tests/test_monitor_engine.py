@@ -102,3 +102,126 @@ def test_guarded_lifecycle(monkeypatch, stage, code):
     assert 'private' not in repr(events)
     assert len(stopped) == (0 if stage in ('trigger', 'prediction', 'backend', 'stop-constructor') else 1)
     assert result == (2 if stage == 'writer' else 0)
+
+
+def test_diagnostics_are_written_only_when_the_match_state_changes(monkeypatch):
+    events = []
+    states = iter([(False, 'no_candidate'), (False, 'no_candidate'), (True, 'pass'), (True, 'pass'),
+                   (False, 'structure_below_threshold'), (False, 'structure_below_threshold')])
+
+    class Writer:
+        sequence = 0
+        def __init__(self, _session):
+            pass
+        def emit(self, event_type, payload):
+            self.sequence += 1
+            events.append((event_type, payload))
+
+    def engine(_payload):
+        state = SimpleNamespace(last_match=None)
+        def process(_frame, _now):
+            matched, reason = next(states)
+            state.last_match = SimpleNamespace(matcher='vs_orientation', matched=matched, score=0.4 + matched * 0.5,
+                                               support=None, orientation=0.4, correlation=None,
+                                               orb_inliers=None, reason=reason)
+            return None
+        state.process = process
+        state.take_triggered = lambda: False
+        state.take_events = lambda: []
+        return state
+
+    class Backend:
+        def __init__(self, _selector):
+            pass
+        def start(self, frame, _closed):
+            for _ in range(6):
+                frame(np.zeros((2, 2, 3), dtype=np.uint8))
+            readers[0]()
+        def stop(self):
+            pass
+
+    readers = []
+
+    class Reader:
+        def __init__(self, target, **_kwargs):
+            readers.append(target)
+        def start(self):
+            pass
+
+    monkeypatch.setattr(monitor, 'EventWriter', Writer)
+    monkeypatch.setattr(monitor, 'TriggerEngine', engine)
+    monkeypatch.setattr(monitor, 'WindowsMonitorBackend', Backend)
+    monkeypatch.setattr(monitor.threading, 'Thread', Reader)
+    monkeypatch.setattr(monitor, 'read_command', lambda *_args, **_kwargs: {'type': 'stop'})
+    assert monitor.run({'sessionId': 'test', 'payload': {
+        'selector': {}, 'prediction': None, 'limits': {'maxImagePixels': 20_000_000},
+    }}) == 0
+    diagnostics = [payload for event_type, payload in events if event_type == 'diagnostic']
+    assert [(item['matched'], item['reason']) for item in diagnostics] == [
+        (False, 'no_candidate'), (True, 'pass'), (False, 'structure_below_threshold')]
+
+
+def test_minimised_window_pauses_analysis_and_reports_both_transitions(monkeypatch):
+    events, processed, captured, readers = [], [], {}, []
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    class Writer:
+        sequence = 0
+        def __init__(self, _session):
+            pass
+        def emit(self, event_type, payload):
+            self.sequence += 1
+            events.append((event_type, payload))
+
+    def engine(_payload):
+        def process(_frame, _now):
+            processed.append(True)
+            return None
+        return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
+                               take_events=lambda: [])
+
+    class Backend:
+        def __init__(self, _selector):
+            pass
+        def start(self, on_frame, _closed):
+            captured['frame'] = on_frame
+            on_frame(frame)
+        def stop(self):
+            pass
+
+    class Reader:
+        def __init__(self, target, **_kwargs):
+            readers.append(target)
+        def start(self):
+            pass
+
+    polls = iter([False, True, True, False, False])
+
+    def probe():
+        state = next(polls, None)
+        if state is None:
+            readers[0]()
+            return False
+        last = [payload for event_type, payload in events if event_type == 'source_state'][-1:]
+        if last:
+            # While minimised the frame is skipped; once restored it is analysed again.
+            captured['frame'](frame)
+        return state
+
+    monkeypatch.setattr(monitor, 'EventWriter', Writer)
+    monkeypatch.setattr(monitor, 'TriggerEngine', engine)
+    monkeypatch.setattr(monitor, 'WindowsMonitorBackend', Backend)
+    monkeypatch.setattr(monitor, 'window_iconic_probe', lambda selector: probe)
+    monkeypatch.setattr(monitor, 'ICONIC_POLL_SECONDS', 0)
+    monkeypatch.setattr(monitor.threading, 'Thread', Reader)
+    monkeypatch.setattr(monitor, 'read_command', lambda *_args, **_kwargs: {'type': 'stop'})
+    assert monitor.run({'sessionId': 'test', 'payload': {
+        'selector': {'kind': 'window', 'windowHwnd': '1'}, 'prediction': None,
+        'limits': {'maxImagePixels': 20_000_000},
+    }}) == 0
+    states = [payload for event_type, payload in events if event_type == 'source_state']
+    assert states == [{'minimized': True}, {'minimized': False}]
+    # The ready frame plus one frame after restore; the two frames while minimised are skipped.
+    assert len(processed) == 2
+    captured['frame'](frame)
+    assert len(processed) == 2  # stopped: no analysis after stop either

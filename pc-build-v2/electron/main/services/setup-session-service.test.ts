@@ -9,6 +9,7 @@ import type { CaptureTargetResolver } from './capture-target-resolver'
 import { SetupSessionService, buildLegacyProjection } from './setup-session-service'
 import { LegacyOcrRegionsSchema } from '../../../shared/models/setup'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
+import type { PredictionResultConfiguration } from '../../../shared/models/prediction-result'
 
 const profile = {
   schemaVersion: 3 as const,
@@ -43,8 +44,33 @@ const legacyProfile = {
   nccThreshold: 0.72 as const,
   analyzerVersion: 'trigger-profile-v2' as const,
 }
-const analysis = { profile, legacyProfile }
-const frame = { size: { width: 1000, height: 500 }, png: Buffer.from('png') }
+const analysis = {
+  profile,
+  legacyProfile,
+  vsOrientation: null,
+  vsBadge: null,
+  vsOutline: null,
+}
+const chrome = {
+  top: 0,
+  bottom: 0,
+  left: 0,
+  right: 0,
+  topEdges: null,
+  bottomEdges: null,
+  leftEdges: null,
+  rightEdges: null,
+}
+const frame = {
+  size: { width: 1000, height: 2000 },
+  png: Buffer.from('png'),
+  game: {
+    rect: { x: 0, y: 0, width: 1000, height: 2000 },
+    aspect: 0.5,
+    chrome,
+    frames: 8,
+  },
+}
 const preference = {
   kind: 'window' as const,
   label: 'Game',
@@ -150,6 +176,274 @@ async function readyForCommit(
 }
 
 describe('SetupSessionService', () => {
+  it.each(['too_small', 'aspect_out_of_range', 'unstable', 'insufficient_frames'])(
+    'refuses a frozen frame without game geometry (%s), and permits a fresh frame',
+    async (reason) => {
+      const test = harness()
+      const failed = await test.service.start(selector, preference, 'capture', {
+        ...frame,
+        game: { rect: null, reason: reason as 'too_small' },
+      })
+      expect(failed).toMatchObject({
+        state: 'FAILED',
+        game: null,
+        error: {
+          code: 'SETUP_GAME_NOT_FOUND',
+          message: 'Не вижу игру в окне — сделайте кадр ещё раз',
+        },
+      })
+      expect(() =>
+        test.service.setRegion(failed.sessionId, failed.generation, 'trigger', {
+          x: 0.1,
+          y: 0.1,
+          width: 0.2,
+          height: 0.2,
+        }),
+      ).toThrow(expect.objectContaining({ code: 'SETUP_STATE_FINAL' }))
+      await expect(
+        test.service.commit(failed.sessionId, failed.generation),
+      ).rejects.toMatchObject({
+        code: 'SETUP_STATE_FINAL',
+      })
+      expect(test.repository.save).not.toHaveBeenCalled()
+      const fresh = await test.service.start(selector, preference, 'capture', frame)
+      expect(fresh).toMatchObject({
+        state: 'SELECTING',
+        game: {
+          viewport: { x: 0, y: 0, width: 1, height: 1 },
+          aspect: 0.5,
+          source: 'freeze',
+        },
+        regionOrigins: {
+          trigger: 'manual',
+          nickname: 'manual',
+          topLeftEvidence: 'manual',
+        },
+        triggerKind: null,
+      })
+    },
+  )
+
+  it('never creates a new full-frame profile through a capture without frozen geometry', async () => {
+    const test = harness()
+    test.capture.capture.mockResolvedValue({ size: frame.size, png: frame.png })
+    const failed = await test.service.start(selector, preference)
+    expect(failed).toMatchObject({
+      state: 'FAILED',
+      error: { code: 'SETUP_GAME_NOT_FOUND' },
+    })
+    expect(test.repository.save).not.toHaveBeenCalled()
+    expect(test.capture.analyze).not.toHaveBeenCalled()
+  })
+
+  it('converts manual frame zones to game fractions and projects the setup layout back to the server', async () => {
+    const test = harness()
+    const gameFrame = {
+      ...frame,
+      game: { ...frame.game, rect: { x: 100, y: 200, width: 800, height: 1600 } },
+    }
+    test.capture.capture.mockResolvedValue(gameFrame)
+    const ready = await readyForCommit(test.service)
+    await test.service.commit(ready.sessionId, ready.generation)
+    expect(test.capture.analyze).toHaveBeenCalledWith(
+      gameFrame,
+      { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+      expect.any(AbortSignal),
+      gameFrame.game.rect,
+    )
+    expect(test.repository.save.mock.calls[0]?.[0] as unknown).toMatchObject({
+      calibration: {
+        schemaVersion: 2,
+        coordinateSpace: 'game_relative',
+        validationStatus: 'validated',
+        layouts: [
+          {
+            layoutSource: 'setup',
+            gameAspect: 0.5,
+            referenceFrameSize: frame.size,
+            referenceGameRect: gameFrame.game.rect,
+            windowChrome: chrome,
+            triggerRegion: { x: 0, y: 0, width: 0.625, height: 0.625 },
+            nicknameRegion: { x: 0, y: 0, width: 0.625, height: 0.625 },
+            topLeftEvidenceRegion: { x: 0, y: 0, width: 0.625, height: 0.625 },
+            trigger: { kind: 'structural', profile },
+            provenance: {
+              trigger: { origin: 'manual', confidence: null, analyzerVersion: '2.0.0' },
+              nickname: { origin: 'manual', confidence: null, analyzerVersion: null },
+              topLeftEvidence: {
+                origin: 'manual',
+                confidence: null,
+                analyzerVersion: null,
+              },
+              viewport: {
+                origin: 'auto',
+                confidence: null,
+                analyzerVersion: 'm9-geom-1',
+              },
+            },
+          },
+        ],
+      },
+    })
+    expect(test.apiRequests[0]).toMatchObject({
+      body: {
+        trigger_area: {
+          x: 100,
+          y: 200,
+          width: 500,
+          height: 1000,
+          ratio: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+          trigger_profile: {
+            schema_version: 2,
+            thumbnail_hash: legacyProfile.thumbnailHash,
+          },
+        },
+      },
+    })
+  })
+
+  it('rejects manually selected areas outside the detected game without clipping them', async () => {
+    const test = harness()
+    const started = await test.service.start(selector, preference, 'capture', {
+      ...frame,
+      game: { ...frame.game, rect: { x: 100, y: 200, width: 800, height: 1600 } },
+    })
+    expect(() =>
+      test.service.setRegion(started.sessionId, started.generation, 'nickname', {
+        x: 0,
+        y: 0,
+        width: 0.2,
+        height: 0.2,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'SETUP_REGION_INVALID' }))
+    expect(test.service.getSession().regions.nickname).toBeNull()
+  })
+
+  it('uses rule (c) for a recognized VS badge and clears it when the marked trigger changes', async () => {
+    const test = harness()
+    const badge = { cx: 0.5, cy: 0.43, width: 0.2, height: 0.08 }
+    const vsOrientation = {
+      kind: 'vs_edge_orientation' as const,
+      algorithm: 'vs-orient-1' as const,
+      badge,
+      normalizedSize: { width: 96 as const, height: 64 },
+      cropMargin: 0.08 as const,
+      padding: 4 as const,
+      maxShift: 3 as const,
+      threshold: 0.5 as const,
+      angleQ8Base64: Buffer.alloc(96 * 64).toString('base64'),
+      weightQ8Base64: Buffer.alloc(96 * 64, 255).toString('base64'),
+      templateHash64: '0123456789abcdef',
+      maskAreaRatio: 0.5,
+    }
+    test.capture.analyze.mockResolvedValueOnce({
+      ...analysis,
+      vsOrientation,
+      vsBadge: badge,
+      vsOutline: [
+        [0.4, 0.4],
+        [0.6, 0.4],
+        [0.5, 0.6],
+      ],
+    })
+    const ready = await readyForCommit(test.service)
+    expect(ready.triggerKind).toBe('vs_edge_orientation')
+    await test.service.commit(ready.sessionId, ready.generation)
+    expect(test.repository.save.mock.calls[0]?.[0] as unknown).toMatchObject({
+      calibration: {
+        coordinateSpace: 'game_relative',
+        layouts: [{ trigger: vsOrientation }],
+      },
+    })
+    let view = await test.service.start(selector, preference)
+    view = test.service.setRegion(view.sessionId, view.generation, 'trigger', {
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.2,
+    })
+    view = await test.service.analyzeTrigger(view.sessionId, view.generation)
+    expect(view.triggerKind).toBe('structural')
+    view = test.service.setRegion(view.sessionId, view.generation, 'trigger', {
+      x: 0.2,
+      y: 0.2,
+      width: 0.2,
+      height: 0.2,
+    })
+    expect(view.triggerProfile).toBeNull()
+    expect(view.triggerKind).toBeNull()
+  })
+
+  it('keeps result setup full-frame and does not send game geometry to its analyzer', async () => {
+    const test = harness()
+    const resultFrame = { size: frame.size, png: frame.png }
+    test.capture.capture.mockResolvedValue(resultFrame)
+    let view = await test.service.start(
+      selector,
+      preference,
+      'predictionResult',
+      undefined,
+      resultTarget,
+    )
+    expect(view).toMatchObject({ state: 'SELECTING', game: null, regionOrigins: null })
+    view = test.service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
+      x: 0,
+      y: 0,
+      width: 0.1,
+      height: 0.1,
+    })
+    view = await test.service.analyzeTrigger(view.sessionId, view.generation)
+    expect(view.triggerKind).toBe('structural')
+    expect(test.capture.analyze).toHaveBeenCalledWith(
+      resultFrame,
+      { x: 0, y: 0, width: 0.1, height: 0.1 },
+      expect.any(AbortSignal),
+      null,
+    )
+  })
+
+  it('creates a fresh calibration identity on every setup and recalibration commit', async () => {
+    const test = harness()
+    const oldId = '00000000-0000-4000-8000-000000000090'
+    test.repository.get.mockResolvedValue({
+      configuration: {
+        revision: 7,
+        calibration: {
+          calibrationId: oldId,
+          revision: 4,
+          coordinateSpace: 'full_frame_normalized',
+        },
+      },
+    })
+    const firstReady = await readyForCommit(test.service)
+    await test.service.commit(firstReady.sessionId, firstReady.generation)
+    const first = test.repository.save.mock.calls[0]?.[0] as
+      | {
+          calibration: { calibrationId: string }
+        }
+      | undefined
+    expect(first?.calibration.calibrationId).not.toBe(oldId)
+    expect(first?.calibration.calibrationId).toMatch(/^[a-f0-9-]{36}$/)
+    const secondReady = await readyForCommit(test.service)
+    await test.service.commit(secondReady.sessionId, secondReady.generation)
+    const second = test.repository.save.mock.calls[1]?.[0] as
+      | {
+          calibration: { calibrationId: string }
+        }
+      | undefined
+    expect(second?.calibration.calibrationId).not.toBe(first?.calibration.calibrationId)
+    expect(second?.calibration.calibrationId).not.toBe(oldId)
+    for (const call of test.repository.save.mock.calls) {
+      expect(call[0] as unknown).toMatchObject({
+        calibration: {
+          coordinateSpace: 'game_relative',
+          revision: 5,
+          layouts: [expect.objectContaining({ layoutSource: 'setup' })],
+        },
+      })
+    }
+  })
+
   it('M6 #11 marks the saved projection unsent when auth changes immediately after local persistence', async () => {
     const test = harness()
     const ready = await readyForCommit(test.service)
@@ -367,9 +661,9 @@ describe('SetupSessionService', () => {
       schema_version: 2,
       trigger_area: {
         x: 100,
-        y: 50,
+        y: 200,
         width: 500,
-        height: 250,
+        height: 1000,
         trigger_profile: {
           schema_version: 2,
           template_gray_base64: legacyProfile.templateGrayBase64,
@@ -382,12 +676,13 @@ describe('SetupSessionService', () => {
           ncc_threshold: 0.72,
         },
       },
-      normal_data_area: { x: 100, y: 50 },
-      precise_data_area: { x: 100, y: 50 },
-      screen_resolution: { width: 1000, height: 500 },
+      normal_data_area: { x: 100, y: 200 },
+      precise_data_area: { x: 100, y: 200 },
+      screen_resolution: { width: 1000, height: 2000 },
     })
     const expectedCalibration: unknown = expect.objectContaining({
-      triggerProfile: profile,
+      coordinateSpace: 'game_relative',
+      layouts: [expect.objectContaining({ trigger: { kind: 'structural', profile } })],
     })
     expect(repository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -524,80 +819,106 @@ describe('SetupSessionService', () => {
     expect(repository.save).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps saved local result zones when the second projection write fails', async () => {
-    const capture = {
-      capture: vi.fn().mockResolvedValue(frame),
-      analyze: vi.fn().mockResolvedValue(analysis),
-    }
-    const resultRepository = { load: vi.fn().mockResolvedValue(null), save: vi.fn() }
-    const resultRequests: { path: string; body: unknown }[] = []
-    const rawApi = {
-      request: vi.fn((request: { path: string; body: unknown }) => {
-        resultRequests.push(request)
-        return Promise.resolve(
-          resultRequests.length === 1
-            ? { ok: true, status: 200, data: { success: true } }
-            : { ok: false, error: { code: 'NETWORK_UNAVAILABLE', message: 'offline' } },
-        )
-      }),
-    }
-    const service = new SetupSessionService(
-      capture as never,
-      {
-        load: vi.fn(),
-        save: vi.fn(),
-        list: vi.fn().mockResolvedValue(resultProfileStatus),
-      } as never,
-      rawApi as never,
-      {
-        getView: () => ({ user: { id: '42' } }),
-        getContextGeneration: () => 1,
-        getAccessToken: vi.fn().mockResolvedValue('secret'),
-      } as never,
-      () => new Date('2026-07-12T12:00:00.000Z'),
-      resultRepository as never,
-      { request: vi.fn() } as never,
-    )
-    let view = await service.start(
-      selector,
-      preference,
-      'predictionResult',
-      undefined,
-      resultTarget,
-    )
-    view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
-      x: 0.1,
-      y: 0.1,
-      width: 0.2,
-      height: 0.2,
-    })
-    view = service.setRegion(view.sessionId, view.generation, 'resultData', {
-      x: 0.2,
-      y: 0.2,
-      width: 0.5,
-      height: 0.5,
-    })
-    view = await service.analyzeTrigger(view.sessionId, view.generation)
-    view = service.review(view.sessionId, view.generation)
-    const result = await service.commit(view.sessionId, view.generation)
-    expect(result).toMatchObject({
-      state: 'COMMITTED',
-      saveOutcome: { local: 'saved', projection: 'failed', warning: 'SETUP_SYNC_FAILED' },
-    })
-    expect(resultRequests.map((request) => request.path)).toEqual([
-      '/api/streamer/result-trigger-area',
-      '/api/streamer/result-data-area',
-    ])
-    expect(resultRequests[0]?.body).toMatchObject({
-      trigger_profile: {
-        template_gray_base64: legacyProfile.templateGrayBase64,
-        thumbnail_hash: legacyProfile.thumbnailHash,
-        feature_mode: legacyProfile.featureMode,
-        hash_threshold: 5,
-      },
-    })
-    expect(resultRepository.save).toHaveBeenCalledOnce()
-  })
+  it.each([false, true])(
+    'keeps saved local result zones when projection fails (calibration binding: %s)',
+    async (gameRelative) => {
+      const capture = {
+        capture: vi.fn().mockResolvedValue(frame),
+        analyze: vi.fn().mockResolvedValue(analysis),
+      }
+      const resultRepository = {
+        load: vi.fn().mockResolvedValue(null),
+        save: vi
+          .fn<
+            (
+              configuration: PredictionResultConfiguration,
+              profileId: string,
+            ) => Promise<void>
+          >()
+          .mockResolvedValue(undefined),
+      }
+      const resultRequests: { path: string; body: unknown }[] = []
+      const rawApi = {
+        request: vi.fn((request: { path: string; body: unknown }) => {
+          resultRequests.push(request)
+          return Promise.resolve(
+            resultRequests.length === 1
+              ? { ok: true, status: 200, data: { success: true } }
+              : { ok: false, error: { code: 'NETWORK_UNAVAILABLE', message: 'offline' } },
+          )
+        }),
+      }
+      const service = new SetupSessionService(
+        capture as never,
+        {
+          load: vi.fn(),
+          save: vi.fn(),
+          list: vi.fn().mockResolvedValue({
+            ...resultProfileStatus,
+            profiles: resultProfileStatus.profiles.map((profile) => ({
+              ...profile,
+              ...(gameRelative ? { calibrationId: resultTarget.profileId } : {}),
+            })),
+          }),
+        } as never,
+        rawApi as never,
+        {
+          getView: () => ({ user: { id: '42' } }),
+          getContextGeneration: () => 1,
+          getAccessToken: vi.fn().mockResolvedValue('secret'),
+        } as never,
+        () => new Date('2026-07-12T12:00:00.000Z'),
+        resultRepository as never,
+        { request: vi.fn() } as never,
+      )
+      let view = await service.start(
+        selector,
+        preference,
+        'predictionResult',
+        undefined,
+        resultTarget,
+      )
+      view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
+        x: 0.1,
+        y: 0.1,
+        width: 0.2,
+        height: 0.2,
+      })
+      view = service.setRegion(view.sessionId, view.generation, 'resultData', {
+        x: 0.2,
+        y: 0.2,
+        width: 0.5,
+        height: 0.5,
+      })
+      view = await service.analyzeTrigger(view.sessionId, view.generation)
+      view = service.review(view.sessionId, view.generation)
+      const result = await service.commit(view.sessionId, view.generation)
+      expect(result).toMatchObject({
+        state: 'COMMITTED',
+        saveOutcome: {
+          local: 'saved',
+          projection: 'failed',
+          warning: 'SETUP_SYNC_FAILED',
+        },
+      })
+      expect(resultRequests.map((request) => request.path)).toEqual([
+        '/api/streamer/result-trigger-area',
+        '/api/streamer/result-data-area',
+      ])
+      expect(resultRequests[0]?.body).toMatchObject({
+        trigger_profile: {
+          template_gray_base64: legacyProfile.templateGrayBase64,
+          thumbnail_hash: legacyProfile.thumbnailHash,
+          feature_mode: legacyProfile.featureMode,
+          hash_threshold: 5,
+        },
+      })
+      expect(resultRepository.save).toHaveBeenCalledOnce()
+      expect(resultRepository.save.mock.calls[0]?.[0].captureCalibrationId).toBe(
+        gameRelative ? resultTarget.profileId : undefined,
+      )
+    },
+  )
 
   it('does not change the server when the local result commit fails', async () => {
     const resultRepository = {
@@ -712,15 +1033,16 @@ describe('SetupSessionService', () => {
     view = service.review(view.sessionId, view.generation)
     await service.commit(view.sessionId, view.generation)
 
-    const canonical = { x: 0.051, y: 0.102, width: 0.2, height: 0.2 }
+    const canonical = { x: 0.051, y: 0.101, width: 0.2, height: 0.201 }
     expect(capture.analyze).toHaveBeenCalledWith(
       frame,
       canonical,
       expect.any(AbortSignal),
+      frame.game.rect,
     )
     expect(repository.save).toHaveBeenCalled()
     expect(repository.save.mock.calls[0]?.[0] as unknown).toMatchObject({
-      calibration: { triggerRegion: canonical },
+      calibration: { layouts: [expect.objectContaining({ triggerRegion: canonical })] },
     })
   })
 

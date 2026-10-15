@@ -2,13 +2,17 @@ import { ipcRenderer } from 'electron'
 import {
   CaptureProfileCommandSchema,
   EmptyCapturePayloadSchema,
+  DetectionPreviewPayloadSchema,
+  DetectionPreviewResultSchema,
   SETUP_IPC_CHANNELS,
   SetRegionPayloadSchema,
   SetupCommandSchema,
   SetupFrameResultSchema,
   SetupSessionResultSchema,
+  RetryDetectionResponseSchema,
 } from '../../shared/contracts/capture-ipc'
 import type { CrToolsSetupApi } from '../../shared/contracts/preload'
+import { ApplicationError } from '../../shared/errors/application-error'
 
 const command = (channel: string) => async (raw: unknown) =>
   SetupSessionResultSchema.parse(
@@ -51,6 +55,24 @@ export const setupApi: CrToolsSetupApi = Object.freeze<CrToolsSetupApi>({
       ),
     ),
   retrySync: command(SETUP_IPC_CHANNELS.retrySync),
+  retryDetection: async (raw) => {
+    const result = RetryDetectionResponseSchema.parse(
+      await ipcRenderer.invoke(
+        SETUP_IPC_CHANNELS.retryDetection,
+        SetupCommandSchema.parse(raw),
+      ),
+    )
+    if (!result.ok) throw new ApplicationError(result.error.code, result.error.message)
+    return result.session
+  },
+  switchToManual: command(SETUP_IPC_CHANNELS.switchToManual),
+  getDetectionPreview: async (raw) =>
+    DetectionPreviewResultSchema.parse(
+      await ipcRenderer.invoke(
+        SETUP_IPC_CHANNELS.getDetectionPreview,
+        DetectionPreviewPayloadSchema.parse(raw),
+      ),
+    ),
   analyzeTrigger: command(SETUP_IPC_CHANNELS.analyzeTrigger),
   review: command(SETUP_IPC_CHANNELS.review),
   commit: command(SETUP_IPC_CHANNELS.commit),

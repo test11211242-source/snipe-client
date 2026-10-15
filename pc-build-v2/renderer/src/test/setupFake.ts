@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 
+import type { DetectionPreview } from '../../../shared/contracts/auto-setup'
 import type { CrToolsSetupApi } from '../../../shared/contracts/preload'
 import type {
   CaptureSourceSnapshot,
@@ -52,6 +53,11 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
     profileId: PROFILE_ID,
     profileName: 'Ноутбук',
     frameSize: FRAME,
+    detection: null,
+    game: null,
+    triggerKind: null,
+    triggerOutline: null,
+    regionOrigins: null,
     regions: {
       trigger: null,
       nickname: null,
@@ -68,6 +74,97 @@ export function sessionView(overrides: Partial<SetupSessionView> = {}): SetupSes
 
 export function resultView(overrides: Partial<SetupSessionView> = {}): SetupSessionView {
   return sessionView({ kind: 'predictionResult', ...overrides })
+}
+
+export const GAME_VIEWPORT: NormalizedRect = { x: 0.36, y: 0, width: 0.28, height: 1 }
+export const GAME_ASPECT = 0.56
+const DEADLINE_MS = 60_000
+
+export const PREVIEW: DetectionPreview = {
+  width: 320,
+  height: 160,
+  mimeType: 'image/jpeg',
+  byteLength: 2,
+  bytes: new Uint8Array([0xff, 0xd8]),
+}
+
+/** A running automatic wait that started `startedAgoMs` ago. */
+export function runningDetection(
+  startedAgoMs = 0,
+): NonNullable<SetupSessionView['detection']> {
+  const started = Date.now() - startedAgoMs
+  return {
+    status: 'running',
+    phase: 'waiting_vs',
+    startedAt: new Date(started).toISOString(),
+    deadlineAt: new Date(started + DEADLINE_MS).toISOString(),
+    game: null,
+    failure: null,
+    frameAvailable: false,
+    nameCheck: { status: 'pending', text: null },
+  }
+}
+
+/** What `startCaptureSetup({ mode: 'auto' })` returns: waiting for the training battle. */
+export function detectingView(
+  overrides: Partial<SetupSessionView> = {},
+): SetupSessionView {
+  return sessionView({
+    generation: 0,
+    state: 'DETECTING',
+    frameSize: null,
+    detection: runningDetection(),
+    ...overrides,
+  })
+}
+
+/** A waiting session whose attempt ended with `code`. */
+export function failedDetectionView(
+  code: NonNullable<NonNullable<SetupSessionView['detection']>['failure']>['code'],
+  overrides: Partial<SetupSessionView> = {},
+): SetupSessionView {
+  return detectingView({
+    generation: 1,
+    detection: { ...runningDetection(60_000), status: 'failed', failure: { code } },
+    ...overrides,
+  })
+}
+
+/** The success main reports: `SELECTING`, three automatic zones and a trigger profile. */
+export function detectedView(
+  overrides: Partial<SetupSessionView> = {},
+): SetupSessionView {
+  return sessionView({
+    generation: 2,
+    detection: {
+      ...runningDetection(5_000),
+      status: 'succeeded',
+      phase: null,
+      game: { viewport: GAME_VIEWPORT, aspect: GAME_ASPECT },
+      frameAvailable: true,
+      nameCheck: { status: 'trainer', text: 'Тренер Чеддер' },
+    },
+    game: { viewport: GAME_VIEWPORT, aspect: GAME_ASPECT, source: 'auto' },
+    regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
+    triggerKind: 'vs_edge_orientation',
+    triggerOutline: [
+      [0.48, 0.42],
+      [0.5, 0.41],
+      [0.52, 0.42],
+      [0.515, 0.5],
+      [0.5, 0.51],
+      [0.485, 0.5],
+    ],
+    regions: {
+      trigger: { x: 0.47, y: 0.4, width: 0.06, height: 0.12 },
+      nickname: { x: 0.38, y: 0.3, width: 0.24, height: 0.08 },
+      topLeftEvidence: { x: 0.37, y: 0.02, width: 0.12, height: 0.06 },
+      resultTrigger: null,
+      resultData: null,
+    },
+    triggerProfile: triggerProfile(),
+    ...overrides,
+  })
 }
 
 export function sourcesFixture(): CaptureSourceSnapshot {
@@ -116,6 +213,10 @@ export interface SetupFakeOptions {
   /** What `commit` leaves behind. */
   committed?: Partial<SetupSessionView>
   grade?: 'high' | 'medium'
+  /** The live picture main returns (`null`: none yet). */
+  preview?: DetectionPreview | null
+  /** `retryDetection` finds the window gone. */
+  sourceLost?: boolean
 }
 
 export interface SetupFake {
@@ -236,6 +337,38 @@ export function createSetupFake(options: SetupFakeOptions = {}): SetupFake {
     }),
     finish: vi.fn(),
     startResult: vi.fn(),
+    retryDetection: vi.fn((payload: { sessionId: string; generation: number }) => {
+      const current = fence(payload)
+      if (current.state !== 'DETECTING' || current.detection?.status !== 'failed')
+        return Promise.reject(new Error('Настройка изменилась — откройте её ещё раз'))
+      if (options.sourceLost)
+        return Promise.reject(new Error('Окно игры закрыто или свёрнуто'))
+      return Promise.resolve(next({ detection: runningDetection() }))
+    }),
+    switchToManual: vi.fn((payload: { sessionId: string; generation: number }) => {
+      const current = fence(payload)
+      if (current.state !== 'DETECTING')
+        return Promise.reject(new Error('Настройка изменилась — откройте её ещё раз'))
+      return Promise.resolve(
+        next({
+          state: 'SELECTING',
+          frameSize: FRAME,
+          game: { viewport: GAME_VIEWPORT, aspect: GAME_ASPECT, source: 'freeze' },
+          regionOrigins: {
+            trigger: 'manual',
+            nickname: 'manual',
+            topLeftEvidence: 'manual',
+          },
+          error: null,
+        }),
+      )
+    }),
+    getDetectionPreview: vi.fn((payload: { sessionId: string }) => {
+      const current = fence({ ...payload, generation: state?.generation ?? 0 })
+      if (current.state !== 'DETECTING' || current.detection?.status !== 'running')
+        return Promise.reject(new Error('Настройка изменилась — откройте её ещё раз'))
+      return Promise.resolve(options.preview === undefined ? PREVIEW : options.preview)
+    }),
   } satisfies Record<keyof CrToolsSetupApi, AsyncMock>
 
   return {

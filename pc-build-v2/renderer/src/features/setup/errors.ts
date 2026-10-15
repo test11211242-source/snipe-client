@@ -18,12 +18,38 @@ export function preparationFailureMessage(code: string): string {
   }
 }
 
+/** Main's own wording for a closed or minimised game window (`SETUP_SOURCE_LOST`). */
+export const SOURCE_LOST_TEXT = 'Окно игры закрыто или свёрнуто'
+
+/**
+ * The one phrase shown for a failed automatic setup (owner rule §1.3). Every internal
+ * `AUTO_*` code collapses into one of four texts; codes themselves never reach the UI.
+ */
+export function autoFailureText(code: string | null): string {
+  switch (code) {
+    case 'AUTO_VS_TIMEOUT':
+      return 'Экран боя не появился за минуту'
+    case 'AUTO_SOURCE_LOST':
+      return SOURCE_LOST_TEXT
+    default:
+      return 'Не получилось настроить автоматически'
+  }
+}
+
+/** The window is gone: retrying cannot work, a new source has to be chosen. */
+export function isSourceLostCode(code: string | null | undefined): boolean {
+  return code === 'AUTO_SOURCE_LOST' || code === 'SETUP_SOURCE_LOST'
+}
+
 /** Message fragments of `ApplicationError`s that survive IPC, in matching order. */
 const COMMAND_FRAGMENTS: readonly (readonly [fragment: string, text: string])[] = [
   ['already active', 'Уже открыта другая настройка. Завершите или отмените её.'],
   ['Setup session is stale', 'Эта настройка уже закрыта или заменена другой.'],
   ['Setup session changed', 'Эта настройка уже закрыта или заменена другой.'],
   ['Setup command is stale', 'Состояние настройки изменилось. Мы его обновили.'],
+  ['inside the game rectangle', 'Отметьте область внутри игры'],
+  [SOURCE_LOST_TEXT, SOURCE_LOST_TEXT],
+  ['откройте её ещё раз', 'Состояние настройки изменилось. Мы его обновили.'],
   [
     'Capture profiles changed',
     'Список профилей изменился, пока шла настройка. Начните заново.',
@@ -40,7 +66,20 @@ const COMMAND_FRAGMENTS: readonly (readonly [fragment: string, text: string])[] 
   ['atomic save', 'Сохранение ещё идёт. Подождите несколько секунд.'],
 ]
 
+/** Structured command codes survive setup IPC; never infer state from translated text. */
+export function commandErrorCode(cause: unknown): string | null {
+  return typeof cause === 'object' &&
+    cause !== null &&
+    'code' in cause &&
+    typeof cause.code === 'string'
+    ? cause.code
+    : null
+}
+
 export function commandErrorMessage(cause: unknown, fallback: string): string {
+  const code = commandErrorCode(cause)
+  if (isSourceLostCode(code)) return SOURCE_LOST_TEXT
+  if (code === 'SETUP_CAPTURE_UNAVAILABLE') return autoFailureText(null)
   const message = cause instanceof Error ? cause.message : ''
   return (
     COMMAND_FRAGMENTS.find(([fragment]) => message.includes(fragment))?.[1] ?? fallback
@@ -53,7 +92,8 @@ export function isStaleCause(cause: unknown): boolean {
   return (
     message.includes('Setup session is stale') ||
     message.includes('Setup command is stale') ||
-    message.includes('Setup session changed')
+    message.includes('Setup session changed') ||
+    message.includes('откройте её ещё раз')
   )
 }
 
@@ -63,6 +103,12 @@ export function viewErrorMessage(error: {
   message: string
 }): string | null {
   switch (error.code) {
+    case 'SETUP_GAME_NOT_FOUND':
+      return 'Не вижу игру в окне — сделайте кадр ещё раз'
+    case 'SETUP_SOURCE_LOST':
+      return SOURCE_LOST_TEXT
+    case 'SETUP_CAPTURE_UNAVAILABLE':
+      return autoFailureText(null)
     case 'CAPTURE_PROFILE_STALE':
       return 'Список профилей изменился, пока шла настройка. Отмените её и начните заново.'
     case 'CAPTURE_PROFILE_NAME_CONFLICT':

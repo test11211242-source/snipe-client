@@ -1,9 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { MonitorResultSchema } from '../../../shared/models/monitor'
+import {
+  MonitorResultSchema,
+  presentedMonitorState,
+  type MonitorState,
+} from '../../../shared/models/monitor'
 import type { MonitorJournalRepository } from '../infrastructure/monitor-journal-repository'
 
-import type { MonitorStartPayload } from '../../../shared/contracts/monitor-protocol'
+import {
+  GameLayoutWireSchema,
+  MonitorStartPayloadSchema,
+  type MonitorStartPayload,
+} from '../../../shared/contracts/monitor-protocol'
+import {
+  CaptureConfigurationSchema,
+  type CaptureConfiguration,
+  type GameLayout,
+} from '../../../shared/models/capture'
 import type { MonitorProcessListener } from './monitor-process-service'
 import { MonitorSupervisor } from './monitor-supervisor'
 import { ApplicationError } from '../../../shared/errors/application-error'
@@ -55,7 +68,10 @@ const configuration = v4CaptureFixture({
 })
 
 function harness(
-  resolveTarget = Promise.resolve({
+  resolveTarget: Promise<{
+    configuration: CaptureConfiguration
+    selector: { kind: 'window'; windowHwnd: string }
+  }> = Promise.resolve({
     configuration,
     selector: { kind: 'window', windowHwnd: '12' },
   }),
@@ -84,6 +100,7 @@ function harness(
     stop: vi.fn().mockResolvedValue(undefined),
   }
   const ocr = { process: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn() }
   const supervisor = new MonitorSupervisor(
     {
       getView: () => ({
@@ -109,6 +126,7 @@ function harness(
     ocr as never,
     now,
     journalRepository,
+    logger,
   )
   return {
     supervisor,
@@ -118,6 +136,7 @@ function harness(
     preferences: preferenceRepository,
     targetResolver,
     listener: () => processListener,
+    logger,
     user: (userId: string | null) => {
       currentUserId = userId
     },
@@ -125,6 +144,876 @@ function harness(
 }
 
 afterEach(() => vi.useRealTimers())
+function gameConfiguration(structural = false): CaptureConfiguration {
+  const origin = { origin: 'manual' as const, confidence: null, analyzerVersion: null }
+  const layout: GameLayout = {
+    layoutId: '00000000-0000-4000-8000-000000000010',
+    layoutSource: 'setup',
+    gameAspect: 9 / 16,
+    referenceFrameSize: { width: 800, height: 1000 },
+    referenceGameRect: { x: 100, y: 20, width: 540, height: 960 },
+    windowChrome: {
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      topEdges: null,
+      bottomEdges: null,
+      leftEdges: null,
+      rightEdges: null,
+    },
+    expectedLayout: 'cr_battle_vs',
+    triggerRegion: { x: 0.4, y: 0.3, width: 0.2, height: 0.1 },
+    nicknameRegion: { x: 0.1, y: 0.2, width: 0.8, height: 0.1 },
+    topLeftEvidenceRegion: { x: 0, y: 0, width: 0.3, height: 0.1 },
+    trigger: structural
+      ? { kind: 'structural', profile: configuration.calibration.triggerProfile }
+      : {
+          kind: 'vs_edge_orientation',
+          algorithm: 'vs-orient-1',
+          badge: { cx: 0.5, cy: 0.35, width: 0.2, height: 0.1 },
+          normalizedSize: { width: 96, height: 64 },
+          cropMargin: 0.08,
+          padding: 4,
+          maxShift: 3,
+          threshold: 0.5,
+          angleQ8Base64: Buffer.alloc(96 * 64).toString('base64'),
+          weightQ8Base64: Buffer.alloc(96 * 64, 255).toString('base64'),
+          templateHash64: '0123456789abcdef',
+          maskAreaRatio: 0.5,
+        },
+    provenance: {
+      trigger: origin,
+      nickname: { ...origin, origin: 'auto' },
+      topLeftEvidence: origin,
+      viewport: origin,
+    },
+    calibratedAt: '2026-10-13T00:00:00.000Z',
+  }
+  return CaptureConfigurationSchema.parse({
+    ...configuration,
+    calibration: {
+      schemaVersion: 2,
+      coordinateSpace: 'game_relative',
+      calibrationId: configuration.calibration.calibrationId,
+      revision: 1,
+      layouts: [layout],
+      validationStatus: 'validated',
+      calibratedAt: layout.calibratedAt,
+    },
+  })
+}
+
+function gameHarness(structural = false, game = gameConfiguration(structural)) {
+  const test = harness(
+    Promise.resolve({
+      configuration: game,
+      selector: { kind: 'window', windowHwnd: '12' },
+    }),
+  )
+  test.captureConfigurations.load.mockResolvedValue(game)
+  test.captureConfigurations.getActive.mockResolvedValue({
+    collectionRevision: 1,
+    profile: { profileId: '00000000-0000-4000-8000-000000000001', configuration: game },
+  })
+  const append = vi.fn().mockResolvedValue(2)
+  test.supervisor.setLearnedLayoutHandler(append)
+  return { ...test, game, append }
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve()
+}
+
+function learnedEvent(game: CaptureConfiguration) {
+  if (game.calibration.coordinateSpace !== 'game_relative')
+    throw new Error('Expected game-relative fixture')
+  const first = game.calibration.layouts[0]
+  if (first === undefined) throw new Error('Expected setup layout')
+  const { provenance: _provenance, ...wire } = first
+  void _provenance
+  return {
+    calibrationId: game.calibration.calibrationId,
+    layout: GameLayoutWireSchema.parse({
+      ...wire,
+      layoutId: '00000000-0000-4000-8000-000000000011',
+      layoutSource: 'learned',
+      gameAspect: 3 / 4,
+      referenceFrameSize: { width: 1200, height: 1600 },
+      referenceGameRect: { x: 0, y: 0, width: 1200, height: 1600 },
+      calibratedAt: '2026-10-13T00:01:00.000Z',
+      confidence: 0.9,
+      zonesOrigin: { nickname: 'auto', topLeftEvidence: 'manual' },
+    }),
+    triggerId: null,
+  }
+}
+
+describe('MonitorSupervisor game-relative runtime', () => {
+  it.each([false, true])(
+    'builds a strict v4 payload (structural=%s)',
+    async (structural) => {
+      const test = gameHarness(structural)
+      await test.supervisor.start()
+      const payload = test.process.start.mock.calls[0]?.[0]
+      expect(MonitorStartPayloadSchema.parse(payload)).toEqual(payload)
+      expect(payload?.primary).toMatchObject({
+        kind: 'game_relative',
+        profileCalibrationId: test.game.calibration.calibrationId,
+        learning: { enabled: true, maxLayouts: 4 },
+        layouts: [
+          {
+            layoutId: '00000000-0000-4000-8000-000000000010',
+            layoutSource: 'setup',
+            calibratedAt: '2026-10-13T00:00:00.000Z',
+            gameAspect: 9 / 16,
+            windowChrome: {
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: 0,
+              topEdges: null,
+              bottomEdges: null,
+              leftEdges: null,
+              rightEdges: null,
+            },
+            badge: structural ? null : { cx: 0.5, cy: 0.35, width: 0.2, height: 0.1 },
+            zonesOrigin: { nickname: 'auto', topLeftEvidence: 'manual' },
+            trigger: { kind: structural ? 'structural' : 'vs_edge_orientation' },
+            regions: {
+              trigger: { x: 0.4, y: 0.3, width: 0.2, height: 0.1 },
+              nicknameRegion: { x: 0.1, y: 0.2, width: 0.8, height: 0.1 },
+              topLeftEvidenceRegion: { x: 0, y: 0, width: 0.3, height: 0.1 },
+            },
+          },
+        ],
+      })
+      expect(test.supervisor.getCurrentView().geometry).toEqual({
+        state: 'locating',
+        aspectLabel: null,
+        learningFailure: null,
+      })
+      if (test.game.calibration.coordinateSpace !== 'game_relative')
+        throw new Error('Expected game-relative fixture')
+      expect(payload?.primary.kind).toBe('game_relative')
+      if (payload?.primary.kind !== 'game_relative')
+        throw new Error('Expected game-relative payload')
+      expect(payload.primary.layouts[0]?.trigger).toEqual(
+        test.game.calibration.layouts[0]?.trigger,
+      )
+    },
+  )
+
+  it('shows the honest structural-only failure on an unknown format', async () => {
+    const test = gameHarness(true)
+    await test.supervisor.start()
+    test.listener()?.onGeometry?.({
+      state: 'aspect_unknown',
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: 3 / 4,
+      layoutId: null,
+    })
+    test.listener()?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_STRUCTURAL_TRIGGER',
+      rejectedCount: 0,
+    })
+    expect(test.supervisor.getCurrentView().geometry).toEqual({
+      state: 'learning_failed',
+      aspectLabel: '9:12',
+      learningFailure: 'LEARN_STRUCTURAL_TRIGGER',
+    })
+  })
+
+  it('enables learning when any layout uses VS and preserves each layout payload', async () => {
+    const structural = gameConfiguration(true)
+    const oriented = gameConfiguration()
+    if (
+      structural.calibration.coordinateSpace !== 'game_relative' ||
+      oriented.calibration.coordinateSpace !== 'game_relative'
+    )
+      throw new Error('Expected game-relative fixtures')
+    const setup = structural.calibration.layouts[0]
+    const vs = oriented.calibration.layouts[0]
+    if (setup === undefined || vs === undefined) throw new Error('Missing layouts')
+    const game = CaptureConfigurationSchema.parse({
+      ...structural,
+      calibration: {
+        ...structural.calibration,
+        layouts: [
+          setup,
+          {
+            ...vs,
+            layoutId: '00000000-0000-4000-8000-000000000012',
+            layoutSource: 'learned',
+            gameAspect: 3 / 4,
+            calibratedAt: '2026-10-13T00:01:00.000Z',
+          },
+        ],
+      },
+    })
+    const test = gameHarness(false, game)
+    await test.supervisor.start()
+    const payload = test.process.start.mock.calls[0]?.[0]
+    expect(payload?.primary.kind).toBe('game_relative')
+    if (payload?.primary.kind !== 'game_relative')
+      throw new Error('Expected game-relative payload')
+    expect(payload.primary.learning).toEqual({ enabled: true, maxLayouts: 4 })
+    expect(
+      payload.primary.layouts.map((layout) => ({
+        id: layout.layoutId,
+        source: layout.layoutSource,
+        calibratedAt: layout.calibratedAt,
+        trigger: layout.trigger,
+        badge: layout.badge,
+      })),
+    ).toEqual([
+      {
+        id: setup.layoutId,
+        source: 'setup',
+        calibratedAt: setup.calibratedAt,
+        trigger: setup.trigger,
+        badge: null,
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000012',
+        source: 'learned',
+        calibratedAt: '2026-10-13T00:01:00.000Z',
+        trigger: vs.trigger,
+        badge: vs.trigger.kind === 'vs_edge_orientation' ? vs.trigger.badge : null,
+      },
+    ])
+  })
+
+  it.each([
+    ['locating', 'locating'],
+    ['armed', 'armed'],
+    ['no_game', 'no_game'],
+    ['aspect_mismatch', 'aspect_mismatch'],
+    ['aspect_unknown', 'learning'],
+  ] as const)('projects geometry %s as %s', async (state, expected) => {
+    const test = gameHarness()
+    await test.supervisor.start()
+    test.listener()?.onGeometry?.({
+      state,
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: state === 'no_game' ? null : 9 / 16,
+      layoutId: null,
+    })
+    expect(test.supervisor.getCurrentView().geometry).toEqual({
+      state: expected,
+      aspectLabel: state === 'no_game' ? null : '9:16',
+      learningFailure: null,
+    })
+  })
+
+  it('maps waiting/rejected/failed learning and retains failure until geometry recovers', async () => {
+    const test = gameHarness()
+    await test.supervisor.start()
+    const events = test.listener()
+    events?.onGeometry?.({
+      state: 'aspect_unknown',
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: 3 / 4,
+      layoutId: null,
+    })
+    for (const status of ['waiting_vs', 'rejected'] as const) {
+      events?.onLearning?.({ status, reason: 'LEARN_TRIGGER_WEAK', rejectedCount: 1 })
+      expect(test.supervisor.getCurrentView().geometry).toEqual({
+        state: 'learning',
+        aspectLabel: '9:12',
+        learningFailure: null,
+      })
+    }
+    events?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_LAYOUT_UNEXPECTED',
+      rejectedCount: 3,
+    })
+    expect(test.supervisor.getCurrentView().geometry).toEqual({
+      state: 'learning_failed',
+      aspectLabel: '9:12',
+      learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
+    })
+    events?.onGeometry?.({
+      state: 'aspect_unknown',
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: 3 / 4,
+      layoutId: null,
+    })
+    expect(test.supervisor.getCurrentView().geometry?.state).toBe('learning_failed')
+    events?.onGeometry?.({
+      state: 'armed',
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: 3 / 4,
+      layoutId: null,
+    })
+    expect(test.supervisor.getCurrentView().geometry).toEqual({
+      state: 'armed',
+      aspectLabel: '9:12',
+      learningFailure: null,
+    })
+    expect(test.supervisor.getCurrentView().state).toBe('READY')
+  })
+
+  it('latches a failed episode through later rejections and geometry gaps', async () => {
+    const test = gameHarness()
+    await test.supervisor.start()
+    const events = test.listener()
+    events?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_LAYOUT_UNEXPECTED',
+      rejectedCount: 2,
+    })
+    events?.onLearning?.({
+      status: 'rejected',
+      reason: 'LEARN_LAYOUT_OVERLAP',
+      rejectedCount: 3,
+    })
+    expect(test.supervisor.getCurrentView().geometry).toMatchObject({
+      state: 'learning_failed',
+      learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
+    })
+    for (const state of ['no_game', 'aspect_mismatch', 'aspect_unknown'] as const) {
+      events?.onGeometry?.({
+        state,
+        frameWidth: 800,
+        frameHeight: 1000,
+        gameRect: null,
+        gameAspect: state === 'no_game' ? null : 3 / 4,
+        layoutId: null,
+      })
+      expect(test.supervisor.getCurrentView().geometry).toMatchObject({
+        state: 'learning_failed',
+        learningFailure: 'LEARN_LAYOUT_UNEXPECTED',
+      })
+    }
+    events?.onLearning?.({ status: 'waiting_vs', reason: null, rejectedCount: 0 })
+    expect(test.supervisor.getCurrentView().geometry).toEqual({
+      state: 'learning',
+      aspectLabel: '9:12',
+      learningFailure: null,
+    })
+  })
+
+  it('formats aspect labels numerically without a redundant decimal zero', async () => {
+    const test = gameHarness()
+    await test.supervisor.start()
+    for (const [aspect, label] of [
+      [9 / 16, '9:16'],
+      [9 / 19.5, '9:19.5'],
+    ] as const) {
+      test.listener()?.onGeometry?.({
+        state: 'armed',
+        frameWidth: 800,
+        frameHeight: 1000,
+        gameRect: null,
+        gameAspect: aspect,
+        layoutId: null,
+      })
+      expect(test.supervisor.getCurrentView().geometry?.aspectLabel).toBe(label)
+    }
+  })
+
+  it('keeps full-frame geometry null and forwards prediction state nonfatally', async () => {
+    const test = harness()
+    const observe = vi.fn()
+    test.supervisor.subscribePredictionStates(observe)
+    const append = vi.fn()
+    test.supervisor.setLearnedLayoutHandler(append)
+    await test.supervisor.start()
+    test.listener()?.onGeometry?.({
+      state: 'no_game',
+      frameWidth: 1920,
+      frameHeight: 1080,
+      gameRect: null,
+      gameAspect: null,
+      layoutId: null,
+    })
+    test.listener()?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 3,
+    })
+    test.listener()?.onLayoutLearned?.(learnedEvent(gameConfiguration()))
+    expect(append).not.toHaveBeenCalled()
+    const stops = test.process.stop.mock.calls.length
+    test.listener()?.onPredictionState?.({ state: 'aspect_mismatch' })
+    test.listener()?.onPredictionState?.({ state: 'active' })
+    expect(observe.mock.calls).toEqual([['aspect_mismatch'], ['active']])
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      geometry: null,
+      error: null,
+    })
+    expect(test.process.stop).toHaveBeenCalledTimes(stops)
+  })
+
+  it('persists using startup identities and applies the revision only after save, without restarting', async () => {
+    const test = gameHarness()
+    const saving = deferred<number>()
+    test.append.mockReturnValue(saving.promise)
+    await test.supervisor.start()
+    test.captureConfigurations.getActive.mockResolvedValue({
+      collectionRevision: 2,
+      profile: {
+        profileId: '00000000-0000-4000-8000-000000000002',
+        configuration: CaptureConfigurationSchema.parse({
+          ...test.game,
+          calibration: { ...test.game.calibration, calibrationId: randomUUID() },
+        }),
+      },
+    })
+    const stops = test.process.stop.mock.calls.length
+    const learned = learnedEvent(test.game)
+    test.listener()?.onLayoutLearned?.(learned)
+    expect(test.append).toHaveBeenCalledWith(
+      '42',
+      '00000000-0000-4000-8000-000000000001',
+      test.game.calibration.calibrationId,
+      learned.layout,
+    )
+    expect(test.captureConfigurations.getActive).toHaveBeenCalledTimes(1)
+    saving.resolve(2)
+    await saving.promise
+    await settle()
+    test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', randomUUID())
+    expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(2)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      error: null,
+    })
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.stop).toHaveBeenCalledTimes(stops)
+  })
+
+  it('uses the persisted calibration revision for later search and results', async () => {
+    const test = gameHarness()
+    test.append.mockResolvedValue(7)
+    await test.supervisor.start()
+    test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
+    await settle()
+    const triggerId = randomUUID()
+    test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', triggerId)
+    expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(7)
+    test.ocr.process.mockResolvedValue(
+      MonitorResultSchema.parse({
+        id: randomUUID(),
+        kind: 'player_not_found',
+        timestamp: '2026-10-13T00:01:00.000Z',
+        searchMode: 'fast',
+        deckMode: 'pol',
+        searchedNickname: 'Synthetic opponent',
+        message: 'Игрок не найден',
+      }),
+    )
+    test.listener()?.onAction({
+      timestamp: '2026-10-13T00:01:00.000Z',
+      triggerId,
+      width: 10,
+      height: 10,
+      image: Buffer.from('synthetic'),
+    })
+    await vi.waitFor(() =>
+      expect(test.supervisor.getCurrentView().results[0]?.calibrationRevision).toBe(7),
+    )
+  })
+
+  it('keeps persisting learned layouts when prediction-state listeners fail', async () => {
+    const test = gameHarness()
+    const prediction = vi.fn()
+    test.supervisor.subscribePredictionStates(() => {
+      throw new Error('synthetic listener failure')
+    })
+    test.supervisor.subscribePredictionStates(() =>
+      Promise.reject(new Error('synthetic listener failure')),
+    )
+    test.supervisor.subscribePredictionStates(prediction)
+    await test.supervisor.start()
+    const stops = test.process.stop.mock.calls.length
+    const learned = learnedEvent(test.game)
+    test.listener()?.onLayoutLearned?.(learned)
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
+    await settle()
+    test.listener()?.onPredictionState?.({ state: 'aspect_mismatch' })
+    expect(prediction).toHaveBeenCalledWith('aspect_mismatch')
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      runIntent: true,
+      error: null,
+    })
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.stop).toHaveBeenCalledTimes(stops)
+  })
+
+  it.each(['LAYOUT_STALE', 'LAYOUT_LIMIT', 'LAYOUT_SAVE_FAILED'])(
+    'does not restart when persistence rejects %s',
+    async (code) => {
+      const test = gameHarness()
+      test.append.mockRejectedValue(new ApplicationError(code, 'private storage detail'))
+      await test.supervisor.start()
+      const stops = test.process.stop.mock.calls.length
+      test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
+      await vi.waitFor(() =>
+        expect(test.logger.warn).toHaveBeenCalledWith('Learned layout not saved', {
+          code,
+          profileId: '00000000-0000-4000-8000-000000000001',
+          calibrationId: test.game.calibration.calibrationId,
+          layoutId: learnedEvent(test.game).layout.layoutId,
+        }),
+      )
+      const view = test.supervisor.getCurrentView()
+      expect(view.state).toBe('READY')
+      expect(view.runIntent).toBe(true)
+      expect(view.error?.code ?? null).toBe(code === 'LAYOUT_SAVE_FAILED' ? code : null)
+      expect(view.error?.message ?? '').not.toContain('private')
+      expect(test.process.start).toHaveBeenCalledTimes(1)
+      expect(test.process.stop).toHaveBeenCalledTimes(stops)
+    },
+  )
+
+  it('discards mismatched calibration events with only a stale log', async () => {
+    const test = gameHarness()
+    await test.supervisor.start()
+    const learned = learnedEvent(test.game)
+    test.listener()?.onLayoutLearned?.({ ...learned, calibrationId: randomUUID() })
+    expect(test.append).not.toHaveBeenCalled()
+    expect(test.logger.warn).toHaveBeenCalledWith('Learned layout not saved', {
+      code: 'LAYOUT_STALE',
+      profileId: '00000000-0000-4000-8000-000000000001',
+      calibrationId: test.game.calibration.calibrationId,
+      layoutId: learned.layout.layoutId,
+    })
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      error: null,
+    })
+  })
+
+  it('does not project pending persistence failures into a different user context', async () => {
+    const test = gameHarness()
+    const saving = deferred<number>()
+    test.append.mockReturnValue(saving.promise)
+    await test.supervisor.start()
+    const oldListener = test.listener()
+    oldListener?.onLayoutLearned?.(learnedEvent(test.game))
+    await test.supervisor.stop('auth_change')
+    test.user('99')
+    test.supervisor.setUserContext('99')
+    saving.reject(new ApplicationError('LAYOUT_SAVE_FAILED', 'private storage detail'))
+    await vi.waitFor(() => expect(test.logger.warn).toHaveBeenCalled())
+    oldListener?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 3,
+    })
+    oldListener?.onLayoutLearned?.(learnedEvent(test.game))
+    expect(test.append).toHaveBeenCalledTimes(1)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'STOPPED',
+      error: null,
+      geometry: null,
+    })
+  })
+
+  it('recovers a learned profile despite its changed revision and fingerprint', async () => {
+    vi.useFakeTimers()
+    const test = gameHarness()
+    await test.supervisor.start()
+    const learned = learnedEvent(test.game)
+    test.listener()?.onLayoutLearned?.(learned)
+    await Promise.resolve()
+    if (test.game.calibration.coordinateSpace !== 'game_relative')
+      throw new Error('Expected game-relative fixture')
+    const first = test.game.calibration.layouts[0]
+    if (first === undefined) throw new Error('Missing setup layout')
+    const { confidence: _confidence, zonesOrigin: _origins, ...layout } = learned.layout
+    void _confidence
+    void _origins
+    const updated = CaptureConfigurationSchema.parse({
+      ...test.game,
+      revision: 2,
+      fingerprint: 'b'.repeat(64),
+      calibration: {
+        ...test.game.calibration,
+        revision: 2,
+        layouts: [first, { ...layout, provenance: first.provenance }],
+      },
+    })
+    test.captureConfigurations.getActive.mockResolvedValue({
+      collectionRevision: 2,
+      profile: {
+        profileId: '00000000-0000-4000-8000-000000000001',
+        configuration: updated,
+      },
+    })
+    test.targetResolver.resolve.mockResolvedValue({
+      configuration: updated,
+      selector: { kind: 'window', windowHwnd: '12' },
+    })
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'source lost'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(test.process.start).toHaveBeenCalledTimes(2)
+    expect(test.supervisor.getCurrentView().state).toBe('READY')
+    expect(test.process.start.mock.calls[1]?.[0].primary).toMatchObject({
+      kind: 'game_relative',
+      layouts: [{ layoutId: first.layoutId }, { layoutId: learned.layout.layoutId }],
+    })
+    await test.supervisor.stop()
+  })
+
+  it('reloads new source and zones during recovery under the same calibration', async () => {
+    vi.useFakeTimers()
+    const test = gameHarness()
+    await test.supervisor.start()
+    if (test.game.calibration.coordinateSpace !== 'game_relative')
+      throw new Error('Expected game-relative fixture')
+    const nickname = { x: 0.15, y: 0.2, width: 0.7, height: 0.1 }
+    const updated = CaptureConfigurationSchema.parse({
+      ...test.game,
+      revision: 2,
+      fingerprint: 'b'.repeat(64),
+      calibration: {
+        ...test.game.calibration,
+        revision: 2,
+        layouts: test.game.calibration.layouts.map((layout) => ({
+          ...layout,
+          nicknameRegion: nickname,
+        })),
+      },
+    })
+    test.captureConfigurations.getActive.mockResolvedValue({
+      collectionRevision: 2,
+      profile: {
+        profileId: '00000000-0000-4000-8000-000000000001',
+        configuration: updated,
+      },
+    })
+    test.targetResolver.resolve.mockResolvedValue({
+      configuration: updated,
+      selector: { kind: 'window', windowHwnd: '99' },
+    })
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'source lost'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(test.process.start).toHaveBeenCalledTimes(2)
+    expect(test.process.start.mock.calls[1]?.[0]).toMatchObject({
+      selector: { kind: 'window', windowHwnd: '99' },
+      primary: {
+        kind: 'game_relative',
+        profileCalibrationId: test.game.calibration.calibrationId,
+        layouts: [{ regions: { nicknameRegion: nickname } }],
+      },
+    })
+    expect(test.supervisor.getCurrentView().state).toBe('READY')
+    await test.supervisor.stop()
+  })
+
+  it.each(['profile', 'calibration'] as const)(
+    'refuses recovery when game-relative %s identity changes',
+    async (changed) => {
+      vi.useFakeTimers()
+      const test = gameHarness()
+      await test.supervisor.start()
+      const updated = CaptureConfigurationSchema.parse({
+        ...test.game,
+        calibration: {
+          ...test.game.calibration,
+          calibrationId:
+            changed === 'calibration'
+              ? randomUUID()
+              : test.game.calibration.calibrationId,
+        },
+      })
+      test.captureConfigurations.getActive.mockResolvedValue({
+        collectionRevision: 2,
+        profile: {
+          profileId:
+            changed === 'profile' ? randomUUID() : '00000000-0000-4000-8000-000000000001',
+          configuration: updated,
+        },
+      })
+      test
+        .listener()
+        ?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'source lost'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(test.process.start).toHaveBeenCalledTimes(1)
+      expect(test.supervisor.getCurrentView()).toMatchObject({
+        state: 'FAILED',
+        runIntent: false,
+        error: { code: 'CAPTURE_CALIBRATION_INVALID' },
+      })
+      await test.supervisor.stop()
+    },
+  )
+
+  it('keeps opponent OCR active after a save failure and clears it after a later save', async () => {
+    const test = gameHarness()
+    test.append.mockRejectedValueOnce(new Error('synthetic disk failure'))
+    await test.supervisor.start()
+    const learned = learnedEvent(test.game)
+    const stops = test.process.stop.mock.calls.length
+    test.listener()?.onLayoutLearned?.(learned)
+    await vi.waitFor(() =>
+      expect(test.supervisor.getCurrentView().error?.code).toBe('LAYOUT_SAVE_FAILED'),
+    )
+    const action = {
+      timestamp: '2026-10-13T00:01:00.000Z',
+      triggerId: randomUUID(),
+      width: 10,
+      height: 10,
+      image: Buffer.alloc(10),
+    }
+    test.ocr.process.mockResolvedValue(
+      MonitorResultSchema.parse({
+        id: randomUUID(),
+        kind: 'player_not_found',
+        timestamp: action.timestamp,
+        searchMode: 'fast',
+        deckMode: 'pol',
+        searchedNickname: 'Synthetic opponent',
+        message: 'Игрок не найден',
+      }),
+    )
+    test.listener()?.onTriggered(action.timestamp, action.triggerId)
+    test.listener()?.onAction(action)
+    await vi.waitFor(() =>
+      expect(test.supervisor.getCurrentView().results).toHaveLength(1),
+    )
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      runIntent: true,
+      error: { code: 'LAYOUT_SAVE_FAILED' },
+      stats: { triggers: 1, requests: 1, playersNotFound: 1 },
+    })
+    test.listener()?.onLayoutLearned?.(learned)
+    await vi.waitFor(() => expect(test.append).toHaveBeenCalledTimes(2))
+    await settle()
+    expect(test.supervisor.getCurrentView().error).toBeNull()
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.stop).toHaveBeenCalledTimes(stops)
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'fences pending save %s and stale callbacks after a same-user restart',
+    async (outcome) => {
+      const test = gameHarness()
+      const saving = deferred<number>()
+      test.append.mockReturnValueOnce(saving.promise)
+      const prediction = vi.fn()
+      test.supervisor.subscribePredictionStates(prediction)
+      await test.supervisor.start()
+      const old = test.listener()
+      old?.onLayoutLearned?.(learnedEvent(test.game))
+      await test.supervisor.restart()
+      if (outcome === 'success') saving.resolve(2)
+      else saving.reject(new Error('synthetic disk failure'))
+      await saving.promise.catch(() => undefined)
+      old?.onGeometry?.({
+        state: 'armed',
+        frameWidth: 800,
+        frameHeight: 1000,
+        gameRect: null,
+        gameAspect: 3 / 4,
+        layoutId: null,
+      })
+      old?.onLearning?.({
+        status: 'failed',
+        reason: 'LEARN_TRIGGER_WEAK',
+        rejectedCount: 3,
+      })
+      old?.onLayoutLearned?.(learnedEvent(test.game))
+      old?.onPredictionState?.({ state: 'aspect_mismatch' })
+      expect(test.append).toHaveBeenCalledTimes(1)
+      expect(prediction).not.toHaveBeenCalled()
+      expect(test.supervisor.getCurrentView()).toMatchObject({
+        state: 'READY',
+        error: null,
+        geometry: { state: 'locating', aspectLabel: null, learningFailure: null },
+      })
+      expect(test.process.start).toHaveBeenCalledTimes(2)
+      test.listener()?.onLayoutLearned?.(learnedEvent(test.game))
+      await vi.waitFor(() => expect(test.append).toHaveBeenCalledTimes(2))
+      await settle()
+      expect(test.supervisor.getCurrentView().error).toBeNull()
+    },
+  )
+
+  it('fences a successful pending save and new events immediately on auth change', async () => {
+    const test = gameHarness()
+    const saving = deferred<undefined>()
+    test.append.mockReturnValue(saving.promise)
+    const prediction = vi.fn()
+    test.supervisor.subscribePredictionStates(prediction)
+    await test.supervisor.start()
+    const old = test.listener()
+    old?.onLayoutLearned?.(learnedEvent(test.game))
+    test.user(null)
+    saving.resolve(undefined)
+    await saving.promise
+    old?.onLayoutLearned?.(learnedEvent(test.game))
+    old?.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 3,
+    })
+    old?.onPredictionState?.({ state: 'aspect_mismatch' })
+    expect(test.append).toHaveBeenCalledTimes(1)
+    expect(prediction).not.toHaveBeenCalled()
+    expect(test.supervisor.getCurrentView().geometry).toBeNull()
+    await test.supervisor.stop('auth_change')
+  })
+
+  it('ignores runtime events from a failed startup even before another generation begins', async () => {
+    const test = gameHarness()
+    let failedListener: MonitorProcessListener | null = null
+    test.process.start.mockImplementationOnce((_payload, listener) => {
+      failedListener = listener
+      return Promise.reject(
+        new ApplicationError('MONITOR_START_FAILED', 'synthetic failure'),
+      )
+    })
+    const prediction = vi.fn()
+    test.supervisor.subscribePredictionStates(prediction)
+    await test.supervisor.start()
+    const before = test.supervisor.getCurrentView()
+    expect(before.state).toBe('FAILED')
+    const events = failedListener as MonitorProcessListener | null
+    if (events === null) throw new Error('Missing failed process listener')
+    events.onGeometry?.({
+      state: 'armed',
+      frameWidth: 800,
+      frameHeight: 1000,
+      gameRect: null,
+      gameAspect: 3 / 4,
+      layoutId: null,
+    })
+    events.onLearning?.({
+      status: 'failed',
+      reason: 'LEARN_TRIGGER_WEAK',
+      rejectedCount: 3,
+    })
+    events.onLayoutLearned?.(learnedEvent(test.game))
+    events.onPredictionState?.({ state: 'aspect_mismatch' })
+    expect(test.append).not.toHaveBeenCalled()
+    expect(prediction).not.toHaveBeenCalled()
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'FAILED',
+      error: before.error,
+      geometry: before.geometry,
+    })
+  })
+})
 
 describe('MonitorSupervisor concurrency', () => {
   it('M6 #5 assigns increasing sequences to every snapshot, including redacted auth views', async () => {
@@ -152,7 +1041,9 @@ describe('MonitorSupervisor concurrency', () => {
     events.onFatal(new ApplicationError(code, 'private arbitrary diagnostic'))
     const view = await test.supervisor.getView()
     expect(view.state).toBe(
-      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME'].includes(code)
+      ['CAPTURE_SOURCE_CLOSED', 'CAPTURE_NO_FRAME', 'MONITOR_INTERNAL_FAILED'].includes(
+        code,
+      )
         ? 'WAITING_SOURCE'
         : 'FAILED',
     )
@@ -179,6 +1070,23 @@ describe('MonitorSupervisor concurrency', () => {
       expect.objectContaining({ capturePolicy: 'immediate_nickname' }),
       expect.anything(),
     )
+    expect(test.process.start.mock.calls[0]?.[0]).toMatchObject({
+      primary: {
+        kind: 'full_frame',
+        configuredFrameSize: configuration.calibration.referenceFrameSize,
+        regions: {
+          trigger: configuration.calibration.triggerRegion,
+          nicknameRegion: configuration.calibration.nicknameRegion,
+          topLeftEvidenceRegion: configuration.calibration.topLeftEvidenceRegion,
+        },
+        triggerProfile: configuration.calibration.triggerProfile,
+      },
+    })
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty('regions')
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty(
+      'configuredFrameSize',
+    )
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty('triggerProfile')
   })
 
   it('cancels a start during preflight without spawning a stale child', async () => {
@@ -326,18 +1234,66 @@ describe('MonitorSupervisor concurrency', () => {
     expect((await test.supervisor.getView()).results).toHaveLength(1)
   })
 
-  it('fails on unexpected child exit and ignores the old listener after restart', async () => {
+  it('restarts an exited worker and ignores the old listener after the restart', async () => {
+    vi.useFakeTimers()
     const test = harness()
     await test.supervisor.start()
     const oldListener = test.listener()
     oldListener?.onExit(
       Object.assign(new Error('closed'), { code: 'MONITOR_PROCESS_EXITED' }) as never,
     )
-    expect((await test.supervisor.getView()).state).toBe('FAILED')
-    await test.supervisor.restart()
+    expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+    await vi.advanceTimersByTimeAsync(1_000)
     oldListener?.onFatal(Object.assign(new Error('stale'), { code: 'STALE' }) as never)
-    expect((await test.supervisor.getView()).state).toBe('READY')
+    expect(test.supervisor.getCurrentView().state).toBe('READY')
     expect(test.process.start).toHaveBeenCalledTimes(2)
+  })
+
+  it('caps worker restarts at three per ten minutes, then fails as before', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-14T12:00:00.000Z'))
+    const test = harness(undefined, () => new Date())
+    await test.supervisor.start()
+    for (const attempt of [1, 2, 3]) {
+      test.listener()?.onFatal(new ApplicationError('MONITOR_INTERNAL_FAILED', 'crash'))
+      expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(test.process.start).toHaveBeenCalledTimes(attempt + 1)
+      expect(test.supervisor.getCurrentView().state).toBe('READY')
+    }
+    test.listener()?.onExit(new ApplicationError('MONITOR_PROCESS_EXITED', 'exited'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'FAILED',
+      runIntent: false,
+      error: { code: 'MONITOR_PROCESS_EXITED' },
+    })
+    // A restart outside the window is allowed again.
+    await test.supervisor.restart()
+    vi.setSystemTime(new Date('2026-10-14T12:11:00.000Z'))
+    test.listener()?.onFatal(new ApplicationError('MONITOR_INTERNAL_FAILED', 'crash'))
+    expect(test.supervisor.getCurrentView().state).toBe('WAITING_SOURCE')
+    await test.supervisor.stop()
+  })
+
+  it('projects a minimised window source while running and clears it on restore, loss and stop', async () => {
+    const test = harness()
+    await test.supervisor.start()
+    test.listener()?.onSourceState?.({ minimized: true })
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      sourceMinimized: true,
+    })
+    test.listener()?.onSourceState?.({ minimized: false })
+    expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
+    // A minimised window that then closes: the lost source is no longer minimised.
+    test.listener()?.onSourceState?.({ minimized: true })
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      sourceMinimized: false,
+    })
+    await test.supervisor.stop()
+    expect(test.supervisor.getCurrentView().sourceMinimized).toBe(false)
   })
 
   it('notifies isolated result listeners and exposes only currently retained results', async () => {
@@ -597,6 +1553,85 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       state: 'STOPPED',
       runIntent: false,
     })
+  })
+
+  it('presents source retries as one waiting state until monitoring resumes', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    const raw: MonitorState[] = []
+    const presented: MonitorState[] = []
+    test.supervisor.subscribeViews((view) => {
+      raw.push(view.state)
+      presented.push(presentedMonitorState(view))
+    })
+
+    // The game window closes and stays away for two retries.
+    test.targetResolver.resolve
+      .mockRejectedValueOnce(new ApplicationError('SOURCE_NOT_FOUND', 'missing'))
+      .mockRejectedValueOnce(new ApplicationError('SOURCE_NOT_FOUND', 'missing'))
+    test.listener()?.onFatal(new ApplicationError('CAPTURE_SOURCE_CLOSED', 'closed'))
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      recovery: 'source',
+    })
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 5_000)
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'READY',
+      recovery: null,
+    })
+    expect(raw).toContain('PREFLIGHT')
+    // Three attempts, one diagnostics line.
+    expect(
+      test.logger.info.mock.calls.filter(
+        ([message]) => message === 'Monitor waiting for source',
+      ),
+    ).toEqual([
+      ['Monitor waiting for source', { code: 'CAPTURE_SOURCE_CLOSED', kind: 'source' }],
+    ])
+    const recovered = presented.indexOf('READY')
+    expect(
+      presented.slice(0, recovered).filter((state) => state !== 'WAITING_SOURCE'),
+    ).toEqual([])
+
+    // A user Start after a stop is no recovery.
+    await test.supervisor.stop()
+    presented.length = 0
+    await test.supervisor.start()
+    expect(presented).toContain('PREFLIGHT')
+    expect(presented.at(-1)).toBe('READY')
+    await test.supervisor.stop()
+  })
+
+  it('presents a worker restart as a start, never as a lost game window', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    await test.supervisor.start()
+    const raw: MonitorState[] = []
+    const presented: MonitorState[] = []
+    test.supervisor.subscribeViews((view) => {
+      raw.push(view.state)
+      presented.push(presentedMonitorState(view))
+    })
+    test
+      .listener()
+      ?.onExit(
+        Object.assign(new Error('closed'), { code: 'MONITOR_PROCESS_EXITED' }) as never,
+      )
+    expect(test.supervisor.getCurrentView()).toMatchObject({
+      state: 'WAITING_SOURCE',
+      recovery: 'worker',
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(raw.filter((state, index) => state !== raw[index - 1])).toEqual([
+      'WAITING_SOURCE',
+      'PREFLIGHT',
+      'STARTING',
+      'READY',
+    ])
+    expect(presented).not.toContain('WAITING_SOURCE')
+    expect(test.supervisor.getCurrentView().recovery).toBeNull()
+    await test.supervisor.stop()
   })
 
   it('does not resume a changed calibration or binding during recovery', async () => {

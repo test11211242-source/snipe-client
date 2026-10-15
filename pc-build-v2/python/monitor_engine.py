@@ -11,10 +11,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import cv2
+
 from capture.monitor_backend import WindowsMonitorBackend
-from capture.backend import CaptureBackendError
+from capture.backend import CaptureBackendError, window_iconic_probe
 from monitor_protocol import MonitorProtocolError, encode_event, read_command
 from trigger_engine import GeometryChangedError, InvalidFrameError, PredictionTriggerEngine, TriggerEngine, ensure_bgr
+
+# WGC sends no frames for a minimised window; poll IsIconic so the UI can say so.
+ICONIC_POLL_SECONDS = 0.5
 
 
 class EventWriter:
@@ -41,7 +46,11 @@ def run(start: dict[str, Any]) -> int:
     engine = None
     prediction_engine = None
     backend = None
-    diagnostic_times = {"primary": -float("inf"), "prediction": -float("inf")}
+    minimized = threading.Event()
+    iconic = None
+    # Last reported (matcher, matched, reason) per profile: a diagnostic line is written
+    # only when it changes, not every second (it was ~96% of the owner's log).
+    diagnostic_states: dict[str, tuple[Any, ...]] = {}
     writer_failed = False
 
     def fail(code: str, message: str, stage: str = "initialize", error: Exception | None = None) -> None:
@@ -59,26 +68,30 @@ def run(start: dict[str, Any]) -> int:
             except Exception:
                 writer_failed = True
 
-    def emit_diagnostic(profile: str, match, now: float) -> None:
-        if match is None or now - diagnostic_times[profile] < 1.0:
+    def emit_diagnostic(profile: str, match) -> None:
+        if match is None:
             return
-        diagnostic_times[profile] = now
+        state = (match.matcher, match.matched, match.reason)
+        if diagnostic_states.get(profile) == state:
+            return
+        diagnostic_states[profile] = state
         writer.emit(
             "diagnostic",
             {
                 "profile": profile,
+                "matcher": match.matcher,
                 "matched": match.matched,
-                "score": round(match.score, 4),
-                "support": round(match.support, 4),
-                "orientation": round(match.orientation, 4),
-                "correlation": round(match.correlation, 4),
+                "score": round(max(0.0, match.score), 4),
+                "support": round(match.support, 4) if match.support is not None else None,
+                "orientation": round(match.orientation, 4) if match.orientation is not None else None,
+                "correlation": round(match.correlation, 4) if match.correlation is not None else None,
                 "orbInliers": match.orb_inliers,
                 "reason": match.reason,
             },
         )
 
     def on_frame(frame) -> None:
-        if terminal.is_set() or stopping.is_set():
+        if terminal.is_set() or stopping.is_set() or minimized.is_set():
             return
         try:
             bgr = ensure_bgr(frame)
@@ -90,10 +103,15 @@ def run(start: dict[str, Any]) -> int:
                 ready.set()
             now = time.monotonic()
             action = engine.process(bgr, now)
-            emit_diagnostic("primary", engine.last_match, now)
+            emit_diagnostic("primary", engine.last_match)
             trigger_id = str(uuid.uuid4())
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            if engine.take_triggered():
+            triggered = engine.take_triggered()
+            for event_type, event_payload in engine.take_events():
+                if event_type == "layout_learned" and triggered:
+                    event_payload["triggerId"] = trigger_id
+                writer.emit(event_type, event_payload)
+            if triggered:
                 writer.emit(
                     "triggered",
                     {
@@ -116,7 +134,9 @@ def run(start: dict[str, Any]) -> int:
                 )
             prediction_result = prediction_engine.process(bgr, now) if prediction_engine else None
             if prediction_engine is not None:
-                emit_diagnostic("prediction", prediction_engine.last_match, now)
+                emit_diagnostic("prediction", prediction_engine.last_match)
+                for event_type, event_payload in prediction_engine.take_events():
+                    writer.emit(event_type, event_payload)
             if prediction_result is not None:
                 image, image_width, image_height = prediction_result
                 writer.emit(
@@ -162,13 +182,26 @@ def run(start: dict[str, Any]) -> int:
             prediction_engine = PredictionTriggerEngine(payload["prediction"], payload["limits"])
         if not terminal.is_set():
             stage = "start"
+            iconic = window_iconic_probe(payload["selector"])
             backend = WindowsMonitorBackend(payload["selector"])
             if not terminal.is_set():
                 backend.start(on_frame, on_closed)
         deadline = time.monotonic() + 7.0
+        next_iconic_poll = -float("inf")
         while not terminal.wait(0.05):
-            if not ready.is_set() and time.monotonic() >= deadline:
-                fail("CAPTURE_NO_FRAME", "The capture source did not provide a frame", "start")
+            if not ready.is_set():
+                if time.monotonic() >= deadline:
+                    fail("CAPTURE_NO_FRAME", "The capture source did not provide a frame", "start")
+            elif iconic is not None and time.monotonic() >= next_iconic_poll:
+                next_iconic_poll = time.monotonic() + ICONIC_POLL_SECONDS
+                state = iconic()
+                if state != minimized.is_set():
+                    # Analysis pauses while minimised and resumes on the first restored frame.
+                    if state:
+                        minimized.set()
+                    else:
+                        minimized.clear()
+                    writer.emit("source_state", {"minimized": state})
     except CaptureBackendError as error:
         fail(
             "CAPTURE_SOURCE_CLOSED" if error.code == "CAPTURE_SOURCE_STALE" else "CAPTURE_START_FAILED",
@@ -197,6 +230,8 @@ def run(start: dict[str, Any]) -> int:
 
 
 def main() -> int:
+    # Frames are small: OpenCV's default pool (one thread per core) only burns CPU.
+    cv2.setNumThreads(1)
     try:
         command = read_command(sys.stdin.buffer)
         if command["type"] != "start":

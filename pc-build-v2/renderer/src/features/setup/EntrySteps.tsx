@@ -110,7 +110,7 @@ export function NameStep({
   )
 }
 
-/** Real windows and screens; the picked one is prepared at once and frozen on «Заморозить кадр». */
+/** Real windows and screens; the picked one is prepared at once and handed on by the action. */
 export function SourceStep({
   picker,
   position,
@@ -121,6 +121,7 @@ export function SourceStep({
   acting,
   backLabel,
   onBack,
+  secondary,
 }: {
   picker: SourcePicker
   position: string
@@ -132,6 +133,8 @@ export function SourceStep({
   acting: boolean
   backLabel: string | null
   onBack: () => void
+  /** A second way on with the same prepared source (e.g. manual setup). */
+  secondary?: { label: string; onAction: () => void; loading: boolean } | undefined
 }): React.JSX.Element {
   const { sources, tab, counts, loading, preparation, preparingKey, selectedKey } = picker
   const failure = picker.error
@@ -237,9 +240,19 @@ export function SourceStep({
             {backLabel}
           </Button>
         )}
+        {secondary === undefined ? null : (
+          <Button
+            disabled={preparation === null || preparingKey !== null || acting}
+            loading={secondary.loading}
+            onClick={secondary.onAction}
+            size="lg"
+          >
+            {secondary.label}
+          </Button>
+        )}
         <Button
-          disabled={preparation === null || preparingKey !== null}
-          loading={acting}
+          disabled={preparation === null || preparingKey !== null || acting}
+          loading={acting && secondary?.loading !== true}
           onClick={onAction}
           size="lg"
           variant="primary"

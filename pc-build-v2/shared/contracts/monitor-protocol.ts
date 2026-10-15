@@ -4,11 +4,24 @@ import {
   PixelSizeSchema,
   NormalizedRectSchema,
   TriggerProfileSchema,
+  PixelRectSchema,
+  WindowChromeSchema as MonitorWindowChromeSchema,
+  VsBadgeSchema as MonitorVsBadgeSchema,
+  GameTriggerSchema,
 } from '../models/capture'
 import { PredictionRuntimeProfileSchema } from '../models/prediction-result'
+import { GameAspectSchema, gameAspectsOverlap } from './game-aspect'
+export {
+  WindowChromeSchema as MonitorWindowChromeSchema,
+  VsBadgeSchema as MonitorVsBadgeSchema,
+  VsOrientationTriggerSchema as MonitorVsOrientationTriggerSchema,
+} from '../models/capture'
+
+export const MONITOR_PROTOCOL_VERSION = 4
+export const MONITOR_MAX_COMMAND_LINE_BYTES = 1024 * 1024
 
 const ProtocolBaseSchema = z.object({
-  protocolVersion: z.literal(3),
+  protocolVersion: z.literal(MONITOR_PROTOCOL_VERSION),
   sessionId: z.uuid(),
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 })
@@ -45,18 +58,102 @@ export const MonitorLimitsSchema = z
   })
   .strict()
 
+const MonitorRegionsSchema = z
+  .object({
+    trigger: NormalizedRectSchema,
+    nicknameRegion: NormalizedRectSchema,
+    topLeftEvidenceRegion: NormalizedRectSchema,
+  })
+  .strict()
+
+export const MonitorCommandLayoutSchema = z
+  .object({
+    layoutId: z.uuid(),
+    layoutSource: z.enum(['setup', 'learned']),
+    calibratedAt: z.iso.datetime(),
+    gameAspect: GameAspectSchema,
+    windowChrome: MonitorWindowChromeSchema,
+    regions: MonitorRegionsSchema,
+    trigger: GameTriggerSchema,
+    badge: MonitorVsBadgeSchema.nullable(),
+    zonesOrigin: z
+      .object({
+        nickname: z.enum(['auto', 'manual']),
+        topLeftEvidence: z.enum(['auto', 'manual']),
+      })
+      .strict(),
+  })
+  .strict()
+
+export const GameLayoutWireSchema = z
+  .object({
+    layoutId: z.uuid(),
+    layoutSource: z.literal('learned'),
+    calibratedAt: z.iso.datetime(),
+    gameAspect: GameAspectSchema,
+    referenceFrameSize: PixelSizeSchema,
+    referenceGameRect: PixelRectSchema,
+    windowChrome: MonitorWindowChromeSchema,
+    expectedLayout: z.literal('cr_battle_vs'),
+    triggerRegion: NormalizedRectSchema,
+    nicknameRegion: NormalizedRectSchema,
+    topLeftEvidenceRegion: NormalizedRectSchema,
+    trigger: GameTriggerSchema,
+    zonesOrigin: MonitorCommandLayoutSchema.shape.zonesOrigin,
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+
+const GameLayoutsSchema = z
+  .array(MonitorCommandLayoutSchema)
+  .min(1)
+  .max(4)
+  .superRefine((layouts, context) => {
+    if (!layouts.some((layout) => layout.layoutSource === 'setup')) {
+      context.addIssue({ code: 'custom', message: 'A setup layout is required' })
+    }
+    for (let index = 0; index < layouts.length; index += 1) {
+      for (let previous = 0; previous < index; previous += 1) {
+        const layout = layouts[index]
+        const other = layouts[previous]
+        if (layout === undefined || other === undefined) continue
+        if (
+          layout.layoutId === other.layoutId ||
+          gameAspectsOverlap(other.gameAspect, layout.gameAspect)
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: [index],
+            message: 'Layouts must have unique identities and distinct aspects',
+          })
+        }
+      }
+    }
+  })
+
+export const MonitorPrimarySchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('full_frame'),
+      configuredFrameSize: PixelSizeSchema,
+      regions: MonitorRegionsSchema,
+      triggerProfile: TriggerProfileSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('game_relative'),
+      profileCalibrationId: z.uuid(),
+      layouts: GameLayoutsSchema,
+      learning: z.object({ enabled: z.boolean(), maxLayouts: z.literal(4) }).strict(),
+    })
+    .strict(),
+])
+
 export const MonitorStartPayloadSchema = z
   .object({
     selector: MonitorCaptureSelectorSchema,
-    configuredFrameSize: PixelSizeSchema,
-    regions: z
-      .object({
-        trigger: NormalizedRectSchema,
-        nicknameRegion: NormalizedRectSchema,
-        topLeftEvidenceRegion: NormalizedRectSchema,
-      })
-      .strict(),
-    triggerProfile: TriggerProfileSchema,
+    primary: MonitorPrimarySchema,
     capturePolicy: z.literal('immediate_nickname'),
     limits: MonitorLimitsSchema,
     prediction: PredictionRuntimeProfileSchema.nullable(),
@@ -99,12 +196,13 @@ export const MonitorDiagnosticEventSchema = ProtocolBaseSchema.extend({
   payload: z
     .object({
       profile: z.enum(['primary', 'prediction']),
+      matcher: z.enum(['structural', 'vs_orientation']),
       matched: z.boolean(),
       score: z.number().min(0).max(1),
-      support: z.number().min(0).max(1),
-      orientation: z.number().min(0).max(1),
-      correlation: z.number().min(-1).max(1),
-      orbInliers: z.number().int().nonnegative().max(1_000),
+      support: z.number().min(0).max(1).nullable(),
+      orientation: z.number().min(0).max(1).nullable(),
+      correlation: z.number().min(-1).max(1).nullable(),
+      orbInliers: z.number().int().nonnegative().max(1_000).nullable(),
       reason: z.enum(['pass', 'structure_below_threshold', 'no_candidate']),
     })
     .strict(),
@@ -155,12 +253,125 @@ export const MonitorStoppedEventSchema = ProtocolBaseSchema.extend({
   payload: z.object({}).strict(),
 }).strict()
 
+export const MonitorGeometryEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('geometry'),
+  payload: z
+    .object({
+      state: z.enum([
+        'locating',
+        'armed',
+        'no_game',
+        'aspect_mismatch',
+        'aspect_unknown',
+      ]),
+      frameWidth: PixelSizeSchema.shape.width,
+      frameHeight: PixelSizeSchema.shape.height,
+      gameRect: PixelRectSchema.nullable(),
+      gameAspect: z.number().positive().nullable(),
+      layoutId: z.uuid().nullable(),
+    })
+    .strict(),
+}).strict()
+
+export const MonitorLearningCodeSchema = z.enum([
+  'LEARN_LAYOUT_UNEXPECTED',
+  'LEARN_LAYOUT_OVERLAP',
+  'LEARN_NICKNAME_ZONE_CLIPPED',
+  'LEARN_TRIGGER_WEAK',
+  'LEARN_SELF_CHECK_FAILED',
+  'LEARN_ASPECT_UNSUPPORTED',
+  'LEARN_STRUCTURAL_TRIGGER',
+  'LAYOUT_LIMIT',
+])
+
+export const MonitorLearningEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('learning'),
+  payload: z
+    .object({
+      status: z.enum(['waiting_vs', 'rejected', 'failed']),
+      reason: MonitorLearningCodeSchema.nullable(),
+      rejectedCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+}).strict()
+
+export const MonitorLayoutLearnedEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('layout_learned'),
+  payload: z
+    .object({
+      calibrationId: z.uuid(),
+      layout: GameLayoutWireSchema,
+      triggerId: z.uuid().nullable(),
+    })
+    .strict(),
+}).strict()
+
+export const MonitorPredictionStateEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('prediction_state'),
+  payload: z.object({ state: z.enum(['active', 'aspect_mismatch']) }).strict(),
+}).strict()
+
+/** Window source minimised (analysis paused) or restored; sent only on change. */
+export const MonitorSourceStateEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('source_state'),
+  payload: z.object({ minimized: z.boolean() }).strict(),
+}).strict()
+
+/**
+ * One compact record per VS candidate or near miss (≥0.30 or a learning
+ * decision): why it fired or not, and the geometry it was evaluated on.
+ * The worker bounds it to one per episode, one per second and 20 per minute.
+ */
+export const MonitorVsCandidateEventSchema = ProtocolBaseSchema.extend({
+  type: z.literal('vs_candidate'),
+  payload: z
+    .object({
+      reason: z.enum([
+        'fired',
+        'cooldown',
+        'rearm',
+        'confirm',
+        'kind',
+        'learning',
+        'aspect',
+        'score',
+      ]),
+      state: z.enum([
+        'armed',
+        'locating',
+        'no_game',
+        'aspect_mismatch',
+        'aspect_unknown',
+      ]),
+      score: z.number().min(-1).max(1).nullable(),
+      frames: z.number().int().positive().max(1_000),
+      matchedFrames: z.number().int().nonnegative().max(1_000),
+      sinceFireS: z.number().nonnegative().nullable(),
+      frameWidth: PixelSizeSchema.shape.width,
+      frameHeight: PixelSizeSchema.shape.height,
+      gameRect: PixelRectSchema.nullable(),
+      gameAspect: z.number().positive().nullable(),
+      layoutAspect: z.number().positive().nullable(),
+      kind: z.enum(['battle', 'spectate']).nullable(),
+      learnedLayout: z.boolean(),
+      code: z.union([MonitorLearningCodeSchema, z.literal('LAYOUT_LEARNED')]).nullable(),
+      suppressed: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+}).strict()
+
 export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
   MonitorReadyEventSchema,
   MonitorDiagnosticEventSchema,
   MonitorTriggeredEventSchema,
   MonitorActionEventSchema,
   MonitorPredictionResultEventSchema,
+  MonitorGeometryEventSchema,
+  MonitorLearningEventSchema,
+  MonitorLayoutLearnedEventSchema,
+  MonitorPredictionStateEventSchema,
+  MonitorSourceStateEventSchema,
+  MonitorVsCandidateEventSchema,
   MonitorFatalEventSchema,
   MonitorStoppedEventSchema,
 ])
@@ -168,3 +379,12 @@ export const MonitorProcessEventSchema = z.discriminatedUnion('type', [
 export type MonitorStartPayload = z.infer<typeof MonitorStartPayloadSchema>
 export type MonitorProcessEvent = z.infer<typeof MonitorProcessEventSchema>
 export type MonitorActionEvent = z.infer<typeof MonitorActionEventSchema>
+export type GameLayoutWire = z.infer<typeof GameLayoutWireSchema>
+export type MonitorGeometryEvent = z.infer<typeof MonitorGeometryEventSchema>
+export type MonitorLearningEvent = z.infer<typeof MonitorLearningEventSchema>
+export type MonitorLayoutLearnedEvent = z.infer<typeof MonitorLayoutLearnedEventSchema>
+export type MonitorPredictionStateEvent = z.infer<
+  typeof MonitorPredictionStateEventSchema
+>
+export type MonitorSourceStateEvent = z.infer<typeof MonitorSourceStateEventSchema>
+export type MonitorVsCandidateEvent = z.infer<typeof MonitorVsCandidateEventSchema>

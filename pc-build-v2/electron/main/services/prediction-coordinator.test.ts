@@ -51,6 +51,9 @@ function harness(
   }
   let battleListener: ((timestamp: string) => void) | undefined
   let resultListener: ((action: MonitorAction) => void) | undefined
+  let stateListener: ((state: 'active' | 'aspect_mismatch') => void) | undefined
+  let viewListener: ((view: { state: string }) => void) | undefined
+  const disposers: ReturnType<typeof vi.fn>[] = []
   let currentUserId = '42'
   let authGeneration = 1
   const authSession = {
@@ -79,13 +82,32 @@ function harness(
     stop: vi.fn().mockResolvedValue({ state: 'STOPPED' }),
     subscribeBattleStarts: vi.fn((listener: (timestamp: string) => void) => {
       battleListener = listener
-      return vi.fn()
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
     }),
     subscribePredictionResults: vi.fn((listener: (action: MonitorAction) => void) => {
       resultListener = listener
-      return vi.fn()
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
+    }),
+    subscribePredictionStates: vi.fn(
+      (listener: (state: 'active' | 'aspect_mismatch') => void) => {
+        stateListener = listener
+        const dispose = vi.fn()
+        disposers.push(dispose)
+        return dispose
+      },
+    ),
+    subscribeViews: vi.fn((listener: (view: { state: string }) => void) => {
+      viewListener = listener
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
     }),
   }
+  const logger = { info: vi.fn() }
   const coordinator = new PredictionCoordinator(
     authSession as never,
     { request } as never,
@@ -93,14 +115,19 @@ function harness(
     monitor as never,
     captureRepository as never,
     runLifecycle,
+    logger,
   )
   coordinator.startLifecycle()
   return {
     coordinator,
     request,
     monitor,
+    logger,
+    disposers,
     battle: () => battleListener,
     result: () => resultListener,
+    states: () => stateListener,
+    views: () => viewListener,
     changeAuthContext: (userId: string) => {
       currentUserId = userId
       authGeneration += 1
@@ -118,6 +145,106 @@ describe('PredictionCoordinator', () => {
       '/api/streamer/bot/stop',
     )
     expect(test.coordinator.state).toBe('failed')
+  })
+
+  it('reports suspension only while active and clears it on resume, stop and monitor restart', async () => {
+    const test = harness()
+    test.states()?.('aspect_mismatch')
+    expect(test.coordinator.suspended).toBe(false)
+    await test.coordinator.start(settings)
+    expect(test.coordinator.suspended).toBe(true)
+    test.states()?.('active')
+    expect(test.coordinator.suspended).toBe(false)
+    test.states()?.('aspect_mismatch')
+    test.views()?.({ state: 'READY' })
+    expect(test.coordinator.suspended).toBe(true)
+    test.views()?.({ state: 'STARTING' })
+    expect(test.coordinator.suspended).toBe(false)
+    test.states()?.('aspect_mismatch')
+    await test.coordinator.stop()
+    expect(test.coordinator.suspended).toBe(false)
+  })
+
+  it('drops battles received while suspended instead of replaying them after resume', async () => {
+    const test = harness()
+    test.states()?.('aspect_mismatch')
+    await test.coordinator.start(settings)
+    expect(test.coordinator.suspended).toBe(true)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    test.battle()?.('2026-10-13T12:00:01.000Z')
+    test.states()?.('active')
+    await Promise.resolve()
+    expect(
+      test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+    ).toHaveLength(0)
+    expect(test.logger.info).toHaveBeenCalledTimes(2)
+    expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start_skipped', {
+      reason: 'aspect_mismatch',
+    })
+    test.battle()?.('2026-10-13T12:00:02.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+      ).toHaveLength(1),
+    )
+  })
+
+  it('still resolves an already-open prediction through suspension and resume', async () => {
+    const test = harness()
+    await test.coordinator.start(settings)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+      ).toHaveLength(1),
+    )
+    test.states()?.('aspect_mismatch')
+    test.result()?.({
+      timestamp: '2026-10-13T12:01:00.000Z',
+      width: 1,
+      height: 1,
+      image: Buffer.from('result-in-flight'),
+    })
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) =>
+          value.path.endsWith('/battle-result'),
+        ),
+      ).toHaveLength(1),
+    )
+    test.states()?.('active')
+    test.result()?.({
+      timestamp: '2026-10-13T12:02:00.000Z',
+      width: 1,
+      height: 1,
+      image: Buffer.from('result-after-resume'),
+    })
+    await vi.waitFor(() =>
+      expect(
+        test.request.mock.calls.filter(([value]) =>
+          value.path.endsWith('/battle-result'),
+        ),
+      ).toHaveLength(2),
+    )
+  })
+
+  it('does not forward a queued battle if suspension begins before its request', async () => {
+    const test = harness()
+    await test.coordinator.start(settings)
+    test.battle()?.('2026-10-13T12:00:00.000Z')
+    test.states()?.('aspect_mismatch')
+    await Promise.resolve()
+    expect(
+      test.request.mock.calls.filter(([value]) => value.path.endsWith('/battle-start')),
+    ).toHaveLength(0)
+    expect(test.logger.info).toHaveBeenCalledOnce()
+  })
+
+  it('stops observing the monitor on shutdown', async () => {
+    const test = harness()
+    await test.coordinator.shutdown()
+    expect(test.disposers).toHaveLength(4)
+    for (const dispose of test.disposers) expect(dispose).toHaveBeenCalledOnce()
   })
 
   it('serializes bounded battle and private result events through main only', async () => {
@@ -212,6 +339,39 @@ describe('PredictionCoordinator', () => {
     expect(
       test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
     ).toBe(false)
+  })
+
+  it('starts with calibration-bound result zones after a learned-layout revision', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const calibrationId = '00000000-0000-4000-8000-000000000010'
+    const test = harness(
+      false,
+      undefined,
+      {
+        list: vi.fn().mockResolvedValue({
+          activeProfileId: profileId,
+          profiles: [
+            {
+              profileId,
+              calibrationId,
+              configurationRevision: 4,
+              configurationFingerprint: 'b'.repeat(64),
+            },
+          ],
+        }),
+      },
+      {
+        ...configuration,
+        captureProfileId: profileId,
+        captureCalibrationId: calibrationId,
+        captureConfigurationRevision: 1,
+        captureConfigurationFingerprint: 'a'.repeat(64),
+      },
+    )
+    await test.coordinator.start(settings)
+    expect(
+      test.request.mock.calls.some(([value]) => value.path === '/api/streamer/bot/start'),
+    ).toBe(true)
   })
 
   it('does not stop a different user server after an auth transition', async () => {

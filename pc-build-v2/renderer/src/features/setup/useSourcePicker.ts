@@ -100,13 +100,16 @@ export function useSourcePicker(): SourcePicker {
   useEffect(() => {
     if (revision === undefined) return undefined
     let active = true
-    void window.crTools.loadCapturePreviews({ revision }).then(
-      (next) => {
-        if (active)
-          setSnapshot((current) => (current?.revision === next.revision ? next : current))
-      },
-      () => undefined,
-    )
+    // Main answers as soon as newer previews exist; keep asking while it reports more.
+    const load = async (): Promise<void> => {
+      for (let response = 0; response < 300; response += 1) {
+        const next = await window.crTools.loadCapturePreviews({ revision })
+        if (!active) return
+        setSnapshot((current) => (current?.revision === next.revision ? next : current))
+        if (next.previewsPending !== true) return
+      }
+    }
+    void load().catch(() => undefined)
     return () => {
       active = false
     }

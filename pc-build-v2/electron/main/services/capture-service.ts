@@ -2,14 +2,20 @@ import { randomUUID } from 'node:crypto'
 
 import { z } from 'zod'
 
+import { GameAspectSchema } from '../../../shared/contracts/game-aspect'
 import {
   ApplicationError,
   PublicErrorSchema,
 } from '../../../shared/errors/application-error'
 import {
   NormalizedRectSchema,
+  PixelRectSchema,
   PixelSizeSchema,
+  ShieldOutlineSchema,
   TriggerProfileSchema,
+  VsBadgeSchema,
+  VsOrientationTriggerSchema,
+  WindowChromeSchema,
   type NormalizedRect,
   type PixelSize,
   type TriggerProfile,
@@ -46,7 +52,70 @@ export type LegacyTriggerAnalysis = z.infer<typeof LegacyTriggerAnalysisSchema>
 export interface TriggerAnalysis {
   profile: TriggerProfile
   legacyProfile: LegacyTriggerAnalysis
+  vsOrientation: z.infer<typeof VsOrientationTriggerSchema> | null
+  vsBadge: z.infer<typeof VsBadgeSchema> | null
+  /** Display-only silhouette outline in game fractions; present with `vsOrientation`. */
+  vsOutline: z.infer<typeof ShieldOutlineSchema> | null
 }
+
+const CropResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      protocolVersion: z.literal(2),
+      requestId: z.uuid(),
+      ok: z.literal(true),
+      width: PixelSizeSchema.shape.width,
+      height: PixelSizeSchema.shape.height,
+      mimeType: z.literal('image/png'),
+      byteLength: z.number().int().positive().max(MAX_PNG_BYTES),
+    })
+    .strict(),
+  z
+    .object({
+      protocolVersion: z.literal(2),
+      requestId: z.string().min(1),
+      ok: z.literal(false),
+      error: PublicErrorSchema,
+    })
+    .strict(),
+])
+
+export const PreparedCaptureGameSchema = z.union([
+  z
+    .object({
+      rect: PixelRectSchema,
+      aspect: GameAspectSchema,
+      chrome: WindowChromeSchema,
+      frames: z.number().int().min(8).max(9),
+    })
+    .strict()
+    .superRefine((game, context) => {
+      if (
+        game.rect.width < 50 ||
+        game.rect.height < 50 ||
+        Math.abs(game.aspect - game.rect.width / game.rect.height) > 1e-9
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['rect'],
+          message: 'Invalid prepared game geometry',
+        })
+      }
+    }),
+  z
+    .object({
+      rect: z.null(),
+      reason: z.enum([
+        'too_small',
+        'aspect_out_of_range',
+        'unstable',
+        'insufficient_frames',
+      ]),
+    })
+    .strict(),
+])
+
+export type PreparedCaptureGame = z.infer<typeof PreparedCaptureGameSchema>
 
 const CaptureResultSchema = z.discriminatedUnion('ok', [
   z
@@ -73,16 +142,19 @@ const CaptureResultSchema = z.discriminatedUnion('ok', [
 const AnalysisResultSchema = z.discriminatedUnion('ok', [
   z
     .object({
-      protocolVersion: z.literal(1),
+      protocolVersion: z.literal(2),
       requestId: z.uuid(),
       ok: z.literal(true),
       profile: TriggerProfileSchema,
       legacyProfile: LegacyTriggerAnalysisSchema,
+      vsOrientation: VsOrientationTriggerSchema.nullable(),
+      vsBadge: VsBadgeSchema.nullable(),
+      vsOutline: ShieldOutlineSchema.nullable(),
     })
     .strict(),
   z
     .object({
-      protocolVersion: z.literal(1),
+      protocolVersion: z.literal(2),
       requestId: z.string().min(1),
       ok: z.literal(false),
       error: PublicErrorSchema,
@@ -93,6 +165,7 @@ const AnalysisResultSchema = z.discriminatedUnion('ok', [
 export interface CapturedFrame {
   size: PixelSize
   png: Buffer
+  game?: PreparedCaptureGame
 }
 
 function toWorkerSelector(selector: SetupCaptureSelector): unknown {
@@ -196,6 +269,7 @@ export class CaptureService {
     frame: CapturedFrame,
     triggerRect: NormalizedRect,
     signal?: AbortSignal,
+    gameRect: z.infer<typeof PixelRectSchema> | null = null,
   ): Promise<TriggerAnalysis> {
     const requestId = randomUUID()
     const result = await this.worker.execute({
@@ -204,10 +278,11 @@ export class CaptureService {
       scriptPath: this.analyzeScriptPath,
       input: encodeBinaryEnvelope(
         {
-          protocolVersion: 1,
+          protocolVersion: 2,
           requestId,
           operation: 'analyze_trigger',
           outerRect: normalizedToPixelRect(triggerRect, frame.size),
+          gameRect,
         },
         frame.png,
       ),
@@ -224,6 +299,56 @@ export class CaptureService {
     }
     if (!metadata.ok)
       throw new ApplicationError(metadata.error.code, metadata.error.message)
-    return { profile: metadata.profile, legacyProfile: metadata.legacyProfile }
+    return {
+      profile: metadata.profile,
+      legacyProfile: metadata.legacyProfile,
+      vsOrientation: metadata.vsOrientation,
+      vsBadge: metadata.vsBadge,
+      vsOutline: metadata.vsOrientation === null ? null : metadata.vsOutline,
+    }
+  }
+
+  async crop(
+    frame: CapturedFrame,
+    rect: NormalizedRect,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    const requestId = randomUUID()
+    const pixels = normalizedToPixelRect(rect, frame.size)
+    const result = await this.worker.execute({
+      requestId,
+      executable: this.pythonExecutable,
+      scriptPath: this.analyzeScriptPath,
+      input: encodeBinaryEnvelope(
+        {
+          protocolVersion: 2,
+          requestId,
+          operation: 'crop_region',
+          outerRect: pixels,
+        },
+        frame.png,
+      ),
+      timeoutMs: 12_000,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const envelope = decodeBinaryEnvelope(result.stdout, {
+      maxMetadataBytes: 128 * 1024,
+      maxBinaryBytes: MAX_PNG_BYTES,
+    })
+    const metadata = CropResultSchema.parse(envelope.metadata)
+    if (metadata.requestId !== result.requestId) {
+      throw new ApplicationError('WORKER_RESULT_STALE', 'Crop result is stale')
+    }
+    if (!metadata.ok) {
+      throw new ApplicationError(metadata.error.code, metadata.error.message)
+    }
+    if (
+      metadata.byteLength !== envelope.binary.byteLength ||
+      metadata.width !== pixels.width ||
+      metadata.height !== pixels.height
+    ) {
+      throw new ApplicationError('CAPTURE_INVALID', 'Crop dimensions are invalid')
+    }
+    return envelope.binary
   }
 }

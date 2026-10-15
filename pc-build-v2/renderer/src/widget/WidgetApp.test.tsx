@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_WIDGET_SETTINGS } from '../../../electron/main/infrastructure/widget-settings-repository'
-import { WidgetSettingsSchema, type WidgetView } from '../../../shared/models/widget'
+import {
+  WidgetSettingsSchema,
+  type WidgetSettingsPatch,
+  type WidgetView,
+} from '../../../shared/models/widget'
 import { WidgetApp } from './WidgetApp'
 
 const card = (name: string, hasImage = true) => ({
@@ -29,6 +36,7 @@ const widgetView: WidgetView = {
   monitorError: null,
   runIntent: true,
   search: null,
+  sourceMinimized: false,
   scale: 1,
   result: {
     id: resultId,
@@ -75,6 +83,15 @@ function deferred<T>() {
 
 function push(view: WidgetView): void {
   act(() => pushedView?.(view))
+}
+
+/** The native window's client size as the renderer sees it, announced like Chromium. */
+function viewport(width: number, height: number): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
+  act(() => {
+    window.dispatchEvent(new Event('resize'))
+  })
 }
 
 describe('WidgetApp', () => {
@@ -138,6 +155,7 @@ describe('WidgetApp', () => {
     pushedView = null
     resizeCallback = null
     contentHeight = 240
+    viewport(1024, 768)
     vi.stubGlobal('ResizeObserver', FakeResizeObserver)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
       () => ({ height: contentHeight, width: 360 }) as DOMRect,
@@ -154,11 +172,19 @@ describe('WidgetApp', () => {
           }
         }),
         getCardAsset: vi.fn().mockResolvedValue({ kind: 'unavailable' }),
-        updateSettings: vi
-          .fn()
-          .mockImplementation((patch) =>
-            Promise.resolve({ ...widgetView.settings, ...patch }),
-          ),
+        updateSettings: vi.fn().mockImplementation((patch: WidgetSettingsPatch) => {
+          // Main resizes for a mode switch; the renderer sees it after the IPC reply.
+          if (patch.compactMode !== undefined)
+            setTimeout(() =>
+              viewport(
+                patch.compactMode === true
+                  ? widgetView.settings.compactWidth
+                  : widgetView.settings.normalWidth,
+                patch.contentHeight ?? 240,
+              ),
+            )
+          return Promise.resolve({ ...widgetView.settings, ...patch })
+        }),
         hide: vi.fn(),
       }),
     })
@@ -256,6 +282,7 @@ describe('WidgetApp', () => {
     await waitFor(() =>
       expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
         compactMode: true,
+        contentHeight: 240,
       }),
     )
     await waitFor(() =>
@@ -333,6 +360,51 @@ describe('WidgetApp', () => {
     expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
       contentHeight: 720,
     })
+  })
+
+  it('sizes the window for both layouts in the mode switch itself, never after it', async () => {
+    // Full is taller than compact; the measuring copies render at the target width.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const height = this.getAttribute('data-compact') === 'true' ? 196.4 : 331.2
+      return { height, width: 360 } as DOMRect
+    })
+    const { container } = render(<WidgetApp />)
+    await screen.findByRole('list', { name: 'Карты колоды 1' })
+    // Main replies before the renderer sees its native resize.
+    vi.mocked(window.crToolsWidget.updateSettings).mockImplementationOnce((patch) =>
+      Promise.resolve({
+        ...widgetView.settings,
+        compactMode: patch.compactMode ?? widgetView.settings.compactMode,
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Компактный вид' }))
+    // The measuring copies never outlive the layout pass.
+    expect(container.querySelectorAll('main')).toHaveLength(1)
+    // Tall enough for the new layout and for the old one at the new width.
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        compactMode: true,
+        contentHeight: 332,
+      }),
+    )
+    const settled = Promise.withResolvers<undefined>()
+    setTimeout(() => settled.resolve(undefined), 50)
+    await act(() => settled.promise)
+    expect(container.querySelector('main')).toHaveAttribute('data-compact', 'false')
+    viewport(300, 332)
+    expect(container.querySelector('main')).toHaveAttribute('data-compact', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Полный вид' }))
+    await waitFor(() =>
+      expect(window.crToolsWidget.updateSettings).toHaveBeenLastCalledWith({
+        compactMode: false,
+        contentHeight: 332,
+      }),
+    )
+    expect(container.querySelectorAll('main')).toHaveLength(1)
   })
 
   it('switches decks with the tabs and labels them «Колода N из M»', async () => {
@@ -533,6 +605,81 @@ describe('WidgetApp', () => {
       expect(
         screen.getByText('Мониторинг остановлен', { selector: 'span' }),
       ).toBeVisible()
+    })
+
+    it('says the game window is minimised, keeping a found deck', async () => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue({
+        ...widgetView,
+        sourceMinimized: true,
+      })
+      render(<WidgetApp />)
+      expect(await screen.findByText('Окно игры свёрнуто')).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'Opponent' })).toBeVisible()
+
+      push({ ...widgetView, result: null, sourceMinimized: true })
+      expect(screen.getByRole('heading', { name: 'Окно игры свёрнуто' })).toBeVisible()
+      push({ ...widgetView, result: null })
+      expect(screen.getByText('Ждём бой')).toBeVisible()
+    })
+  })
+
+  describe('native drag', () => {
+    // Compact collapses the header strip to zero height, so there it is no handle.
+    const sizedHandles = (): Element[] => {
+      const shell = screen.getByRole('main')
+      const compact = shell.getAttribute('data-compact') === 'true'
+      return [...shell.querySelectorAll('[data-drag-handle]')].filter(
+        (handle) => !(compact && handle.tagName === 'HEADER'),
+      )
+    }
+
+    it.each<[string, WidgetView]>([
+      ['found', widgetView],
+      ['waiting for the game window', { ...widgetView, monitorState: 'WAITING_SOURCE' }],
+      ['reading a nickname', { ...widgetView, search: search('capturing', null) }],
+      [
+        'searching a nickname',
+        { ...widgetView, search: search('requesting', 'Voron_17') },
+      ],
+      [
+        'stopped',
+        { ...widgetView, result: null, monitorState: 'STOPPED', runIntent: false },
+      ],
+    ])('%s stays draggable across every mode switch', async (_state, view) => {
+      vi.mocked(window.crToolsWidget.getView).mockResolvedValue(view)
+      render(<WidgetApp />)
+      await screen.findByRole('button', { name: 'Компактный вид' })
+      expect(sizedHandles()).not.toHaveLength(0)
+      for (const compact of [true, false, true]) {
+        fireEvent.click(
+          screen.getByRole('button', { name: compact ? 'Компактный вид' : 'Полный вид' }),
+        )
+        await waitFor(() =>
+          expect(screen.getByRole('main')).toHaveAttribute(
+            'data-compact',
+            String(compact),
+          ),
+        )
+        expect(sizedHandles()).not.toHaveLength(0)
+      }
+    })
+
+    it('declares native drag once, on the handles, and never for a locked overlay', () => {
+      const overlayCss = readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), 'Overlay.module.css'),
+        'utf8',
+      )
+      const dragSelectors = [
+        ...overlayCss.matchAll(/([^{}]+)\{[^}]*-webkit-app-region:\s*drag;/g),
+      ].map((match) => (match[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '').trim())
+      expect(dragSelectors).toEqual(['.shell [data-drag-handle]'])
+      expect(overlayCss).toMatch(
+        /\.shell\[data-locked='true'\] \[data-drag-handle\] \{[^}]*-webkit-app-region: no-drag;/,
+      )
+      // The premise of `sizedHandles`: compact hides the header strip.
+      expect(overlayCss).toMatch(
+        /\.shell\[data-compact='true'\] \.top \{[^}]*\bheight: 0;/,
+      )
     })
   })
 

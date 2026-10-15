@@ -1,6 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
-import type { NormalizedRect, PixelSize } from '../../../../shared/models/capture'
+import type {
+  NormalizedRect,
+  PixelSize,
+  ShieldOutline,
+} from '../../../../shared/models/capture'
 import { cx } from '../../ui'
 import {
   containTransform,
@@ -23,6 +27,12 @@ export interface StageBox {
   active: boolean
   /** Label under the box instead of above (keeps neighbours readable). */
   labelBelow?: boolean | undefined
+  /**
+   * Outline of what is actually compared (the VS silhouette), in frame fractions. A
+   * passive box is drawn as this outline instead of its rectangle; an active box keeps
+   * its editable rectangle with the outline inside.
+   */
+  outline?: ShieldOutline | null | undefined
 }
 
 type Drag =
@@ -59,6 +69,14 @@ function boxStyle(rect: NormalizedRect): React.CSSProperties {
   }
 }
 
+function outlineBounds(outline: ShieldOutline): NormalizedRect {
+  const xs = outline.map(([x]) => x)
+  const ys = outline.map(([, y]) => y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
+}
+
 /**
  * The frozen frame with its regions. When `editable`, the active region is edited with
  * the pointer: drag on empty frame to draw, drag a corner to resize, drag inside to move.
@@ -69,8 +87,8 @@ export function FrameStage({
   frameUrl,
   frameSize,
   boxes,
-  inner = null,
-  innerLabel = 'Найдена структура',
+  gameViewport = null,
+  inset = 0,
   editable,
   draft,
   onDraft,
@@ -80,9 +98,10 @@ export function FrameStage({
   frameUrl: string
   frameSize: PixelSize
   boxes: readonly StageBox[]
-  /** Structure the analyzer found inside the trigger, already in frame coordinates. */
-  inner?: NormalizedRect | null
-  innerLabel?: string
+  /** The game inside the frame, drawn as a thin outline without a label. */
+  gameViewport?: NormalizedRect | null
+  /** Margin kept around the frame so labels above its top edge stay visible. */
+  inset?: number
   editable: boolean
   draft: NormalizedRect | null
   onDraft: (rect: NormalizedRect | null) => void
@@ -97,16 +116,16 @@ export function FrameStage({
   useLayoutEffect(() => {
     const stage = stageRef.current
     if (stage === null) return undefined
-    const update = (): void =>
-      setTransform(
-        containTransform(
-          {
-            width: Math.max(1, stage.clientWidth),
-            height: Math.max(1, stage.clientHeight),
-          },
-          frameSize,
-        ),
+    const update = (): void => {
+      const fitted = containTransform(
+        {
+          width: Math.max(1, stage.clientWidth - 2 * inset),
+          height: Math.max(1, stage.clientHeight - 2 * inset),
+        },
+        frameSize,
       )
+      setTransform({ ...fitted, x: fitted.x + inset, y: fitted.y + inset })
+    }
     update()
     if (typeof ResizeObserver === 'undefined') {
       window.addEventListener('resize', update)
@@ -115,7 +134,7 @@ export function FrameStage({
     const observer = new ResizeObserver(update)
     observer.observe(stage)
     return () => observer.disconnect()
-  }, [frameSize])
+  }, [frameSize, inset])
 
   const point = (event: React.PointerEvent<HTMLDivElement>): Point | null => {
     const stage = stageRef.current
@@ -142,11 +161,20 @@ export function FrameStage({
 
   const apply = (gesture: Drag, at: Point): void => {
     if (gesture.mode === 'draw') {
-      onDraft(rectFromPoints(gesture.start, at) ?? gesture.origin)
+      onDraft(
+        rectFromPoints(gesture.start, at, gameViewport ?? undefined) ?? gesture.origin,
+      )
     } else if (gesture.mode === 'move') {
-      onDraft(moveRect(gesture.origin, at.x - gesture.start.x, at.y - gesture.start.y))
+      onDraft(
+        moveRect(
+          gesture.origin,
+          at.x - gesture.start.x,
+          at.y - gesture.start.y,
+          gameViewport ?? undefined,
+        ),
+      )
     } else {
-      onDraft(resizeCorner(gesture.origin, gesture.corner, at))
+      onDraft(resizeCorner(gesture.origin, gesture.corner, at, gameViewport ?? undefined))
     }
   }
 
@@ -248,7 +276,13 @@ export function FrameStage({
             src={frameUrl}
           />
           {boxes.map((box) => {
-            const rect = box.active ? activeRect : box.rect
+            const outline = box.outline ?? null
+            const shaped = outline !== null && !box.active
+            const rect = shaped
+              ? outlineBounds(outline)
+              : box.active
+                ? activeRect
+                : box.rect
             if (rect === null) return null
             return (
               <div
@@ -257,7 +291,11 @@ export function FrameStage({
                     ? `Область «${activeName ?? box.label}». Стрелки — сдвинуть, Shift — крупнее, Alt+стрелки — изменить размер.`
                     : undefined
                 }
-                className={cx(styles['box'], box.active && styles['boxActive'])}
+                className={cx(
+                  styles['box'],
+                  box.active && styles['boxActive'],
+                  shaped && styles['boxShape'],
+                )}
                 data-region={box.id}
                 key={box.id}
                 onKeyDown={(event) => {
@@ -275,6 +313,7 @@ export function FrameStage({
                         event.key,
                         event.shiftKey ? 0.05 : 0.01,
                         event.altKey,
+                        gameViewport ?? undefined,
                       ),
                     )
                   }
@@ -303,14 +342,30 @@ export function FrameStage({
               </div>
             )
           })}
-          {inner === null ? null : (
+          {boxes.map((box) =>
+            box.outline == null ? null : (
+              <svg
+                aria-hidden="true"
+                className={styles['shapeLayer']}
+                data-testid={`outline-${box.id}`}
+                key={box.id}
+                preserveAspectRatio="none"
+                viewBox="0 0 1 1"
+              >
+                <polygon
+                  className={styles['shapeLine']}
+                  points={box.outline.map(([x, y]) => `${x},${y}`).join(' ')}
+                />
+              </svg>
+            ),
+          )}
+          {gameViewport === null ? null : (
             <div
-              className={cx(styles['box'], styles['boxInner'])}
-              data-testid="trigger-inner-region"
-              style={boxStyle(inner)}
-            >
-              <i className={styles['boxLabel']}>{innerLabel}</i>
-            </div>
+              aria-hidden="true"
+              className={styles['gameOutline']}
+              data-testid="game-viewport"
+              style={boxStyle(gameViewport)}
+            />
           )}
         </div>
       )}

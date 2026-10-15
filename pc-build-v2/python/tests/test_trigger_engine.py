@@ -60,12 +60,15 @@ def profile_for(trigger: np.ndarray) -> dict:
 
 def payload(profile: dict):
     return {
-        "configuredFrameSize": {"width": 256, "height": 128},
-        "triggerProfile": profile,
-        "regions": {
-            "trigger": {"x": 0, "y": 0, "width": 0.5, "height": 1},
-            "nicknameRegion": {"x": 0.5, "y": 0, "width": 0.25, "height": 1},
-            "topLeftEvidenceRegion": {"x": 0.5, "y": 0, "width": 0.5, "height": 1},
+        "primary": {
+            "kind": "full_frame",
+            "configuredFrameSize": {"width": 256, "height": 128},
+            "triggerProfile": profile,
+            "regions": {
+                "trigger": {"x": 0, "y": 0, "width": 0.5, "height": 1},
+                "nicknameRegion": {"x": 0.5, "y": 0, "width": 0.25, "height": 1},
+                "topLeftEvidenceRegion": {"x": 0.5, "y": 0, "width": 0.5, "height": 1},
+            },
         },
         "capturePolicy": "immediate_nickname",
         "limits": {
@@ -214,8 +217,8 @@ def test_nickname_capture_uses_the_same_confirmation_frame() -> None:
 def test_trigger_shifted_lower_outside_saved_roi_never_fires() -> None:
     trigger = trigger_image((120, 40, 80))
     configured = payload(profile_for(trigger))
-    configured["configuredFrameSize"] = {"width": 256, "height": 256}
-    configured["regions"]["trigger"] = {"x": 0, "y": 0, "width": 0.5, "height": 0.5}
+    configured["primary"]["configuredFrameSize"] = {"width": 256, "height": 256}
+    configured["primary"]["regions"]["trigger"] = {"x": 0, "y": 0, "width": 0.5, "height": 0.5}
     engine = TriggerEngine(configured)
     shifted = np.zeros((256, 256, 3), dtype=np.uint8)
     shifted[128:, :128] = trigger
@@ -231,10 +234,10 @@ def test_prediction_result_uses_shared_matcher_and_two_confirmations() -> None:
     configured = payload(profile_for(trigger))
     engine = PredictionTriggerEngine(
         {
-            "configuredFrameSize": configured["configuredFrameSize"],
-            "trigger": configured["regions"]["trigger"],
-            "data": configured["regions"]["nicknameRegion"],
-            "triggerProfile": configured["triggerProfile"],
+            "configuredFrameSize": configured["primary"]["configuredFrameSize"],
+            "trigger": configured["primary"]["regions"]["trigger"],
+            "data": configured["primary"]["regions"]["nicknameRegion"],
+            "triggerProfile": configured["primary"]["triggerProfile"],
         },
         configured["limits"],
     )

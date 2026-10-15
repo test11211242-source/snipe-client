@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+from datetime import datetime
 import json
 import math
 import uuid
 from typing import Any, BinaryIO
 
-PROTOCOL_VERSION = 3
-MAX_COMMAND_BYTES = 256 * 1024
+from geometry.aspect import ASPECT_MIN, ASPECT_MAX, aspects_overlap
+
+PROTOCOL_VERSION = 4
+MAX_COMMAND_BYTES = 1024 * 1024
 
 
 class MonitorProtocolError(ValueError):
@@ -42,14 +47,155 @@ def _positive_int(value: Any, maximum: int, name: str) -> int:
     return value
 
 
+def _number(value, minimum, maximum, name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not minimum <= value <= maximum:
+        raise MonitorProtocolError(f"{name} is invalid")
+    return value
+
+
+def _integer(value, minimum, maximum, name):
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise MonitorProtocolError(f"{name} is invalid")
+    return value
+
+
+def _uuid(value, name):
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise MonitorProtocolError(f"{name} is invalid") from error
+
+
+def _size(value, name):
+    value = _exact(value, {"width", "height"}, name)
+    _positive_int(value["width"], 16384, name + " width")
+    _positive_int(value["height"], 16384, name + " height")
+
+
+def _base64(value, length, name):
+    if not isinstance(value, str) or len(value) != 4 * ((length + 2) // 3):
+        raise MonitorProtocolError(f"{name} length is invalid")
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise MonitorProtocolError(f"{name} encoding is invalid") from error
+    if len(decoded) != length or base64.b64encode(decoded).decode("ascii") != value:
+        raise MonitorProtocolError(f"{name} bytes are invalid")
+
+
+def _badge(value):
+    value = _exact(value, {"cx", "cy", "width", "height"}, "badge")
+    for name, number in value.items():
+        _number(number, 0.000000001, 1, "badge " + name)
+
+
+def _chrome(value):
+    sides = ("top", "bottom", "left", "right")
+    value = _exact(value, set(sides) | {side + "Edges" for side in sides}, "window chrome")
+    for side in sides:
+        _integer(value[side], 0, 2048, "chrome " + side)
+        template = value[side + "Edges"]
+        if template is not None:
+            _exact(template, {"length", "thickness", "angleQ8Base64", "weightQ8Base64"}, "strip edges")
+            if template["length"] != 256:
+                raise MonitorProtocolError("strip length is invalid")
+            thickness = _integer(template["thickness"], 1, 256, "strip thickness")
+            _base64(template["angleQ8Base64"], 256 * thickness, "strip angles")
+            _base64(template["weightQ8Base64"], 256 * thickness, "strip weights")
+
+
+def _regions(value):
+    value = _exact(value, {"trigger", "nicknameRegion", "topLeftEvidenceRegion"}, "regions")
+    for name in value:
+        value[name] = validate_ratio(value[name], "regions." + name)
+
+
+def _orientation(value):
+    _exact(value, {"kind", "algorithm", "badge", "normalizedSize", "cropMargin", "padding", "maxShift",
+                   "threshold", "angleQ8Base64", "weightQ8Base64", "templateHash64", "maskAreaRatio"}, "orientation trigger")
+    if (value["kind"] != "vs_edge_orientation" or value["algorithm"] != "vs-orient-1" or
+            value["cropMargin"] != 0.08 or value["padding"] != 4 or value["maxShift"] != 3 or value["threshold"] != 0.5):
+        raise MonitorProtocolError("orientation constants are invalid")
+    _badge(value["badge"])
+    size = _exact(value["normalizedSize"], {"width", "height"}, "orientation size")
+    if size["width"] != 96:
+        raise MonitorProtocolError("orientation width is invalid")
+    height = _integer(size["height"], 64, 160, "orientation height")
+    _base64(value["angleQ8Base64"], 96 * height, "orientation angles")
+    _base64(value["weightQ8Base64"], 96 * height, "orientation weights")
+    digest = value["templateHash64"]
+    if not isinstance(digest, str) or len(digest) != 16 or any(c not in "0123456789abcdef" for c in digest):
+        raise MonitorProtocolError("orientation hash is invalid")
+    _number(value["maskAreaRatio"], 0, 1, "mask area")
+
+
+def _primary(value):
+    if not isinstance(value, dict):
+        raise MonitorProtocolError("primary is invalid")
+    if value.get("kind") == "full_frame":
+        _exact(value, {"kind", "configuredFrameSize", "regions", "triggerProfile"}, "full frame primary")
+        _size(value["configuredFrameSize"], "frame size")
+        _regions(value["regions"])
+        if not isinstance(value["triggerProfile"], dict):
+            raise MonitorProtocolError("trigger profile is invalid")
+        return
+    _exact(value, {"kind", "profileCalibrationId", "layouts", "learning"}, "game relative primary")
+    if value["kind"] != "game_relative":
+        raise MonitorProtocolError("primary kind is invalid")
+    _uuid(value["profileCalibrationId"], "calibration id")
+    learning = _exact(value["learning"], {"enabled", "maxLayouts"}, "learning")
+    if not isinstance(learning["enabled"], bool) or learning["maxLayouts"] != 4:
+        raise MonitorProtocolError("learning settings are invalid")
+    layouts = value["layouts"]
+    if not isinstance(layouts, list) or not 1 <= len(layouts) <= 4:
+        raise MonitorProtocolError("layouts count is invalid")
+    ids = set()
+    aspects = []
+    for layout in layouts:
+        _exact(layout, {"layoutId", "layoutSource", "calibratedAt", "gameAspect", "windowChrome", "regions", "trigger", "badge", "zonesOrigin"}, "layout")
+        _uuid(layout["layoutId"], "layout id")
+        if layout["layoutId"] in ids:
+            raise MonitorProtocolError("layout ids are not unique")
+        ids.add(layout["layoutId"])
+        if layout["layoutSource"] not in ("setup", "learned"):
+            raise MonitorProtocolError("layout source is invalid")
+        date = layout["calibratedAt"]
+        try:
+            if not isinstance(date, str) or not date.endswith("Z"):
+                raise ValueError()
+            datetime.fromisoformat(date.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise MonitorProtocolError("layout calibratedAt is invalid") from error
+        aspect = _number(layout["gameAspect"], ASPECT_MIN, ASPECT_MAX, "game aspect")
+        if any(aspects_overlap(other, aspect) for other in aspects):
+            raise MonitorProtocolError("layout aspects overlap")
+        aspects.append(aspect)
+        _chrome(layout["windowChrome"])
+        _regions(layout["regions"])
+        if layout["badge"] is not None:
+            _badge(layout["badge"])
+        origins = _exact(layout["zonesOrigin"], {"nickname", "topLeftEvidence"}, "zone origins")
+        if any(origin not in ("auto", "manual") for origin in origins.values()):
+            raise MonitorProtocolError("zone origins are invalid")
+        trigger = layout["trigger"]
+        if not isinstance(trigger, dict):
+            raise MonitorProtocolError("layout trigger is invalid")
+        if trigger.get("kind") == "vs_edge_orientation":
+            _orientation(trigger)
+        else:
+            _exact(trigger, {"kind", "profile"}, "structural trigger")
+            if trigger["kind"] != "structural" or not isinstance(trigger["profile"], dict):
+                raise MonitorProtocolError("structural trigger is invalid")
+    if not any(layout["layoutSource"] == "setup" for layout in layouts):
+        raise MonitorProtocolError("setup layout is required")
+
+
 def validate_start_payload(value: Any) -> dict[str, Any]:
     payload = _exact(
         value,
         {
             "selector",
-            "configuredFrameSize",
-            "regions",
-            "triggerProfile",
+            "primary",
             "capturePolicy",
             "limits",
             "prediction",
@@ -75,12 +221,7 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
     else:
         raise MonitorProtocolError("selector kind is invalid")
 
-    frame_size = _exact(payload["configuredFrameSize"], {"width", "height"}, "frame size")
-    _positive_int(frame_size["width"], 16384, "frame width")
-    _positive_int(frame_size["height"], 16384, "frame height")
-    regions = _exact(payload["regions"], {"trigger", "nicknameRegion", "topLeftEvidenceRegion"}, "regions")
-    for name in ("trigger", "nicknameRegion", "topLeftEvidenceRegion"):
-        regions[name] = validate_ratio(regions[name], f"regions.{name}")
+    _primary(payload["primary"])
     if payload["capturePolicy"] != "immediate_nickname":
         raise MonitorProtocolError("capture policy is invalid")
     limits = _exact(
@@ -109,8 +250,6 @@ def validate_start_payload(value: Any) -> dict[str, Any]:
     }
     if limits != expected_limits:
         raise MonitorProtocolError("monitor limits are invalid")
-    if not isinstance(payload["triggerProfile"], dict):
-        raise MonitorProtocolError("trigger profile is invalid")
     prediction = payload["prediction"]
     if prediction is not None:
         prediction = _exact(

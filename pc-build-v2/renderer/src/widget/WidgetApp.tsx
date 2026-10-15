@@ -1,14 +1,16 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   WIDGET_MAX_HEIGHT,
   WIDGET_MIN_HEIGHT,
+  widgetScale,
   type WidgetSettingsPatch,
   type WidgetView,
 } from '../../../shared/models/widget'
 import { REPROCESSED_LABEL } from '../features/opponent/labels'
 import { OverlayCard } from './OverlayCard'
 import { selectOverlayModel } from './overlayModel'
+import styles from './Overlay.module.css'
 
 const OPACITY_STEP = 5
 const MIN_OPACITY_PERCENT = 55
@@ -32,6 +34,7 @@ function sameWidgetView(left: WidgetView, right: WidgetView): boolean {
     left.monitorState === right.monitorState &&
     left.monitorError?.code === right.monitorError?.code &&
     left.runIntent === right.runIntent &&
+    left.sourceMinimized === right.sourceMinimized &&
     left.search?.attemptId === right.search?.attemptId &&
     left.search?.phase === right.search?.phase &&
     left.search?.searchedNickname === right.search?.searchedNickname &&
@@ -62,6 +65,16 @@ export function WidgetApp(): React.JSX.Element {
   const opacityDirtyRef = useRef(false)
   const mountedRef = useRef(true)
   const reportedHeightRef = useRef<number | null>(null)
+  /**
+   * A full↔compact switch: measured (`height: null`), then waiting until the viewport has
+   * the target size. Until it ends the previous mode keeps painting.
+   */
+  const [modeSwitch, setModeSwitch] = useState<{
+    compact: boolean
+    width: number
+    height: number | null
+  } | null>(null)
+  const measureRef = useRef<HTMLDivElement | null>(null)
 
   const saving = pendingMutations > 0
   const loaded = view !== null
@@ -216,6 +229,49 @@ export function WidgetApp(): React.JSX.Element {
     }
   }, [loaded])
 
+  // A mode switch changes width and layout at once. Waiting for the content report (above)
+  // showed the new layout in the old window and cut the deck off for ~120 ms. Instead both
+  // layouts are measured at the target width and sent with the switch, so the old one fits
+  // the resized window too; the new one paints only once the viewport has that size (the
+  // IPC reply can arrive before the renderer sees the native resize).
+  useLayoutEffect(() => {
+    const box = measureRef.current
+    if (modeSwitch?.height !== null || box === null) return
+    const tallest = Math.max(
+      ...Array.from(box.children, (card) => card.getBoundingClientRect().height),
+    )
+    const height = Math.min(
+      WIDGET_MAX_HEIGHT,
+      Math.max(WIDGET_MIN_HEIGHT, Math.ceil(tallest)),
+    )
+    // The settled report after the switch only shrinks from here.
+    reportedHeightRef.current = height
+    setModeSwitch({ ...modeSwitch, height })
+    void enqueueSettingsEvent({
+      compactMode: modeSwitch.compact,
+      contentHeight: height,
+    }).then((ok) => {
+      if (!ok && mountedRef.current) setModeSwitch(null)
+    })
+  }, [modeSwitch])
+
+  useEffect(() => {
+    if (typeof modeSwitch?.height !== 'number') return
+    const { width, height } = modeSwitch
+    const settle = (): void => {
+      if (Math.abs(window.innerWidth - width) <= 1 && window.innerHeight >= height - 1)
+        setModeSwitch(null)
+    }
+    settle()
+    window.addEventListener('resize', settle)
+    // A work-area clamp may never give the exact size: never hold the old mode for long.
+    const timer = window.setTimeout(() => setModeSwitch(null), 500)
+    return () => {
+      window.removeEventListener('resize', settle)
+      window.clearTimeout(timer)
+    }
+  }, [modeSwitch])
+
   useEffect(() => {
     if (view === null || opacityDirtyRef.current) return
     const nextOpacity = Math.round(view.settings.opacity * 100)
@@ -300,23 +356,50 @@ export function WidgetApp(): React.JSX.Element {
   const notice =
     mutationError ?? (view.result?.reprocessed === true ? REPROCESSED_LABEL : null)
 
-  return (
+  const compact = modeSwitch === null ? view.settings.compactMode : !modeSwitch.compact
+  /** `measureScale` renders a hidden measuring copy at that scale. */
+  const card = (cardCompact: boolean, measureScale?: number): React.JSX.Element => (
     <OverlayCard
-      compact={view.settings.compactMode}
+      compact={cardCompact}
       controls={{
-        disabled: saving,
+        disabled: saving || modeSwitch !== null,
         onCompact: () =>
-          void enqueueSettings({ compactMode: !view.settings.compactMode }),
+          setModeSwitch({
+            compact: !compact,
+            width: compact ? view.settings.normalWidth : view.settings.compactWidth,
+            height: null,
+          }),
         onHide: () => void window.crToolsWidget.hide(),
         onLock: () => void enqueueSettings({ locked: !view.settings.locked }),
         onPin: () => void enqueueSettings({ alwaysOnTop: !view.settings.alwaysOnTop }),
       }}
       deckIndex={deckIndex}
+      measuring={measureScale !== undefined}
       model={model}
       notice={notice}
       onDeck={(index) => setDeckSelection({ resultId: resultId ?? '', index })}
-      shellRef={shellRef}
-      view={view}
+      shellRef={measureScale === undefined ? shellRef : null}
+      view={measureScale === undefined ? view : { ...view, scale: measureScale }}
     />
+  )
+
+  return (
+    <>
+      {card(compact)}
+      {modeSwitch?.height !== null ? null : (
+        <div
+          aria-hidden
+          className={styles['measure']}
+          inert
+          ref={measureRef}
+          style={{ width: modeSwitch.width }}
+        >
+          {/* The old layout repaints at the new scale once main publishes it, maybe before
+              the switch: measure it at the larger of both. */}
+          {card(compact, Math.max(view.scale, widgetScale(modeSwitch.width)))}
+          {card(modeSwitch.compact, widgetScale(modeSwitch.width))}
+        </div>
+      )}
+    </>
   )
 }

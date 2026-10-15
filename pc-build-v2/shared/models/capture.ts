@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { GameAspectSchema, gameAspectsOverlap } from '../contracts/game-aspect'
+
 export const PixelSizeSchema = z
   .object({
     width: z.number().int().positive().max(16_384),
@@ -62,6 +64,8 @@ export const CaptureSourceSnapshotSchema = z
     revision: z.string().regex(/^[a-f0-9]{32}$/),
     expiresAt: z.number().int().positive(),
     sources: z.array(CaptureSourceViewSchema).max(256),
+    /** Set by preview responses: more previews are still loading, ask again. */
+    previewsPending: z.boolean().optional(),
   })
   .strict()
 
@@ -170,9 +174,124 @@ export const SourceBindingSchema = z
   })
   .strict()
 
-export const LayoutCalibrationSchema = z
+export const PixelRectSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    x: z.number().int().nonnegative(),
+    y: z.number().int().nonnegative(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  })
+  .strict()
+
+const CanonicalBase64Schema = z
+  .string()
+  .max(87_384)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+  .refine((value) => {
+    if (value.endsWith('==')) return /[AQgw]==$/.test(value)
+    if (value.endsWith('=')) return /[AEIMQUYcgkosw048]=$/.test(value)
+    return true
+  }, 'Base64 must use canonical padding bits')
+
+function decodedByteLength(value: string): number {
+  return (value.length / 4) * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0)
+}
+
+export const StripEdgesSchema = z
+  .object({
+    length: z.literal(256),
+    thickness: z.number().int().min(1).max(256),
+    angleQ8Base64: CanonicalBase64Schema,
+    weightQ8Base64: CanonicalBase64Schema,
+  })
+  .strict()
+  .superRefine((strip, context) => {
+    for (const field of ['angleQ8Base64', 'weightQ8Base64'] as const) {
+      if (decodedByteLength(strip[field]) !== strip.length * strip.thickness) {
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: 'Invalid strip byte length',
+        })
+      }
+    }
+  })
+
+export const WindowChromeSchema = z
+  .object({
+    top: z.number().int().min(0).max(2048),
+    bottom: z.number().int().min(0).max(2048),
+    left: z.number().int().min(0).max(2048),
+    right: z.number().int().min(0).max(2048),
+    topEdges: StripEdgesSchema.nullable(),
+    bottomEdges: StripEdgesSchema.nullable(),
+    leftEdges: StripEdgesSchema.nullable(),
+    rightEdges: StripEdgesSchema.nullable(),
+  })
+  .strict()
+
+export const VsBadgeSchema = z
+  .object({
+    cx: z.number().positive().max(1),
+    cy: z.number().positive().max(1),
+    width: z.number().positive().max(1),
+    height: z.number().positive().max(1),
+  })
+  .strict()
+
+/**
+ * Display-only outline of the compared VS silhouette: polygon points as [x, y] fractions
+ * of the game (analysis results) or of the frame (setup view). Never persisted.
+ */
+export const ShieldOutlineSchema = z
+  .array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]))
+  .min(3)
+  .max(64)
+export type ShieldOutline = z.infer<typeof ShieldOutlineSchema>
+
+export const VsOrientationTriggerSchema = z
+  .object({
+    kind: z.literal('vs_edge_orientation'),
+    algorithm: z.literal('vs-orient-1'),
+    badge: VsBadgeSchema,
+    normalizedSize: z
+      .object({
+        width: z.literal(96),
+        height: z.number().int().min(64).max(160),
+      })
+      .strict(),
+    cropMargin: z.literal(0.08),
+    padding: z.literal(4),
+    maxShift: z.literal(3),
+    threshold: z.literal(0.5),
+    angleQ8Base64: CanonicalBase64Schema,
+    weightQ8Base64: CanonicalBase64Schema,
+    templateHash64: z.string().regex(/^[a-f0-9]{16}$/),
+    maskAreaRatio: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((trigger, context) => {
+    for (const field of ['angleQ8Base64', 'weightQ8Base64'] as const) {
+      if (
+        decodedByteLength(trigger[field]) !==
+        trigger.normalizedSize.width * trigger.normalizedSize.height
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: 'Invalid orientation byte length',
+        })
+      }
+    }
+  })
+
+export const GameTriggerSchema = z.discriminatedUnion('kind', [
+  VsOrientationTriggerSchema,
+  z.object({ kind: z.literal('structural'), profile: TriggerProfileSchema }).strict(),
+])
+export const FullFrameCalibrationSchema = z
+  .object({
+    schemaVersion: z.literal(2),
     calibrationId: z.uuid(),
     revision: z.number().int().positive(),
     referenceFrameSize: PixelSizeSchema,
@@ -196,9 +315,69 @@ export const LayoutCalibrationSchema = z
   })
   .strict()
 
-export const CaptureConfigurationSchema = z
+export const GameLayoutSchema = z
+  .object({
+    layoutId: z.uuid(),
+    layoutSource: z.enum(['setup', 'learned']),
+    gameAspect: GameAspectSchema,
+    referenceFrameSize: PixelSizeSchema,
+    referenceGameRect: PixelRectSchema,
+    windowChrome: WindowChromeSchema,
+    expectedLayout: z.literal('cr_battle_vs'),
+    triggerRegion: NormalizedRectSchema,
+    nicknameRegion: NormalizedRectSchema,
+    topLeftEvidenceRegion: NormalizedRectSchema,
+    trigger: GameTriggerSchema,
+    provenance: FullFrameCalibrationSchema.shape.provenance,
+    calibratedAt: z.iso.datetime(),
+  })
+  .strict()
+
+export const GameRelativeCalibrationSchema = z
   .object({
     schemaVersion: z.literal(2),
+    coordinateSpace: z.literal('game_relative'),
+    calibrationId: z.uuid(),
+    revision: z.number().int().positive(),
+    layouts: z.array(GameLayoutSchema).min(1).max(4),
+    validationStatus: FullFrameCalibrationSchema.shape.validationStatus,
+    calibratedAt: z.iso.datetime(),
+  })
+  .strict()
+  .superRefine((calibration, context) => {
+    if (!calibration.layouts.some((layout) => layout.layoutSource === 'setup')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['layouts'],
+        message: 'A setup layout is required',
+      })
+    }
+    for (const [index, layout] of calibration.layouts.entries()) {
+      for (let previous = 0; previous < index; previous += 1) {
+        const other = calibration.layouts[previous]
+        if (other === undefined) continue
+        if (
+          layout.layoutId === other.layoutId ||
+          gameAspectsOverlap(other.gameAspect, layout.gameAspect)
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['layouts', index],
+            message: 'Layouts must have unique identities and distinct aspects',
+          })
+        }
+      }
+    }
+  })
+
+export const LayoutCalibrationSchema = z.discriminatedUnion('coordinateSpace', [
+  FullFrameCalibrationSchema,
+  GameRelativeCalibrationSchema,
+])
+
+export const CaptureConfigurationSchema = z
+  .object({
+    schemaVersion: z.literal(3),
     userId: z.string().min(1).max(128),
     revision: z.number().int().positive(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -225,7 +404,7 @@ export const CaptureProfileSchema = z
 
 export const CaptureProfileCollectionSchema = z
   .object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
     userId: z.string().min(1).max(128),
     revision: z.number().int().positive(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -286,6 +465,7 @@ export const CaptureProfileSummarySchema = z
     updatedAt: z.iso.datetime(),
     configurationRevision: z.number().int().positive(),
     configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    calibrationId: z.uuid().optional(),
     committedAt: z.iso.datetime(),
     sourceKind: CaptureSourceKindSchema,
     sourceLabel: z.string().min(1).max(300),
@@ -387,6 +567,9 @@ export type TriggerProfile = z.infer<typeof TriggerProfileSchema>
 export type CapturePreference = z.infer<typeof CapturePreferenceSchema>
 export type SourceBinding = z.infer<typeof SourceBindingSchema>
 export type LayoutCalibration = z.infer<typeof LayoutCalibrationSchema>
+export type GameLayout = z.infer<typeof GameLayoutSchema>
+export type FullFrameCalibration = z.infer<typeof FullFrameCalibrationSchema>
+export type GameRelativeCalibration = z.infer<typeof GameRelativeCalibrationSchema>
 export type CaptureConfiguration = z.infer<typeof CaptureConfigurationSchema>
 export type CaptureProfile = z.infer<typeof CaptureProfileSchema>
 export type CaptureProfileCollection = z.infer<typeof CaptureProfileCollectionSchema>

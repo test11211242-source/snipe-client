@@ -1,6 +1,10 @@
-import type { MonitorView } from '../../../../shared/models/monitor'
+import {
+  presentedMonitorState,
+  type MonitorView,
+} from '../../../../shared/models/monitor'
 import type { RealtimeStatus } from '../../../../shared/models/network'
 import type { Tone } from '../../ui'
+import { SOURCE_LOST_TEXT } from '../setup/errors'
 
 export type RunPhase =
   | 'no-profile'
@@ -13,12 +17,13 @@ export type RunPhase =
 
 /**
  * Presentation phase of the Start/Stop control, derived from the main-owned view.
- * `runIntent` and `state` are separate: WAITING_SOURCE is still "running" with Stop.
+ * `runIntent` and `state` are separate: WAITING_SOURCE is still "running" with Stop. The
+ * presented state keeps automatic recovery from flapping (see `presentedMonitorState`).
  */
 export function selectRunPhase(view: MonitorView | null, hasProfiles: boolean): RunPhase {
   if (!hasProfiles) return 'no-profile'
   if (view === null) return 'stopped'
-  switch (view.state) {
+  switch (presentedMonitorState(view)) {
     case 'PREFLIGHT':
     case 'STARTING':
       return 'starting'
@@ -84,6 +89,8 @@ export function selectStatus(
     case 'waiting-source':
       return status('Ждём окно игры…', 'warn')
     case 'running': {
+      // Same wording as setup's lost source (§1.3): analysis is paused, not failed.
+      if (view?.sourceMinimized === true) return status(SOURCE_LOST_TEXT, 'warn')
       if (offline) return status('Нет связи с сервером', 'warn')
       const latest = view?.results[0] ?? null
       if (view?.search != null && ['capturing', 'requesting'].includes(view.search.phase))

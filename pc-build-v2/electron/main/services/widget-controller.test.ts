@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { MonitorResultSchema, type MonitorResult } from '../../../shared/models/monitor'
-import type { WidgetSettings } from '../../../shared/models/widget'
+import {
+  MonitorResultSchema,
+  type MonitorResult,
+  type MonitorView,
+} from '../../../shared/models/monitor'
+import type { WidgetSettings, WidgetView } from '../../../shared/models/widget'
+import { selectOverlayModel } from '../../../renderer/src/widget/overlayModel'
 import { DEFAULT_WIDGET_SETTINGS } from '../infrastructure/widget-settings-repository'
 import { WidgetController } from './widget-controller'
 import { monitorViewFixture } from '../../../tests/monitor-fixtures'
@@ -41,6 +46,7 @@ function deferred() {
 function harness(autoOpen = true) {
   let latest: MonitorResult | null = null
   let resultListener: ((result: MonitorResult) => void) | null = null
+  let viewListener: ((view: MonitorView) => void) | null = null
   let boundsListener:
     ((bounds: { x: number; y: number; width: number; height: number }) => void) | null =
     null
@@ -50,7 +56,10 @@ function harness(autoOpen = true) {
       resultListener = listener
       return vi.fn()
     }),
-    subscribeViews: vi.fn(() => vi.fn()),
+    subscribeViews: vi.fn((listener: (view: MonitorView) => void) => {
+      viewListener = listener
+      return vi.fn()
+    }),
     getCurrentView: vi.fn(() => monitorViewFixture({ state: 'READY', runIntent: true })),
   }
   const repository = {
@@ -92,6 +101,10 @@ function harness(autoOpen = true) {
     },
     bounds: (value: { x: number; y: number; width: number; height: number }) =>
       boundsListener?.(value),
+    view: (value: MonitorView) => {
+      monitor.getCurrentView.mockReturnValue(value)
+      viewListener?.(value)
+    },
   }
 }
 
@@ -415,6 +428,95 @@ describe('approved review projection followup', () => {
         message: 'Выберите окно игры заново в профиле',
       },
     })
+    await test.controller.stop()
+  })
+})
+
+describe('source-loss retries', () => {
+  it('keeps one waiting state through source retries and the deck through a worker restart', async () => {
+    const test = harness(false)
+    await test.controller.start('user')
+    test.result(found('7f0b31d6-3c8f-4e4b-9e57-5f5bb6f3b4a1'))
+    const lost = { code: 'CAPTURE_SOURCE_CLOSED', message: 'Окно игры закрыто' }
+    // Returns the view pushed to the renderer for this monitor transition.
+    const drive = (patch: Partial<MonitorView>): WidgetView => {
+      test.windows.sendToRenderer.mockClear()
+      test.view(monitorViewFixture({ runIntent: true, ...patch }))
+      const sent = test.windows.sendToRenderer.mock.lastCall?.[2] as
+        WidgetView | undefined
+      if (sent === undefined) throw new Error('No widget view was published')
+      expect(test.controller.getView()).toEqual(sent)
+      return sent
+    }
+
+    expect(selectOverlayModel(drive({ state: 'READY' })).body.kind).toBe('found')
+    // The game closes; the supervisor retries on its backoff ladder.
+    const cycle: Partial<MonitorView>[] = [
+      { state: 'WAITING_SOURCE', error: lost },
+      { state: 'PREFLIGHT', error: null },
+      { state: 'WAITING_SOURCE', error: lost },
+      { state: 'PREFLIGHT', error: null },
+      { state: 'STARTING', error: null },
+    ]
+    for (const patch of cycle) {
+      const view = drive({ ...patch, recovery: 'source' })
+      expect(view.monitorState).toBe('WAITING_SOURCE')
+      expect(selectOverlayModel(view).body).toMatchObject({
+        kind: 'message',
+        title: 'Ждём окно игры',
+      })
+    }
+    // Monitoring really resumed: the retained deck returns once.
+    expect(drive({ state: 'READY', error: null }).monitorState).toBe('READY')
+    // A worker restart with the game open keeps the deck instead of «Ждём окно игры».
+    const restart = drive({
+      state: 'WAITING_SOURCE',
+      error: { code: 'MONITOR_PROCESS_EXITED', message: 'exited' },
+      recovery: 'worker',
+    })
+    expect(restart.monitorState).toBe('STARTING')
+    expect(selectOverlayModel(restart).body.kind).toBe('found')
+    // A user Start is not a recovery attempt: it projects as itself.
+    drive({ state: 'STOPPING', runIntent: false })
+    expect(drive({ state: 'PREFLIGHT' }).monitorState).toBe('PREFLIGHT')
+    await test.controller.stop()
+  })
+})
+
+describe('widget audit followups', () => {
+  it('fits the native height to new content before the disk write completes', async () => {
+    const test = harness(false)
+    await test.controller.start('user')
+    const write = deferred()
+    test.repository.save.mockImplementationOnce(
+      async (_userId: string, settings: WidgetSettings) => {
+        await write.promise
+        return settings
+      },
+    )
+    const update = test.controller.updateSettings({ contentHeight: 420 })
+    await vi.waitFor(() => {
+      const applied = test.windows.applyWidgetSettings.mock.lastCall as
+        [WidgetSettings] | undefined
+      expect(applied?.[0].bounds.height).toBe(420)
+    })
+    expect(test.controller.getView().settings.bounds.height).not.toBe(420)
+    write.resolve()
+    expect((await update).bounds.height).toBe(420)
+    await test.controller.stop()
+  })
+
+  it('projects a minimised game window to the overlay', async () => {
+    const test = harness(false)
+    await test.controller.start('user')
+    test.view(
+      monitorViewFixture({ state: 'READY', runIntent: true, sourceMinimized: true }),
+    )
+    expect(test.windows.sendToRenderer).toHaveBeenLastCalledWith(
+      'widget',
+      'widget:view-changed',
+      expect.objectContaining({ sourceMinimized: true }),
+    )
     await test.controller.stop()
   })
 })

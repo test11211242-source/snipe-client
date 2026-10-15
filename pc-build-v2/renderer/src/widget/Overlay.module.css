@@ -11,6 +11,10 @@
   width: 100%;
   display: flex;
   flex-direction: column;
+  /* WIDGET_MIN_HEIGHT: the native window is never shorter, so a short compact card fills
+     it instead of leaving an invisible strip that still takes clicks over the game. */
+  min-height: 80px;
+  justify-content: center;
   gap: calc(var(--space-2) * var(--k));
   padding: calc(var(--space-2) * var(--k));
   border-radius: calc(var(--radius-xl) * var(--k));
@@ -24,6 +28,14 @@
 .shell[data-pinned='true'] {
   box-shadow: 0 0 0 1px var(--color-accent-line);
 }
+/* Off-flow copies measured before a full↔compact switch; removed before any paint. */
+.measure {
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 
 .top {
   display: flex;
@@ -32,10 +44,17 @@
   gap: calc(var(--space-2) * var(--k));
   min-width: 0;
   min-height: calc(var(--control-sm) * var(--k));
+}
+/*
+ * Native window drag. The one rule for every state and mode: full mode drags by the top
+ * strip, compact (whose strip has zero height) by the name row or the message body.
+ * A locked overlay has no drag region at all.
+ */
+.shell [data-drag-handle] {
   cursor: grab;
   -webkit-app-region: drag;
 }
-.shell[data-locked='true'] .top {
+.shell[data-locked='true'] [data-drag-handle] {
   cursor: default;
   -webkit-app-region: no-drag;
 }
@@ -141,12 +160,6 @@
 .shell[data-compact='true'] .who {
   align-items: center;
   gap: var(--space-1);
-  cursor: grab;
-  -webkit-app-region: drag;
-}
-.shell[data-locked='true'] .who {
-  cursor: default;
-  -webkit-app-region: no-drag;
 }
 .shell[data-compact='true'] .name {
   flex: 1;
@@ -201,6 +214,8 @@
   margin: 0;
   color: var(--color-text-2);
   font-size: calc(var(--fs-sm) * var(--k));
+  /* Drag regions swallow hover on Windows; the line stays a hover target for compact controls. */
+  -webkit-app-region: no-drag;
 }
 .notice {
   margin: 0;

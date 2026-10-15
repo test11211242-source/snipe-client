@@ -388,6 +388,53 @@ describe('WindowCoordinator auth shell', () => {
     expect(observed).not.toHaveBeenCalled()
   })
 
+  it('raises a visible widget when it gets pinned, never on a resize or other setting', async () => {
+    const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)
+    const settings = {
+      autoOpen: true,
+      alwaysOnTop: true,
+      locked: false,
+      opacity: 0.96,
+      displayMode: 'deck' as const,
+      bounds: { x: null, y: null, width: 360, height: 300 },
+      normalWidth: 360,
+      compactWidth: 300,
+      compactMode: false,
+    }
+    const opening = coordinator.ensureWidgetWindow(settings)
+    coordinator.markWidgetRendererReady()
+    await opening
+    const window = electronMocks.browserWindowConstructed.mock.calls.at(-1)?.[1] as {
+      isAlwaysOnTop: Mock<() => boolean>
+      isVisible: Mock<() => boolean>
+      moveTop: Mock<() => void>
+      setAlwaysOnTop: Mock<(value: boolean) => void>
+    }
+    let pinned = true
+    window.isAlwaysOnTop.mockImplementation(() => pinned)
+    window.setAlwaysOnTop.mockClear().mockImplementation((value: boolean) => {
+      pinned = value
+    })
+    window.moveTop.mockClear()
+    window.isVisible.mockReturnValue(true)
+
+    for (const height of [280, 320, 300])
+      coordinator.applyWidgetSettings({
+        ...settings,
+        bounds: { ...settings.bounds, height },
+      })
+    coordinator.applyWidgetSettings({ ...settings, opacity: 0.8, compactMode: true })
+    expect(window.setAlwaysOnTop).not.toHaveBeenCalled()
+    expect(window.moveTop).not.toHaveBeenCalled()
+
+    coordinator.applyWidgetSettings({ ...settings, alwaysOnTop: false })
+    expect(window.setAlwaysOnTop).toHaveBeenLastCalledWith(false, 'normal')
+    expect(window.moveTop).not.toHaveBeenCalled()
+    coordinator.applyWidgetSettings(settings)
+    expect(window.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'normal')
+    expect(window.moveTop).toHaveBeenCalledOnce()
+  })
+
   it('destroys a non-interactive widget when renderer readiness times out', async () => {
     vi.useFakeTimers()
     const coordinator = new WindowCoordinator({ warn: vi.fn() } as never)

@@ -17,21 +17,19 @@ const PREVIEW_WIDTH = 360
 const PREVIEW_HEIGHT = 203
 const MAX_PREVIEW_BYTES = 512 * 1024
 const MAX_TOTAL_PREVIEW_DATA_URL_BYTES = 24 * 1024 * 1024
-
-export interface CaptureThumbnail {
-  isEmpty: () => boolean
-  getSize: () => { width: number; height: number }
-  toPNG: () => Buffer
-  toJPEG: (quality: number) => Buffer
-}
+/** The picker list never waits longer than this for the metadata helpers. */
+const LIST_METADATA_WAIT_MS = 1_500
 
 export interface ElectronCaptureSource {
   id: string
   name: string
   displayId: string
-  thumbnail: CaptureThumbnail
   ownerProcessId?: number
   executableLabel?: string
+  /**
+   * Windows only. `false`: the helper could not identify the window. Absent: not checked yet
+   * (helper slow or failed); identity is then verified when the window is selected.
+   */
   metadataAvailable?: boolean
 }
 
@@ -42,19 +40,50 @@ export interface ElectronDisplayInfo {
   deviceName?: string
 }
 
+export interface SourcePreviewRequest {
+  windowSourceIds: readonly string[]
+  screens: boolean
+  size: { width: number; height: number }
+}
+
+export interface SourcePreviewImage {
+  sourceId: string
+  /** Source title when the image was taken; a window whose title changed gets no preview. */
+  name: string
+  size: { width: number; height: number }
+  jpeg: Buffer
+}
+
 export interface CaptureSourceProvider {
-  enumerate: (thumbnailSize: {
-    width: number
-    height: number
-  }) => Promise<ElectronCaptureSource[]>
-  previews?: (thumbnailSize: {
-    width: number
-    height: number
-  }) => Promise<ElectronCaptureSource[]>
+  /** Without `metadataWaitMs` a metadata failure rejects; with it the list degrades. */
+  enumerate: (options?: { metadataWaitMs?: number }) => Promise<ElectronCaptureSource[]>
+  /** Delivers previews as they become ready; settles when no more will come. */
+  previews?: (
+    request: SourcePreviewRequest,
+    onPreview: (image: SourcePreviewImage) => void,
+  ) => Promise<void>
   resolveWindow?: (windowHwnd: string) => Promise<ElectronCaptureSource | undefined>
-  displays: () => Promise<ElectronDisplayInfo[]>
+  /**
+   * Owner process and executable of one live window (no owner = closed handle), without
+   * listing any other window; undefined when the handle is not a window.
+   */
+  checkWindow?: (
+    windowHwnd: string,
+  ) => Promise<{ ownerProcessId: number; executableLabel: string | null } | undefined>
+  displays: (options?: { waitMs?: number }) => Promise<ElectronDisplayInfo[]>
   ownWindowHandles: () => ReadonlySet<string>
   currentProcessId: number
+}
+
+interface PreviewJob {
+  revision: string
+  /** Count of applied previews; `delivered` is the count the last response carried. */
+  version: number
+  delivered: number
+  done: boolean
+  totalBytes: number
+  /** Resolves with `done` on every change, then is replaced. */
+  wake: PromiseWithResolvers<boolean>
 }
 
 interface RegistryEntry {
@@ -93,20 +122,21 @@ export class CaptureSourceRegistry {
   #expiresAt = 0
   #entries = new Map<string, RegistryEntry>()
   #enumerationGeneration = 0
-  #previewLoad: { revision: string; promise: Promise<CaptureSourceSnapshot> } | null =
-    null
+  #previewJob: PreviewJob | null = null
 
   constructor(
     private readonly provider: CaptureSourceProvider,
     private readonly ttlMs = 30_000,
     private readonly now: () => number = Date.now,
+    /** Previews arriving within this window after the first one share one response. */
+    private readonly previewBatchMs = 100,
   ) {}
 
   async enumerate(): Promise<CaptureSourceSnapshot> {
     const generation = ++this.#enumerationGeneration
     const [sources, displayResult] = await Promise.all([
-      this.provider.enumerate({ width: 0, height: 0 }),
-      this.provider.displays().then(
+      this.provider.enumerate({ metadataWaitMs: LIST_METADATA_WAIT_MS }),
+      this.provider.displays({ waitMs: LIST_METADATA_WAIT_MS }).then(
         (displays) => ({ displays, unavailable: false }),
         () => ({ displays: [], unavailable: true }),
       ),
@@ -209,7 +239,9 @@ export class CaptureSourceRegistry {
 
     if (generation !== this.#enumerationGeneration) throw this.staleError()
     this.#revision = revision
-    this.#previewLoad = null
+    const replaced = this.#previewJob
+    this.#previewJob = null
+    replaced?.wake.resolve(replaced.done)
     this.#expiresAt = this.now() + this.ttlMs
     this.#entries = entries
     return CaptureSourceSnapshotSchema.parse({
@@ -219,45 +251,89 @@ export class CaptureSourceRegistry {
     })
   }
 
-  loadPreviews(revision: string): Promise<CaptureSourceSnapshot> {
-    if (revision !== this.#revision) return Promise.reject(this.staleError())
-    if (this.#previewLoad?.revision === revision) return this.#previewLoad.promise
-    const promise = this.populatePreviews(revision)
-    this.#previewLoad = { revision, promise }
-    void promise.catch(() => {
-      if (this.#previewLoad?.promise === promise) this.#previewLoad = null
-    })
-    return promise
-  }
-
-  private async populatePreviews(revision: string): Promise<CaptureSourceSnapshot> {
-    const size = { width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }
-    const sources = await (this.provider.previews?.(size) ??
-      this.provider.enumerate(size))
+  /**
+   * Previews arrive progressively: the first call starts loading them, and every call
+   * resolves once previews newer than the previous response exist (or loading ends).
+   * `previewsPending` tells the caller whether to ask again.
+   */
+  async loadPreviews(revision: string): Promise<CaptureSourceSnapshot> {
     if (revision !== this.#revision) throw this.staleError()
-    const byId = new Map(sources.map((source) => [source.id, source]))
-    let totalBytes = 0
-    for (const entry of this.#entries.values()) {
-      const source = byId.get(entry.rawId)
-      if (
-        source === undefined ||
-        (entry.view.kind === 'window' && source.name.slice(0, 300) !== entry.view.label)
-      )
-        continue
-      const preview = this.preview(source)
-      if (
-        preview === null ||
-        totalBytes + preview.dataUrl.length > MAX_TOTAL_PREVIEW_DATA_URL_BYTES
-      )
-        continue
-      totalBytes += preview.dataUrl.length
-      entry.view = { ...entry.view, preview }
+    let job = this.#previewJob
+    if (job?.revision !== revision) {
+      job = this.startPreviewJob(revision)
+      this.#previewJob = job
     }
+    if (!job.done && job.version === job.delivered) {
+      const done = await job.wake.promise
+      if (!done && this.previewBatchMs > 0 && this.#previewJob === job) {
+        const batch = Promise.withResolvers<undefined>()
+        setTimeout(() => batch.resolve(undefined), this.previewBatchMs)
+        await batch.promise
+      }
+    }
+    if (revision !== this.#revision || this.#previewJob !== job) throw this.staleError()
+    job.delivered = job.version
     return CaptureSourceSnapshotSchema.parse({
       revision,
       expiresAt: this.#expiresAt,
       sources: [...this.#entries.values()].map((entry) => entry.view),
+      previewsPending: !job.done,
     })
+  }
+
+  private startPreviewJob(revision: string): PreviewJob {
+    const job: PreviewJob = {
+      revision,
+      version: 0,
+      delivered: 0,
+      done: false,
+      totalBytes: 0,
+      wake: Promise.withResolvers<boolean>(),
+    }
+    const signal = (): void => {
+      const { wake } = job
+      job.wake = Promise.withResolvers<boolean>()
+      wake.resolve(job.done)
+    }
+    const entries = [...this.#entries.values()]
+    const byRawId = new Map(entries.map((entry) => [entry.rawId, entry]))
+    const onPreview = (image: SourcePreviewImage): void => {
+      if (this.#previewJob !== job) return
+      const entry = byRawId.get(image.sourceId)
+      if (
+        entry?.view.preview !== null ||
+        (entry.view.kind === 'window' && image.name.slice(0, 300) !== entry.view.label)
+      )
+        return
+      const preview = this.preview(image)
+      if (
+        preview === null ||
+        job.totalBytes + preview.dataUrl.length > MAX_TOTAL_PREVIEW_DATA_URL_BYTES
+      )
+        return
+      job.totalBytes += preview.dataUrl.length
+      entry.view = { ...entry.view, preview }
+      job.version += 1
+      signal()
+    }
+    const request: SourcePreviewRequest = {
+      windowSourceIds: entries
+        .filter((entry) => entry.view.kind === 'window')
+        .map((entry) => entry.rawId),
+      screens: entries.some((entry) => entry.view.kind === 'display'),
+      size: { width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT },
+    }
+    void (async () => {
+      try {
+        await this.provider.previews?.(request, onPreview)
+      } catch {
+        // Previews are optional: the sources stay selectable without them.
+      } finally {
+        job.done = true
+        signal()
+      }
+    })()
+    return job
   }
 
   async resolve(sourceKey: string, revision: string): Promise<ResolvedCaptureSource> {
@@ -272,9 +348,7 @@ export class CaptureSourceRegistry {
     const currentSource =
       entry.windowHwnd !== null && this.provider.resolveWindow !== undefined
         ? await this.provider.resolveWindow(entry.windowHwnd)
-        : (await this.provider.enumerate({ width: 0, height: 0 })).find(
-            (source) => source.id === entry.rawId,
-          )
+        : (await this.provider.enumerate()).find((source) => source.id === entry.rawId)
     this.assertCurrent(sourceKey, revision)
     this.assertExpiredWindowHasIdentity(entry)
     if (currentSource === undefined) throw this.staleError()
@@ -290,6 +364,7 @@ export class CaptureSourceRegistry {
       if (
         parseElectronWindowHandle(currentSource.id) !== entry.windowHwnd ||
         currentSource.name.slice(0, 300) !== entry.view.label ||
+        currentSource.ownerProcessId === this.provider.currentProcessId ||
         (entry.ownerProcessId !== null &&
           currentSource.ownerProcessId !== entry.ownerProcessId) ||
         (entry.executableLabel !== null &&
@@ -297,6 +372,10 @@ export class CaptureSourceRegistry {
       ) {
         throw this.staleError()
       }
+      // A window listed unverified (slow metadata helper) takes its identity from this
+      // fresh check; `resolveWindow` never returns a window without an executable label.
+      entry.executableLabel ??= safeExecutableLabel(currentSource.executableLabel)
+      entry.ownerProcessId ??= currentSource.ownerProcessId ?? null
       selector = { kind: 'window', windowHwnd: entry.windowHwnd }
     } else if (
       entry.view.kind === 'display' &&
@@ -350,8 +429,11 @@ export class CaptureSourceRegistry {
         'SOURCE_REBIND_REQUIRED',
         'Choose the window again to save its executable identity',
       )
+    const liveHwnd =
+      preference.kind === 'window' ? await this.liveSavedWindow(preference) : null
+    if (liveHwnd !== null) return { kind: 'window', windowHwnd: liveHwnd }
     const [sources, displays] = await Promise.all([
-      this.provider.enumerate({ width: 0, height: 0 }),
+      this.provider.enumerate(),
       preference.kind === 'display' ? this.provider.displays() : Promise.resolve([]),
     ])
     return this.matchPreference(
@@ -363,12 +445,32 @@ export class CaptureSourceRegistry {
     )
   }
 
+  /**
+   * Start and recovery: the saved HWND still being a window of the same executable binds
+   * directly, with no window list. Anything else (closed, reused handle, failed check)
+   * falls back to the full list, which can also rebind a reopened game by its title.
+   */
+  private async liveSavedWindow(
+    preference: Extract<CapturePreference, { kind: 'window' }>,
+  ): Promise<string | null> {
+    const hwnd = preference.windowHwnd
+    if (hwnd === undefined || this.provider.checkWindow === undefined) return null
+    if (this.provider.ownWindowHandles().has(hwnd)) return null
+    const live = await this.provider.checkWindow(hwnd).catch(() => undefined)
+    return live !== undefined &&
+      live.ownerProcessId !== this.provider.currentProcessId &&
+      live.executableLabel !== null &&
+      safeExecutableLabel(live.executableLabel) === preference.executableLabel
+      ? hwnd
+      : null
+  }
+
   async resolvePreferences(
     preferences: readonly CapturePreference[],
   ): Promise<readonly (SetupCaptureSelector | ApplicationError)[]> {
     if (preferences.length === 0) return []
     const [enumeration, displayList] = await Promise.allSettled([
-      this.provider.enumerate({ width: 0, height: 0 }),
+      this.provider.enumerate(),
       preferences.some((preference) => preference.kind === 'display')
         ? this.provider.displays()
         : Promise.resolve([]),
@@ -562,26 +664,22 @@ export class CaptureSourceRegistry {
     )
   }
 
-  private preview(source: ElectronCaptureSource): CaptureSourceView['preview'] {
-    try {
-      const size = source.thumbnail.getSize()
-      if (
-        source.thumbnail.isEmpty() ||
-        size.width <= 0 ||
-        size.height <= 0 ||
-        size.width > PREVIEW_WIDTH ||
-        size.height > PREVIEW_HEIGHT
-      ) {
-        return null
-      }
-      const bytes = source.thumbnail.toJPEG(76)
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_PREVIEW_BYTES) return null
-      return {
-        size,
-        dataUrl: `data:image/jpeg;base64,${bytes.toString('base64')}`,
-      }
-    } catch {
+  private preview(image: SourcePreviewImage): CaptureSourceView['preview'] {
+    const { width, height } = image.size
+    if (
+      !Number.isSafeInteger(width) ||
+      !Number.isSafeInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      width > PREVIEW_WIDTH ||
+      height > PREVIEW_HEIGHT ||
+      image.jpeg.byteLength === 0 ||
+      image.jpeg.byteLength > MAX_PREVIEW_BYTES
+    )
       return null
+    return {
+      size: { width, height },
+      dataUrl: `data:image/jpeg;base64,${image.jpeg.toString('base64')}`,
     }
   }
 }
