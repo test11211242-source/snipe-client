@@ -163,21 +163,27 @@ units of the M9 game rectangle, `U = min(height, width × 16/9)`.
 
 Runtime wiring (game-relative profiles only): on an own-battle VS fire
 (`kind == "battle"`) `TriggerEngine` runs `check_rank` on the trigger frame and
-arms its `ResultReader`; the `triggered` event carries `rank`/`rankEvidence`
-(`"unknown"`/`null` for spectate and full-frame fires). On ticks without a VS fire
-the armed reader reads the result screen; `monitor_engine.FrameEvents` turns a
-report into one `prediction_result {battleId, gap, outcome, evidence}`, where
-`battleId` is the last own-battle `triggerId` and `gap` is set if the source was
-minimised since that VS or the frames paused mid-read. Prediction failures never
-stop the opponent monitor.
+arms its `ResultReader`; any other fire disarms it. The `triggered` event carries
+`rank`/`rankEvidence` (`"unknown"`/`null` for spectate and full-frame fires). On
+ticks without a VS fire the armed reader reads the result screen;
+`monitor_engine.FrameEvents` turns a report into one
+`prediction_result {battleId, gap, outcome, evidence}`, where `battleId` is the
+last own-battle `triggerId` and `gap` is set if the source was minimised since
+that VS or the frames paused mid-read. When capture ends (stop, source closed,
+failure) a read cut short is still reported (`FrameEvents.finish`), before
+`stopped`. Prediction failures never stop the opponent monitor: a missing or
+corrupt C3 asset turns that part off and writes
+`PREDICTION_ASSET_UNAVAILABLE <error class>` to stderr.
 
 - `geometry/rank_line.py` `check_rank(frame, gameRect, badge, RankTemplates.load())`
   reads the opponent and own rank lines and returns
   `{"rank", "rankEvidence": {"opponent", "own"}}`.
 - `result_reader.py` `ResultReader`: armed from VS + 20 s to VS + 7 min. Idle ticks
   check only the small result-«vs» band; a burst reads the pill and six crown
-  slots until the «vs» moves up (shift), is missing for 0.6 s, the frames pause,
-  or 3 s pass.
+  slots until the «vs» moves up (shift, also when it is already above its band),
+  is missing for 0.6 s, the frames pause, or 3 s pass. Crown counts are reported
+  only after a seen shift or the cap with the last read ≥ 1.0 s into the burst;
+  any other end leaves them `null`, so a cut-short count never becomes a draw.
 - `prediction_values.py` holds every wire value, matching the server validation.
 - `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
   orientation fields only (no pixels, no names), generated once by

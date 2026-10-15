@@ -92,8 +92,10 @@ def generate(clip: Path, vs_frame: int, crown_frame: int, leagues: Path, medal: 
               art_template(medal, PILL_MEDAL_HEIGHT, "pill-medal")]
     result += [art_template(leagues / f"league-{n}.webp", PILL_LEAGUE_HEIGHT, f"pill-league-{n}") for n in range(1, 7)]
     rank = [art_template(medal, RANK_TEMPLATE_HEIGHTS["medal"], "rank-medal")]
+    # Leagues 1-6 only: the league-7 (Ultimate Champion) art matches the game's
+    # VS badge poorly; that line carries the medal, which decides it.
     rank += [art_template(leagues / f"league-{n}.webp", RANK_TEMPLATE_HEIGHTS["league"], f"rank-league-{n}")
-             for n in range(1, 8)]
+             for n in range(1, 7)]
     output.mkdir(parents=True, exist_ok=True)
     for name, templates, px in (("result_screen_v1.json", result, {"vs": VS_PX, "crown": CROWN_PX, "pill": PILL_PX}),
                                 ("pol_rank_v1.json", rank, {"rank": RANK_PX})):

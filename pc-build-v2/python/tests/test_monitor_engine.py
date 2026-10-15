@@ -48,7 +48,8 @@ def test_guarded_lifecycle(monkeypatch, stage, code):
                 raise ValueError('private internal diagnostic')
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
-                               take_events=lambda: [], take_prediction_result=lambda: None)
+                               take_events=lambda: [], take_prediction_result=lambda: None,
+                               finish_prediction=lambda _now: None)
 
 
     class Backend:
@@ -124,6 +125,7 @@ def test_diagnostics_are_written_only_when_the_match_state_changes(monkeypatch):
         state.take_triggered = lambda: False
         state.take_events = lambda: []
         state.take_prediction_result = lambda: None
+        state.finish_prediction = lambda _now: None
         return state
 
     class Backend:
@@ -174,7 +176,8 @@ def test_minimised_window_pauses_analysis_and_reports_both_transitions(monkeypat
             processed.append(True)
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
-                               take_events=lambda: [], take_prediction_result=lambda: None)
+                               take_events=lambda: [], take_prediction_result=lambda: None,
+                               finish_prediction=lambda _now: None)
 
     class Backend:
         def __init__(self, _selector):
@@ -244,7 +247,7 @@ def test_primary_trigger_emits_identity_kind_and_rank(monkeypatch, kind):
     state = SimpleNamespace(
         process=lambda _frame, _now: (image, 2, 2), last_match=None,
         take_triggered=lambda: True, triggered_kind=kind, triggered_rank=RANKS[kind], take_events=lambda: [],
-        take_prediction_result=lambda: None,
+        take_prediction_result=lambda: None, finish_prediction=lambda _now: None,
     )
     initialized = []
 
@@ -297,6 +300,7 @@ class ScriptedEngine:
         self.triggered_rank = {"rank": "unknown", "rankEvidence": None}
         self._fired = False
         self._result = None
+        self.finish = None          # what finish_prediction returns at capture end
 
     def process(self, _frame, _now):
         kind, report, reason = self.script.pop(0)
@@ -317,6 +321,9 @@ class ScriptedEngine:
         result, self._result = self._result, None
         return result
 
+    def finish_prediction(self, _now):
+        return self.finish
+
 
 REPORT = {"outcome": "loss", "evidence": {"crowns": {"top": 1, "bottom": 0}, "deltaSign": "-", "deltaIcon": "pol"}}
 STAMP = "2026-10-15T12:00:00Z"
@@ -336,12 +343,14 @@ def run_frames(frames, ticks, pause_before=None):
 
 
 def test_result_carries_the_own_battle_id_and_no_gap():
+    # A spectate fire disarms the engine's reader (test_game_geometry), so a
+    # result only ever follows its own battle.
     frames = monitor.FrameEvents(ScriptedEngine([("battle", None, None), (None, None, None),
-                                                 ("spectate", None, None), (None, REPORT, "shift")]))
+                                                 (None, None, None), (None, REPORT, "shift")]))
     events = run_frames(frames, IDS[:4])
-    assert [event_type for event_type, _ in events] == ["triggered", "triggered", "prediction_result"]
-    assert events[0][1]["rank"] == "pol" and events[1][1]["kind"] == "spectate"
-    assert events[2][1] == {"battleId": IDS[0], "gap": False, **REPORT}
+    assert [event_type for event_type, _ in events] == ["triggered", "prediction_result"]
+    assert events[0][1]["rank"] == "pol"
+    assert events[1][1] == {"battleId": IDS[0], "gap": False, **REPORT}
 
 
 @pytest.mark.parametrize("pause_before,reason,gap", [(None, "gap", True), (1, "shift", True), (0, "shift", False)])
@@ -349,3 +358,62 @@ def test_result_gap_after_a_pause_since_the_vs(pause_before, reason, gap):
     frames = monitor.FrameEvents(ScriptedEngine([("battle", None, None), (None, None, None), (None, REPORT, reason)]))
     events = run_frames(frames, IDS[:3], pause_before)
     assert events[-1][1]["gap"] is gap and events[-1][1]["battleId"] == IDS[0]
+
+
+CUT_SHORT = {"outcome": "loss", "evidence": {"crowns": {"top": None, "bottom": None}, "deltaSign": "-",
+                                             "deltaIcon": "pol"}}
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_frame_events_flush_a_result_cut_short_by_the_capture_end(paused):
+    engine = ScriptedEngine([("battle", None, None), (None, None, None)])
+    frames = monitor.FrameEvents(engine)
+    run_frames(frames, IDS[:2], 1 if paused else None)
+    assert frames.finish(0.3) == []                                        # nothing being read
+    engine.finish = (CUT_SHORT, "capture_end")
+    (event_type, payload), = frames.finish(0.3)
+    monitor.encode_event("s", 1, event_type, payload)
+    assert (event_type, payload) == ("prediction_result", {"battleId": IDS[0], "gap": paused, **CUT_SHORT})
+
+
+def test_worker_reports_a_result_cut_short_by_stop_before_stopped(monkeypatch):
+    # Review m-14: the reader's finish() was never called by the worker, so a
+    # stop during the result screen lost the result (the server marks it missed).
+    events, readers = [], []
+    engine = ScriptedEngine([("battle", None, None)])
+    engine.finish = (CUT_SHORT, "capture_end")
+
+    class Writer:
+        sequence = 0
+        def __init__(self, _session):
+            pass
+        def emit(self, event_type, payload):
+            monitor.encode_event("s", self.sequence, event_type, payload)
+            self.sequence += 1
+            events.append((event_type, payload))
+
+    class Backend:
+        def __init__(self, _selector):
+            pass
+        def start(self, on_frame, _closed):
+            on_frame(np.zeros((2, 2, 3), dtype=np.uint8))
+            readers[0]()
+        def stop(self):
+            pass
+
+    class Reader:
+        def __init__(self, target, **_kwargs):
+            readers.append(target)
+        def start(self):
+            pass
+
+    monkeypatch.setattr(monitor, "EventWriter", Writer)
+    monkeypatch.setattr(monitor, "TriggerEngine", lambda _payload: engine)
+    monkeypatch.setattr(monitor, "WindowsMonitorBackend", Backend)
+    monkeypatch.setattr(monitor, "window_iconic_probe", lambda _selector: None)
+    monkeypatch.setattr(monitor.threading, "Thread", Reader)
+    monkeypatch.setattr(monitor, "read_command", lambda *_args, **_kwargs: {"type": "stop"})
+    payload = {"selector": {}, "limits": {"maxImagePixels": 20_000_000}}
+    assert monitor.run({"sessionId": "test", "payload": payload}) == 0
+    assert [event_type for event_type, _ in events] == ["ready", "triggered", "prediction_result", "stopped"]
+    assert events[2][1] == {"battleId": events[1][1]["triggerId"], "gap": False, **CUT_SHORT}

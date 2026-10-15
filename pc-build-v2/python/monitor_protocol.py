@@ -286,7 +286,7 @@ def read_command(stream: BinaryIO, expected_session_id: str | None = None) -> di
 
 
 def validate_prediction_result(value: Any) -> dict[str, Any]:
-    """Future C3 report: metadata only; C1 never produces these events."""
+    """C3 result-screen report of an own battle: metadata only, never images."""
     payload = _exact(value, {"battleId", "gap", "outcome", "evidence"}, "prediction result")
     if payload["battleId"] is not None:
         _uuid(payload["battleId"], "battle id")

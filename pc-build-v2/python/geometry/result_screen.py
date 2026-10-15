@@ -23,6 +23,11 @@ ASSET = Path(__file__).resolve().parents[1] / "assets" / "result_screen_v1.json"
 
 # Result «vs»: band around the game centre, (dx0, dx1, dy0, dy1) units.
 VS_BAND = (-0.08, 0.09, -0.04, 0.12)
+# Above it: where the «vs» rests (uy ≈ -0.134) or passes (-0.12 … -0.04) once
+# the screen has shifted up after the last crown. Owner clips: the shifted
+# «vs» scores 0.61-0.87 here for 0.12-0.97 s; before the shift (crowns
+# landing included) this band scores <= 0.42.
+VS_SHIFTED_BAND = (-0.08, 0.09, -0.24, -0.02)
 VS_PX = 540
 # First match fires the burst. Battle and «Match over» frames score <= 0.41
 # on the owner's clips, the settled «vs» 0.68-0.86.
@@ -47,7 +52,11 @@ TEXT_PX = 1000         # glyphs next to the icon
 PILL_ICON_UNITS = {"medal": 0.0375, "league": 0.040}
 ICON_SCALES = (0.85, 0.95, 1.05, 1.15)
 ICON_T = 0.50          # PoL icon (medal / league badge) in the pill
-ICON_SEEN_T = 0.40     # something pill-like was on screen
+# Something pill-like but not a readable PoL icon (unreadable, not absent).
+# Owner clips: the pill box scores <= 0.46 before the pill appears (crowns
+# landing included) and >= 0.61 once a PoL pill is there; 0.40 made every
+# burst «pill seen», so a pill-less screen could never read `absent`.
+ICON_SEEN_T = 0.55
 # Sign: height of the leftmost glyph over the digit height.
 PLUS_MIN = 0.50
 MINUS_MAX = 0.36
@@ -82,8 +91,8 @@ class VsHit:
     uy: float
 
 
-def find_vs(frame: np.ndarray, rect, templates: ResultTemplates) -> VsHit | None:
-    crop = crop_units(frame, rect, game_center(rect), VS_BAND, VS_PX)
+def find_vs(frame: np.ndarray, rect, templates: ResultTemplates, band=VS_BAND) -> VsHit | None:
+    crop = crop_units(frame, rect, game_center(rect), band, VS_PX)
     if crop is None:
         return None
     match = best_match(orientation_field(crop.image), templates.vs)

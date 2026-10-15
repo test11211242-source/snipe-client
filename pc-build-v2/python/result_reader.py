@@ -14,10 +14,12 @@ holds the codes and timings of the last burst (never sent to users).
 While armed and idle only the small result-«vs» band is checked. The first
 match starts the burst: for at most `BURST_CAP_S`, each tick also reads the
 pill and the six crown slots, and the burst ends as soon as the «vs» moves up
-(the screen starts shifting, after which the player may skip) or is missing
-for `MISSING_S`. Ticks without the «vs» at its place are never read. A pause
-in the frames longer than `MISSING_S` (minimised source, stalled capture)
-ends the burst on what was read before it (`endReason == "gap"`).
+(the screen starts shifting, after which the player may skip; a «vs» already
+above its band counts too) or is missing for `MISSING_S`. Ticks without the
+«vs» at its place are never read. A pause in the frames longer than
+`MISSING_S` (minimised source, stalled capture) ends the burst on what was read
+before it (`endReason == "gap"`). Crown counts are reported only after a seen
+shift or the cap; the pill sign decides either way.
 """
 from __future__ import annotations
 
@@ -26,8 +28,8 @@ from typing import Any
 
 import numpy as np
 
-from geometry.result_screen import (ICON_SEEN_T, VS_FIRE_T, VS_KEEP_T, ResultTemplates, count_crowns, crown_scores,
-                                    find_vs, read_pill)
+from geometry.result_screen import (ICON_SEEN_T, VS_FIRE_T, VS_KEEP_T, VS_SHIFTED_BAND, ResultTemplates, count_crowns,
+                                    crown_scores, find_vs, read_pill)
 from prediction_values import (CROWNS_UNREADABLE, ICON_ABSENT, ICON_POL, ICON_UNREADABLE, SIGN_UNREADABLE,
                                outcome_from_evidence)
 
@@ -40,11 +42,15 @@ MISSING_S = 0.6
 SHIFT_UNITS = 0.006
 # Wobble/jitter tolerance of the settled «vs» position.
 HOME_UNITS = 0.006
-# No pill by then means no pill (measured pill readable <= 0.55 s).
+# No pill by the last read means no pill (measured pill readable <= 0.55 s).
 PILL_ABSENT_S = 0.7
-# Crown counts settle >= 1.13 s, the shift starts >= 1.40 s after the «vs»;
-# a burst ending sooner never confirms final counts (no 0:0 «draw» from a skip).
+# Crown counts settle 0.95-2.13 s after the «vs» (one crown after another);
+# the shift starts only after the last one. Counts are final only when the
+# burst saw the shift (or ran to the cap) and the last read is this late; any
+# other end (a hidden/skipped «vs», a pause, a lost game, capture stop) may
+# cut the counts short, so they stay null and never make a «draw».
 CROWNS_FINAL_S = 1.0
+FINAL_REASONS = ("shift", "cap")
 CONFIRM = 2
 END_REASONS = ("shift", "vs_lost", "cap", "no_game", "gap", "capture_end")
 
@@ -70,8 +76,10 @@ class _Burst:
     last: float = 0.0
 
 
-def decide(samples: list[_Sample], *, elapsed: float, pill_seen: bool) -> dict[str, Any]:
-    """Pure decision over the burst samples (in tick order)."""
+def decide(samples: list[_Sample], *, final: bool, pill_seen: bool) -> dict[str, Any]:
+    """Pure decision over the burst samples (in tick order); `final` = the
+    burst ended where the crowns have all landed (shift seen, or the cap)."""
+    last_read = samples[-1].t if samples else 0.0
     confirmed: set[str] = set()
     icon = False
     for previous, current in zip(samples, samples[1:]):
@@ -80,9 +88,14 @@ def decide(samples: list[_Sample], *, elapsed: float, pill_seen: bool) -> dict[s
             if current.sign is not None and current.sign == previous.sign:
                 confirmed.add(current.sign)
     sign = next(iter(confirmed)) if len(confirmed) == 1 else SIGN_UNREADABLE
+    # No trophy-pill template yet (review M-9): a trophy-road pill reads
+    # `absent` (nothing PoL-like) or `unreadable`; `pol` needs the PoL icon on
+    # two consecutive reads. Its VS reads `not_pol` (a cup scores as an empty
+    # line), and the server counts a `not_pol` battle as not ranked with
+    # `absent`, as `unknown` with anything else; never as a win or loss.
     if icon:
         delta_icon = ICON_POL
-    elif pill_seen or elapsed < PILL_ABSENT_S:
+    elif pill_seen or last_read < PILL_ABSENT_S:
         delta_icon = ICON_UNREADABLE
     else:
         delta_icon = ICON_ABSENT
@@ -92,7 +105,8 @@ def decide(samples: list[_Sample], *, elapsed: float, pill_seen: bool) -> dict[s
     # flicker for one sample. Held counts only grow.
     held = [b for a, b in zip(counts, counts[1:]) if a == b]
     growing = all(b[0] >= a[0] and b[1] >= a[1] for a, b in zip(held, held[1:]))
-    if elapsed >= CROWNS_FINAL_S and len(counts) >= CONFIRM and growing and counts[-1] == counts[-2]:
+    if (final and last_read >= CROWNS_FINAL_S and len(counts) >= CONFIRM and growing
+            and counts[-1] == counts[-2]):
         top, bottom = counts[-1]
     return {"outcome": outcome_from_evidence(top, bottom, sign),
             "evidence": {"crowns": {"top": top, "bottom": bottom}, "deltaSign": sign, "deltaIcon": delta_icon}}
@@ -154,7 +168,12 @@ class ResultReader:
             if hit is not None and hit.score >= VS_KEEP_T and hit.uy < burst.home_units - SHIFT_UNITS:
                 return self._finish(now, "shift")
             if hit is None or hit.score < VS_KEEP_T or abs(hit.uy - burst.home_units) > HOME_UNITS:
-                # Hidden (a crown over it), gone (skipped) or misplaced: never read.
+                # Gone from home: shifted up past the band (a fast shift), hidden
+                # (a crown over it), skipped or misplaced. Only the first is final.
+                shifted = find_vs(frame, rect, self.templates, VS_SHIFTED_BAND)
+                if (shifted is not None and shifted.score >= VS_FIRE_T
+                        and shifted.uy < burst.home_units - SHIFT_UNITS):
+                    return self._finish(now, "shift")
                 burst.missing_since = now if burst.missing_since is None else burst.missing_since
                 if now - burst.missing_since >= MISSING_S:
                     return self._finish(now, "vs_lost")
@@ -173,7 +192,7 @@ class ResultReader:
     def _finish(self, now: float, reason: str) -> dict[str, Any]:
         burst = self.burst
         elapsed = now - burst.start
-        report = decide(burst.samples, elapsed=elapsed, pill_seen=burst.pill_seen)
+        report = decide(burst.samples, final=reason in FINAL_REASONS, pill_seen=burst.pill_seen)
         self.diagnostics = {"endReason": reason, "startS": round(burst.start, 3), "elapsedS": round(elapsed, 3),
                             "ticks": burst.ticks,
                             "trace": [[s.t, s.top, s.bottom, int(s.icon), s.sign] for s in burst.samples]}

@@ -10,9 +10,9 @@ from __future__ import annotations
 # One nickname line on the battle-start VS screen.
 LINE_MEDAL = "medal"        # Ultimate Champion medal icon
 LINE_LEAGUE = "league"      # league 1-6 badge
-LINE_TROPHY = "trophy"      # trophy-road cup
+LINE_TROPHY = "trophy"      # trophy-road cup: contract only, no cup template yet (review M-9), reads `empty`
 LINE_EMPTY = "empty"        # no icon under the name
-LINE_OTHER = "other"        # an icon that is not a rank marker (clan badge, laurel cup)
+LINE_OTHER = "other"        # contract only: never produced (no clan-badge/laurel templates, review M-9)
 LINE_UNKNOWN = "unknown"    # unreadable
 RANK_LINES = (LINE_MEDAL, LINE_LEAGUE, LINE_TROPHY, LINE_EMPTY, LINE_OTHER, LINE_UNKNOWN)
 
@@ -33,8 +33,8 @@ SIGN_UNREADABLE = None
 DELTA_SIGNS = (SIGN_PLUS, SIGN_MINUS, SIGN_UNREADABLE)
 
 ICON_POL = "pol"            # medal or league badge in the pill
-ICON_TROPHY = "trophy"
-ICON_ABSENT = "absent"      # no pill (not ranked)
+ICON_TROPHY = "trophy"      # contract only: no trophy-pill template yet (review M-9); reads absent/unreadable
+ICON_ABSENT = "absent"      # no PoL icon and nothing pill-like in the pill box (not ranked)
 ICON_UNREADABLE = "unreadable"
 DELTA_ICONS = (ICON_POL, ICON_TROPHY, ICON_ABSENT, ICON_UNREADABLE)
 
