@@ -547,6 +547,43 @@
     ]
   },
   {
+    "name": "predictions-c2-twitch-prediction-exists-mini",
+    "width": 460,
+    "height": 1000,
+    "fixture": { "streamer": { "predictions": "twitchPredictionExists" } },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\"); })()"]
+  },
+  {
+    "name": "predictions-c2-twitch-prediction-mapped-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": { "streamer": { "predictions": "twitchPredictionMapped" } },
+    "steps": ["(async () => { await window.__h.go('stream', \"Прогнозы\"); })()"]
+  },
+  {
+    "name": "predictions-c2-twitch-refund-confirm-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": { "streamer": { "predictions": "twitchPredictionExists" } },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); await h.click('Отменить и вернуть ставки'); })()"
+    ]
+  },
+  {
+    "name": "predictions-c2-deferred-action-wide",
+    "width": 1100,
+    "height": 1000,
+    "fixture": {
+      "streamer": {
+        "predictions": "locked",
+        "predictionsCommandError": "SERVER_ERROR"
+      }
+    },
+    "steps": [
+      "(async () => { const h = window.__h; await h.go('stream', \"Прогнозы\"); await h.click('Победа'); })()"
+    ]
+  },
+  {
     "name": "predictions-c2-overview-wide",
     "width": 1100,
     "height": 700,

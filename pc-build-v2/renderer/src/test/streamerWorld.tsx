@@ -39,6 +39,8 @@ export function predictionFixture(
     wins: 0,
     locksAt: '2026-10-10T12:00:30.000Z',
     hasBets: true,
+    source: 'snipe',
+    canSettle: true,
     ...patch,
   }
 }
@@ -256,10 +258,12 @@ export function applyStreamerCommand(
       if (command.action === 'predictions.battle') {
         // Deduplicated by request ID: a repeated intent never counts twice.
         if (fake.manualRequests.has(command.requestId)) break
+        if (command.outcome !== 'not_ranked' && !current.canSettle)
+          return failure('VALIDATION_FAILED')
         // «Бой не считается» needs a counted battle (here: a locked prediction); the
         // server never invents one and answers 409.
         if (command.outcome === 'not_ranked' && view.predictions.phase !== 'locked')
-          return failure('VALIDATION_FAILED')
+          return failure('PREDICTION_NO_BATTLE_TO_SKIP')
         fake.manualRequests.add(command.requestId)
         if (command.outcome === 'not_ranked') {
           // The battle is skipped: the prediction and its streak stay as they are.

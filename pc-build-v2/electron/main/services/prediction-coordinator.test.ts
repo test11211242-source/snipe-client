@@ -71,6 +71,8 @@ function status(enabled = true): PredictionStatus {
           wins: 0,
           locksAt: '2026-10-15T12:00:30.000Z',
           hasBets: false,
+          source: 'snipe',
+          canSettle: true,
         }
       : null,
     stats: { resolved: 0, yes: 0, no: 0, canceled: 0 },

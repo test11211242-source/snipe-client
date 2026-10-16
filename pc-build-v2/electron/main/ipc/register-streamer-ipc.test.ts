@@ -129,6 +129,7 @@ describe('streamer mutation capability', () => {
     'UNAUTHORIZED',
     'FORBIDDEN',
     'VALIDATION_FAILED',
+    'PREDICTION_NO_BATTLE_TO_SKIP',
   ])('preserves allowlisted %s through JSON', async (code) => {
     const test = harness()
     const response = { ok: false, error: { code, detail: 'Safe domain detail' } }

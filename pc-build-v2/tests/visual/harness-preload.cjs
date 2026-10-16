@@ -873,6 +873,8 @@ const predictionCurrent = (patch = {}) => ({
   wins: 0,
   locksAt: '2026-10-10T12:00:30.000Z',
   hasBets: true,
+  source: 'snipe',
+  canSettle: true,
   ...patch,
 })
 const predictionStreak = (wins, target) =>
@@ -920,7 +922,19 @@ const PREDICTION_PRESETS = {
     attention: 'reconnect_twitch',
     prediction: predictionCurrent(),
   },
-  twitchPredictionExists: { phase: 'idle', attention: 'twitch_prediction_exists' },
+  twitchPredictionExists: {
+    phase: 'locked',
+    attention: 'twitch_prediction_exists',
+    prediction: predictionCurrent({
+      title: 'Прогноз с Twitch',
+      source: 'twitch',
+      canSettle: false,
+    }),
+  },
+  twitchPredictionMapped: {
+    phase: 'locked',
+    prediction: predictionCurrent({ source: 'twitch', canSettle: true }),
+  },
 }
 const predictionSettings = {
   enabled: true,
@@ -1150,11 +1164,16 @@ const streamerCommand = (command) => {
       if (command.action === 'predictions.battle') {
         // The server deduplicates by request ID: a repeated intent never counts twice.
         if (manualRequests.has(command.requestId)) return Promise.resolve(sok())
+        if (command.outcome !== 'not_ranked' && !current.canSettle)
+          return Promise.resolve({
+            ok: false,
+            error: { code: 'VALIDATION_FAILED', detail: null },
+          })
         // «Бой не считается» needs a counted battle; the server never invents one.
         if (command.outcome === 'not_ranked' && sview.predictions.phase !== 'locked')
           return Promise.resolve({
             ok: false,
-            error: { code: 'VALIDATION_FAILED', detail: null },
+            error: { code: 'PREDICTION_NO_BATTLE_TO_SKIP', detail: null },
           })
         manualRequests.add(command.requestId)
         if (command.outcome === 'not_ranked') {

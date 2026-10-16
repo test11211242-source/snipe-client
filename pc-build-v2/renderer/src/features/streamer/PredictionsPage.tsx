@@ -41,13 +41,14 @@ const KEY_PREFIX = 'predictions.'
 /** A manual command for a prediction that is no longer the current one (server 409). */
 const STALE_PREDICTION = 'Прогноз уже сменился. Проверьте итог.'
 /** A manual command whose result is unknown: it may have been applied. No «повторите». */
-const UNCONFIRMED = 'Сервер не подтвердил действие. Проверьте итог.'
+const UNCONFIRMED = 'Действие ещё может выполниться. Проверьте итог.'
 /** Failures where the server certainly did not apply the command. */
 const REJECTED: Partial<Record<StreamerFailureCode, true>> = {
   UNAUTHORIZED: true,
   FORBIDDEN: true,
   STREAMER_ROLE_REQUIRED: true,
   TWITCH_REQUIRED: true,
+  PREDICTION_NO_BATTLE_TO_SKIP: true,
 }
 
 /**
@@ -198,30 +199,42 @@ function Predictions(): React.JSX.Element {
                 ) : null}
               </div>
               <div className={styles['manual']}>
-                <Button
-                  disabled={busy}
-                  loading={pending('battle')}
-                  onClick={() => void settle(prediction.id, prediction.wins, 'win')}
-                  variant="primary"
-                >
-                  Победа
-                </Button>
-                <Button
-                  disabled={busy}
-                  loading={pending('battle')}
-                  onClick={() => void settle(prediction.id, prediction.wins, 'loss')}
-                >
-                  Поражение
-                </Button>
-                <Button
-                  disabled={busy}
-                  loading={pending('battle')}
-                  onClick={() =>
-                    void settle(prediction.id, prediction.wins, 'not_ranked')
-                  }
-                >
-                  Бой не считается
-                </Button>
+                {prediction.source === 'twitch' ? null : (
+                  <>
+                    {prediction.canSettle ? (
+                      <>
+                        <Button
+                          disabled={busy}
+                          loading={pending('battle')}
+                          onClick={() =>
+                            void settle(prediction.id, prediction.wins, 'win')
+                          }
+                          variant="primary"
+                        >
+                          Победа
+                        </Button>
+                        <Button
+                          disabled={busy}
+                          loading={pending('battle')}
+                          onClick={() =>
+                            void settle(prediction.id, prediction.wins, 'loss')
+                          }
+                        >
+                          Поражение
+                        </Button>
+                      </>
+                    ) : null}
+                    <Button
+                      disabled={busy}
+                      loading={pending('battle')}
+                      onClick={() =>
+                        void settle(prediction.id, prediction.wins, 'not_ranked')
+                      }
+                    >
+                      Бой не считается
+                    </Button>
+                  </>
+                )}
                 <Button
                   disabled={busy}
                   onClick={() => {

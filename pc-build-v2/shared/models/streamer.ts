@@ -60,6 +60,8 @@ export const DEFAULT_PREDICTION_SETTINGS: PredictionSettings = {
   chatProgress: true,
 }
 
+const PredictionSourceSchema = z.enum(['snipe', 'twitch'])
+
 const openPredictionShape = {
   id: z.number().int().positive(),
   title: z.string().max(200),
@@ -68,6 +70,10 @@ const openPredictionShape = {
   wins: z.number().int().nonnegative(),
   locksAt: z.string(),
   hasBets: z.boolean(),
+  /** `twitch`: an adopted prediction that Snipe did not open. */
+  source: PredictionSourceSchema,
+  /** The server may resolve it from a reported battle outcome. */
+  canSettle: z.boolean(),
 }
 const predictionStatsShape = {
   resolved: CountSchema,
@@ -86,7 +92,35 @@ const predictionHistoryItemShape = {
   createdAt: z.string(),
   endedAt: z.string().nullable(),
   settledBy: z.enum(['screen', 'streamer', 'twitch', 'disable', 'stream_end']).nullable(),
+  source: PredictionSourceSchema,
 }
+
+/** Main-projected renderer view items: unknown keys are rejected. */
+const OpenPredictionSchema = z.object(openPredictionShape).strict()
+const PredictionHistoryItemSchema = z.object(predictionHistoryItemShape).strict()
+
+export type PredictionSource = z.infer<typeof PredictionSourceSchema>
+export type OpenPrediction = z.infer<typeof OpenPredictionSchema>
+export type PredictionHistoryItem = z.infer<typeof PredictionHistoryItemSchema>
+
+/**
+ * A server older than the source metadata only served predictions Snipe opened
+ * and could settle; a `twitch` prediction without `canSettle` is never settled.
+ */
+const OpenPredictionResponseSchema = z
+  .object({
+    ...openPredictionShape,
+    source: PredictionSourceSchema.default('snipe'),
+    canSettle: z.boolean().optional(),
+  })
+  .transform(({ canSettle, ...prediction }): OpenPrediction => ({
+    ...prediction,
+    canSettle: canSettle ?? prediction.source === 'snipe',
+  }))
+const PredictionHistoryItemResponseSchema = z.object({
+  ...predictionHistoryItemShape,
+  source: PredictionSourceSchema.default('snipe'),
+})
 
 function predictionStatusShape<
   Prediction extends z.ZodType,
@@ -116,20 +150,21 @@ function predictionStatusShape<
  * Server responses (status, heartbeat, settings save, manual commands):
  * unknown keys are stripped at every level so an additive server field never
  * breaks a released client, while known fields keep their types and bounds.
+ * Missing prediction source metadata takes its pre-metadata meaning.
  */
 export const PredictionStatusSchema = z.object(
   predictionStatusShape(
-    z.object(openPredictionShape),
+    OpenPredictionResponseSchema,
     z.object(predictionStatsShape),
-    z.object(predictionHistoryItemShape),
+    PredictionHistoryItemResponseSchema,
   ),
 )
 
 /** Main-projected renderer view: strict at every level. */
 const predictionStatusViewShape = predictionStatusShape(
-  z.object(openPredictionShape).strict(),
+  OpenPredictionSchema,
   z.object(predictionStatsShape).strict(),
-  z.object(predictionHistoryItemShape).strict(),
+  PredictionHistoryItemSchema,
 )
 
 export type PredictionSettings = z.infer<typeof PredictionSettingsSchema>

@@ -40,6 +40,7 @@ const COMMAND_ERRORS: Record<StreamerFailureCode, string> = {
   REQUEST_TIMEOUT: 'Сервер слишком долго отвечает. Подождите минуту и повторите.',
   SERVER_ERROR: 'На сервере что-то пошло не так. Повторите через пару минут.',
   INVALID_RESPONSE: 'Сервер ответил неожиданно. Повторите через минуту.',
+  PREDICTION_NO_BATTLE_TO_SKIP: 'Нет боя, который можно пропустить',
   STREAMER_COMMAND_FAILED: 'Не удалось выполнить действие. Повторите попытку.',
   TWITCH_OAUTH_URL_REJECTED:
     'Не удалось открыть страницу входа в Twitch: адрес не прошёл проверку. Повторите позже.',
@@ -126,6 +127,8 @@ export function predictionStatusText(
   status: PredictionStatusView,
 ): { tone: Tone; label: string } | null {
   const { prediction, attention } = status
+  if (prediction?.source === 'twitch')
+    return { tone: 'warn', label: PREDICTION_PHRASES.twitchPredictionExists }
   switch (attention) {
     case 'channel_not_eligible':
       return { tone: 'danger', label: PREDICTION_PHRASES.notEligible }

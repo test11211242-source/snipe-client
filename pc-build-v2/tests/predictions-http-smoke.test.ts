@@ -125,6 +125,22 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         { timeout: 5_000 },
       )
       const firstId = await nextPrediction()
+      expect(
+        await service.execute({
+          action: 'predictions.battle',
+          predictionId: firstId,
+          outcome: 'not_ranked',
+          requestId: randomUUID(),
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code: 'PREDICTION_NO_BATTLE_TO_SKIP' },
+      })
+      expect(service.getView().predictions.prediction).toMatchObject({
+        id: firstId,
+        source: 'snipe',
+        canSettle: true,
+      })
       expect(battleListener).not.toBeNull()
       const listener = battleListener as unknown as (
         event: MonitorTriggeredEvent['payload'],
@@ -300,6 +316,59 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       const finalEvidence = await fetch(`${url.origin}/__smoke/evidence`)
       expect(await finalEvidence.json()).toMatchObject({ chatMessages: 1 })
 
+      // A foreign Twitch prediction is adopted, never treated as an own win/loss.
+      expect((await fetch(`${url.origin}/__smoke/reset`, { method: 'POST' })).ok).toBe(
+        true,
+      )
+      expect((await fetch(`${url.origin}/__smoke/foreign`, { method: 'POST' })).ok).toBe(
+        true,
+      )
+      coordinator.notifyContextChanged()
+      await vi.waitFor(
+        async () => {
+          const ready = await api.request({
+            method: 'GET',
+            path: '/api/streamer/predictions/status',
+            schema: PredictionStatusSchema,
+          })
+          expect(ready).toMatchObject({ ok: true, data: { clientReady: true } })
+        },
+        { timeout: 5_000 },
+      )
+      const foreignId = await nextPrediction()
+      const foreignView = await service.refresh()
+      expect(foreignView.predictions.prediction).toMatchObject({
+        id: foreignId,
+        source: 'twitch',
+        canSettle: false,
+      })
+      const unsafeSettlement = await api.request({
+        method: 'POST',
+        path: '/api/streamer/predictions/current/battle',
+        schema: PredictionStatusSchema,
+        body: { predictionId: foreignId, outcome: 'win', requestId: randomUUID() },
+      })
+      expect(unsafeSettlement).toMatchObject({
+        ok: false,
+        error: { code: 'VALIDATION_FAILED', status: 409 },
+      })
+      expect(
+        await service.execute({
+          action: 'predictions.cancel',
+          predictionId: foreignId,
+          confirmed: true,
+        }),
+      ).toMatchObject({ ok: true })
+      expect(service.getView().predictions.stats).toEqual({
+        resolved: 0,
+        yes: 0,
+        no: 0,
+        canceled: 1,
+      })
+      expect(
+        service.getView().predictions.history.find((item) => item.id === foreignId),
+      ).toMatchObject({ phase: 'canceled', source: 'twitch' })
+
       const eventsFile = process.env['CR_C3_EVENTS_JSONL']
       if (eventsFile !== undefined) {
         const replayed = readFileSync(eventsFile, 'utf8')
@@ -380,5 +449,5 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
     } finally {
       await coordinator.shutdown()
     }
-  }, 15_000)
+  }, 30_000)
 })

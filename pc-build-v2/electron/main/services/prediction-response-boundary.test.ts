@@ -6,17 +6,22 @@ import {
   PredictionSettingsSchema,
   PredictionStatusSchema,
   StreamerViewSchema,
+  type OpenPrediction,
+  type PredictionSource,
 } from '../../../shared/models/streamer'
 import { createProductionServerConfig } from '../infrastructure/server-config'
 import { ApiClient } from './api-client'
 import { parsePredictions } from './streamer-adapters'
+
+type PredictionMetadata = Pick<OpenPrediction, 'source' | 'canSettle'>
 
 const logger = {
   debug: vi.fn<(message: string, context?: unknown) => void>(),
   warn: vi.fn<(message: string, context?: unknown) => void>(),
 }
 
-const prediction = {
+// The open prediction and history item a server sent before source metadata.
+const legacyPrediction = {
   id: 41,
   title: 'Win the next battle?',
   mode: 'each_battle',
@@ -25,8 +30,9 @@ const prediction = {
   locksAt: '2026-10-15T12:00:30Z',
   hasBets: false,
 } as const
+const prediction = { ...legacyPrediction, source: 'snipe', canSettle: true } as const
 const stats = { resolved: 3, yes: 2, no: 1, canceled: 0 }
-const historyItem = {
+const legacyHistoryItem = {
   id: 40,
   twitchPredictionId: 'tw-40',
   title: 'Win the next battle?',
@@ -38,6 +44,7 @@ const historyItem = {
   endedAt: '2026-10-15T11:55:00Z',
   settledBy: 'screen',
 } as const
+const historyItem = { ...legacyHistoryItem, source: 'snipe' } as const
 const knownStatus = {
   enabled: true,
   live: true,
@@ -52,11 +59,10 @@ const knownStatus = {
 // A newer server adds fields at every level of the payload.
 const remoteStatus = {
   ...knownStatus,
-  source: 'snipe',
   serverRevision: 7,
-  prediction: { ...prediction, source: 'twitch', outcomes: [{ id: 'yes' }] },
+  prediction: { ...prediction, outcomes: [{ id: 'yes' }] },
   stats: { ...stats, refunded: 4 },
-  history: [{ ...historyItem, source: 'snipe', battleId: 'battle-40' }],
+  history: [{ ...historyItem, battleId: 'battle-40' }],
 }
 const remoteSettings = { ...DEFAULT_PREDICTION_SETTINGS, autoCancelMinutes: 15 }
 
@@ -86,6 +92,16 @@ function getSettings(body: unknown) {
   })
 }
 
+/** HTTP 200 → response schema → adapter → strict main-renderer view. */
+async function projectStatus(body: unknown) {
+  const status = await getStatus(body)
+  const settings = await getSettings(remoteSettings)
+  if (!status.ok || !settings.ok) throw new Error('Server snapshot was rejected')
+  return StreamerViewSchema.shape.predictions.parse(
+    parsePredictions(status.data, settings.data),
+  )
+}
+
 describe('prediction server response boundary', () => {
   it.each([false, true])(
     'projects current server enabled=%s through a fresh HTTP client, not local settings',
@@ -107,23 +123,75 @@ describe('prediction server response boundary', () => {
   )
 
   it('projects an HTTP 200 payload with nested additive fields into the strict view', async () => {
-    const status = await getStatus(remoteStatus)
-    const settings = await getSettings(remoteSettings)
-    if (!status.ok || !settings.ok) throw new Error('Additive fields were rejected')
-
-    const projected = parsePredictions(status.data, settings.data)
-    const expected = { ...knownStatus, settings: DEFAULT_PREDICTION_SETTINGS }
-    expect(projected).toEqual(expected)
-    expect(projected).not.toHaveProperty('source')
+    const projected = await projectStatus(remoteStatus)
+    expect(projected).toEqual({ ...knownStatus, settings: DEFAULT_PREDICTION_SETTINGS })
     expect(projected).not.toHaveProperty('serverRevision')
-    expect(projected.prediction).not.toHaveProperty('source')
     expect(projected.prediction).not.toHaveProperty('outcomes')
     expect(projected.stats).not.toHaveProperty('refunded')
-    expect(projected.history[0]).not.toHaveProperty('source')
     expect(projected.history[0]).not.toHaveProperty('battleId')
     expect(projected.settings).not.toHaveProperty('autoCancelMinutes')
-    expect(StreamerViewSchema.shape.predictions.parse(projected)).toEqual(expected)
   })
+
+  it.each<[PredictionSource, boolean]>([
+    ['snipe', true],
+    ['snipe', false],
+    ['twitch', true],
+    ['twitch', false],
+  ])(
+    'preserves an open %s prediction with canSettle=%s into the strict view',
+    async (source, canSettle) => {
+      const projected = await projectStatus({
+        ...remoteStatus,
+        attention: source === 'twitch' ? 'twitch_prediction_exists' : null,
+        prediction: { ...remoteStatus.prediction, source, canSettle },
+      })
+      expect(projected.prediction).toEqual({ ...prediction, source, canSettle })
+    },
+  )
+
+  it('preserves every history item source into the strict view', async () => {
+    const projected = await projectStatus({
+      ...remoteStatus,
+      history: [
+        { ...historyItem, id: 40, source: 'snipe', battleId: 'battle-40' },
+        { ...historyItem, id: 39, source: 'twitch', battleId: 'battle-39' },
+      ],
+    })
+    expect(projected.history).toEqual([
+      { ...historyItem, id: 40, source: 'snipe' },
+      { ...historyItem, id: 39, source: 'twitch' },
+    ])
+  })
+
+  it.each<[string, Record<string, unknown>, PredictionMetadata]>([
+    ['no metadata', legacyPrediction, { source: 'snipe', canSettle: true }],
+    [
+      'only a snipe source',
+      { ...legacyPrediction, source: 'snipe' },
+      { source: 'snipe', canSettle: true },
+    ],
+    [
+      'only a twitch source',
+      { ...legacyPrediction, source: 'twitch' },
+      { source: 'twitch', canSettle: false },
+    ],
+    [
+      'only canSettle=false',
+      { ...legacyPrediction, canSettle: false },
+      { source: 'snipe', canSettle: false },
+    ],
+  ])(
+    'applies compatible defaults to an older server payload with %s',
+    async (_case, open, metadata) => {
+      const projected = await projectStatus({
+        ...knownStatus,
+        prediction: open,
+        history: [legacyHistoryItem],
+      })
+      expect(projected.prediction).toEqual({ ...legacyPrediction, ...metadata })
+      expect(projected.history).toEqual([{ ...legacyHistoryItem, source: 'snipe' }])
+    },
+  )
 
   it('strips additive fields when the adapter receives a raw server payload', () => {
     expect(parsePredictions(remoteStatus, remoteSettings)).toEqual({
@@ -141,6 +209,30 @@ describe('prediction server response boundary', () => {
     [
       'a non-positive prediction id',
       { ...remoteStatus, prediction: { ...prediction, id: 0 } },
+    ],
+    [
+      'an open prediction source outside the enum',
+      { ...remoteStatus, prediction: { ...prediction, source: 'youtube' } },
+    ],
+    [
+      'a null open prediction source',
+      { ...remoteStatus, prediction: { ...prediction, source: null } },
+    ],
+    [
+      'a non-boolean canSettle',
+      { ...remoteStatus, prediction: { ...prediction, canSettle: 'yes' } },
+    ],
+    [
+      'a null canSettle',
+      { ...remoteStatus, prediction: { ...prediction, canSettle: null } },
+    ],
+    [
+      'a history source outside the enum',
+      { ...remoteStatus, history: [{ ...historyItem, source: 'youtube' }] },
+    ],
+    [
+      'a null history source',
+      { ...remoteStatus, history: [{ ...historyItem, source: null }] },
     ],
     ['a negative count', { ...remoteStatus, stats: { ...stats, yes: -1 } }],
     [
@@ -179,14 +271,35 @@ describe('prediction server response boundary', () => {
   })
 
   it.each([
-    ['the predictions section', { source: 'snipe' }],
-    ['the open prediction', { prediction: { ...prediction, source: 'twitch' } }],
+    ['the predictions section', { serverRevision: 7 }],
+    ['the open prediction', { prediction: { ...prediction, outcomes: [{ id: 'yes' }] } }],
     ['the stats', { stats: { ...stats, refunded: 4 } }],
-    ['a history item', { history: [{ ...historyItem, source: 'snipe' }] }],
+    ['a history item', { history: [{ ...historyItem, battleId: 'battle-40' }] }],
     ['the settings', { settings: remoteSettings }],
   ])('keeps the renderer view strict for unknown keys in %s', (_case, extra) => {
     const view = { ...knownStatus, settings: DEFAULT_PREDICTION_SETTINGS }
     expect(StreamerViewSchema.shape.predictions.safeParse(view).success).toBe(true)
+    expect(
+      StreamerViewSchema.shape.predictions.safeParse({ ...view, ...extra }).success,
+    ).toBe(false)
+  })
+
+  it.each([
+    [
+      'an open prediction without source',
+      { prediction: { ...legacyPrediction, canSettle: true } },
+    ],
+    [
+      'an open prediction without canSettle',
+      { prediction: { ...legacyPrediction, source: 'twitch' } },
+    ],
+    [
+      'an open prediction source outside the enum',
+      { prediction: { ...prediction, source: 'youtube' } },
+    ],
+    ['a history item without source', { history: [legacyHistoryItem] }],
+  ])('requires known prediction metadata in the renderer view: %s', (_case, extra) => {
+    const view = { ...knownStatus, settings: DEFAULT_PREDICTION_SETTINGS }
     expect(
       StreamerViewSchema.shape.predictions.safeParse({ ...view, ...extra }).success,
     ).toBe(false)

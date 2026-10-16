@@ -438,17 +438,24 @@ allow 2–10 wins, random bounds 1–10 with an ordered range. Changes apply to 
 prediction. Voting closes only on the server/Twitch timer; no trigger locks voting.
 
 The prediction page renders server phases, attention, streak progress and persisted
-yes/no/canceled counts. Every unsettled prediction has manual win/loss, «Бой не считается»
-and refund controls, including disabled predictions with bets. A refund confirmation binds
-the selected prediction ID; a stale-ID failure closes it and shows a page banner.
+yes/no/canceled counts. Own unsettled predictions have manual win/loss, «Бой не считается»
+and refund controls, including disabled predictions with bets. Server `source` and
+`canSettle` metadata survive through main to the renderer. Predictions started on Twitch
+show only the refund control, even with a verified win/loss mapping; an explicit settlement
+refusal also hides win/loss for an own prediction. A refund confirmation binds the selected
+prediction ID; a stale-ID failure closes it and shows a page banner.
 The main IPC commands are `predictions.settings.save`, `predictions.battle` and
 `predictions.cancel`. Manual settlement is never automatically retried. Each account,
 displayed prediction/progress and outcome keeps its UUID intent after an uncertain answer,
 even across page navigation; a confirmed skip starts a new intent because it changes no wins.
 After a failed command, main refreshes server state and the renderer consumes that view
-before unlocking controls. Uncertain outcomes ask the streamer to check the result.
+before unlocking controls. Uncertain outcomes say the action may still execute and ask
+the streamer to check the result. An empty skip has its own allowlisted server code and
+fixed phrase, distinct from a genuinely stale prediction ID.
 Server response schemas strip additive fields recursively while preserving known-field
 validation; outgoing settings, manual commands and the main-to-renderer view stay strict.
+Older server responses default a missing source to `snipe` and a missing settlement
+capability to true only for `snipe` (false for `twitch`); explicit server values are kept.
 
 `PredictionResultConfigurationRepository` and its existing
 `prediction-result-config.v1` files remain for the v5 capture migration contract, without
@@ -485,10 +492,12 @@ schema in local Docker PostgreSQL, synthetic authentication and the server tests
 Creation is polled/ticked for at most five seconds because a ready heartbeat can still
 own the live-operation lease. The coordinator's result log is awaited separately for at
 most five seconds: server settlement can be visible before the HTTP response is logged.
-The fixture applies prediction migrations 077–080 to its own schema and clears its
-operation/manual-request rows on reset. It exercises win, loss, non-ranked skip (including
-repeating the same UUID intent), refund and streak settlement. It never connects to Twitch
-or reads owner configuration. From `pc-build-v2`, start the fixture in one terminal
+The fixture applies prediction migrations 077–081 to its own schema and clears its
+operation/manual-request rows on reset. It exercises win, loss, empty/non-ranked skip
+(including repeating the same UUID intent), refund and streak settlement, then adopts
+an external 61-second prediction with unrelated outcomes, preserves its metadata, rejects
+an unsafe win and refunds it. It never connects to Twitch or reads owner configuration.
+From `pc-build-v2`, start the fixture in one terminal
 (requires the server Windows venv and local Docker compose):
 
 ```powershell

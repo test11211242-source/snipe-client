@@ -309,6 +309,8 @@ describe('recovery after a failed prediction command', () => {
       wins,
       locksAt: '2026-07-12T12:00:30.000Z',
       hasBets: true,
+      source: 'snipe',
+      canSettle: true,
     },
   })
   const battle = (outcome: 'win' | 'loss' | 'not_ranked' = 'win') => ({
@@ -336,6 +338,7 @@ describe('recovery after a failed prediction command', () => {
     'SERVER_ERROR',
     'INVALID_RESPONSE',
     'VALIDATION_FAILED',
+    'PREDICTION_NO_BATTLE_TO_SKIP',
   ] as const)(
     'refreshes the status after %s and keeps the original error',
     async (code) => {

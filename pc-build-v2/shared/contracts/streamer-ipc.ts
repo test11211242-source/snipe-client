@@ -134,6 +134,7 @@ export const StreamerCommandErrorCodeSchema = z.enum([
   'OVERLAY_URL_UNAVAILABLE',
   'TITLE_ACCOUNT_SELECTION_CONFLICT',
   'TITLE_APPLY_UNAVAILABLE',
+  'PREDICTION_NO_BATTLE_TO_SKIP',
 ])
 export const StreamerWarningCodeSchema = z.enum([
   'TITLE_UPDATE_FAILED',

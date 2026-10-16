@@ -23,6 +23,7 @@ os.environ['JWT_SECRET_KEY'] = uuid4().hex + uuid4().hex
 sys.path[:0] = [str(root / 'server'), str(root / 'server/tests')]
 
 import asyncpg
+from aiohttp import ClientSession
 from fastapi import FastAPI
 import uvicorn
 from fakes.fake_helix import FakeHelix
@@ -51,6 +52,7 @@ async def lifespan(app):
             '078_add_prediction_live_override.sql',
             '079_harden_streamer_predictions.sql',
             '080_allow_imported_prediction_windows.sql',
+            '081_verify_prediction_outcome_mapping.sql',
         ):
             await admin.execute((root / 'data/migrations' / name).read_text(encoding='utf-8'))
         pool = await asyncpg.create_pool(**LOCAL_DATABASE,
@@ -124,6 +126,24 @@ async def unrelated_status():
 async def tick():
     await app.state.streamer_predictions.tick(USER)
     return await app.state.streamer_predictions.status(USER)
+
+
+@app.post('/__smoke/foreign')
+async def foreign_prediction():
+    async with ClientSession() as http:
+        async with http.post(
+            f'{app.state.smoke.helix.base_url}/helix/predictions',
+            headers={'Authorization': 'Bearer db-token', 'Client-Id': 'synthetic-client'},
+            json={
+                'broadcaster_id': 'synthetic-channel',
+                'title': 'Прогноз с Twitch',
+                'prediction_window': 61,
+                'outcomes': [{'title': 'Первый'}, {'title': 'Второй'}],
+            },
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError('Synthetic foreign prediction creation failed')
+    return {'created': True}
 
 
 @app.post('/__smoke/bets')

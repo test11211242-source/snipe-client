@@ -210,7 +210,8 @@ const UUID_INTENT: unknown = expect.stringMatching(UUID)
 const SKIP = 'Бой не считается'
 const MANUAL = ['Победа', 'Поражение', SKIP, CANCEL]
 const STALE = 'Прогноз уже сменился. Проверьте итог.'
-const UNCONFIRMED = 'Сервер не подтвердил действие. Проверьте итог.'
+const UNCONFIRMED = 'Действие ещё может выполниться. Проверьте итог.'
+const NO_BATTLE = 'Нет боя, который можно пропустить'
 
 /** The request IDs of every manual battle command sent so far, in order. */
 const requestIds = (world: StreamWorld): string[] =>
@@ -310,7 +311,7 @@ describe('predictions: manual settle', () => {
     if (patch.phase === 'locked')
       expect(screen.queryByText(/Не получилось/)).not.toBeInTheDocument()
     // No counted battle: the server invents none and answers 409.
-    else expect(await screen.findByText(STALE)).toBeVisible()
+    else expect(await screen.findByText(NO_BATTLE)).toBeVisible()
   })
 
   it.each(STATES)('%s: cancel refunds after one confirmation', async (_, patch) => {
@@ -448,6 +449,109 @@ describe('predictions: manual settle', () => {
     expect(commandsOf(world, 'predictions.battle')).toMatchObject([{ predictionId: 41 }])
     expect(button('Победа')).toBeEnabled()
   })
+})
+
+describe('predictions: adopted Twitch predictions are refund-only', () => {
+  it.each([false, true])(
+    'offers only refund for a Twitch prediction even when canSettle=%s',
+    async (canSettle) => {
+      const world = mountPredictions(
+        running({
+          phase: 'locked',
+          attention: 'result_unknown',
+          prediction: predictionFixture({ source: 'twitch', canSettle }),
+        }),
+      )
+      expect(
+        await screen.findByText(PREDICTION_PHRASES.twitchPredictionExists),
+      ).toBeVisible()
+      for (const name of ['Победа', 'Поражение', SKIP])
+        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+      fireEvent.click(button(CANCEL))
+      const dialog = await screen.findByRole('alertdialog', { name: 'Отменить прогноз?' })
+      expect(commandsOf(world, 'predictions.cancel')).toHaveLength(0)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Вернуть ставки' }))
+      expect(await screen.findByText('Прогноза сейчас нет')).toBeVisible()
+      expect(commandsOf(world, 'predictions.cancel')).toEqual([
+        { action: 'predictions.cancel', predictionId: 41, confirmed: true },
+      ])
+      expect(commandsOf(world, 'predictions.battle')).toHaveLength(0)
+    },
+  )
+
+  it('keeps the foreign origin visible without an attention code', async () => {
+    mountPredictions(
+      running({ prediction: predictionFixture({ source: 'twitch', canSettle: true }) }),
+    )
+    expect(
+      await screen.findByText(PREDICTION_PHRASES.twitchPredictionExists),
+    ).toBeVisible()
+    expect(button(CANCEL)).toBeEnabled()
+    for (const name of ['Победа', 'Поражение', SKIP])
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+  })
+
+  it('respects an explicit settlement refusal for a Snipe prediction', async () => {
+    mountPredictions(
+      running({
+        phase: 'locked',
+        prediction: predictionFixture({ source: 'snipe', canSettle: false }),
+      }),
+    )
+    expect(await screen.findByRole('button', { name: CANCEL })).toBeEnabled()
+    expect(button(SKIP)).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Победа' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Поражение' })).not.toBeInTheDocument()
+  })
+})
+
+describe('predictions: precise manual failure phrases', () => {
+  it('distinguishes an empty skip from a stale prediction', async () => {
+    const world = mountPredictions(running())
+    fireEvent.click(await screen.findByRole('button', { name: SKIP }))
+    expect(await screen.findByText(NO_BATTLE)).toBeVisible()
+    expect(screen.queryByText(STALE)).not.toBeInTheDocument()
+    expect(world.fake.view.predictions.prediction?.id).toBe(41)
+    expect(commandsOf(world, 'predictions.battle')).toHaveLength(1)
+  })
+
+  it('still reports a genuinely stale skip as a changed prediction', async () => {
+    const world = mountPredictions(running())
+    world.fake.handlers.push((command, fake) => {
+      if (command.action !== 'predictions.battle') return undefined
+      fake.view.predictions.prediction = predictionFixture({ id: 42 })
+      return failure('VALIDATION_FAILED')
+    })
+    fireEvent.click(await screen.findByRole('button', { name: SKIP }))
+    expect(await screen.findByText(STALE)).toBeVisible()
+    expect(screen.queryByText(NO_BATTLE)).not.toBeInTheDocument()
+    expect(world.fake.view.predictions.prediction?.id).toBe(42)
+  })
+
+  it.each(['battle', 'cancel'] as const)(
+    'says a 503 %s action may still execute without retrying it',
+    async (kind) => {
+      const world = mountPredictions(running({ phase: 'locked' }))
+      const action = kind === 'battle' ? 'predictions.battle' : 'predictions.cancel'
+      world.fake.handlers.push((command) =>
+        command.action === action ? failure('SERVER_ERROR') : undefined,
+      )
+      if (kind === 'battle')
+        fireEvent.click(await screen.findByRole('button', { name: 'Победа' }))
+      else {
+        fireEvent.click(await screen.findByRole('button', { name: CANCEL }))
+        const dialog = await screen.findByRole('alertdialog', {
+          name: 'Отменить прогноз?',
+        })
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Вернуть ставки' }))
+      }
+      expect(await screen.findByText(UNCONFIRMED)).toBeVisible()
+      expect(
+        screen.queryByText(describeCommandError('SERVER_ERROR')),
+      ).not.toBeInTheDocument()
+      expect(commandsOf(world, action)).toHaveLength(1)
+    },
+  )
 })
 
 describe('predictions: a lost manual response', () => {
