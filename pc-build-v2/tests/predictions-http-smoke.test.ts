@@ -398,6 +398,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       expect(
         (await fetch(`${url.origin}/__smoke/foreign/resolve`, { method: 'POST' })).ok,
       ).toBe(true)
+      // The server re-reads an open prediction from Twitch every 15 seconds.
       await vi.waitFor(
         async () => {
           const response = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
@@ -405,7 +406,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
           const closed = PredictionStatusSchema.parse(await response.json())
           expect(closed.prediction?.id).not.toBe(externalId)
         },
-        { timeout: 5_000 },
+        { timeout: 20_000, interval: 500 },
       )
       const externalView = (await service.refresh()).predictions
       expect(externalView.history.find((item) => item.id === externalId)).toMatchObject({
@@ -495,5 +496,5 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
     } finally {
       await coordinator.shutdown()
     }
-  }, 45_000)
+  }, 60_000)
 })
