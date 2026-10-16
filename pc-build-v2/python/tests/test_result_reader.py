@@ -201,6 +201,21 @@ def test_a_shift_seen_after_a_hidden_vs_keeps_counts_only_after_one_tick(monkeyp
     assert report["outcome"] == ("loss" if crowns["top"] is None else "draw")
 
 
+def test_a_pol_icon_below_the_seen_score_still_counts_as_a_pill(monkeypatch) -> None:
+    # Review R1-C3 probe: the medal is found at 0.52 (>= ICON_T, < ICON_SEEN_T)
+    # on alternating reads only; that is a pill, never `absent`.
+    screen = Screen(monkeypatch)
+    reads = iter([PillReading(0.52, "medal", "-", 0.25), PillReading(0.30, None, None, None)] * 20)
+    monkeypatch.setattr(rr, "read_pill", lambda frame, rect, vs, t: next(reads))
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, delay=0)
+    screen.vs = {round(30 + t / 10, 1): (0.85, 0.024) for t in range(0, 16)}
+    screen.vs[31.6] = (0.8, 0.01)
+    (_, report, reason), = run(reader, screen, 30.0, 33.0)
+    assert reason == "shift"
+    assert report["evidence"]["deltaIcon"] == "unreadable" and report["outcome"] == "unknown"
+
+
 def test_hidden_vs_is_not_read_and_ends_after_missing_time(monkeypatch) -> None:
     screen = Screen(monkeypatch)
     reader = ResultReader(templates=object())

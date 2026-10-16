@@ -186,7 +186,8 @@ class ResultReader:
             burst.home = (hit.x, hit.y)
         crowns = count_crowns(crown_scores(frame, rect, burst.home, self.templates))
         pill = read_pill(frame, rect, burst.home, self.templates)
-        burst.pill_seen |= pill.icon_score >= ICON_SEEN_T
+        # A detected PoL icon is a pill, even below the «pill seen» score (review R1-C3).
+        burst.pill_seen |= pill.icon is not None or pill.icon_score >= ICON_SEEN_T
         burst.samples.append(_Sample(round(now - burst.start, 3), crowns["top"], crowns["bottom"],
                                      pill.icon is not None, pill.sign))
         if now - burst.start >= BURST_CAP_S:
