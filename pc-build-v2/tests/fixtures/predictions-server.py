@@ -132,7 +132,7 @@ async def tick():
 async def foreign_prediction():
     async with ClientSession() as http:
         async with http.post(
-            f'{app.state.smoke.helix.base_url}/helix/predictions',
+            f'{app.state.smoke.helix.base_url}/predictions',
             headers={'Authorization': 'Bearer db-token', 'Client-Id': 'synthetic-client'},
             json={
                 'broadcaster_id': 'synthetic-channel',
