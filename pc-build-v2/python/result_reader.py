@@ -51,6 +51,10 @@ PILL_ABSENT_S = 0.7
 # cut the counts short, so they stay null and never make a «draw».
 CROWNS_FINAL_S = 1.0
 FINAL_REASONS = ("shift", "cap")
+# A shift seen right after the «vs» went unread for longer than one tick
+# (0.1 s at 10 FPS) is not final: a crown landing over it hides it for
+# 0.2-0.4 s, and its counts were read before that crown (review R1-C1).
+FINAL_GAP_S = 0.15
 CONFIRM = 2
 END_REASONS = ("shift", "vs_lost", "cap", "no_game", "gap", "capture_end")
 
@@ -182,7 +186,8 @@ class ResultReader:
             burst.home = (hit.x, hit.y)
         crowns = count_crowns(crown_scores(frame, rect, burst.home, self.templates))
         pill = read_pill(frame, rect, burst.home, self.templates)
-        burst.pill_seen |= pill.icon_score >= ICON_SEEN_T
+        # A detected PoL icon is a pill, even below the «pill seen» score (review R1-C3).
+        burst.pill_seen |= pill.icon is not None or pill.icon_score >= ICON_SEEN_T
         burst.samples.append(_Sample(round(now - burst.start, 3), crowns["top"], crowns["bottom"],
                                      pill.icon is not None, pill.sign))
         if now - burst.start >= BURST_CAP_S:
@@ -192,7 +197,9 @@ class ResultReader:
     def _finish(self, now: float, reason: str) -> dict[str, Any]:
         burst = self.burst
         elapsed = now - burst.start
-        report = decide(burst.samples, final=reason in FINAL_REASONS, pill_seen=burst.pill_seen)
+        final = reason in FINAL_REASONS and (
+            burst.missing_since is None or now - burst.missing_since <= FINAL_GAP_S)
+        report = decide(burst.samples, final=final, pill_seen=burst.pill_seen)
         self.diagnostics = {"endReason": reason, "startS": round(burst.start, 3), "elapsedS": round(elapsed, 3),
                             "ticks": burst.ticks,
                             "trace": [[s.t, s.top, s.bottom, int(s.icon), s.sign] for s in burst.samples]}
