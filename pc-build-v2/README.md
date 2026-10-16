@@ -492,11 +492,13 @@ schema in local Docker PostgreSQL, synthetic authentication and the server tests
 Creation is polled/ticked for at most five seconds because a ready heartbeat can still
 own the live-operation lease. The coordinator's result log is awaited separately for at
 most five seconds: server settlement can be visible before the HTTP response is logged.
-The fixture applies prediction migrations 077–081 to its own schema and clears its
+The fixture applies prediction migrations 077–082 to its own schema and clears its
 operation/manual-request rows on reset. It exercises win, loss, empty/non-ranked skip
 (including repeating the same UUID intent), refund and streak settlement, then adopts
 an external 61-second prediction with unrelated outcomes, preserves its metadata, rejects
-an unsafe win and refunds it. It never connects to Twitch or reads owner configuration.
+an unsafe win and refunds it. A second external prediction resolved on the fake Twitch
+closes as history phase `resolved_external` (`settledBy: twitch`), counted in no stat.
+It never connects to Twitch or reads owner configuration.
 From `pc-build-v2`, start the fixture in one terminal
 (requires the server Windows venv and local Docker compose):
 

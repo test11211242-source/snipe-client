@@ -369,6 +369,52 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         service.getView().predictions.history.find((item) => item.id === foreignId),
       ).toMatchObject({ phase: 'canceled', source: 'twitch' })
 
+      // A foreign prediction the streamer resolves on Twitch closes locally as
+      // `resolved_external` and is counted in none of the stats.
+      expect((await fetch(`${url.origin}/__smoke/reset`, { method: 'POST' })).ok).toBe(
+        true,
+      )
+      expect((await fetch(`${url.origin}/__smoke/foreign`, { method: 'POST' })).ok).toBe(
+        true,
+      )
+      coordinator.notifyContextChanged()
+      await vi.waitFor(
+        async () => {
+          const ready = await api.request({
+            method: 'GET',
+            path: '/api/streamer/predictions/status',
+            schema: PredictionStatusSchema,
+          })
+          expect(ready).toMatchObject({ ok: true, data: { clientReady: true } })
+        },
+        { timeout: 5_000 },
+      )
+      const externalId = await nextPrediction()
+      expect((await service.refresh()).predictions.prediction).toMatchObject({
+        id: externalId,
+        source: 'twitch',
+        canSettle: false,
+      })
+      expect(
+        (await fetch(`${url.origin}/__smoke/foreign/resolve`, { method: 'POST' })).ok,
+      ).toBe(true)
+      await vi.waitFor(
+        async () => {
+          const response = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
+          expect(response.ok).toBe(true)
+          const closed = PredictionStatusSchema.parse(await response.json())
+          expect(closed.prediction?.id).not.toBe(externalId)
+        },
+        { timeout: 5_000 },
+      )
+      const externalView = (await service.refresh()).predictions
+      expect(externalView.history.find((item) => item.id === externalId)).toMatchObject({
+        phase: 'resolved_external',
+        settledBy: 'twitch',
+        source: 'twitch',
+      })
+      expect(externalView.stats).toEqual({ resolved: 0, yes: 0, no: 0, canceled: 0 })
+
       const eventsFile = process.env['CR_C3_EVENTS_JSONL']
       if (eventsFile !== undefined) {
         const replayed = readFileSync(eventsFile, 'utf8')
@@ -449,5 +495,5 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
     } finally {
       await coordinator.shutdown()
     }
-  }, 30_000)
+  }, 45_000)
 })

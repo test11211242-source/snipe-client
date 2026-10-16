@@ -163,6 +163,29 @@ describe('prediction server response boundary', () => {
     ])
   })
 
+  it('projects a history item Twitch closed without counting it in the stats', async () => {
+    const external = {
+      ...historyItem,
+      id: 39,
+      twitchPredictionId: 'tw-39',
+      title: 'Who wins the tournament?',
+      phase: 'resolved_external',
+      settledBy: 'twitch',
+      source: 'twitch',
+    } as const
+    const projected = await projectStatus({
+      ...remoteStatus,
+      phase: 'idle',
+      prediction: null,
+      history: [{ ...external, battleId: null }, remoteStatus.history[0]],
+    })
+    expect(projected.phase).toBe('idle')
+    expect(projected.prediction).toBeNull()
+    expect(projected.history).toEqual([external, historyItem])
+    // Stats are the server's counts as sent; the client derives none from history.
+    expect(projected.stats).toEqual(stats)
+  })
+
   it.each<[string, Record<string, unknown>, PredictionMetadata]>([
     ['no metadata', legacyPrediction, { source: 'snipe', canSettle: true }],
     [
@@ -205,6 +228,10 @@ describe('prediction server response boundary', () => {
     [
       'a settledBy outside the unchanged enum',
       { ...remoteStatus, history: [{ ...historyItem, settledBy: 'snipe' }] },
+    ],
+    [
+      'a history phase outside the enum',
+      { ...remoteStatus, history: [{ ...historyItem, phase: 'resolved_draw' }] },
     ],
     [
       'a non-positive prediction id',

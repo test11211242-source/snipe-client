@@ -88,7 +88,18 @@ const predictionHistoryItemShape = {
   mode: PredictionModeSchema,
   target: z.number().int().min(1).max(10),
   wins: z.number().int().nonnegative(),
-  phase: z.enum(['voting', 'locked', 'resolved_yes', 'resolved_no', 'canceled']),
+  /**
+   * `resolved_external`: Twitch closed a prediction Snipe could not settle (`settledBy:
+   * twitch`); the server counts it in none of the stats.
+   */
+  phase: z.enum([
+    'voting',
+    'locked',
+    'resolved_yes',
+    'resolved_no',
+    'resolved_external',
+    'canceled',
+  ]),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
   settledBy: z.enum(['screen', 'streamer', 'twitch', 'disable', 'stream_end']).nullable(),

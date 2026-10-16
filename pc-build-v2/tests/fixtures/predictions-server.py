@@ -53,6 +53,7 @@ async def lifespan(app):
             '079_harden_streamer_predictions.sql',
             '080_allow_imported_prediction_windows.sql',
             '081_verify_prediction_outcome_mapping.sql',
+            '082_close_external_predictions.sql',
         ):
             await admin.execute((root / 'data/migrations' / name).read_text(encoding='utf-8'))
         pool = await asyncpg.create_pool(**LOCAL_DATABASE,
@@ -144,6 +145,27 @@ async def foreign_prediction():
             if response.status != 200:
                 raise RuntimeError('Synthetic foreign prediction creation failed')
     return {'created': True}
+
+
+@app.post('/__smoke/foreign/resolve')
+async def resolve_foreign_on_twitch():
+    """The streamer resolves the open foreign prediction on Twitch (first outcome wins)."""
+    [open_prediction] = [item for item in app.state.smoke.helix.predictions.values()
+                         if item['status'] in ('ACTIVE', 'LOCKED')]
+    async with ClientSession() as http:
+        async with http.patch(
+            f'{app.state.smoke.helix.base_url}/predictions',
+            headers={'Authorization': 'Bearer db-token', 'Client-Id': 'synthetic-client'},
+            json={
+                'broadcaster_id': 'synthetic-channel',
+                'id': open_prediction['id'],
+                'status': 'RESOLVED',
+                'winning_outcome_id': open_prediction['outcomes'][0]['id'],
+            },
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError('Synthetic foreign prediction resolution failed')
+    return {'resolved': True}
 
 
 @app.post('/__smoke/bets')
