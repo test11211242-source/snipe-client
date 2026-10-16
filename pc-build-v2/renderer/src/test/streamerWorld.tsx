@@ -195,10 +195,16 @@ export interface StreamerFake {
   widget: WidgetStatus
   /** First handler returning a result wins; otherwise the built-in state machine runs. */
   handlers: CommandHandler[]
+  /** Manual request IDs the "server" applied; a repeat is answered, not re-applied. */
+  manualRequests: Set<string>
   command: Mock<(command: StreamerCommand) => Promise<StreamerCommandResult>>
 }
 
-function applyDefault(
+/**
+ * The built-in "server" state machine. Exported so a handler can apply a command and
+ * still lose its response (an applied press whose answer never arrived).
+ */
+export function applyStreamerCommand(
   fake: StreamerFake,
   command: StreamerCommand,
 ): StreamerCommandResult {
@@ -247,6 +253,24 @@ function applyDefault(
       const current = view.predictions.prediction
       // The server answers 409 for a prediction that is no longer the current one.
       if (current?.id !== command.predictionId) return failure('VALIDATION_FAILED')
+      if (command.action === 'predictions.battle') {
+        // Deduplicated by request ID: a repeated intent never counts twice.
+        if (fake.manualRequests.has(command.requestId)) break
+        // «Бой не считается» needs a counted battle (here: a locked prediction); the
+        // server never invents one and answers 409.
+        if (command.outcome === 'not_ranked' && view.predictions.phase !== 'locked')
+          return failure('VALIDATION_FAILED')
+        fake.manualRequests.add(command.requestId)
+        if (command.outcome === 'not_ranked') {
+          // The battle is skipped: the prediction and its streak stay as they are.
+          if (
+            view.predictions.attention === 'result_unknown' ||
+            view.predictions.attention === 'result_missed'
+          )
+            view.predictions.attention = null
+          break
+        }
+      }
       const stats = view.predictions.stats
       const won = command.action === 'predictions.battle' && command.outcome === 'win'
       // A streak win short of the target only counts one battle.
@@ -349,13 +373,14 @@ export function installStream(options: StreamOptions = {}): StreamWorld {
     readiness: readinessFixture(readiness),
     widget,
     handlers: [],
+    manualRequests: new Set<string>(),
   } as unknown as StreamerFake
   fake.command = vi.fn((command: StreamerCommand) => {
     for (const handler of fake.handlers) {
       const result = handler(command, fake)
       if (result !== undefined) return Promise.resolve(result)
     }
-    return Promise.resolve(applyDefault(fake, command))
+    return Promise.resolve(applyStreamerCommand(fake, command))
   })
 
   const crTools = bridge.crTools as Record<string, unknown>

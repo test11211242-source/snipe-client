@@ -894,6 +894,11 @@ const PREDICTION_PRESETS = {
   },
   streakVoting: { phase: 'voting', prediction: predictionStreak(0, 5) },
   streak: { phase: 'locked', prediction: predictionStreak(3, 5) },
+  streakResultUnknown: {
+    phase: 'locked',
+    attention: 'result_unknown',
+    prediction: predictionStreak(3, 5),
+  },
   disabledWithBets: {
     enabled: false,
     phase: 'locked',
@@ -910,6 +915,12 @@ const PREDICTION_PRESETS = {
   clientNotReady: { clientReady: false, phase: 'client_not_ready' },
   twitchUnavailable: { phase: 'idle', attention: 'twitch_unavailable' },
   notEligible: { phase: 'idle', attention: 'channel_not_eligible' },
+  reconnectTwitch: {
+    phase: 'locked',
+    attention: 'reconnect_twitch',
+    prediction: predictionCurrent(),
+  },
+  twitchPredictionExists: { phase: 'idle', attention: 'twitch_prediction_exists' },
 }
 const predictionSettings = {
   enabled: true,
@@ -1034,6 +1045,8 @@ const sreadiness = () => ({
   activeProfileId: uuid(1),
 })
 const sclone = () => JSON.parse(JSON.stringify(sview))
+// Manual request IDs the fake server already applied (server-side deduplication).
+const manualRequests = new Set()
 const sok = (extra = {}) => ({
   ok: true,
   view: sclone(),
@@ -1122,12 +1135,38 @@ const streamerCommand = (command) => {
     case 'predictions.cancel': {
       // A held command shows the page with every prediction control disabled.
       if (sx.predictionsPending === true) return new Promise(() => undefined)
+      // A lost response: the command fails and the page asks to check the result.
+      if (typeof sx.predictionsCommandError === 'string')
+        return Promise.resolve({
+          ok: false,
+          error: { code: sx.predictionsCommandError, detail: null },
+        })
       const current = sview.predictions.prediction
       if (current === null || current.id !== command.predictionId)
         return Promise.resolve({
           ok: false,
           error: { code: 'VALIDATION_FAILED', detail: null },
         })
+      if (command.action === 'predictions.battle') {
+        // The server deduplicates by request ID: a repeated intent never counts twice.
+        if (manualRequests.has(command.requestId)) return Promise.resolve(sok())
+        // «Бой не считается» needs a counted battle; the server never invents one.
+        if (command.outcome === 'not_ranked' && sview.predictions.phase !== 'locked')
+          return Promise.resolve({
+            ok: false,
+            error: { code: 'VALIDATION_FAILED', detail: null },
+          })
+        manualRequests.add(command.requestId)
+        if (command.outcome === 'not_ranked') {
+          // The battle is skipped: the prediction and its streak stay as they are.
+          if (
+            sview.predictions.attention === 'result_unknown' ||
+            sview.predictions.attention === 'result_missed'
+          )
+            sview.predictions.attention = null
+          return Promise.resolve(sok())
+        }
+      }
       const stats = sview.predictions.stats
       const won = command.action === 'predictions.battle' && command.outcome === 'win'
       if (won && current.wins + 1 < current.target) {

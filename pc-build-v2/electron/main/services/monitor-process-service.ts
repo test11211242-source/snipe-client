@@ -27,6 +27,7 @@ const KILLER_TIMEOUT_MS = 1_000
 const MAX_STDOUT_LINE_BYTES = 14 * 1024 * 1024
 const MAX_STDERR_LINE_BYTES = 2 * 1024
 const STDERR_REPORT_INTERVAL_MS = 5_000
+const MAX_ASSET_DIAGNOSTIC_BYTES = 128
 
 export interface MonitorProcessLogger {
   info: (message: string, context?: unknown) => void
@@ -99,6 +100,7 @@ export interface MonitorProcessListener {
   onLearning?: (payload: MonitorLearningEvent['payload']) => void
   onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
   onSourceState?: (payload: MonitorSourceStateEvent['payload']) => void
+  onStopped?: () => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
 }
@@ -116,6 +118,10 @@ interface OwnedProcess {
   loggedGeometry: string | null
   stdoutBuffer: Buffer
   stderrLineBytes: number
+  stopped: boolean
+  stderrDiagnosticLine: string
+  stderrDiagnosticOverflow: boolean
+  assetDiagnosticReported: boolean
   stderrReportAt: number
   stderrBytes: number
   stderrLines: number
@@ -308,6 +314,10 @@ export class MonitorProcessService {
       loggedGeometry: null,
       stdoutBuffer: Buffer.alloc(0),
       stderrLineBytes: 0,
+      stopped: false,
+      stderrDiagnosticLine: '',
+      stderrDiagnosticOverflow: false,
+      assetDiagnosticReported: false,
       stderrReportAt: 0,
       stderrBytes: 0,
       stderrLines: 0,
@@ -465,6 +475,12 @@ export class MonitorProcessService {
   }
 
   private dispatchEvent(owned: OwnedProcess, event: MonitorProcessEvent): void {
+    if (owned.stopped) return
+    if (event.type === 'stopped') {
+      owned.stopped = true
+      owned.listener.onStopped?.()
+      return
+    }
     if (event.type === 'ready') {
       if (owned.ready) {
         this.protocolFailure(
@@ -479,7 +495,7 @@ export class MonitorProcessService {
       owned.resolveReady()
       return
     }
-    if (!owned.ready && event.type !== 'fatal' && event.type !== 'stopped') {
+    if (!owned.ready && event.type !== 'fatal') {
       this.protocolFailure(
         owned,
         'MONITOR_PROTOCOL_ORDER',
@@ -540,7 +556,7 @@ export class MonitorProcessService {
         image,
       }
       owned.listener.onAction(action)
-    } else if (event.type === 'fatal') {
+    } else {
       this.logger.warn('Monitor worker fatal', {
         code: event.payload.code,
         stage: event.payload.stage,
@@ -587,10 +603,12 @@ export class MonitorProcessService {
     let newline = bytes.indexOf(10)
     while (newline >= 0) {
       owned.stderrLines = Math.min(Number.MAX_SAFE_INTEGER, owned.stderrLines + 1)
+      this.inspectAssetDiagnostic(owned, bytes.subarray(offset, newline), true)
       owned.stderrLineBytes = 0
       offset = newline + 1
       newline = bytes.indexOf(10, offset)
     }
+    this.inspectAssetDiagnostic(owned, bytes.subarray(offset), false)
     owned.stderrLineBytes = Math.min(
       MAX_STDERR_LINE_BYTES,
       owned.stderrLineBytes + bytes.length - offset,
@@ -606,6 +624,36 @@ export class MonitorProcessService {
       owned.stderrLines = 0
       owned.stderrReportAt = now + STDERR_REPORT_INTERVAL_MS
     }
+  }
+
+  private inspectAssetDiagnostic(
+    owned: OwnedProcess,
+    bytes: Buffer,
+    complete: boolean,
+  ): void {
+    if (!owned.stderrDiagnosticOverflow) {
+      if (owned.stderrDiagnosticLine.length + bytes.length <= MAX_ASSET_DIAGNOSTIC_BYTES)
+        owned.stderrDiagnosticLine += bytes.toString('utf8')
+      else {
+        owned.stderrDiagnosticLine = ''
+        owned.stderrDiagnosticOverflow = true
+      }
+    }
+    if (!complete) return
+    const match = owned.stderrDiagnosticOverflow
+      ? null
+      : /^PREDICTION_ASSET_UNAVAILABLE ([A-Za-z_][A-Za-z0-9_]{0,63})\r?$/.exec(
+          owned.stderrDiagnosticLine,
+        )
+    if (match && !owned.assetDiagnosticReported) {
+      owned.assetDiagnosticReported = true
+      this.logger.warn('Monitor prediction assets unavailable', {
+        code: 'PREDICTION_ASSET_UNAVAILABLE',
+        errorClass: match[1],
+      })
+    }
+    owned.stderrDiagnosticLine = ''
+    owned.stderrDiagnosticOverflow = false
   }
 
   private handleChildError(owned: OwnedProcess, error: Error): void {

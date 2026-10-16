@@ -438,11 +438,17 @@ allow 2–10 wins, random bounds 1–10 with an ordered range. Changes apply to 
 prediction. Voting closes only on the server/Twitch timer; no trigger locks voting.
 
 The prediction page renders server phases, attention, streak progress and persisted
-yes/no/canceled counts. Every unsettled prediction has manual win/loss and refund controls,
-including disabled predictions with bets; refunds require one confirmation tied to the
-selected prediction ID. The main IPC commands are `predictions.settings.save`,
-`predictions.battle` and `predictions.cancel`. Manual settlement is never automatically
-retried after an uncertain network response, because one win can advance a streak.
+yes/no/canceled counts. Every unsettled prediction has manual win/loss, «Бой не считается»
+and refund controls, including disabled predictions with bets. A refund confirmation binds
+the selected prediction ID; a stale-ID failure closes it and shows a page banner.
+The main IPC commands are `predictions.settings.save`, `predictions.battle` and
+`predictions.cancel`. Manual settlement is never automatically retried. Each account,
+displayed prediction/progress and outcome keeps its UUID intent after an uncertain answer,
+even across page navigation; a confirmed skip starts a new intent because it changes no wins.
+After a failed command, main refreshes server state and the renderer consumes that view
+before unlocking controls. Uncertain outcomes ask the streamer to check the result.
+Server response schemas strip additive fields recursively while preserving known-field
+validation; outgoing settings, manual commands and the main-to-renderer view stay strict.
 
 `PredictionResultConfigurationRepository` and its existing
 `prediction-result-config.v1` files remain for the v5 capture migration contract, without
@@ -455,14 +461,35 @@ Spectate and full-frame events are never forwarded. The old full-frame result ma
 prediction image uploads are removed. The worker emits one strict `prediction_result` JSON
 event per read result screen of an own battle (no images), with `battleId`, `gap`, `outcome`
 and evidence containing nullable crown counts `crowns:{top,bottom}` (0–3), `deltaSign` and
-`deltaIcon`. Interrupted/minimised monitoring marks the last own battle as having a gap.
-Heartbeat, VS and result network failures get one retry after two seconds; outcomes are
-logged as codes, not user data. The server owns voting timers and settlement.
+`deltaIcon`. Actual capture pauses and minimisation mark the own battle as having a gap.
+On Stop or capture failure, main accepts the current worker's final result until its
+`stopped` acknowledgement (or exit), preserving the pre-stop gap and own VS ID; the
+stop request itself does not manufacture a gap. Auth changes and older workers stay fenced.
+Missing or corrupt bundled prediction assets keep nickname search running. Main logs the
+allowlisted `PREDICTION_ASSET_UNAVAILABLE` code and bounded error class once per worker;
+all other stderr stays suppressed as byte/line counters, with no asset paths or raw text.
+Heartbeat, VS and result network failures get one retry after two seconds. Idempotent
+VS/result reports also retry once on HTTP 5xx, including non-JSON server errors; manual
+actions never do. Outcomes are logged as codes, not user data. The server owns voting
+timers and settlement.
+
+Battle reports carry `vsAgeMs`: monotonic milliseconds since CR Tools observed the own VS,
+recomputed for every attempt and capped at 24 hours. An unacknowledged start is kept and
+resent before its result; if that resend also fails, the result still reaches the server
+so the missing battle requires manual attention instead of silently counting the next one.
+Pending observations are cleared on logout/account change; wall-clock adjustments never
+make a delayed VS look newer.
 
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
-schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake
-Helix. It never connects to Twitch or reads owner configuration. From `pc-build-v2`, start
-the fixture in one terminal (requires the server Windows venv and local Docker compose):
+schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake Helix.
+Creation is polled/ticked for at most five seconds because a ready heartbeat can still
+own the live-operation lease. The coordinator's result log is awaited separately for at
+most five seconds: server settlement can be visible before the HTTP response is logged.
+The fixture applies prediction migrations 077–080 to its own schema and clears its
+operation/manual-request rows on reset. It exercises win, loss, non-ranked skip (including
+repeating the same UUID intent), refund and streak settlement. It never connects to Twitch
+or reads owner configuration. From `pc-build-v2`, start the fixture in one terminal
+(requires the server Windows venv and local Docker compose):
 
 ```powershell
 & C:\Dev\Snipe\server\.venv\Scripts\python.exe tests\fixtures\predictions-server.py --server-worktree C:\Dev\Snipe\worktrees\server\predictions-v2 *> "$env:TEMP\predictions-local-api.log"

@@ -108,6 +108,7 @@ function listener(): MonitorProcessListener {
     onGeometry: vi.fn(),
     onLearning: vi.fn(),
     onLayoutLearned: vi.fn(),
+    onStopped: vi.fn(),
     onFatal: vi.fn(),
     onExit: vi.fn(),
   }
@@ -200,6 +201,64 @@ describe('MonitorProcessService', () => {
     const stopped = test.value.stop()
     child.emit('close', 0, null)
     await stopped
+  })
+
+  it('logs the bounded prediction asset code and error class across stderr chunks', async () => {
+    const child = new FakeChild()
+    const test = service(child)
+    const events = listener()
+    const started = test.value.start(payload(), events)
+    child.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
+    await started
+    child.stderr.write('PREDICTION_ASSET_UN')
+    child.stderr.write('AVAILABLE FileNotFoundError\r')
+    expect(test.logger.warn).not.toHaveBeenCalledWith(
+      'Monitor prediction assets unavailable',
+      expect.anything(),
+    )
+    child.stderr.write('\n')
+    child.stderr.write('PREDICTION_ASSET_UNAVAILABLE ValueError\n')
+    const assetWarnings = test.logger.warn.mock.calls.filter(
+      ([message]) => message === 'Monitor prediction assets unavailable',
+    )
+    expect(assetWarnings).toEqual([
+      [
+        'Monitor prediction assets unavailable',
+        { code: 'PREDICTION_ASSET_UNAVAILABLE', errorClass: 'FileNotFoundError' },
+      ],
+    ])
+    expect(events.onFatal).not.toHaveBeenCalled()
+    expect(child.killed).toBe(false)
+    const stopping = test.value.stop()
+    child.emit('close', 0, null)
+    await stopping
+  })
+
+  it('never logs stderr paths, malformed asset diagnostics or an overlong line', async () => {
+    const child = new FakeChild()
+    const test = service(child)
+    const started = test.value.start(payload(), listener())
+    child.event(1, 'ready', { frameWidth: 10, frameHeight: 10 })
+    await started
+    child.stderr.write('private C:/secret/config.json\n')
+    child.stderr.write('prefix PREDICTION_ASSET_UNAVAILABLE ValueError\n')
+    child.stderr.write('PREDICTION_ASSET_UNAVAILABLE ValueError C:/secret/assets.json\n')
+    child.stderr.write('PREDICTION_ASSET_UNAVAILABLE ValueError')
+    child.stderr.write('x'.repeat(1024 * 1024))
+    child.stderr.write('\n')
+    expect(test.logger.warn).not.toHaveBeenCalledWith(
+      'Monitor prediction assets unavailable',
+      expect.anything(),
+    )
+    expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('secret')
+    child.stderr.write('PREDICTION_ASSET_UNAVAILABLE KeyError\n')
+    expect(test.logger.warn).toHaveBeenCalledWith(
+      'Monitor prediction assets unavailable',
+      { code: 'PREDICTION_ASSET_UNAVAILABLE', errorClass: 'KeyError' },
+    )
+    const stopping = test.value.stop()
+    child.emit('close', 0, null)
+    await stopping
   })
 
   it('preserves a structured startup fatal instead of replacing it with early exit', async () => {
@@ -399,6 +458,12 @@ describe('MonitorProcessService', () => {
     child.event(5, 'prediction_result', result)
     expect(processListener.onPredictionResult).toHaveBeenCalledWith(result)
     const stopping = monitored.value.stop()
+    child.event(6, 'prediction_result', result)
+    expect(processListener.onPredictionResult).toHaveBeenCalledTimes(2)
+    child.event(7, 'stopped', {})
+    expect(processListener.onStopped).toHaveBeenCalledExactlyOnceWith()
+    child.event(8, 'prediction_result', result)
+    expect(processListener.onPredictionResult).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(3_000)
     expect(monitored.treeKill).toHaveBeenCalledWith(4321)
     child.emit('close', null, 'SIGTERM')

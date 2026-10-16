@@ -108,6 +108,8 @@ export const PREDICTION_PHRASES = {
   disabled: 'Прогнозы выключены',
   twitch: 'Twitch не отвечает',
   notEligible: 'Прогнозы недоступны для этого канала',
+  reconnectTwitch: 'Переподключите Twitch',
+  twitchPredictionExists: 'На Twitch уже идёт прогноз',
 } as const
 
 /** «Серия: k из N» for a streak prediction. */
@@ -129,6 +131,10 @@ export function predictionStatusText(
       return { tone: 'danger', label: PREDICTION_PHRASES.notEligible }
     case 'twitch_unavailable':
       return { tone: 'danger', label: PREDICTION_PHRASES.twitch }
+    case 'reconnect_twitch':
+      return { tone: 'danger', label: PREDICTION_PHRASES.reconnectTwitch }
+    case 'twitch_prediction_exists':
+      return { tone: 'danger', label: PREDICTION_PHRASES.twitchPredictionExists }
     default:
       break
   }

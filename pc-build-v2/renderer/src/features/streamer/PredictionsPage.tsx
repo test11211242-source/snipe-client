@@ -16,6 +16,7 @@ import {
   Stepper,
   Switch,
 } from '../../ui'
+import { useAuth } from '../auth'
 import { StreamerGate } from './StreamerGate'
 import { useStreamer } from './streamerContext'
 import styles from './Streamer.module.css'
@@ -26,17 +27,28 @@ import {
   VOTING_CHOICES,
   type StreamerFailureCode,
 } from './text'
+import { confirmManualIntent, manualRequestId } from './manualIntent'
 import { useRequirements } from './useRequirements'
 import type { CommandOutcome } from './useStreamerController'
 
 /** Unsaved edits of the settings form; «Автопрогнозы» is saved by its own switch. */
 type Draft = Partial<Omit<PredictionSettings, 'enabled'>>
 type CommandKind = 'settings' | 'enabled' | 'battle' | 'cancel'
+type ManualOutcome = Extract<StreamerCommand, { action: 'predictions.battle' }>['outcome']
 
 /** Every prediction command runs under a `predictions.*` key: one at a time. */
 const KEY_PREFIX = 'predictions.'
 /** A manual command for a prediction that is no longer the current one (server 409). */
-const STALE_PREDICTION = 'Прогноз уже сменился. Повторите.'
+const STALE_PREDICTION = 'Прогноз уже сменился. Проверьте итог.'
+/** A manual command whose result is unknown: it may have been applied. No «повторите». */
+const UNCONFIRMED = 'Сервер не подтвердил действие. Проверьте итог.'
+/** Failures where the server certainly did not apply the command. */
+const REJECTED: Partial<Record<StreamerFailureCode, true>> = {
+  UNAUTHORIZED: true,
+  FORBIDDEN: true,
+  STREAMER_ROLE_REQUIRED: true,
+  TWITCH_REQUIRED: true,
+}
 
 /**
  * «Прогнозы»: server-side automatic predictions. The server is the only source of truth;
@@ -61,6 +73,8 @@ function Predictions(): React.JSX.Element {
   const [cancelId, setCancelId] = useState<number | null>(null)
   const [cancelError, setCancelError] = useState<string | null>(null)
   const inFlight = useRef(false)
+  // Intents are per account: another account never reuses a request ID.
+  const userId = useAuth().value?.user?.id ?? null
   if (view === null) return <></>
 
   const { predictions } = view
@@ -90,7 +104,11 @@ function Predictions(): React.JSX.Element {
     }
   }
   const manualFailure = (code: StreamerFailureCode): string =>
-    code === 'VALIDATION_FAILED' ? STALE_PREDICTION : describeCommandError(code)
+    code === 'VALIDATION_FAILED'
+      ? STALE_PREDICTION
+      : REJECTED[code] === true
+        ? describeCommandError(code)
+        : UNCONFIRMED
 
   const change = (patch: Draft): void => setDraft({ ...draft, ...patch })
   const save = async (): Promise<void> => {
@@ -110,15 +128,28 @@ function Predictions(): React.JSX.Element {
     setDesiredEnabled(null)
     if (outcome?.status === 'failed') setError(describeCommandError(outcome.code))
   }
-  const settle = async (predictionId: number, result: 'win' | 'loss'): Promise<void> => {
+  const settle = async (
+    predictionId: number,
+    wins: number,
+    result: ManualOutcome,
+  ): Promise<void> => {
+    if (inFlight.current) return
     setError(null)
+    const key = `${userId ?? ''}:${predictionId}:${wins}`
     const next: StreamerCommand = {
       action: 'predictions.battle',
       predictionId,
       outcome: result,
+      requestId: manualRequestId(key, result),
     }
+    // Never retried automatically: the streamer checks the refreshed status first.
     const outcome = await send(next, 'battle')
-    if (outcome?.status === 'failed') setError(manualFailure(outcome.code))
+    // A confirmed skip leaves the shown progress as it was, yet the next battle may need
+    // one too. A confirmed win/loss keeps its ID: if the server stored it uncounted
+    // (gated), a repeat at the same progress must not count a second battle.
+    if (outcome?.status === 'ok' && result === 'not_ranked')
+      confirmManualIntent(key, result)
+    else if (outcome?.status === 'failed') setError(manualFailure(outcome.code))
   }
   const confirmCancel = async (): Promise<void> => {
     if (cancelId === null) return
@@ -130,7 +161,11 @@ function Predictions(): React.JSX.Element {
     }
     const outcome = await send(next, 'cancel')
     if (outcome?.status === 'ok') setCancelId(null)
-    else if (outcome?.status === 'failed') setCancelError(manualFailure(outcome.code))
+    else if (outcome?.status === 'failed' && outcome.code === 'VALIDATION_FAILED') {
+      // The dialog's prediction is gone; the refreshed status is already on the page.
+      setCancelId(null)
+      setError(STALE_PREDICTION)
+    } else if (outcome?.status === 'failed') setCancelError(manualFailure(outcome.code))
   }
 
   return (
@@ -166,7 +201,7 @@ function Predictions(): React.JSX.Element {
                 <Button
                   disabled={busy}
                   loading={pending('battle')}
-                  onClick={() => void settle(prediction.id, 'win')}
+                  onClick={() => void settle(prediction.id, prediction.wins, 'win')}
                   variant="primary"
                 >
                   Победа
@@ -174,9 +209,18 @@ function Predictions(): React.JSX.Element {
                 <Button
                   disabled={busy}
                   loading={pending('battle')}
-                  onClick={() => void settle(prediction.id, 'loss')}
+                  onClick={() => void settle(prediction.id, prediction.wins, 'loss')}
                 >
                   Поражение
+                </Button>
+                <Button
+                  disabled={busy}
+                  loading={pending('battle')}
+                  onClick={() =>
+                    void settle(prediction.id, prediction.wins, 'not_ranked')
+                  }
+                >
+                  Бой не считается
                 </Button>
                 <Button
                   disabled={busy}

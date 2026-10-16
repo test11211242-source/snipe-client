@@ -29,18 +29,19 @@ const BattleStartResponseSchema = z
     accepted: z.boolean(),
     reason: CodeSchema,
   })
-  .strict()
+  .strip()
 const BattleResultResponseSchema = z
   .object({
     applied: z.boolean(),
     finalOutcome: CodeSchema.nullable(),
     reason: CodeSchema,
   })
-  .strict()
+  .strip()
 const ManualBattleRequestSchema = z
   .object({
     predictionId: z.number().int().positive(),
-    outcome: z.enum(['win', 'loss']),
+    outcome: z.enum(['win', 'loss', 'not_ranked']),
+    requestId: z.uuid(),
   })
   .strict()
 const CurrentPredictionRequestSchema = z
@@ -49,6 +50,11 @@ const CurrentPredictionRequestSchema = z
 
 type BattleStart = MonitorTriggeredEvent['payload']
 type BattleResult = MonitorPredictionResultEvent['payload']
+interface BattleObservation {
+  event: BattleStart
+  observedAt: number
+}
+const MAX_VS_AGE_MS = 86_400_000
 interface Context {
   userId: string
   generation: number
@@ -66,14 +72,14 @@ type Operation =
  * server applies idempotently. `none` never repeats: a lost manual-settle response
  * may already have advanced a streak, so a resend could count the battle twice.
  */
-type RetryPolicy = 'network' | 'none'
+type RetryPolicy = 'network' | 'battle_event' | 'none'
 
 export interface PredictionReadiness {
   ready: boolean
   reason: 'ok' | 'monitor_not_ready' | 'profile_not_own_battle' | 'profile_full_frame'
 }
 
-/** C1 intentionally needs no result setup; C3 supplies result recognition later. */
+/** C3 uses bundled result templates; legacy result-zone setup is not required. */
 export function getPredictionReadiness(
   configuration: CaptureConfiguration | null,
   monitor: Pick<MonitorView, 'state' | 'runIntent' | 'sourceMinimized'>,
@@ -114,6 +120,8 @@ export class PredictionCoordinator {
   #disposers: (() => void)[] = []
   #started = false
   #monitorSignature: string | null = null
+  #unacknowledgedStarts = new Map<string, BattleObservation>()
+  #latestBattle: BattleObservation | null = null
 
   constructor(
     private readonly auth: AuthSession,
@@ -122,6 +130,7 @@ export class PredictionCoordinator {
     private readonly captures: CaptureConfigurationRepository,
     private readonly logger: Pick<StructuredLogger, 'info'>,
     private readonly clientVersion: string,
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {}
 
   startLifecycle(): void {
@@ -168,7 +177,8 @@ export class PredictionCoordinator {
   /** Never retried: a lost response may already have advanced the streak. */
   async manualBattle(
     predictionId: number,
-    outcome: 'win' | 'loss',
+    outcome: 'win' | 'loss' | 'not_ranked',
+    requestId: string,
   ): Promise<PredictionStatus> {
     return this.request(
       this.requireContext(),
@@ -176,7 +186,7 @@ export class PredictionCoordinator {
       'POST',
       '/api/streamer/predictions/current/battle',
       PredictionStatusSchema,
-      ManualBattleRequestSchema.parse({ predictionId, outcome }),
+      ManualBattleRequestSchema.parse({ predictionId, outcome, requestId }),
       'none',
     )
   }
@@ -212,6 +222,8 @@ export class PredictionCoordinator {
     this.#eventQueue = Promise.resolve()
     this.#context = null
     this.#monitorSignature = null
+    this.#unacknowledgedStarts.clear()
+    this.#latestBattle = null
   }
 
   private updateAuthContext(): void {
@@ -278,37 +290,86 @@ export class PredictionCoordinator {
       this.log('battle_start', { code: 'skipped', reason: 'not_own_battle' })
       return
     }
-    // The server deduplicates on battleId, so the network retry cannot double count.
-    this.enqueue('battle_start', (context) =>
-      this.request(
-        context,
-        'battle_start',
-        'POST',
-        '/api/streamer/predictions/battle-start',
-        BattleStartResponseSchema,
-        {
-          battleId: event.triggerId,
-          kind: 'battle',
-          rank: event.rank,
-          rankEvidence: event.rankEvidence,
-        },
-        'network',
-      ),
+    if (this.currentContext() === null) {
+      this.log('battle_start', { code: 'skipped', reason: 'auth_context_changed' })
+      return
+    }
+    const observedAt = this.monotonicNow()
+    for (const [id, pending] of this.#unacknowledgedStarts) {
+      if (observedAt - pending.observedAt > MAX_VS_AGE_MS)
+        this.#unacknowledgedStarts.delete(id)
+    }
+    const observation: BattleObservation = { event, observedAt }
+    this.#latestBattle = observation
+    this.#unacknowledgedStarts.set(event.triggerId, observation)
+    this.enqueue('battle_start', (context) => this.sendBattleStart(context, observation))
+  }
+
+  private async sendBattleStart(
+    context: Context,
+    observation: BattleObservation,
+  ): Promise<void> {
+    const event = observation.event
+    await this.request(
+      context,
+      'battle_start',
+      'POST',
+      '/api/streamer/predictions/battle-start',
+      BattleStartResponseSchema,
+      () => ({
+        battleId: event.triggerId,
+        kind: 'battle',
+        rank: event.rank,
+        rankEvidence: event.rankEvidence,
+        vsAgeMs: this.vsAgeMs(observation),
+      }),
+      'battle_event',
     )
+    if (this.#unacknowledgedStarts.get(event.triggerId) === observation)
+      this.#unacknowledgedStarts.delete(event.triggerId)
   }
 
   private enqueueResult(event: BattleResult): void {
-    this.enqueue('battle_result', (context) =>
-      this.request(
+    const observation =
+      event.battleId === null
+        ? undefined
+        : (this.#unacknowledgedStarts.get(event.battleId) ??
+          (this.#latestBattle?.event.triggerId === event.battleId
+            ? this.#latestBattle
+            : undefined))
+    this.enqueue('battle_result', async (context) => {
+      if (
+        observation !== undefined &&
+        this.#unacknowledgedStarts.get(observation.event.triggerId) === observation
+      ) {
+        // A lost start must precede its result again; even a second outage must
+        // not suppress the result (the server records an unknown VS as missed).
+        await this.sendBattleStart(context, observation).catch(() => undefined)
+      }
+      await this.request(
         context,
         'battle_result',
         'POST',
         '/api/streamer/predictions/battle-result',
         BattleResultResponseSchema,
-        event,
-        'network',
-      ),
-    )
+        () => ({ ...event, vsAgeMs: this.vsAgeMs(observation) }),
+        'battle_event',
+      )
+      if (observation !== undefined) {
+        if (this.#unacknowledgedStarts.get(observation.event.triggerId) === observation)
+          this.#unacknowledgedStarts.delete(observation.event.triggerId)
+        if (this.#latestBattle === observation) this.#latestBattle = null
+      }
+    })
+  }
+
+  private vsAgeMs(observation: BattleObservation | undefined): number {
+    return observation === undefined
+      ? 0
+      : Math.min(
+          MAX_VS_AGE_MS,
+          Math.max(0, Math.floor(this.monotonicNow() - observation.observedAt)),
+        )
   }
 
   private enqueue(
@@ -337,10 +398,10 @@ export class PredictionCoordinator {
     method: 'POST' | 'PUT',
     path: `/api/${string}`,
     schema: z.ZodType<T>,
-    body: unknown,
+    body: Record<string, unknown> | (() => Record<string, unknown>),
     retry: RetryPolicy,
   ): Promise<T> {
-    const attempts = retry === 'network' ? 2 : 1
+    const attempts = retry === 'none' ? 1 : 2
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (!this.isCurrent(context)) {
         this.log(operation, { code: 'AUTH_CANCELLED', attempt })
@@ -353,7 +414,7 @@ export class PredictionCoordinator {
           method,
           path,
           schema,
-          body,
+          body: typeof body === 'function' ? body() : body,
           timeoutMs: 15_000,
           signal: context.signal,
           authContextGuard: () => this.isCurrent(context),
@@ -392,7 +453,14 @@ export class PredictionCoordinator {
       this.log(operation, { code, attempt, ...(status === undefined ? {} : { status }) })
       if (
         attempt === attempts ||
-        (code !== 'NETWORK_UNAVAILABLE' && code !== 'REQUEST_TIMEOUT')
+        (code !== 'NETWORK_UNAVAILABLE' &&
+          code !== 'REQUEST_TIMEOUT' &&
+          !(
+            retry === 'battle_event' &&
+            status !== undefined &&
+            status >= 500 &&
+            status <= 599
+          ))
       )
         throw new ApplicationError(code, 'Prediction request failed')
       await this.retryDelay(context.signal)

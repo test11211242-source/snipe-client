@@ -1440,6 +1440,89 @@ describe('MonitorSupervisor concurrency', () => {
     )
   })
 
+  it.each(['stop', 'fatal', 'source_closed'] as const)(
+    'forwards a final result during %s only until the worker acknowledges stopped',
+    async (reason) => {
+      vi.useFakeTimers()
+      const test = gameHarness()
+      const observed = vi.fn()
+      test.supervisor.subscribePredictionResults(observed)
+      await test.supervisor.start()
+      const own = battleStart()
+      const worker = test.listener()
+      worker?.onTriggered(own)
+      const closing = deferred<undefined>()
+      test.process.stop.mockReturnValueOnce(closing.promise)
+      let stopping: Promise<unknown> | undefined
+      if (reason === 'stop') stopping = test.supervisor.stop()
+      else
+        worker?.onFatal(
+          new ApplicationError(
+            reason === 'source_closed' ? 'CAPTURE_SOURCE_CLOSED' : 'CAPTURE_FAILED',
+            'synthetic capture failure',
+          ),
+        )
+      expect(test.supervisor.getCurrentView().state).not.toBe('READY')
+      const report = {
+        ...predictionResult(own.triggerId),
+        evidence: {
+          crowns: { top: null, bottom: null },
+          deltaSign: '+' as const,
+          deltaIcon: 'pol' as const,
+        },
+      }
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledExactlyOnceWith(report)
+      worker?.onStopped?.()
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledTimes(1)
+      closing.resolve(undefined)
+      await stopping
+      await settle()
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledTimes(1)
+      await test.supervisor.stop()
+    },
+  )
+
+  it('keeps an earlier minimization gap and the owned VS ID in a drained result', async () => {
+    const test = gameHarness()
+    const observed = vi.fn()
+    test.supervisor.subscribePredictionResults(observed)
+    await test.supervisor.start()
+    const own = battleStart()
+    const worker = test.listener()
+    worker?.onTriggered(own)
+    worker?.onSourceState?.({ minimized: true })
+    const closing = deferred<undefined>()
+    test.process.stop.mockReturnValueOnce(closing.promise)
+    const stopping = test.supervisor.stop()
+    worker?.onPredictionResult(predictionResult(randomUUID()))
+    expect(observed).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ battleId: own.triggerId, gap: true }),
+    )
+    closing.resolve(undefined)
+    await stopping
+  })
+
+  it('does not drain a previous user result after an authentication change', async () => {
+    const test = gameHarness()
+    const observed = vi.fn()
+    test.supervisor.subscribePredictionResults(observed)
+    await test.supervisor.start()
+    const own = battleStart()
+    const worker = test.listener()
+    worker?.onTriggered(own)
+    const closing = deferred<undefined>()
+    test.process.stop.mockReturnValueOnce(closing.promise)
+    const stopping = test.supervisor.stop('auth_change')
+    test.user('84')
+    worker?.onPredictionResult(predictionResult(own.triggerId))
+    expect(observed).not.toHaveBeenCalled()
+    closing.resolve(undefined)
+    await stopping
+  })
+
   it('retains a non-ready gap across a restart until the next own VS', async () => {
     const test = gameHarness()
     const result = vi.fn()

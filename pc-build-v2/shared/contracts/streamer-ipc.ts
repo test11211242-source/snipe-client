@@ -72,7 +72,8 @@ export const StreamerCommandSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('predictions.battle'),
       predictionId: z.number().int().positive(),
-      outcome: z.enum(['win', 'loss']),
+      outcome: z.enum(['win', 'loss', 'not_ranked']),
+      requestId: z.uuid(),
     })
     .strict(),
   z

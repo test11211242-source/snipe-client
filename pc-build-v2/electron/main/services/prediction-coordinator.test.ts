@@ -26,6 +26,7 @@ type TestRequest = ApiRequest<unknown> & { authContextGuard?: () => boolean }
 const root = '/api/streamer/predictions'
 const battleId = '00000000-0000-4000-8000-000000000001'
 const secondBattleId = '00000000-0000-4000-8000-000000000002'
+const manualRequestId = '00000000-0000-4000-8000-000000000003'
 const readyMonitor = { state: 'READY', runIntent: true, sourceMinimized: false } as const
 
 function deferred<T>() {
@@ -129,6 +130,7 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     'state' | 'runIntent' | 'sourceMinimized'
   >
   let configuration: CaptureConfiguration | null = profile(0.4, 0.459)
+  let monotonicMs = 0
   let serverStatus = status()
   const disposers: Mock[] = []
   const subscribe = <T>(setListener: (listener: T) => void, listener: T) => {
@@ -202,6 +204,7 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     captures as never,
     logger,
     '2.7.0',
+    () => monotonicMs,
   )
   coordinators.push(coordinator)
   coordinator.startLifecycle()
@@ -211,6 +214,9 @@ function harness(initialAuth: 'streamer' | 'user' | 'signed_out' = 'streamer') {
     monitor,
     captures,
     logger,
+    advanceClock: (milliseconds: number) => {
+      monotonicMs += milliseconds
+    },
     disposers,
     calls: (suffix: string) =>
       request.mock.calls
@@ -481,6 +487,7 @@ describe('PredictionCoordinator event forwarding', () => {
       kind: 'battle',
       rank: 'unknown',
       rankEvidence: null,
+      vsAgeMs: 0,
     })
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'skipped',
@@ -521,7 +528,7 @@ describe('PredictionCoordinator event forwarding', () => {
     })
     test.result(event)
     await flush()
-    expect(test.calls('battle-result')[0]?.body).toEqual(event)
+    expect(test.calls('battle-result')[0]?.body).toEqual({ ...event, vsAgeMs: 0 })
   })
 
   it('serializes starts and results while heartbeats remain independent', async () => {
@@ -545,19 +552,124 @@ describe('PredictionCoordinator event forwarding', () => {
     ])
   })
 
-  it('forwards after app/server restarts whatever the server enabled flag says', async () => {
+  it('keeps an unsent VS and resends it before the result with its original monotonic age', async () => {
     const test = harness()
-    test.setServerStatus(status(false))
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+      .mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
     test.battle()
+    await flush()
+    expect(test.calls('battle-start')[0]?.body).toMatchObject({ battleId, vsAgeMs: 0 })
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.calls('battle-start')[1]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 2_000,
+    })
+    test.advanceClock(3_000)
+    vi.setSystemTime(new Date('2000-01-01T00:00:00Z'))
     test.result()
     await flush()
-    expect(test.calls('battle-start')).toHaveLength(1)
-    expect(test.calls('battle-result')).toHaveLength(1)
-    test.coordinator.notifyContextChanged()
+    expect(test.request.mock.calls.slice(-2).map(([request]) => request.path)).toEqual([
+      `${root}/battle-start`,
+      `${root}/battle-result`,
+    ])
+    expect(test.calls('battle-start')[2]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 5_000,
+    })
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 5_000,
+    })
+  })
+
+  it('still sends a result if replaying its unsent VS fails twice again', async () => {
+    const test = harness()
     await flush()
+    for (let attempt = 0; attempt < 4; attempt += 1)
+      test.request.mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+    test.battle()
+    await flush()
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.result()
+    await flush()
+    test.advanceClock(2_000)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(test.calls('battle-start')).toHaveLength(4)
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 4_000,
+    })
+  })
+
+  it('caps monotonic VS age at the server limit on both reports', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.advanceClock(90_000_000)
+    // The current battle remains available even past the age cap; no wall clock is used.
+    test.result()
+    await flush()
+    expect(test.calls('battle-start')[2]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 86_400_000,
+    })
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 86_400_000,
+    })
+  })
+
+  it('retains each failed VS identity instead of binding its result to a newer battle', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.advanceClock(10_000)
     test.battle(battle({ triggerId: secondBattleId }))
     await flush()
+    test.advanceClock(5_000)
+    test.result()
+    await flush()
+    expect(test.calls('battle-start').map((request) => request.body)).toMatchObject([
+      { battleId },
+      { battleId },
+      { battleId: secondBattleId, vsAgeMs: 0 },
+      { battleId, vsAgeMs: 15_000 },
+    ])
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({
+      battleId,
+      vsAgeMs: 15_000,
+    })
+  })
+
+  it('clears a failed VS on auth change and never resends another user’s observation', async () => {
+    const test = harness()
+    await flush()
+    test.request
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+      .mockResolvedValueOnce(failure('REQUEST_TIMEOUT'))
+    test.battle()
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    test.changeAuth('streamer', '84')
+    await flush()
+    test.result()
+    await flush()
     expect(test.calls('battle-start')).toHaveLength(2)
+    expect(test.calls('battle-result')[0]?.body).toMatchObject({ battleId, vsAgeMs: 0 })
   })
 })
 
@@ -591,6 +703,48 @@ describe('PredictionCoordinator retry and logging', () => {
     },
   )
 
+  it.each(['battle-start', 'battle-result'] as const)(
+    'retries idempotent %s once on HTTP 5xx',
+    async (suffix) => {
+      for (const statusCode of [500, 502, 503, 504, 599]) {
+        const test = harness()
+        await flush()
+        test.request.mockResolvedValueOnce(failure('SERVER_ERROR', statusCode))
+        if (suffix === 'battle-start') test.battle()
+        else test.result()
+        await flush()
+        expect(test.calls(suffix)).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(1_999)
+        expect(test.calls(suffix)).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(test.calls(suffix)).toHaveLength(2)
+        expect(test.calls(suffix)[1]?.body).toEqual(test.calls(suffix)[0]?.body)
+        await test.coordinator.shutdown()
+      }
+    },
+  )
+
+  it.each(['settings', 'heartbeat', 'current/battle', 'current/cancel'] as const)(
+    'does not broaden %s retries to HTTP 5xx',
+    async (suffix) => {
+      const test = harness()
+      await flush()
+      const before = test.calls(suffix).length
+      test.request.mockResolvedValueOnce(failure('SERVER_ERROR', 503))
+      if (suffix === 'heartbeat') test.coordinator.notifyContextChanged()
+      else {
+        const command =
+          suffix === 'settings'
+            ? test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
+            : suffix === 'current/battle'
+              ? test.coordinator.manualBattle(1, 'win', manualRequestId)
+              : test.coordinator.cancel(1)
+        await expect(command).rejects.toMatchObject({ code: 'SERVER_ERROR' })
+      }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(test.calls(suffix)).toHaveLength(before + 1)
+    },
+  )
   it('retries transport timeouts once, then releases the queue after a second failure', async () => {
     const test = harness()
     await flush()
@@ -601,7 +755,7 @@ describe('PredictionCoordinator retry and logging', () => {
     test.result()
     await flush()
     await vi.advanceTimersByTimeAsync(2_000)
-    expect(test.calls('battle-start')).toHaveLength(2)
+    expect(test.calls('battle-start')).toHaveLength(3)
     expect(test.calls('battle-result')).toHaveLength(1)
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'NETWORK_UNAVAILABLE',
@@ -613,7 +767,6 @@ describe('PredictionCoordinator retry and logging', () => {
     ['UNAUTHORIZED', 401],
     ['FORBIDDEN', 403],
     ['VALIDATION_FAILED', 422],
-    ['SERVER_ERROR', 503],
     ['INVALID_RESPONSE', 200],
   ] as const)(
     'does not retry %s even when marked retryable',
@@ -639,7 +792,7 @@ describe('PredictionCoordinator retry and logging', () => {
     test.battle()
     test.result()
     await flush()
-    expect(test.calls('battle-start')).toHaveLength(1)
+    expect(test.calls('battle-start')).toHaveLength(2)
     expect(test.calls('battle-result')).toHaveLength(1)
     expect(test.logger.info).toHaveBeenCalledWith('prediction.battle_start', {
       code: 'UNKNOWN',
@@ -700,7 +853,7 @@ describe('PredictionCoordinator retry and logging', () => {
     const test = harness()
     await flush()
     await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     await test.coordinator.cancel(1)
     for (const operation of ['heartbeat', 'settings_save', 'manual_battle', 'cancel'])
       expect(test.logger.info).toHaveBeenCalledWith(`prediction.${operation}`, {
@@ -776,7 +929,7 @@ describe('PredictionCoordinator auth isolation and lifecycle', () => {
     await flush()
     const pending = deferred<ApiResult<unknown>>()
     test.request.mockImplementationOnce(() => pending.promise)
-    const command = test.coordinator.manualBattle(1, 'win')
+    const command = test.coordinator.manualBattle(1, 'win', manualRequestId)
     const sent = test.calls('current/battle')[0]
     expect(sent).toBeDefined()
     test.changeAuth('streamer', '84')
@@ -849,19 +1002,25 @@ describe('PredictionCoordinator server commands', () => {
     expect(test.monitor.stop).not.toHaveBeenCalled()
   })
 
-  it.each(['win', 'loss'] as const)(
+  it.each(['win', 'loss', 'not_ranked'] as const)(
     'sends manual %s as exact JSON and returns the server status',
     async (outcome) => {
       const test = harness()
       await flush()
       test.setServerStatus(settled)
-      await expect(test.coordinator.manualBattle(1, outcome)).resolves.toEqual(settled)
+      await expect(
+        test.coordinator.manualBattle(1, outcome, manualRequestId),
+      ).resolves.toEqual(settled)
       expect(test.calls('current/battle')).toHaveLength(1)
       expect(test.calls('current/battle')[0]).toMatchObject({
         method: 'POST',
         timeoutMs: 15_000,
       })
-      expect(test.calls('current/battle')[0]?.body).toEqual({ predictionId: 1, outcome })
+      expect(test.calls('current/battle')[0]?.body).toEqual({
+        predictionId: 1,
+        outcome,
+        requestId: manualRequestId,
+      })
     },
   )
 
@@ -875,11 +1034,11 @@ describe('PredictionCoordinator server commands', () => {
     expect(test.calls('current/cancel')[0]?.body).toEqual({ predictionId: 7 })
   })
 
-  it('validates every command response with the strict status schema', async () => {
+  it('validates known command response fields and strips additive server fields', async () => {
     const test = harness()
     await flush()
     await test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS)
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     await test.coordinator.cancel(1)
     for (const suffix of ['settings', 'current/battle', 'current/cancel', 'heartbeat']) {
       const schema = test.calls(suffix)[0]?.schema
@@ -891,9 +1050,55 @@ describe('PredictionCoordinator server commands', () => {
         { requirements: {} },
         { settings: DEFAULT_PREDICTION_SETTINGS },
       ])
-        expect(schema?.safeParse({ ...status(), ...legacy }).success).toBe(false)
+        expect(schema?.parse({ ...status(), ...legacy })).toEqual(status())
     }
   })
+
+  it('strips additive battle acknowledgements but rejects malformed known fields', async () => {
+    const test = harness()
+    await flush()
+    test.battle()
+    test.result()
+    await flush()
+    const startSchema = test.calls('battle-start')[0]?.schema
+    const resultSchema = test.calls('battle-result')[0]?.schema
+    expect(
+      startSchema?.parse({ accepted: true, reason: 'accepted', futureField: true }),
+    ).toEqual({ accepted: true, reason: 'accepted' })
+    expect(
+      resultSchema?.parse({
+        applied: true,
+        finalOutcome: 'win',
+        reason: 'resolved',
+        futureField: { version: 2 },
+      }),
+    ).toEqual({ applied: true, finalOutcome: 'win', reason: 'resolved' })
+    expect(startSchema?.safeParse({ accepted: 'yes', reason: 'accepted' }).success).toBe(
+      false,
+    )
+    expect(
+      resultSchema?.safeParse({ applied: true, finalOutcome: 1, reason: 'resolved' })
+        .success,
+    ).toBe(false)
+  })
+
+  it.each(['NETWORK_UNAVAILABLE', 'REQUEST_TIMEOUT', 'SERVER_ERROR'] as const)(
+    'never retries the skip-battle intent on %s',
+    async (code) => {
+      const test = harness()
+      await flush()
+      test.request.mockResolvedValueOnce(failure(code, code === 'SERVER_ERROR' ? 503 : 0))
+      const action = test.coordinator.manualBattle(1, 'not_ranked', manualRequestId)
+      await expect(action).rejects.toMatchObject({ code })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(test.calls('current/battle')).toHaveLength(1)
+      expect(test.calls('current/battle')[0]?.body).toEqual({
+        predictionId: 1,
+        outcome: 'not_ranked',
+        requestId: manualRequestId,
+      })
+    },
+  )
 
   it.each([
     ['current/battle', 'manual_battle', 'NETWORK_UNAVAILABLE'],
@@ -908,7 +1113,7 @@ describe('PredictionCoordinator server commands', () => {
       test.request.mockResolvedValueOnce(failure(code))
       const command =
         operation === 'manual_battle'
-          ? test.coordinator.manualBattle(1, 'win')
+          ? test.coordinator.manualBattle(1, 'win', manualRequestId)
           : test.coordinator.cancel(1)
       await expect(command).rejects.toMatchObject({ code })
       await vi.advanceTimersByTimeAsync(60_000)
@@ -928,11 +1133,15 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness()
     await flush()
     test.request.mockRejectedValueOnce(new Error('Private socket hang up after send'))
-    await expect(test.coordinator.manualBattle(1, 'win')).rejects.toMatchObject({
+    await expect(
+      test.coordinator.manualBattle(1, 'win', manualRequestId),
+    ).rejects.toMatchObject({
       code: 'UNKNOWN',
     })
     test.request.mockResolvedValueOnce(failure('VALIDATION_FAILED', 409))
-    await expect(test.coordinator.manualBattle(1, 'loss')).rejects.toMatchObject({
+    await expect(
+      test.coordinator.manualBattle(1, 'loss', manualRequestId),
+    ).rejects.toMatchObject({
       code: 'VALIDATION_FAILED',
     })
     await vi.advanceTimersByTimeAsync(60_000)
@@ -982,7 +1191,7 @@ describe('PredictionCoordinator server commands', () => {
     test.request.mockResolvedValueOnce(failure('NETWORK_UNAVAILABLE'))
     test.battle()
     await flush()
-    await test.coordinator.manualBattle(1, 'win')
+    await test.coordinator.manualBattle(1, 'win', manualRequestId)
     expect(test.calls('current/battle')).toHaveLength(1)
     expect(test.calls('battle-start')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(2_000)
@@ -993,9 +1202,18 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness()
     await flush()
     const count = test.request.mock.calls.length
-    await expect(test.coordinator.manualBattle(0, 'win')).rejects.toThrow()
-    await expect(test.coordinator.manualBattle(1.5, 'win')).rejects.toThrow()
-    await expect(test.coordinator.manualBattle(1, 'draw' as never)).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(0, 'win', manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1.5, 'win', manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1, 'draw' as never, manualRequestId),
+    ).rejects.toThrow()
+    await expect(
+      test.coordinator.manualBattle(1, 'win', 'invalid-uuid'),
+    ).rejects.toThrow()
     await expect(test.coordinator.cancel(-1)).rejects.toThrow()
     await expect(
       test.coordinator.saveSettings({
@@ -1011,7 +1229,7 @@ describe('PredictionCoordinator server commands', () => {
     const test = harness('user')
     for (const command of [
       () => test.coordinator.saveSettings(DEFAULT_PREDICTION_SETTINGS),
-      () => test.coordinator.manualBattle(1, 'win'),
+      () => test.coordinator.manualBattle(1, 'win', manualRequestId),
       () => test.coordinator.cancel(1),
     ])
       await expect(command()).rejects.toMatchObject({ code: 'STREAMER_ROLE_REQUIRED' })

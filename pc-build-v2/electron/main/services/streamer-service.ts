@@ -14,6 +14,7 @@ import { hasStreamerRole } from '../../../shared/models/auth'
 import {
   OverlaySettingsSchema,
   DEFAULT_PREDICTION_SETTINGS,
+  PredictionSettingsResponseSchema,
   PredictionSettingsSchema,
   PredictionStatusSchema,
   StreamTitlePreviewSchema,
@@ -201,7 +202,11 @@ export class StreamerService {
           await this.savePredictionSettings(command.settings)
           break
         case 'predictions.battle':
-          await this.settlePredictionBattle(command.predictionId, command.outcome)
+          await this.settlePredictionBattle(
+            command.predictionId,
+            command.outcome,
+            command.requestId,
+          )
           break
         case 'predictions.cancel':
           await this.cancelPrediction(command.predictionId)
@@ -453,12 +458,17 @@ export class StreamerService {
     return this.predictionMutation(() => this.predictions.saveSettings(parsed), parsed)
   }
 
+  /**
+   * Settles the current prediction by hand. `requestId` is generated once per intent by
+   * the renderer and reused on a repeat, so the server counts a lost-response press once.
+   */
   settlePredictionBattle(
     predictionId: number,
-    outcome: 'win' | 'loss',
+    outcome: 'win' | 'loss' | 'not_ranked',
+    requestId: string,
   ): Promise<StreamerView> {
     return this.predictionMutation(() =>
-      this.predictions.manualBattle(predictionId, outcome),
+      this.predictions.manualBattle(predictionId, outcome, requestId),
     )
   }
 
@@ -466,14 +476,41 @@ export class StreamerService {
     return this.predictionMutation(() => this.predictions.cancel(predictionId))
   }
 
+  /**
+   * A failed prediction command may still have been applied (a lost response) or may have
+   * targeted a prediction that is no longer current (409). The status is refreshed before
+   * the original error is rethrown, so the caller never re-enables its controls on a
+   * stale view. An account switch or shutdown cancels the recovery.
+   */
   private predictionMutation(
     operation: () => Promise<PredictionStatus>,
     settings?: PredictionSettings,
   ): Promise<StreamerView> {
     return this.mutate(async () => {
       const generation = this.auth.getContextGeneration()
-      const status = await operation()
-      if (generation !== this.auth.getContextGeneration())
+      const lifecycle = this.#lifecycleGeneration
+      const cancelled = (): boolean =>
+        generation !== this.auth.getContextGeneration() ||
+        lifecycle !== this.#lifecycleGeneration
+      let status: PredictionStatus
+      try {
+        status = await operation()
+      } catch (error) {
+        if (!cancelled()) {
+          this.cancelRefresh()
+          await this.refresh().catch(() => {
+            if (!cancelled())
+              this.patch({ refresh: { ...this.#view.refresh, state: 'failed' } })
+          })
+        }
+        if (cancelled())
+          throw new ApplicationError(
+            'STREAMER_CANCELLED',
+            'Prediction operation was cancelled',
+          )
+        throw error
+      }
+      if (cancelled())
         throw new ApplicationError(
           'STREAMER_CANCELLED',
           'Prediction operation was cancelled',
@@ -659,7 +696,7 @@ export class StreamerService {
       this.api.request({
         method: 'GET',
         path: '/api/streamer/predictions/settings',
-        schema: PredictionSettingsSchema,
+        schema: PredictionSettingsResponseSchema,
         signal,
       }),
     ]).then(([status, settings]) => {
