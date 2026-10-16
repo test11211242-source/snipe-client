@@ -182,6 +182,24 @@ def test_vs_lost_before_a_seen_shift_never_reports_a_draw(monkeypatch, lost_at) 
     assert report["evidence"] == {"crowns": {"top": None, "bottom": None}, "deltaSign": "-", "deltaIcon": "pol"}
 
 
+@pytest.mark.parametrize("hidden,crowns", [
+    ((31.5, 31.6, 31.7, 31.8), {"top": None, "bottom": None}),   # a landing crown hid it: counts not final
+    ((31.5,), {"top": 1, "bottom": 1}),                          # one unread tick: still final
+])
+def test_a_shift_seen_after_a_hidden_vs_keeps_counts_only_after_one_tick(monkeypatch, hidden, crowns) -> None:
+    # Review R1-C1 probe: a true 2:1 loss; 1:1 read until the second top crown
+    # lands at 1.5 s over the «vs», which reappears already shifted.
+    screen = Screen(monkeypatch, crowns=((0.8, 0, 0), (0.8, 0, 0)))
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, delay=0)
+    screen.vs = {round(30 + t / 10, 1): (0.85, 0.024) for t in range(0, 15)}
+    shift_at = round(hidden[-1] + 0.1, 1)
+    screen.shifted[shift_at] = (0.8, -0.134)
+    (t, report, reason), = run(reader, screen, 30.0, 33.0)
+    assert (t, reason) == (shift_at, "shift")
+    assert report["evidence"]["crowns"] == crowns
+    assert report["outcome"] == ("loss" if crowns["top"] is None else "draw")
+
 
 def test_hidden_vs_is_not_read_and_ends_after_missing_time(monkeypatch) -> None:
     screen = Screen(monkeypatch)
