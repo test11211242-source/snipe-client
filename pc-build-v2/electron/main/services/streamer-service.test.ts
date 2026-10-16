@@ -6,7 +6,16 @@ import { createApiError } from '../../../shared/errors/api-error'
 import { AccountMutationResultSchema } from '../../../shared/contracts/streamer-ipc'
 import { ApiClient } from './api-client'
 import { z } from 'zod'
+import { predictionStatusFixture } from '../../../tests/prediction-fixtures'
+import {
+  DEFAULT_PREDICTION_SETTINGS,
+  type PredictionStatus,
+  type StreamerView,
+} from '../../../shared/models/streamer'
 
+import { ApplicationError } from '../../../shared/errors/application-error'
+
+const REQUEST_ID = '6f1f7c2e-8a3b-4c7d-9e2f-0a1b2c3d4e5f'
 const userView = {
   state: 'AUTHENTICATED' as const,
   user: {
@@ -22,11 +31,12 @@ const userView = {
 function harness(
   connectUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=x',
   activeProfile: object | null = null,
-  resultConfig: object = {},
 ) {
   let authGeneration = 1
   let activeMutations = 0
   let maxMutations = 0
+  let predictionStatus = structuredClone(predictionStatusFixture)
+  let predictionSettings = { ...DEFAULT_PREDICTION_SETTINGS }
   const request = vi.fn(
     async (input: {
       method: string
@@ -53,11 +63,17 @@ function harness(
           status: 200,
           data: { success: true, connected: true, username: 'caster' },
         }
-      if (input.path.endsWith('/bot/status'))
+      if (input.path.endsWith('/predictions/status'))
         return {
           ok: true as const,
           status: 200,
-          data: { success: true, status: { is_active: false, state: 'idle' } },
+          data: predictionStatus,
+        }
+      if (input.path.endsWith('/predictions/settings'))
+        return {
+          ok: true as const,
+          status: 200,
+          data: predictionSettings,
         }
       if (input.path.endsWith('/title/status'))
         return {
@@ -87,22 +103,22 @@ function harness(
   )
   const shell = { openExternal: vi.fn().mockResolvedValue(undefined) }
   const clipboard = { writeText: vi.fn() }
+  const predictions = {
+    startLifecycle: vi.fn(),
+    shutdown: vi.fn(),
+    saveSettings: vi.fn((settings: typeof predictionSettings) => {
+      predictionSettings = settings
+      predictionStatus = { ...predictionStatus, enabled: settings.enabled }
+      return Promise.resolve(predictionStatus)
+    }),
+    manualBattle: vi.fn().mockResolvedValue(predictionStatusFixture),
+    cancel: vi.fn().mockResolvedValue(predictionStatusFixture),
+  }
   const service = new StreamerService(
     { getView: () => userView, getContextGeneration: () => authGeneration } as never,
     { request } as never,
     {
-      load: vi.fn().mockResolvedValue({
-        predictionType: 'win_lose',
-        predictionWindow: 60,
-        winStreakCount: 2,
-        delayBetweenPredictions: 5,
-        autoCreateNext: true,
-      }),
-      save: vi.fn(),
-    } as never,
-    { load: vi.fn().mockResolvedValue(resultConfig) } as never,
-    {
-      load: vi.fn().mockResolvedValue({}),
+      load: vi.fn().mockResolvedValue(null),
       getActive: vi.fn().mockResolvedValue(activeProfile),
       list: vi.fn().mockResolvedValue({
         activeProfileId: '00000000-0000-4000-8000-000000000001',
@@ -116,15 +132,7 @@ function harness(
       }),
     } as never,
     { getView: vi.fn().mockResolvedValue({ state: 'READY', runIntent: true }) } as never,
-    {
-      state: 'stopped',
-      observationGeneration: 0,
-      observeServerState: vi.fn(),
-      startLifecycle: vi.fn(),
-      shutdown: vi.fn(),
-      start: vi.fn(),
-      stop: vi.fn(),
-    } as never,
+    predictions as never,
     shell,
     clipboard,
     () => new Date('2026-07-12T12:00:00.000Z'),
@@ -133,11 +141,385 @@ function harness(
     service,
     request,
     shell,
+    predictions,
+    setPredictionStatus: (status: PredictionStatus) => {
+      predictionStatus = status
+    },
     clipboard,
     maxMutations: () => maxMutations,
     changeAuth: () => ++authGeneration,
   }
 }
+
+describe('prediction settings and manual settlement', () => {
+  it('loads settings from the server with the 30-second default', async () => {
+    const test = harness()
+    const view = await test.service.refresh()
+    expect(view.predictions.settings).toEqual(DEFAULT_PREDICTION_SETTINGS)
+    expect(test.request.mock.calls.map(([input]) => input.path)).toContain(
+      '/api/streamer/predictions/settings',
+    )
+    expect(view.predictions.settings.votingSeconds).toBe(30)
+  })
+
+  it('saves new settings without starting or stopping the monitor', async () => {
+    const test = harness()
+    const settings = {
+      ...DEFAULT_PREDICTION_SETTINGS,
+      enabled: false,
+      mode: 'streak' as const,
+    }
+    const result = await test.service.execute({
+      action: 'predictions.settings.save',
+      settings,
+    })
+    expect(result.ok).toBe(true)
+    expect(test.predictions.saveSettings).toHaveBeenCalledWith(settings)
+    expect(test.service.getView().predictions.settings).toEqual(settings)
+    expect(test.service.getView().predictions.enabled).toBe(false)
+  })
+
+  it.each(['win', 'loss', 'not_ranked'] as const)(
+    'routes manual %s with the current prediction identity and request ID',
+    async (outcome) => {
+      const test = harness()
+      const status = {
+        ...predictionStatusFixture,
+        stats: {
+          resolved: 1,
+          yes: outcome === 'win' ? 1 : 0,
+          no: outcome === 'loss' ? 1 : 0,
+          canceled: 0,
+        },
+      }
+      test.setPredictionStatus(status)
+      test.predictions.manualBattle.mockResolvedValue(status)
+      const result = await test.service.execute({
+        action: 'predictions.battle',
+        predictionId: 71,
+        outcome,
+        requestId: REQUEST_ID,
+      })
+      expect(result.ok).toBe(true)
+      expect(test.predictions.manualBattle).toHaveBeenCalledExactlyOnceWith(
+        71,
+        outcome,
+        REQUEST_ID,
+      )
+      expect(test.service.getView().predictions.stats).toEqual(status.stats)
+    },
+  )
+
+  it('rejects a manual battle without a UUID request ID before any request', async () => {
+    const test = harness()
+    for (const requestId of [undefined, '', 'press-1', 7])
+      expect(
+        await test.service.execute({
+          action: 'predictions.battle',
+          predictionId: 71,
+          outcome: 'win',
+          ...(requestId === undefined ? {} : { requestId }),
+        }),
+      ).toEqual({ ok: false, error: { code: 'VALIDATION_FAILED', detail: null } })
+    expect(test.predictions.manualBattle).not.toHaveBeenCalled()
+    expect(test.request).not.toHaveBeenCalled()
+  })
+
+  it('requires confirmation before forwarding cancel', async () => {
+    const test = harness()
+    expect(
+      (
+        await test.service.execute({
+          action: 'predictions.cancel',
+          predictionId: 71,
+        })
+      ).ok,
+    ).toBe(false)
+    expect(test.predictions.cancel).not.toHaveBeenCalled()
+    expect(
+      (
+        await test.service.execute({
+          action: 'predictions.cancel',
+          predictionId: 71,
+          confirmed: true,
+        })
+      ).ok,
+    ).toBe(true)
+    expect(test.predictions.cancel).toHaveBeenCalledExactlyOnceWith(71)
+  })
+
+  it('rejects invalid streak ranges at the IPC boundary', async () => {
+    const test = harness()
+    const result = await test.service.execute({
+      action: 'predictions.settings.save',
+      settings: { ...DEFAULT_PREDICTION_SETTINGS, streakFrom: 6, streakTo: 2 },
+    })
+    expect(result.ok).toBe(false)
+    expect(test.predictions.saveSettings).not.toHaveBeenCalled()
+  })
+
+  it('renders a server-side stop and restart without a local runtime gate', async () => {
+    const test = harness()
+    expect((await test.service.refresh()).predictions.enabled).toBe(true)
+    test.setPredictionStatus({
+      ...predictionStatusFixture,
+      enabled: false,
+      phase: 'disabled',
+    })
+    expect((await test.service.refresh()).predictions.enabled).toBe(false)
+    test.setPredictionStatus(predictionStatusFixture)
+    expect((await test.service.refresh()).predictions.enabled).toBe(true)
+  })
+
+  it('never applies a manual response from an old auth generation', async () => {
+    const test = harness()
+    const gate = Promise.withResolvers<PredictionStatus>()
+    test.predictions.manualBattle.mockReturnValueOnce(gate.promise)
+    const before = test.service.getView().predictions
+    const pending = test.service.execute({
+      action: 'predictions.battle',
+      predictionId: 71,
+      outcome: 'win',
+      requestId: REQUEST_ID,
+    })
+    await vi.waitFor(() => expect(test.predictions.manualBattle).toHaveBeenCalled())
+    test.changeAuth()
+    gate.resolve({
+      ...predictionStatusFixture,
+      stats: { resolved: 1, yes: 1, no: 0, canceled: 0 },
+    })
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(test.service.getView().predictions).toEqual(before)
+  })
+})
+
+describe('recovery after a failed prediction command', () => {
+  const streak = (id: number, wins: number): PredictionStatus => ({
+    ...predictionStatusFixture,
+    live: true,
+    phase: 'locked',
+    prediction: {
+      id,
+      title: 'Выиграю 5 боёв подряд?',
+      mode: 'streak',
+      target: 5,
+      wins,
+      locksAt: '2026-07-12T12:00:30.000Z',
+      hasBets: true,
+      source: 'snipe',
+      canSettle: true,
+    },
+  })
+  const battle = (outcome: 'win' | 'loss' | 'not_ranked' = 'win') => ({
+    action: 'predictions.battle' as const,
+    predictionId: 71,
+    outcome,
+    requestId: REQUEST_ID,
+  })
+  const statusReads = (request: {
+    mock: { calls: [{ path: string }][]; invocationCallOrder: number[] }
+  }): number[] =>
+    request.mock.calls.flatMap(([input], index) =>
+      input.path === '/api/streamer/predictions/status'
+        ? [request.mock.invocationCallOrder[index] ?? 0]
+        : [],
+    )
+  /** Lets every already-queued continuation run; no wall-clock wait. */
+  const flushMicrotasks = async (): Promise<void> => {
+    for (let turn = 0; turn < 50; turn += 1) await Promise.resolve()
+  }
+
+  it.each([
+    'NETWORK_UNAVAILABLE',
+    'REQUEST_TIMEOUT',
+    'SERVER_ERROR',
+    'INVALID_RESPONSE',
+    'VALIDATION_FAILED',
+    'PREDICTION_NO_BATTLE_TO_SKIP',
+  ] as const)(
+    'refreshes the status after %s and keeps the original error',
+    async (code) => {
+      const test = harness()
+      test.setPredictionStatus(streak(71, 3))
+      await test.service.refresh()
+      // The press reached the server and was applied; only its response was lost.
+      test.predictions.manualBattle.mockImplementationOnce(() => {
+        test.setPredictionStatus(streak(71, 4))
+        return Promise.reject(new ApplicationError(code, 'lost response'))
+      })
+      const before = statusReads(test.request).length
+      const result = await test.service.execute(battle())
+      expect(result).toEqual({ ok: false, error: { code, detail: null } })
+      expect(test.predictions.manualBattle).toHaveBeenCalledOnce()
+      const after = statusReads(test.request)
+      expect(after.length).toBe(before + 1)
+      expect(after.at(-1)).toBeGreaterThan(
+        test.predictions.manualBattle.mock.invocationCallOrder[0] ?? Infinity,
+      )
+      expect(test.service.getView().predictions.prediction).toMatchObject({
+        id: 71,
+        wins: 4,
+      })
+      expect(test.service.getView().refresh.errors).toEqual([])
+    },
+  )
+
+  it('answers a failed manual command only after the status refresh finished', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    const gate = Promise.withResolvers<undefined>()
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status') await gate.promise
+      return original(input)
+    })
+    test.predictions.manualBattle.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(71, 4))
+      return Promise.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    })
+    let settled = false
+    const pending = test.service.execute(battle()).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(statusReads(test.request).length).toBe(2))
+    await flushMicrotasks()
+    expect(settled).toBe(false)
+    expect(test.service.getView().predictions.prediction?.wins).toBe(3)
+    gate.resolve(undefined)
+    expect(await pending).toMatchObject({ ok: false, error: { code: 'REQUEST_TIMEOUT' } })
+    expect(test.service.getView().predictions.prediction?.wins).toBe(4)
+  })
+
+  it('keeps the original error and the last status when the refresh also fails', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status')
+        return {
+          ok: false,
+          error: createApiError('NETWORK_UNAVAILABLE', 'offline', true),
+        } as never
+      return original(input)
+    })
+    test.predictions.manualBattle.mockRejectedValueOnce(
+      new ApplicationError('NETWORK_UNAVAILABLE', 'offline'),
+    )
+    expect(await test.service.execute(battle('not_ranked'))).toMatchObject({
+      ok: false,
+      error: { code: 'NETWORK_UNAVAILABLE' },
+    })
+    const view = test.service.getView()
+    expect(view.predictions.prediction).toMatchObject({ id: 71, wins: 3 })
+    expect(view.refresh.errors.map((error) => error.section)).toContain('predictions')
+  })
+
+  it('refreshes after a stale (409) cancel so the new prediction is shown', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    test.predictions.cancel.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(72, 0))
+      return Promise.reject(new ApplicationError('VALIDATION_FAILED', 'stale'))
+    })
+    expect(
+      await test.service.execute({
+        action: 'predictions.cancel',
+        predictionId: 71,
+        confirmed: true,
+      }),
+    ).toEqual({ ok: false, error: { code: 'VALIDATION_FAILED', detail: null } })
+    expect(test.service.getView().predictions.prediction?.id).toBe(72)
+  })
+
+  it('an account switch before the failure arrives cancels the recovery', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const before = test.service.getView().predictions
+    const gate = Promise.withResolvers<PredictionStatus>()
+    test.predictions.manualBattle.mockReturnValueOnce(gate.promise)
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(test.predictions.manualBattle).toHaveBeenCalled())
+    const reads = statusReads(test.request).length
+    test.changeAuth()
+    gate.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    expect(await pending).toEqual({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED', detail: null },
+    })
+    expect(statusReads(test.request)).toHaveLength(reads)
+    expect(test.service.getView().predictions).toEqual(before)
+  })
+
+  it('an account switch during the recovery refresh discards it', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const original = test.request.getMockImplementation()
+    if (original === undefined) throw new Error('Missing request fixture')
+    const gate = Promise.withResolvers<undefined>()
+    test.request.mockImplementation(async (input) => {
+      if (input.path === '/api/streamer/predictions/status') await gate.promise
+      return original(input)
+    })
+    test.predictions.manualBattle.mockImplementationOnce(() => {
+      test.setPredictionStatus(streak(71, 4))
+      return Promise.reject(new ApplicationError('REQUEST_TIMEOUT', 'lost response'))
+    })
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(statusReads(test.request).length).toBe(2))
+    // The application controller stops the service on every account transition.
+    test.changeAuth()
+    await test.service.stop()
+    gate.resolve(undefined)
+    expect(await pending).toEqual({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED', detail: null },
+    })
+    expect(test.service.getView().predictions.prediction).toBeNull()
+  })
+
+  it('does not mark a new account failed when an old recovery rejects after stop', async () => {
+    const test = harness()
+    test.setPredictionStatus(streak(71, 3))
+    await test.service.refresh()
+    const recovery = Promise.withResolvers<StreamerView>()
+    const refresh = vi
+      .spyOn(test.service, 'refresh')
+      .mockReturnValueOnce(recovery.promise)
+    test.predictions.manualBattle.mockRejectedValueOnce(
+      new ApplicationError('REQUEST_TIMEOUT', 'lost response'),
+    )
+    const pending = test.service.execute(battle())
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+    test.changeAuth()
+    await test.service.stop()
+    recovery.reject(new Error('stale recovery failed'))
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'STREAMER_CANCELLED' },
+    })
+    expect(test.service.getView().refresh.state).toBe('idle')
+  })
+
+  it('never retries a failed manual command by itself', async () => {
+    const test = harness()
+    test.predictions.manualBattle.mockRejectedValue(
+      new ApplicationError('REQUEST_TIMEOUT', 'lost response'),
+    )
+    await test.service.execute(battle())
+    await flushMicrotasks()
+    expect(test.predictions.manualBattle).toHaveBeenCalledOnce()
+  })
+})
 
 describe('StreamerService', () => {
   it.each([
@@ -375,7 +757,7 @@ describe('StreamerService', () => {
       accountsCount: 0,
       monitoring: true,
       captureConfigured: false,
-      resultZonesConfigured: false,
+      predictionProfileReady: false,
       activeProfileId: null,
     })
     const original = test.request.getMockImplementation()
@@ -392,60 +774,40 @@ describe('StreamerService', () => {
     })
   })
 
-  it.each([true, false])(
-    'derives result-zone readiness from the active profile fingerprint: %s',
-    async (matches) => {
-      const profileId = '00000000-0000-4000-8000-000000000001'
-      const active = {
-        profile: {
-          profileId,
-          configuration: {
-            revision: 1,
-            fingerprint: 'a'.repeat(64),
-            calibration: { coordinateSpace: 'full_frame_normalized' },
-          },
-        },
-      }
-      const result = {
-        captureProfileId: profileId,
-        captureConfigurationRevision: 1,
-        captureConfigurationFingerprint: (matches ? 'a' : 'b').repeat(64),
-      }
-      const test = harness(undefined, active, result)
-      await test.service.refresh()
-      expect(await test.service.getReadiness()).toMatchObject({
-        captureConfigured: true,
-        resultZonesConfigured: matches,
-        activeProfileId: profileId,
-      })
-    },
-  )
+  it('does not accept a full-frame profile even with saved result zones', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const test = harness(undefined, {
+      profile: {
+        profileId,
+        configuration: { calibration: { coordinateSpace: 'full_frame_normalized' } },
+      },
+    })
+    await test.service.refresh()
+    expect(await test.service.getReadiness()).toMatchObject({
+      captureConfigured: true,
+      predictionProfileReady: false,
+      activeProfileId: profileId,
+    })
+  })
 
-  it.each([true, false])(
-    'derives game-relative readiness from calibration identity after layout append: %s',
-    async (matches) => {
+  it.each([0.43, 0.52])(
+    'requires only own-battle game-relative layouts: %s',
+    async (cy) => {
       const profileId = '00000000-0000-4000-8000-000000000001'
-      const calibrationId = '00000000-0000-4000-8000-000000000010'
-      const active = {
+      const test = harness(undefined, {
         profile: {
           profileId,
           configuration: {
-            revision: 4,
-            fingerprint: 'b'.repeat(64),
-            calibration: { coordinateSpace: 'game_relative', calibrationId },
+            calibration: {
+              coordinateSpace: 'game_relative',
+              layouts: [{ trigger: { kind: 'vs_edge_orientation', badge: { cy } } }],
+            },
           },
         },
-      }
-      const result = {
-        captureProfileId: profileId,
-        captureCalibrationId: matches ? calibrationId : profileId,
-        captureConfigurationRevision: 1,
-        captureConfigurationFingerprint: 'a'.repeat(64),
-      }
-      const test = harness(undefined, active, result)
+      })
       await test.service.refresh()
       expect(await test.service.getReadiness()).toMatchObject({
-        resultZonesConfigured: matches,
+        predictionProfileReady: cy === 0.43,
         activeProfileId: profileId,
       })
     },

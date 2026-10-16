@@ -202,9 +202,6 @@ function harness(nameChecker?: SetupNameChecker) {
     api as unknown as ApiClient,
     auth as unknown as AuthSession,
     () => new Date('2026-10-13T12:00:00.000Z'),
-    undefined,
-    undefined,
-    undefined,
     nameChecker,
     logger,
   )
@@ -537,7 +534,7 @@ describe('automatic setup session lifecycle', () => {
     const test = harness()
     const started = await test.service.startAuto(selector, preference, test.live)
     test.service.cancel(started.sessionId, started.generation)
-    const replacement = await test.service.start(selector, preference, 'capture', frame)
+    const replacement = await test.service.start(selector, preference, frame)
     requiredFixture(test.operations[0]).resolve({ result: success, frame })
     await settle()
     expect(test.service.getSession()).toEqual(replacement)

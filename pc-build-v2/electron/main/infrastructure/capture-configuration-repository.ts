@@ -270,7 +270,6 @@ function collectionStatus(
       sourceLabel: profile.configuration.sourceBinding.identity.label,
       sourceHealth: { state: 'unknown', reason: null },
       calibrationHealth: profile.configuration.calibration.validationStatus,
-      resultConfigured: false,
     })),
   })
 }

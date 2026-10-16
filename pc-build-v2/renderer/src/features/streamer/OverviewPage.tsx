@@ -27,8 +27,14 @@ import {
   type FoundationItem,
 } from './useRequirements'
 import { useRunner } from './useRunner'
+import { predictionStatusText, votingLabel } from './text'
 
-const BASE: readonly FoundationId[] = ['twitch', 'accounts', 'monitoring', 'zones']
+const BASE: readonly FoundationId[] = [
+  'twitch',
+  'accounts',
+  'monitoring',
+  'predictionProfile',
+]
 
 /** «Обзор эфира»: four foundations on top, the features below, each with its next step. */
 export function OverviewPage(): React.JSX.Element {
@@ -56,6 +62,9 @@ function Overview(): React.JSX.Element {
     missingFor(feature, foundations).length === 0
 
   const settings = view.title.settings
+  const predictionPill = predictionStatusText(view.predictions)
+  const predictionMode =
+    view.predictions.settings.mode === 'streak' ? 'Серия побед' : 'Каждый бой'
   const features: {
     id: FeatureId
     icon: IconName
@@ -69,10 +78,8 @@ function Overview(): React.JSX.Element {
       id: 'predictions',
       icon: 'trophy',
       title: 'Прогнозы',
-      sub: `Идут сами · ${view.predictions.settings.predictionWindow} с на голосование`,
-      pill: view.predictions.active
-        ? { tone: 'ok', label: 'Включены' }
-        : { tone: 'neutral', label: 'Выключены' },
+      sub: `${predictionMode} · ${votingLabel(view.predictions.settings.votingSeconds)} на ставки`,
+      ...(predictionPill === null ? {} : { pill: predictionPill }),
       section: 'predictions',
     },
     {

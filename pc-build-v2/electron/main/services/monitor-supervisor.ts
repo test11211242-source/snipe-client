@@ -20,7 +20,8 @@ import {
   type MonitorGeometryEvent,
   type MonitorLearningEvent,
   type MonitorLayoutLearnedEvent,
-  type MonitorPredictionStateEvent,
+  type MonitorTriggeredEvent,
+  type MonitorPredictionResultEvent,
 } from '../../../shared/contracts/monitor-protocol'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
 import {
@@ -31,10 +32,6 @@ import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorAction, MonitorProcessService } from './monitor-process-service'
 import type { OcrApiClient } from './ocr-api-client'
-import {
-  PredictionRuntimeProfileSchema,
-  type PredictionRuntimeProfile,
-} from '../../../shared/models/prediction-result'
 import {
   canonicalOpponentTag,
   HISTORY_LIMIT,
@@ -132,11 +129,16 @@ export class MonitorSupervisor {
   #stopPromise: Promise<MonitorView> | null = null
   #stopIntentGeneration = 0
   readonly #resultListeners = new Set<(result: MonitorResult) => void | Promise<void>>()
-  readonly #battleStartListeners = new Set<(timestamp: string) => void | Promise<void>>()
-  readonly #predictionResultListeners = new Set<
-    (action: MonitorAction) => void | Promise<void>
+  readonly #battleStartListeners = new Set<
+    (event: MonitorTriggeredEvent['payload']) => void | Promise<void>
   >()
-  #predictionProfile: PredictionRuntimeProfile | null = null
+  readonly #predictionResultListeners = new Set<
+    (result: MonitorPredictionResultEvent['payload']) => void | Promise<void>
+  >()
+  #lastOwnBattleId: string | null = null
+  #battleGap = true
+  #predictionGeneration: number | null = null
+  #predictionDrainGap: boolean | null = null
   #userContextId: string | null = null
   #userContextGeneration = 0
   readonly #viewListeners = new Set<(view: MonitorView) => void>()
@@ -158,9 +160,6 @@ export class MonitorSupervisor {
   #sessionTags = new Map<string, number>()
   #sessionRepeats = new Set<string>()
   #learnedLayoutHandler: LearnedLayoutHandler | null = null
-  readonly #predictionStateListeners = new Set<
-    (state: MonitorPredictionStateEvent['payload']['state']) => void | Promise<void>
-  >()
 
   constructor(
     private readonly auth: AuthSession,
@@ -233,15 +232,6 @@ export class MonitorSupervisor {
 
   setLearnedLayoutHandler(handler: LearnedLayoutHandler): void {
     this.#learnedLayoutHandler = handler
-  }
-
-  subscribePredictionStates(
-    listener: (
-      state: MonitorPredictionStateEvent['payload']['state'],
-    ) => void | Promise<void>,
-  ): () => void {
-    this.#predictionStateListeners.add(listener)
-    return () => this.#predictionStateListeners.delete(listener)
   }
 
   async getHistory(offset = 0, limit = 50): Promise<MonitorResult[]> {
@@ -321,27 +311,17 @@ export class MonitorSupervisor {
   }
 
   subscribeBattleStarts(
-    listener: (timestamp: string) => void | Promise<void>,
+    listener: (event: MonitorTriggeredEvent['payload']) => void | Promise<void>,
   ): () => void {
     this.#battleStartListeners.add(listener)
     return () => this.#battleStartListeners.delete(listener)
   }
 
   subscribePredictionResults(
-    listener: (action: MonitorAction) => void | Promise<void>,
+    listener: (result: MonitorPredictionResultEvent['payload']) => void | Promise<void>,
   ): () => void {
     this.#predictionResultListeners.add(listener)
     return () => this.#predictionResultListeners.delete(listener)
-  }
-
-  async configurePredictionRuntime(
-    profile: PredictionRuntimeProfile | null,
-  ): Promise<MonitorView> {
-    this.#predictionProfile =
-      profile === null ? null : PredictionRuntimeProfileSchema.parse(profile)
-    return ['PREFLIGHT', 'STARTING', 'READY'].includes(this.#view.state)
-      ? this.restart()
-      : this.#view
   }
 
   isRunning(): boolean {
@@ -376,7 +356,8 @@ export class MonitorSupervisor {
     this.#ocrController = null
     this.#ocrActive = false
     this.#pendingAction = null
-    this.#predictionProfile = null
+    this.#lastOwnBattleId = null
+    this.#battleGap = true
     this.cancelRecovery()
     this.clearRetry()
     this.#journal = null
@@ -487,6 +468,7 @@ export class MonitorSupervisor {
   }
 
   stop(reason: MonitorSession['stopReason'] = 'user'): Promise<MonitorView> {
+    this.beginPredictionDrain()
     ++this.#stopIntentGeneration
     this.cancelRecovery()
     this.clearRetry()
@@ -510,8 +492,7 @@ export class MonitorSupervisor {
     this.#ocrController = null
     this.#pendingAction = null
     this.transition('STOPPING')
-    const operation = this.process
-      .stop()
+    const operation = this.stopProcess()
       .then(async () => {
         await this.#journalWrite
         if (generation === this.#generation && this.#view.state === 'STOPPING') {
@@ -576,7 +557,7 @@ export class MonitorSupervisor {
     contextGeneration: number,
   ): Promise<MonitorView> {
     try {
-      await this.process.stop()
+      await this.stopProcess()
       this.assertCurrent(generation, userId, contextGeneration)
       if (userId === null)
         throw new ApplicationError('AUTH_REQUIRED', 'Sign in to start monitoring')
@@ -699,22 +680,17 @@ export class MonitorSupervisor {
           confirmationDecay: 0.5,
           cooldownSeconds: 15,
         },
-        prediction: this.#predictionProfile,
       })
       this.assertCurrent(generation, userId, contextGeneration)
+      this.#predictionGeneration = generation
+      this.#predictionDrainGap = null
       await this.process.start(payload, {
-        onTriggered: (timestamp, triggerId) =>
-          this.acceptTriggered(
-            generation,
-            userId,
-            contextGeneration,
-            timestamp,
-            triggerId,
-          ),
+        onTriggered: (event) =>
+          this.acceptTriggered(generation, userId, contextGeneration, event),
         onAction: (action) =>
           this.acceptAction(generation, userId, contextGeneration, action),
-        onPredictionResult: (action) =>
-          this.acceptPredictionResult(generation, userId, contextGeneration, action),
+        onPredictionResult: (result) =>
+          this.acceptPredictionResult(generation, userId, contextGeneration, result),
         onGeometry: (geometry) => {
           if (
             primary.kind === 'game_relative' &&
@@ -743,22 +719,14 @@ export class MonitorSupervisor {
               learned,
             )
         },
-        onPredictionState: ({ state }) => {
-          if (!this.isRuntimeCurrent(generation, userId, contextGeneration)) return
-          for (const listener of this.#predictionStateListeners) {
-            try {
-              void Promise.resolve(listener(state)).catch(() => undefined)
-            } catch {
-              // One-way prediction notifications cannot stop opponent monitoring.
-            }
-          }
-        },
         onSourceState: ({ minimized }) => {
           if (this.isRuntimeCurrent(generation, userId, contextGeneration))
             this.patch({ sourceMinimized: minimized })
         },
         onFatal: (error) => this.failRun(generation, userId, contextGeneration, error),
+        onStopped: () => this.finishPredictionRun(generation),
         onExit: (error) => {
+          this.finishPredictionRun(generation)
           if (error !== null) this.failRun(generation, userId, contextGeneration, error)
         },
       })
@@ -905,14 +873,18 @@ export class MonitorSupervisor {
     generation: number,
     userId: string,
     contextGeneration: number,
-    timestamp: string,
-    triggerId: string = randomUUID(),
+    event: MonitorTriggeredEvent['payload'],
   ): void {
     if (
       !this.isCurrent(generation, userId, contextGeneration) ||
       !['STARTING', 'READY'].includes(this.#view.state)
     )
       return
+    const { timestamp, triggerId } = event
+    if (event.kind === 'battle') {
+      this.#lastOwnBattleId = triggerId
+      this.#battleGap = this.#view.state !== 'READY' || this.#view.sourceMinimized
+    }
     this.#lastTriggerId = triggerId
     this.clearRetry()
     if (this.#profileId !== null && this.#calibrationRevision !== null) {
@@ -931,7 +903,12 @@ export class MonitorSupervisor {
     }
     for (const listener of this.#battleStartListeners) {
       try {
-        void Promise.resolve(listener(timestamp)).catch(() => undefined)
+        void Promise.resolve(
+          listener({
+            ...event,
+            rankEvidence: event.rankEvidence === null ? null : { ...event.rankEvidence },
+          }),
+        ).catch(() => undefined)
       } catch {
         // Private one-way notifications cannot affect normal monitor processing.
       }
@@ -943,20 +920,32 @@ export class MonitorSupervisor {
     generation: number,
     userId: string,
     contextGeneration: number,
-    action: MonitorAction,
+    result: MonitorPredictionResultEvent['payload'],
   ): void {
     if (
-      !this.isCurrent(generation, userId, contextGeneration) ||
-      this.#view.state !== 'READY' ||
-      this.#predictionProfile === null
+      generation !== this.#predictionGeneration ||
+      !this.isUserContextCurrent(userId, contextGeneration) ||
+      !(
+        (this.isCurrent(generation, userId, contextGeneration) &&
+          this.#view.state === 'READY') ||
+        this.#predictionDrainGap !== null
+      )
     )
       return
     for (const listener of this.#predictionResultListeners) {
       try {
-        const copy = { ...action, image: Buffer.from(action.image) }
+        const copy = {
+          ...result,
+          battleId: this.#lastOwnBattleId,
+          gap:
+            result.gap ||
+            (this.#predictionDrainGap ?? this.#battleGap) ||
+            result.battleId !== this.#lastOwnBattleId,
+          evidence: { ...result.evidence, crowns: { ...result.evidence.crowns } },
+        }
         void Promise.resolve(listener(copy)).catch(() => undefined)
       } catch {
-        // Private images remain inside main and listener failures are isolated.
+        // Main-only result notifications cannot interrupt opponent monitoring.
       }
     }
   }
@@ -1203,6 +1192,7 @@ export class MonitorSupervisor {
     ) {
       return
     }
+    this.beginPredictionDrain()
     if (
       this.#view.runIntent &&
       (RECOVERABLE_SOURCE_CODES[error.code] || this.takeWorkerRestart(error.code))
@@ -1217,7 +1207,7 @@ export class MonitorSupervisor {
         publicError(error),
         RECOVERABLE_SOURCE_CODES[error.code] ? 'source' : 'worker',
       )
-      void this.process.stop()
+      void this.stopProcess()
       return
     }
     ++this.#generation
@@ -1227,7 +1217,27 @@ export class MonitorSupervisor {
     this.transition('FAILED', { error: publicError(error), runIntent: false })
     this.clearRetry()
     this.finalizeSession('failed')
-    void this.process.stop()
+    void this.stopProcess()
+  }
+
+  private beginPredictionDrain(): void {
+    if (
+      this.#predictionGeneration !== null &&
+      this.#view.state === 'READY' &&
+      this.#predictionDrainGap === null
+    )
+      this.#predictionDrainGap = this.#battleGap
+  }
+
+  private finishPredictionRun(generation: number | null): void {
+    if (this.#predictionGeneration !== generation) return
+    this.#predictionGeneration = null
+    this.#predictionDrainGap = null
+  }
+
+  private stopProcess(): Promise<void> {
+    const generation = this.#predictionGeneration
+    return this.process.stop().finally(() => this.finishPredictionRun(generation))
   }
 
   private takeWorkerRestart(code: string): boolean {
@@ -1485,6 +1495,9 @@ export class MonitorSupervisor {
 
   private patch(patch: Partial<MonitorView>): void {
     this.#view = MonitorViewSchema.parse({ ...this.#view, ...patch })
+    if (this.#view.state !== 'READY' || this.#view.sourceMinimized) {
+      this.#battleGap = true
+    }
     for (const listener of this.#viewListeners) {
       try {
         listener(this.getCurrentView())

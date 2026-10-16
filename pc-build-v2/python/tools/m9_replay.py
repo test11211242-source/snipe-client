@@ -1,6 +1,7 @@
-"""Offline M9 replay: setup, fixed-badge rule (c), and the actual runtime.
+"""Offline M9 replay: setup, fixed-badge rule (c), the actual runtime, and C3.
 
-Usage: m9_replay.py {setup|orient|runtime|autosetup|boundary} --manifest <external.json> --out <external-dir>
+Usage: m9_replay.py {setup|orient|runtime|autosetup|boundary|c3} --manifest <external.json> --out <external-dir>
+The c3 mode (predictions detectors) takes its own manifest; see tools/c3_replay.py.
 Manifest JSON: {"recordings": [{"key": "sample1", "path": "video.mp4",
 "kind": "cheddar|ranked|spectate|long|language|toolbar|titlebar",
 "vsOnsets": [4.6], "vsDuration": 1.9, "gameAspect": 0.5625,
@@ -48,8 +49,12 @@ from geometry.vs_finder import MATCH_T, Candidate, VSConfirmer, search
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
 from geometry.zones import Badge, layout_kind, regions
 from trigger_engine import TemporalGate, TriggerEngine
-from monitor_protocol import validate_start_payload
+from monitor_engine import FrameEvents
+from monitor_protocol import encode_event, validate_start_payload
 from auto_setup import AutoSetupEngine, DEADLINE_MS
+
+# Wall-clock stamp of replayed events (the protocol requires a valid one).
+REPLAY_TIMESTAMP = "2026-10-15T00:00:00Z"
 
 
 def _hsv(image: np.ndarray, dh: int = 0, saturation: float = 1.0) -> np.ndarray:
@@ -442,7 +447,6 @@ def _runtime_payload(layout: dict[str, Any], *, learning: bool) -> dict[str, Any
         "limits": {"fps": 10, "maxImageBytes": 10 * 1024 * 1024, "maxImagePixels": 20_000_000,
                    "maxImageWidth": 8192, "maxImageHeight": 8192, "confirmationsNeeded": 2,
                    "confirmationDecay": 0.5, "cooldownSeconds": 15},
-        "prediction": None,
         "primary": {"kind": "game_relative", "profileCalibrationId": layout["layoutId"],
                     "layouts": [layout], "learning": {"enabled": learning, "maxLayouts": 4}},
     })
@@ -457,14 +461,18 @@ def _runtime_windows(record: dict[str, Any], offset: int = 0) -> list[tuple[int,
 def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]], *,
                  learning: bool = False, output: Path | None = None,
                  overlay_number: int = 0, gap_at: int | list[int] | None = None) -> dict[str, Any]:
-    """Only TriggerEngine decides geometry, learning, firing and action pixels."""
+    """Only TriggerEngine decides geometry, learning, firing and action pixels.
+    Frames run through the worker's `FrameEvents`; every emitted event passes
+    the protocol validation of `encode_event`."""
     engine = TriggerEngine(_runtime_payload(layout, learning=learning))
+    wired = FrameEvents(engine)
     gaps = [] if gap_at is None else [gap_at] if isinstance(gap_at, int) else list(gap_at)
 
     def clock(index: int) -> float:
         return index / 10 + 16.0 * sum(index >= gap for gap in gaps)
 
     fires, actions, states, events, timings = [], [], {}, [], []
+    prediction_results: list[dict[str, Any]] = []
     scores: dict[int, float] = {}
     episode_gate = TemporalGate(2, 0)
     episodes, blocked_fires, unknown_at, mismatch_at = [], [], None, None
@@ -473,9 +481,15 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
     for index, frame in enumerate(frames):
         started = time.perf_counter()
         now = clock(index)
-        action = engine.process(frame, now)
+        emitted = wired.process(frame, now, REPLAY_TIMESTAMP, str(uuid.uuid4()))
         timings.append((time.perf_counter() - started) * 1000)
-        fired = engine.take_triggered()
+        for event_type, payload in emitted:
+            encode_event("replay", index + 1, event_type, payload)
+        triggered = next((payload for event_type, payload in emitted if event_type == "triggered"), None)
+        fired = triggered is not None
+        action = next((payload for event_type, payload in emitted if event_type == "action"), None)
+        prediction_results += [{"frame": index, "outcome": payload["outcome"]}
+                               for event_type, payload in emitted if event_type == "prediction_result"]
         geometry = engine.geometry
         state = geometry.state
         key = ("armed" if state == "armed_provisional" else state,
@@ -498,7 +512,9 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
             scores[index] = match.score
         if episode_gate.observe(bool(evaluated and match.matched), now):
             episodes.append(index)
-        for event_type, payload in engine.take_events():
+        for event_type, payload in emitted:
+            if event_type in ("triggered", "action", "prediction_result"):
+                continue
             event = {"frame": index, "type": event_type}
             if event_type == "geometry":
                 event.update({key: payload[key] for key in ("state", "gameAspect")})
@@ -514,7 +530,9 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
         if fired:
             fires.append(index)
             fire_layouts.append({"source": geometry.layout["layoutSource"] if geometry.layout else None,
-                                 "gameAspect": round(geometry.layout["gameAspect"], 4) if geometry.layout else None})
+                                 "gameAspect": round(geometry.layout["gameAspect"], 4) if geometry.layout else None,
+                                 "kind": triggered["kind"], "rank": triggered["rank"],
+                                 "rankEvidence": triggered["rankEvidence"]})
             if state not in ("armed", "armed_provisional"):
                 blocked_fires.append(index)
             if output is not None and geometry.rect is not None:
@@ -525,8 +543,8 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
                              Candidate(1.0, badge["width"], Badge(**badge)),
                              output / f"runtime-{overlay_number}-{len(fires)}.png")
         if action is not None:
-            png, width, height = action
-            actions.append({"frame": index, "bytes": len(png), "width": width, "height": height})
+            actions.append({"frame": index, "bytes": action["byteLength"], "width": action["width"],
+                            "height": action["height"]})
     stable = {index for onset, end in windows for index in range(onset + 1, min(end, onset + 9))}
     # Score extrema omit pop-in/fade, but EVERY frame is passed to the engine.
     non = {index for index in scores if not any(onset - 2 <= index < end + 4 for onset, end in windows)}
@@ -544,6 +562,7 @@ def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]],
         "nonMax": max((scores[index] for index in non), default=None),
         "stableVsMin": min((scores[index] for index in stable if index in scores), default=None),
         "processMsMedian": float(np.median(timings)), "processMsP95": float(np.percentile(timings, 95)),
+        "predictionResults": prediction_results,
     }
 
 
@@ -600,10 +619,31 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
               "spectateProfile3FireOwnBattles0": spectate_ok,
               "windowResize16OneFirePerVs": resize_ok,
               "fullscreenLetterbox6": fullscreen_ok}
+    prediction_checks, predictions = _runtime_predictions(result)
+    checks.update(prediction_checks)
     return {"passed": all(checks.values()), "checks": checks, "positiveRequired": 22,
             "crossRequired": 6, "aspectRequired": 4, "learningRequired": 4,
             "learningSpectateRequired": 3, "windowResizeRequired": 16, "fullscreenLetterboxRequired": 6,
-            "maxPositiveDelayS": 0.2, "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20}
+            "maxPositiveDelayS": 0.2, "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20,
+            "predictions": predictions}
+
+
+def _runtime_predictions(result: dict[str, Any]) -> tuple[dict[str, bool], dict[str, Any]]:
+    """C3 on the VS-only recordings: no result report anywhere; only own-battle
+    fires carry a rank, and the Trainer Cheddar battles are never `pol`."""
+    cells = [cell for value in result.values() if isinstance(value, dict)
+             for cell in value.values() if isinstance(cell, dict) and "fireLayouts" in cell]
+    fires = [fire for cell in cells for fire in cell["fireLayouts"]]
+    own = [fire for fire in fires if fire["kind"] == "battle"]
+    other = [fire for fire in fires if fire["kind"] != "battle"]
+    ranks = {rank: sum(fire["rank"] == rank for fire in own) for rank in ("pol", "not_pol", "unknown")}
+    checks = {
+        "predictionResultsOnVsClips0": bool(cells) and all(not cell["predictionResults"] for cell in cells),
+        "rankOnOwnBattleFiresOnly": bool(own) and all(fire["rankEvidence"] is not None for fire in own)
+        and all(fire["rank"] == "unknown" and fire["rankEvidence"] is None for fire in other),
+        "cheddarRankNeverPol": ranks["pol"] == 0,
+    }
+    return checks, {"cells": len(cells), "ownFires": len(own), "otherFires": len(other), "ownRanks": ranks}
 
 
 def _fullscreen_ok(cells: list[dict[str, Any]]) -> bool:
@@ -1087,7 +1127,7 @@ def boundary_replay(manifest: Path, output: Path) -> dict[str, Any]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup", "boundary"))
+    parser.add_argument("mode", choices=("setup", "orient", "runtime", "autosetup", "boundary", "c3"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--distortions", choices=("all", "none"), default="all")
@@ -1096,7 +1136,10 @@ if __name__ == "__main__":
     parser.add_argument("--titlebar-image", type=Path)
     parser.add_argument("--titlebar-rect", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     args = parser.parse_args()
-    if args.mode == "autosetup":
+    if args.mode == "c3":
+        from c3_replay import c3_replay
+        result = c3_replay(args.manifest, args.out)
+    elif args.mode == "autosetup":
         result = autosetup_replay(args.manifest, args.out, overlays=args.overlays,
                                  prototype_jpeg92=args.prototype_jpeg92)
     elif args.mode == "runtime":

@@ -27,15 +27,12 @@ const profile = (n, name, label, kind, active, health, extra = {}) => ({
   sourceLabel: label,
   sourceHealth: { state: health, reason: null },
   calibrationHealth: 'validated',
-  resultConfigured: false,
   ...extra,
 })
 const healthProfiles = [
   profile(1, 'Основной', 'BlueStacks App Player', 'window', true, 'available'),
   profile(2, 'Для друзей', 'LDPlayer', 'window', false, 'missing'),
-  profile(3, 'Планшет (Duo)', 'Экран 2', 'display', false, 'unknown', {
-    resultConfigured: true,
-  }),
+  profile(3, 'Планшет (Duo)', 'Экран 2', 'display', false, 'unknown'),
   profile(4, 'Старый импорт', 'Game', 'window', false, 'metadata_unavailable', {
     calibrationHealth: 'needs_validation',
   }),
@@ -491,30 +488,7 @@ const drawGame = (c, scene) => {
     g.font = `600 ${gw * 0.075}px "Segoe UI"`
     g.fillText(text, gx + gw * 0.5, c.height * (fy + 0.05))
   }
-  if (scene === 'result') {
-    g.fillStyle = '#f4f5f7'
-    g.font = `800 ${gw * 0.12}px "Segoe UI"`
-    g.fillText('ПОБЕДА', gx + gw * 0.5, c.height * 0.18)
-    roundRect(
-      g,
-      gx + gw * 0.1,
-      c.height * 0.3,
-      gw * 0.8,
-      c.height * 0.2,
-      gw * 0.03,
-      '#2c3652',
-    )
-    roundRect(
-      g,
-      gx + gw * 0.1,
-      c.height * 0.56,
-      gw * 0.8,
-      c.height * 0.14,
-      gw * 0.03,
-      '#242d46',
-    )
-    plate(0.78, 'Продолжить', '#3d66c7', '#f4f5f7')
-  } else if (scene === 'menu') {
+  if (scene === 'menu') {
     roundRect(
       g,
       gx + gw * 0.08,
@@ -582,8 +556,6 @@ const REGIONS = {
   trigger: { x: gameX(0.28), y: 0.4, width: gameW(0.44), height: 0.18 },
   nickname: { x: gameX(0.12), y: 0.15, width: gameW(0.76), height: 0.1 },
   topLeftEvidence: { x: gameX(0.04), y: 0.02, width: gameW(0.5), height: 0.1 },
-  resultTrigger: { x: gameX(0.12), y: 0.1, width: gameW(0.76), height: 0.16 },
-  resultData: { x: gameX(0.1), y: 0.3, width: gameW(0.8), height: 0.2 },
 }
 const triggerProfileFx = (grade) => ({
   schemaVersion: 3,
@@ -610,8 +582,6 @@ const emptyRegions = {
   trigger: null,
   nickname: null,
   topLeftEvidence: null,
-  resultTrigger: null,
-  resultData: null,
 }
 // `setup.game: true`: main found the game in the frozen frame (portrait area of the stand-in).
 const gameFx = () => ({
@@ -630,7 +600,7 @@ const runningDetectionFx = (startedAgoMs) => ({
   nameCheck: { status: 'pending', text: null },
 })
 const detectingSession = (name, patch) =>
-  makeSession('capture', name, {
+  makeSession(name, {
     generation: 0,
     state: 'DETECTING',
     frameSize: null,
@@ -638,8 +608,7 @@ const detectingSession = (name, patch) =>
     detection: runningDetectionFx(13_000),
     ...patch,
   })
-const makeSession = (kind, name, patch = {}) => ({
-  kind,
+const makeSession = (name, patch = {}) => ({
   sessionId: uuid(901),
   generation: 1,
   state: 'SELECTING',
@@ -651,7 +620,7 @@ const makeSession = (kind, name, patch = {}) => ({
   profileId: uuid(7),
   profileName: name,
   frameSize: { width: 1280, height: 720 },
-  game: setupFx.game && kind === 'capture' ? gameFx() : null,
+  game: setupFx.game ? gameFx() : null,
   triggerKind: null,
   regionOrigins: null,
   regions: { ...emptyRegions },
@@ -668,22 +637,13 @@ const initialSession = () => {
     topLeftEvidence: REGIONS.topLeftEvidence,
   }
   const grade = setupFx.grade ?? 'high'
-  if (mode === 'selecting') return makeSession('capture', 'Ноутбук')
+  if (mode === 'selecting') return makeSession('Ноутбук')
   if (mode === 'regions')
-    return makeSession('capture', 'Ноутбук', { regions: { ...emptyRegions, ...capture } })
+    return makeSession('Ноутбук', { regions: { ...emptyRegions, ...capture } })
   if (mode === 'checked')
-    return makeSession('capture', 'Ноутбук', {
+    return makeSession('Ноутбук', {
       regions: { ...emptyRegions, ...capture },
       triggerProfile: triggerProfileFx(grade),
-    })
-  if (mode === 'result') return makeSession('predictionResult', 'Основной')
-  if (mode === 'resultRegions')
-    return makeSession('predictionResult', 'Основной', {
-      regions: {
-        ...emptyRegions,
-        resultTrigger: REGIONS.resultTrigger,
-        resultData: REGIONS.resultData,
-      },
     })
   if (mode === 'detecting') return detectingSession('Ноутбук', {})
   if (mode === 'detectFailed')
@@ -696,7 +656,7 @@ const initialSession = () => {
       },
     })
   if (mode === 'detected')
-    return makeSession('capture', 'Ноутбук', {
+    return makeSession('Ноутбук', {
       generation: 2,
       game: { ...gameFx(), source: 'auto' },
       regionOrigins: { trigger: 'auto', nickname: 'auto', topLeftEvidence: 'auto' },
@@ -721,7 +681,7 @@ const initialSession = () => {
       },
     })
   if (mode === 'failed')
-    return makeSession('capture', 'Ноутбук', {
+    return makeSession('Ноутбук', {
       state: 'FAILED',
       frameSize: null,
       error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
@@ -730,8 +690,6 @@ const initialSession = () => {
 }
 let session = initialSession()
 let startedOnce = false
-const frameScene = () =>
-  session && session.kind === 'predictionResult' ? 'result' : 'vs'
 const bump = (patch) => {
   session = { ...session, generation: session.generation + 1, ...patch }
   return session
@@ -764,7 +722,7 @@ const setupApi = {
     const refused = requireSession(payload)
     if (refused !== null) return refused
     const blob = await new Promise((resolve) =>
-      sceneFrame(frameScene()).toBlob(resolve, 'image/png'),
+      sceneFrame('vs').toBlob(resolve, 'image/png'),
     )
     const bytes = new Uint8Array(await blob.arrayBuffer())
     return {
@@ -781,9 +739,7 @@ const setupApi = {
     Promise.resolve(
       bump({
         regions: { ...session.regions, [payload.region]: payload.rect },
-        ...(payload.region === 'trigger' || payload.region === 'resultTrigger'
-          ? { triggerProfile: null }
-          : {}),
+        ...(payload.region === 'trigger' ? { triggerProfile: null } : {}),
         error: null,
       }),
     ),
@@ -848,10 +804,6 @@ const setupApi = {
         },
       }),
     ),
-  startResult: () => {
-    session = makeSession('predictionResult', 'Основной')
-    return Promise.resolve(session)
-  },
 }
 const profileMutation = () => ({
   ok: true,
@@ -912,6 +864,92 @@ const renderTitle = (template) =>
     .replaceAll('{delta}', '+12')
     .replaceAll('{account}', 'Основной')
 const twitchOn = (sx.twitch ?? 'on') === 'on'
+// Server prediction status presets (`streamer.predictions`), predictions plan §3.8.
+const predictionCurrent = (patch = {}) => ({
+  id: 41,
+  title: 'Выиграю следующий бой?',
+  mode: 'each_battle',
+  target: 1,
+  wins: 0,
+  locksAt: '2026-10-10T12:00:30.000Z',
+  hasBets: true,
+  source: 'snipe',
+  canSettle: true,
+  ...patch,
+})
+const predictionStreak = (wins, target) =>
+  predictionCurrent({
+    title: `Выиграю ${target} боёв подряд?`,
+    mode: 'streak',
+    target,
+    wins,
+  })
+const PREDICTION_PRESETS = {
+  waiting: { phase: 'waiting_stream', live: false },
+  idle: { phase: 'idle' },
+  voting: { phase: 'voting', prediction: predictionCurrent() },
+  locked: { phase: 'locked', prediction: predictionCurrent() },
+  resultUnknown: {
+    phase: 'locked',
+    attention: 'result_unknown',
+    prediction: predictionCurrent(),
+  },
+  streakVoting: { phase: 'voting', prediction: predictionStreak(0, 5) },
+  streak: { phase: 'locked', prediction: predictionStreak(3, 5) },
+  streakResultUnknown: {
+    phase: 'locked',
+    attention: 'result_unknown',
+    prediction: predictionStreak(3, 5),
+  },
+  disabledWithBets: {
+    enabled: false,
+    phase: 'locked',
+    attention: 'settle_after_disable',
+    prediction: predictionCurrent(),
+  },
+  disabled: { enabled: false, phase: 'disabled' },
+  streamEnded: {
+    live: false,
+    phase: 'locked',
+    attention: 'stream_ended',
+    prediction: predictionStreak(2, 4),
+  },
+  clientNotReady: { clientReady: false, phase: 'client_not_ready' },
+  twitchUnavailable: { phase: 'idle', attention: 'twitch_unavailable' },
+  notEligible: { phase: 'idle', attention: 'channel_not_eligible' },
+  reconnectTwitch: {
+    phase: 'locked',
+    attention: 'reconnect_twitch',
+    prediction: predictionCurrent(),
+  },
+  twitchPredictionExists: {
+    phase: 'locked',
+    attention: 'twitch_prediction_exists',
+    prediction: predictionCurrent({
+      title: 'Прогноз с Twitch',
+      source: 'twitch',
+      canSettle: false,
+    }),
+  },
+  twitchPredictionMapped: {
+    phase: 'locked',
+    prediction: predictionCurrent({ source: 'twitch', canSettle: true }),
+  },
+}
+const predictionSettings = {
+  enabled: true,
+  mode: 'each_battle',
+  streakKind: 'fixed',
+  streakLength: 3,
+  streakFrom: 2,
+  streakTo: 5,
+  votingSeconds: 30,
+  chatProgress: true,
+  ...sx.predictionSettings,
+}
+const predictionPreset = PREDICTION_PRESETS[sx.predictions ?? 'waiting']
+if (predictionPreset === undefined)
+  throw new Error(`unknown streamer.predictions preset "${sx.predictions}"`)
 const sview = {
   access: { allowed: true, reason: null },
   twitch: {
@@ -920,38 +958,17 @@ const sview = {
     polling: sx.twitch === 'pending',
   },
   predictions: {
-    active: sx.predictions === 'active' || sx.predictions === 'suspended',
-    state:
-      sx.predictions === 'active' || sx.predictions === 'suspended'
-        ? 'active'
-        : 'stopped',
-    runtimeState:
-      sx.predictions === 'active'
-        ? 'active'
-        : sx.predictions === 'suspended'
-          ? 'suspended'
-          : sx.predictions === 'failed'
-            ? 'failed'
-            : 'stopped',
+    enabled: predictionPreset.enabled ?? predictionSettings.enabled,
+    live: true,
+    clientReady: true,
+    attention: null,
+    prediction: null,
+    stats: { resolved: 22, yes: 13, no: 9, canceled: 2 },
+    history: [],
+    ...predictionPreset,
     settings: {
-      predictionType: 'win_lose',
-      predictionWindow: 120,
-      winStreakCount: 3,
-      delayBetweenPredictions: 10,
-      autoCreateNext: true,
-    },
-    statistics: {
-      total: 24,
-      successful: 18,
-      successRate: 75,
-      currentWinStreak: 3,
-      activeTitle: sx.predictions === 'active' ? 'Победит ли стример в этом бою?' : null,
-    },
-    requirements: {
-      twitchConnected: twitchOn,
-      mainMonitorConfigured: true,
-      mainMonitorRunning: true,
-      resultConfigured: sx.zones !== false,
+      ...predictionSettings,
+      enabled: predictionPreset.enabled ?? predictionSettings.enabled,
     },
   },
   title: {
@@ -1038,10 +1055,12 @@ const sreadiness = () => ({
   accountsCount: sview.title.accounts.filter((a) => a.enabled).length,
   monitoring: sx.monitoring !== false,
   captureConfigured: sx.profile !== false,
-  resultZonesConfigured: sx.zones !== false,
+  predictionProfileReady: sx.predictionProfile !== false,
   activeProfileId: uuid(1),
 })
 const sclone = () => JSON.parse(JSON.stringify(sview))
+// Manual request IDs the fake server already applied (server-side deduplication).
+const manualRequests = new Set()
 const sok = (extra = {}) => ({
   ok: true,
   view: sclone(),
@@ -1119,14 +1138,71 @@ const streamerCommand = (command) => {
     case 'widget.settings':
       sview.overlay.settings = command.settings
       return Promise.resolve(sok())
-    case 'predictions.start':
-      sview.predictions.active = true
-      sview.predictions.runtimeState = 'active'
+    case 'predictions.settings.save':
+      if (sx.predictionsPending === true) return new Promise(() => undefined)
+      sview.predictions.settings = command.settings
+      sview.predictions.enabled = command.settings.enabled
+      if (sview.predictions.prediction === null)
+        sview.predictions.phase = command.settings.enabled ? 'waiting_stream' : 'disabled'
       return Promise.resolve(sok())
-    case 'predictions.stop':
-      sview.predictions.active = false
-      sview.predictions.runtimeState = 'stopped'
+    case 'predictions.battle':
+    case 'predictions.cancel': {
+      // A held command shows the page with every prediction control disabled.
+      if (sx.predictionsPending === true) return new Promise(() => undefined)
+      // A lost response: the command fails and the page asks to check the result.
+      if (typeof sx.predictionsCommandError === 'string')
+        return Promise.resolve({
+          ok: false,
+          error: { code: sx.predictionsCommandError, detail: null },
+        })
+      const current = sview.predictions.prediction
+      if (current === null || current.id !== command.predictionId)
+        return Promise.resolve({
+          ok: false,
+          error: { code: 'VALIDATION_FAILED', detail: null },
+        })
+      if (command.action === 'predictions.battle') {
+        // The server deduplicates by request ID: a repeated intent never counts twice.
+        if (manualRequests.has(command.requestId)) return Promise.resolve(sok())
+        if (command.outcome !== 'not_ranked' && !current.canSettle)
+          return Promise.resolve({
+            ok: false,
+            error: { code: 'VALIDATION_FAILED', detail: null },
+          })
+        // «Бой не считается» needs a counted battle; the server never invents one.
+        if (command.outcome === 'not_ranked' && sview.predictions.phase !== 'locked')
+          return Promise.resolve({
+            ok: false,
+            error: { code: 'PREDICTION_NO_BATTLE_TO_SKIP', detail: null },
+          })
+        manualRequests.add(command.requestId)
+        if (command.outcome === 'not_ranked') {
+          // The battle is skipped: the prediction and its streak stay as they are.
+          if (
+            sview.predictions.attention === 'result_unknown' ||
+            sview.predictions.attention === 'result_missed'
+          )
+            sview.predictions.attention = null
+          return Promise.resolve(sok())
+        }
+      }
+      const stats = sview.predictions.stats
+      const won = command.action === 'predictions.battle' && command.outcome === 'win'
+      if (won && current.wins + 1 < current.target) {
+        current.wins += 1
+        return Promise.resolve(sok())
+      }
+      if (command.action === 'predictions.cancel') stats.canceled += 1
+      else {
+        stats.resolved += 1
+        if (won) stats.yes += 1
+        else stats.no += 1
+      }
+      sview.predictions.prediction = null
+      sview.predictions.attention = null
+      sview.predictions.phase = 'idle'
       return Promise.resolve(sok())
+    }
     case 'accounts.add':
       if (sx.accountError)
         return Promise.resolve({
@@ -1242,12 +1318,12 @@ contextBridge.exposeInMainWorld('crTools', {
       setupFx.start === 'failed' || (setupFx.start === 'failed-once' && !startedOnce)
     startedOnce = true
     session = failing
-      ? makeSession('capture', profileName, {
+      ? makeSession(profileName, {
           state: 'FAILED',
           frameSize: null,
           error: { code: setupFx.failCode ?? 'CAPTURE_NO_FRAME', message: 'No frame' },
         })
-      : makeSession('capture', profileName, { profileId: profileId ?? uuid(7) })
+      : makeSession(profileName, { profileId: profileId ?? uuid(7) })
     return Promise.resolve(session)
   },
   renameCaptureProfile: renameProfile,

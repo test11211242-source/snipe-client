@@ -22,7 +22,7 @@ const TITLES: Record<StreamSection, string> = {
   widgets: 'Виджеты для OBS',
 }
 
-const FOUNDATIONS = ['twitch', 'accounts', 'monitoring', 'zones'] as const
+const FOUNDATIONS = ['twitch', 'accounts', 'monitoring', 'predictionProfile'] as const
 const WITH_CHANNEL: readonly StreamSection[] = ['predictions', 'title', 'chat']
 const onOff = (on: boolean): string => (on ? 'включено' : 'выключено')
 
@@ -110,7 +110,7 @@ function Area({ section }: { section: StreamSection }): React.JSX.Element {
           sub:
             view === null
               ? undefined
-              : view.predictions.active
+              : view.predictions.enabled
                 ? 'включены'
                 : 'выключены',
           icon: 'trophy',

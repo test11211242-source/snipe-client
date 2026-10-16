@@ -1,9 +1,8 @@
 import { useState } from 'react'
 
 import type { CaptureProfileSummary } from '../../../../shared/models/capture'
-import { Banner, Button, Dialog, Field, Input } from '../../ui'
+import { Button, Dialog, Field, Input } from '../../ui'
 import { copyName, profileNameError } from './errors'
-import { sourceUsable } from './health'
 import styles from './ProfilesPanel.module.css'
 
 export function DuplicateDialog({
@@ -76,80 +75,6 @@ export function DuplicateDialog({
           )}
         </Field>
       </form>
-    </Dialog>
-  )
-}
-
-export interface ResultZoneStart {
-  /** Failure text; `activeSetup` when another setup session is already open. */
-  message: string
-  activeSetup: boolean
-}
-
-/** Explains what the frame grab does before `setup.startResult` is called. */
-export function ResultZoneDialog({
-  profile,
-  onStart,
-  onResume,
-  onClose,
-}: {
-  profile: CaptureProfileSummary
-  /** Resolves with the failure, or `null` when the session started (the caller navigates). */
-  onStart: () => Promise<ResultZoneStart | null>
-  onResume: () => void
-  onClose: () => void
-}): React.JSX.Element {
-  const [starting, setStarting] = useState(false)
-  const [failure, setFailure] = useState<ResultZoneStart | null>(null)
-  const usable = sourceUsable(profile)
-
-  const start = async (): Promise<void> => {
-    setStarting(true)
-    setFailure(null)
-    const result = await onStart()
-    if (result !== null) {
-      setFailure(result)
-      setStarting(false)
-    }
-  }
-
-  return (
-    <Dialog
-      description="Откройте в игре экран с итогом боя — победа или поражение, неважно — и нажмите «Сделать кадр». Приложение сфотографирует окно профиля, а зоны вы отметите вручную."
-      footer={
-        <>
-          <Button disabled={starting} onClick={onClose} variant="ghost">
-            Отмена
-          </Button>
-          {failure?.activeSetup === true ? (
-            <Button onClick={onResume}>Открыть начатую настройку</Button>
-          ) : null}
-          <Button
-            disabled={!usable}
-            loading={starting}
-            onClick={() => void start()}
-            variant="primary"
-          >
-            Сделать кадр
-          </Button>
-        </>
-      }
-      onClose={starting ? () => undefined : onClose}
-      title={`Зоны результата — «${profile.profileName}»`}
-    >
-      <div className={styles['dialogForm']}>
-        {usable ? null : (
-          <Banner icon="alert" title="Источник профиля недоступен" tone="warn">
-            Откройте игру или выберите окно профиля заново — без картинки кадр сделать
-            нельзя.
-          </Banner>
-        )}
-        {failure === null ? null : (
-          <Banner icon="alert" live title="Не получилось" tone="danger">
-            {failure.message}
-          </Banner>
-        )}
-      </div>
     </Dialog>
   )
 }

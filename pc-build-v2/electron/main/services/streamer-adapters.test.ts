@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   MAX_STREAMER_ACCOUNTS,
+  DEFAULT_PREDICTION_SETTINGS,
   OverlaySettingsSchema,
   StreamerViewSchema,
 } from '../../../shared/models/streamer'
@@ -12,6 +13,7 @@ import {
   parseTitle,
   recommendedSizes,
 } from './streamer-adapters'
+import { predictionStatusFixture } from '../../../tests/prediction-fixtures'
 
 describe('streamer server adapters', () => {
   it('bounds loose status data and never projects overlay tokens or raw URLs into the view', () => {
@@ -31,26 +33,14 @@ describe('streamer server adapters', () => {
     expect(overlay.urls.opponent).toContain('secret-token')
   })
 
-  it('normalizes inconsistent prediction and title payloads to strict bounded values', () => {
+  it('projects authoritative prediction counts and bounds loose title payloads', () => {
     const predictions = parsePredictions(
-      {
-        status: {
-          is_active: true,
-          state: 'x'.repeat(100),
-          statistics: { total_predictions: 9_999_999, success_rate: 500 },
-        },
-      },
-      {
-        predictionType: 'win_lose',
-        predictionWindow: 60,
-        winStreakCount: 2,
-        delayBetweenPredictions: 5,
-        autoCreateNext: true,
-      },
+      { ...predictionStatusFixture, stats: { resolved: 8, yes: 3, no: 5, canceled: 2 } },
+      DEFAULT_PREDICTION_SETTINGS,
     )
-    expect(predictions.state).toHaveLength(64)
-    expect(predictions.statistics.total).toBe(1_000_000)
-    expect(predictions.statistics.successRate).toBe(100)
+    expect(predictions.phase).toBe('waiting_stream')
+    expect(predictions.stats).toEqual({ resolved: 8, yes: 3, no: 5, canceled: 2 })
+    expect(predictions.settings.votingSeconds).toBe(30)
     expect(
       parseTitle({
         settings: { account_display_mode: 'invalid', max_accounts: 999 },

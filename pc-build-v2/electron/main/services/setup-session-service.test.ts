@@ -5,11 +5,9 @@ import type { CaptureConfigurationRepository } from '../infrastructure/capture-c
 import type { ApiClient } from './api-client'
 import type { AuthSession } from './auth-session'
 import type { CaptureService } from './capture-service'
-import type { CaptureTargetResolver } from './capture-target-resolver'
 import { SetupSessionService, buildLegacyProjection } from './setup-session-service'
 import { LegacyOcrRegionsSchema } from '../../../shared/models/setup'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
-import type { PredictionResultConfiguration } from '../../../shared/models/prediction-result'
 
 const profile = {
   schemaVersion: 3 as const,
@@ -78,17 +76,17 @@ const preference = {
   executableLabel: null,
 }
 const selector = { kind: 'window' as const, windowHwnd: '9007199254740993' }
-const resultTarget = {
+const profileTarget = {
   profileId: '00000000-0000-4000-8000-000000000001',
   profileName: 'Основной',
   expectedRevision: 1,
 }
-const resultProfileStatus = {
+const profileStatus = {
   revision: 1,
-  activeProfileId: resultTarget.profileId,
+  activeProfileId: profileTarget.profileId,
   profiles: [
     {
-      profileId: resultTarget.profileId,
+      profileId: profileTarget.profileId,
       isActive: true,
       configurationRevision: 2,
       configurationFingerprint: 'a'.repeat(64),
@@ -96,7 +94,7 @@ const resultProfileStatus = {
   ],
 }
 
-function harness(remoteOk = true, resolver?: CaptureTargetResolver) {
+function harness(remoteOk = true) {
   let authGeneration = 1
   const capture = {
     capture: vi.fn().mockResolvedValue(frame),
@@ -138,9 +136,6 @@ function harness(remoteOk = true, resolver?: CaptureTargetResolver) {
     api as unknown as ApiClient,
     auth as unknown as AuthSession,
     () => new Date('2026-07-12T12:00:00.000Z'),
-    undefined,
-    undefined,
-    resolver,
   )
   return {
     service,
@@ -162,7 +157,7 @@ async function readyForCommit(
     expectedRevision: number
   },
 ) {
-  let view = await service.start(selector, preference, 'capture', undefined, target)
+  let view = await service.start(selector, preference, undefined, target)
   for (const region of ['trigger', 'nickname', 'topLeftEvidence'] as const) {
     view = service.setRegion(view.sessionId, view.generation, region, {
       x: 0.1,
@@ -180,7 +175,7 @@ describe('SetupSessionService', () => {
     'refuses a frozen frame without game geometry (%s), and permits a fresh frame',
     async (reason) => {
       const test = harness()
-      const failed = await test.service.start(selector, preference, 'capture', {
+      const failed = await test.service.start(selector, preference, {
         ...frame,
         game: { rect: null, reason: reason as 'too_small' },
       })
@@ -206,7 +201,7 @@ describe('SetupSessionService', () => {
         code: 'SETUP_STATE_FINAL',
       })
       expect(test.repository.save).not.toHaveBeenCalled()
-      const fresh = await test.service.start(selector, preference, 'capture', frame)
+      const fresh = await test.service.start(selector, preference, frame)
       expect(fresh).toMatchObject({
         state: 'SELECTING',
         game: {
@@ -304,7 +299,7 @@ describe('SetupSessionService', () => {
 
   it('rejects manually selected areas outside the detected game without clipping them', async () => {
     const test = harness()
-    const started = await test.service.start(selector, preference, 'capture', {
+    const started = await test.service.start(selector, preference, {
       ...frame,
       game: { ...frame.game, rect: { x: 100, y: 200, width: 800, height: 1600 } },
     })
@@ -374,32 +369,17 @@ describe('SetupSessionService', () => {
     expect(view.triggerKind).toBeNull()
   })
 
-  it('keeps result setup full-frame and does not send game geometry to its analyzer', async () => {
+  it('starts only capture sessions with capture regions', async () => {
     const test = harness()
-    const resultFrame = { size: frame.size, png: frame.png }
-    test.capture.capture.mockResolvedValue(resultFrame)
-    let view = await test.service.start(
-      selector,
-      preference,
-      'predictionResult',
-      undefined,
-      resultTarget,
-    )
-    expect(view).toMatchObject({ state: 'SELECTING', game: null, regionOrigins: null })
-    view = test.service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
-      x: 0,
-      y: 0,
-      width: 0.1,
-      height: 0.1,
+    const view = await test.service.start(selector, preference)
+    expect(view).not.toHaveProperty('kind')
+    expect(view.regions).toEqual({ trigger: null, nickname: null, topLeftEvidence: null })
+    expect(view.regionOrigins).toEqual({
+      trigger: 'manual',
+      nickname: 'manual',
+      topLeftEvidence: 'manual',
     })
-    view = await test.service.analyzeTrigger(view.sessionId, view.generation)
-    expect(view.triggerKind).toBe('structural')
-    expect(test.capture.analyze).toHaveBeenCalledWith(
-      resultFrame,
-      { x: 0, y: 0, width: 0.1, height: 0.1 },
-      expect.any(AbortSignal),
-      null,
-    )
+    expect('startPredictionResult' in test.service).toBe(false)
   })
 
   it('creates a fresh calibration identity on every setup and recalibration commit', async () => {
@@ -472,52 +452,6 @@ describe('SetupSessionService', () => {
     expect(() => test.service.close(view.sessionId, view.generation + 1)).toThrow(
       expect.objectContaining({ code: 'AUTH_CONTEXT_CHANGED' }),
     )
-  })
-
-  it('starts result setup on the selected profile without changing the active profile', async () => {
-    const resolved = {
-      userId: '42',
-      profileId: resultTarget.profileId,
-      profileName: 'Второй',
-      collectionRevision: 3,
-      selector,
-      configuration: { sourceBinding: { identity: preference } },
-    }
-    const resolver = {
-      resolveProfileTarget: vi.fn().mockResolvedValue(resolved),
-      resolveActiveProfile: vi.fn(),
-    }
-    const test = harness(true, resolver as never)
-    const view = await test.service.startPredictionResult(resultTarget.profileId, 3)
-    expect(view).toMatchObject({
-      state: 'SELECTING',
-      kind: 'predictionResult',
-      profileId: resultTarget.profileId,
-      profileName: 'Второй',
-    })
-    expect(resolver.resolveProfileTarget).toHaveBeenCalledWith(resultTarget.profileId)
-    expect(resolver.resolveActiveProfile).not.toHaveBeenCalled()
-    expect(test.repository.save).not.toHaveBeenCalled()
-    expect(test.capture.capture).toHaveBeenCalledWith(selector, expect.any(AbortSignal))
-  })
-
-  it('fences profile revision and auth generation before capturing result setup', async () => {
-    const gate = Promise.withResolvers<unknown>()
-    const resolver = { resolveProfileTarget: vi.fn().mockReturnValue(gate.promise) }
-    const test = harness(true, resolver as never)
-    const starting = test.service.startPredictionResult(resultTarget.profileId, 1)
-    test.changeAuthContext()
-    gate.resolve({ userId: '42', collectionRevision: 1 })
-    await expect(starting).rejects.toMatchObject({ code: 'AUTH_CONTEXT_CHANGED' })
-    expect(test.capture.capture).not.toHaveBeenCalled()
-    resolver.resolveProfileTarget.mockResolvedValue({
-      userId: '42',
-      collectionRevision: 2,
-    })
-    await expect(
-      test.service.startPredictionResult(resultTarget.profileId, 1),
-    ).rejects.toMatchObject({ code: 'CAPTURE_PROFILE_STALE' })
-    expect(test.capture.capture).not.toHaveBeenCalled()
   })
 
   it('cancels an in-flight saved projection on auth change without restarting runtime', async () => {
@@ -707,8 +641,8 @@ describe('SetupSessionService', () => {
       profileCount: 2,
       profiles: [
         {
-          profileId: resultTarget.profileId,
-          profileName: resultTarget.profileName,
+          profileId: profileTarget.profileId,
+          profileName: profileTarget.profileName,
           isActive: false,
         },
         {
@@ -722,7 +656,7 @@ describe('SetupSessionService', () => {
     service.configureCaptureProfileLifecycle(vi.fn(), committed, (operation) =>
       operation(),
     )
-    const view = await readyForCommit(service, resultTarget)
+    const view = await readyForCommit(service, profileTarget)
 
     await expect(service.commit(view.sessionId, view.generation)).resolves.toMatchObject({
       state: 'COMMITTED',
@@ -730,7 +664,7 @@ describe('SetupSessionService', () => {
     expect(apiRequests).toHaveLength(0)
     expect(repository.save).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ profileId: resultTarget.profileId, activate: false }),
+      expect.objectContaining({ profileId: profileTarget.profileId, activate: false }),
     )
     expect(committed).not.toHaveBeenCalled()
   })
@@ -748,8 +682,8 @@ describe('SetupSessionService', () => {
 
   it('does not resurrect a setup cancelled while a repository read is pending', async () => {
     const { service, repository } = harness()
-    const view = await readyForCommit(service, resultTarget)
-    let resolveProfiles!: (value: typeof resultProfileStatus) => void
+    const view = await readyForCommit(service, profileTarget)
+    let resolveProfiles!: (value: typeof profileStatus) => void
     repository.list.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveProfiles = resolve
@@ -759,11 +693,11 @@ describe('SetupSessionService', () => {
     await vi.waitFor(() => expect(repository.list).toHaveBeenCalled())
 
     service.cancelForAuthTransition()
-    resolveProfiles(resultProfileStatus)
+    resolveProfiles(profileStatus)
 
     await expect(committing).resolves.toMatchObject({ state: 'CANCELLED' })
     await expect(
-      service.start(selector, preference, 'capture', undefined, resultTarget),
+      service.start(selector, preference, undefined, profileTarget),
     ).resolves.toMatchObject({ state: 'SELECTING' })
     expect(repository.save).not.toHaveBeenCalled()
   })
@@ -787,7 +721,7 @@ describe('SetupSessionService', () => {
 
   it('uses a prepared click-time frame and completes the final region in one command', async () => {
     const { service, capture, repository } = harness()
-    let view = await service.start(selector, preference, 'capture', frame)
+    let view = await service.start(selector, preference, frame)
     expect(capture.capture).not.toHaveBeenCalled()
     view = service.setRegion(view.sessionId, view.generation, 'trigger', {
       x: 0.1,
@@ -817,166 +751,6 @@ describe('SetupSessionService', () => {
     expect(finished.state).toBe('COMMITTED')
     expect(capture.analyze).toHaveBeenCalledTimes(1)
     expect(repository.save).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([false, true])(
-    'keeps saved local result zones when projection fails (calibration binding: %s)',
-    async (gameRelative) => {
-      const capture = {
-        capture: vi.fn().mockResolvedValue(frame),
-        analyze: vi.fn().mockResolvedValue(analysis),
-      }
-      const resultRepository = {
-        load: vi.fn().mockResolvedValue(null),
-        save: vi
-          .fn<
-            (
-              configuration: PredictionResultConfiguration,
-              profileId: string,
-            ) => Promise<void>
-          >()
-          .mockResolvedValue(undefined),
-      }
-      const resultRequests: { path: string; body: unknown }[] = []
-      const rawApi = {
-        request: vi.fn((request: { path: string; body: unknown }) => {
-          resultRequests.push(request)
-          return Promise.resolve(
-            resultRequests.length === 1
-              ? { ok: true, status: 200, data: { success: true } }
-              : { ok: false, error: { code: 'NETWORK_UNAVAILABLE', message: 'offline' } },
-          )
-        }),
-      }
-      const service = new SetupSessionService(
-        capture as never,
-        {
-          load: vi.fn(),
-          save: vi.fn(),
-          list: vi.fn().mockResolvedValue({
-            ...resultProfileStatus,
-            profiles: resultProfileStatus.profiles.map((profile) => ({
-              ...profile,
-              ...(gameRelative ? { calibrationId: resultTarget.profileId } : {}),
-            })),
-          }),
-        } as never,
-        rawApi as never,
-        {
-          getView: () => ({ user: { id: '42' } }),
-          getContextGeneration: () => 1,
-          getAccessToken: vi.fn().mockResolvedValue('secret'),
-        } as never,
-        () => new Date('2026-07-12T12:00:00.000Z'),
-        resultRepository as never,
-        { request: vi.fn() } as never,
-      )
-      let view = await service.start(
-        selector,
-        preference,
-        'predictionResult',
-        undefined,
-        resultTarget,
-      )
-      view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
-        x: 0.1,
-        y: 0.1,
-        width: 0.2,
-        height: 0.2,
-      })
-      view = service.setRegion(view.sessionId, view.generation, 'resultData', {
-        x: 0.2,
-        y: 0.2,
-        width: 0.5,
-        height: 0.5,
-      })
-      view = await service.analyzeTrigger(view.sessionId, view.generation)
-      view = service.review(view.sessionId, view.generation)
-      const result = await service.commit(view.sessionId, view.generation)
-      expect(result).toMatchObject({
-        state: 'COMMITTED',
-        saveOutcome: {
-          local: 'saved',
-          projection: 'failed',
-          warning: 'SETUP_SYNC_FAILED',
-        },
-      })
-      expect(resultRequests.map((request) => request.path)).toEqual([
-        '/api/streamer/result-trigger-area',
-        '/api/streamer/result-data-area',
-      ])
-      expect(resultRequests[0]?.body).toMatchObject({
-        trigger_profile: {
-          template_gray_base64: legacyProfile.templateGrayBase64,
-          thumbnail_hash: legacyProfile.thumbnailHash,
-          feature_mode: legacyProfile.featureMode,
-          hash_threshold: 5,
-        },
-      })
-      expect(resultRepository.save).toHaveBeenCalledOnce()
-      expect(resultRepository.save.mock.calls[0]?.[0].captureCalibrationId).toBe(
-        gameRelative ? resultTarget.profileId : undefined,
-      )
-    },
-  )
-
-  it('does not change the server when the local result commit fails', async () => {
-    const resultRepository = {
-      load: vi.fn().mockResolvedValue(null),
-      save: vi.fn().mockRejectedValue(new Error('disk full')),
-    }
-    const rawApi = {
-      request: vi
-        .fn()
-        .mockResolvedValue({ ok: true, status: 200, data: { success: true } }),
-    }
-    const service = new SetupSessionService(
-      {
-        capture: vi.fn().mockResolvedValue(frame),
-        analyze: vi.fn().mockResolvedValue(analysis),
-      } as never,
-      {
-        load: vi.fn(),
-        save: vi.fn(),
-        list: vi.fn().mockResolvedValue(resultProfileStatus),
-      } as never,
-      rawApi as never,
-      {
-        getView: () => ({ user: { id: '42' } }),
-        getContextGeneration: () => 1,
-        getAccessToken: vi.fn().mockResolvedValue('secret'),
-      } as never,
-      () => new Date('2026-07-12T12:00:00.000Z'),
-      resultRepository as never,
-      { request: vi.fn() } as never,
-    )
-    let view = await service.start(
-      selector,
-      preference,
-      'predictionResult',
-      undefined,
-      resultTarget,
-    )
-    view = service.setRegion(view.sessionId, view.generation, 'resultTrigger', {
-      x: 0.1,
-      y: 0.1,
-      width: 0.2,
-      height: 0.2,
-    })
-    view = service.setRegion(view.sessionId, view.generation, 'resultData', {
-      x: 0.2,
-      y: 0.2,
-      width: 0.5,
-      height: 0.5,
-    })
-    view = await service.analyzeTrigger(view.sessionId, view.generation)
-    view = service.review(view.sessionId, view.generation)
-    await expect(service.commit(view.sessionId, view.generation)).resolves.toMatchObject({
-      state: 'FAILED',
-      error: { code: 'RESULT_SETUP_LOCAL_COMMIT_FAILED' },
-    })
-    expect(rawApi.request).not.toHaveBeenCalled()
-    expect(resultRepository.save).toHaveBeenCalledTimes(1)
   })
 
   it('projects inner trigger coordinates into source-normalized space', () => {

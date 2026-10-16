@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import math
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,10 +19,28 @@ from layout_learning import LayoutLearning
 from geometry.aspect import aspect_gap
 from geometry.game_rect import pixel_rect
 from geometry.vs_orient_trigger import ORIENT_T, OrientationTrigger
+from geometry.rank_line import RankTemplates, check_rank
 from geometry.zones import Badge, layout_kind
+from prediction_values import RANK_UNKNOWN
+from result_reader import ResultReader
 from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 
 NORMALIZED_SIZE = 128
+# `triggered` rank fields when the check does not run (spectate, full-frame).
+NO_RANK = {"rank": RANK_UNKNOWN, "rankEvidence": None}
+# stderr code when a C3 asset cannot be loaded (opponent search goes on).
+C3_ASSET_FAILED = "PREDICTION_ASSET_UNAVAILABLE"
+
+
+def _load_c3(loader):
+    """A missing or corrupt C3 asset turns that prediction part off; it never
+    stops the opponent monitor (review m-15)."""
+    try:
+        return loader()
+    except Exception as error:
+        sys.stderr.write(f"{C3_ASSET_FAILED} {type(error).__name__}\n")
+        return None
+
 
 class InvalidFrameError(RuntimeError):
     pass
@@ -535,6 +554,10 @@ class TriggerEngine:
         self.geometry = None
         self.learner = None
         self.matchers = {}
+        # Predictions (C3), game-relative only: own-battle VS rank lines and
+        # the result screen; None when off (full frame, or an asset failed).
+        self.rank_templates: RankTemplates | None = None
+        self.result_reader: ResultReader | None = None
         if self.kind == "full_frame":
             self.profile = TriggerProfile(self.primary["triggerProfile"])
             self.trigger_ratio = self.primary["regions"]["trigger"]
@@ -545,6 +568,8 @@ class TriggerEngine:
             self.learner = LayoutLearning(layouts, self.primary["learning"]["enabled"])
             for layout in layouts:
                 self._matcher(layout)
+            self.rank_templates = _load_c3(RankTemplates.load)
+            self.result_reader = _load_c3(ResultReader)
         self.limits = payload["limits"]
         self.frame_interval = 1.0 / self.limits["fps"]
         self.last_frame_time = -math.inf
@@ -552,6 +577,9 @@ class TriggerEngine:
             self.limits["confirmationsNeeded"], self.limits["cooldownSeconds"]
         )
         self.triggered = False
+        self.triggered_kind: str | None = None
+        self.triggered_rank: dict[str, Any] = NO_RANK
+        self.prediction_report: dict[str, Any] | None = None
         self.last_match: MatchResult | None = None
         self.candidates = VsCandidateLog()
         self._sample: dict[str, Any] | None = None
@@ -562,6 +590,9 @@ class TriggerEngine:
 
     def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
         self.triggered = False
+        self.triggered_kind = None
+        self.triggered_rank = NO_RANK
+        self.prediction_report = None
         # Game-relative ticks also feed the 5-Hz evidence/finder clock. Accept
         # exact 10-Hz timestamps despite binary-float subtraction roundoff;
         # leave the legacy full-frame scheduling contract unchanged.
@@ -601,7 +632,59 @@ class TriggerEngine:
         record = self.candidates.observe(now, self._sample)
         if record is not None:
             self.events.append(("vs_candidate", record))
+        if not self.triggered:
+            # The result screen is read only on ticks without a VS fire; an own
+            # VS fire re-arms the reader (a pending battle is then missed).
+            self._read_result(bgr, now)
         return action
+
+    def _own_battle(self, bgr, rect, layout, now) -> None:
+        """A VS fire: record its kind; own battles get the rank check and arm
+        the result reader. Any other fire disarms it: the next result screen
+        is that battle's, never the pending own one (review m-13)."""
+        self.triggered = True
+        self.triggered_kind = layout_kind(Badge(**layout["badge"])) if layout["badge"] else None
+        reader = self.result_reader
+        if self.triggered_kind != "battle":
+            if reader is not None:
+                reader.disarm()
+            return
+        if self.rank_templates is not None:
+            try:
+                self.triggered_rank = check_rank(bgr, rect, Badge(**layout["badge"]), self.rank_templates)
+            except Exception:  # predictions must never stop opponent monitoring
+                self.triggered_rank = NO_RANK
+        if reader is not None:
+            reader.arm(now)
+
+    def _read_result(self, bgr, now) -> None:
+        if self.result_reader is None or not self.result_reader.armed:
+            return
+        try:
+            self.prediction_report = self.result_reader.process(bgr, self.geometry.rect, now)
+        except Exception:  # predictions must never stop opponent monitoring
+            self.result_reader.disarm()
+            self.prediction_report = None
+
+    def take_prediction_result(self) -> tuple[dict[str, Any], str] | None:
+        """`(report, endReason)` once per read result screen."""
+        report, self.prediction_report = self.prediction_report, None
+        if report is None:
+            return None
+        return report, self.result_reader.diagnostics["endReason"]
+
+    def finish_prediction(self, now: float) -> tuple[dict[str, Any], str] | None:
+        """Capture is ending: the result screen being read (if any), once,
+        as `(report, endReason)` (review m-14)."""
+        reader = self.result_reader
+        if reader is None:
+            return None
+        try:
+            report = reader.finish(now)
+        except Exception:  # predictions must never stop opponent monitoring
+            reader.disarm()
+            return None
+        return None if report is None else (report, reader.diagnostics["endReason"])
 
     def _candidate(self, bgr, now, layout, score, *, matched=False, fired=False, kind_ignored=False, code=None):
         """Candidate evidence of this frame, or None when it shows no VS."""
@@ -671,7 +754,7 @@ class TriggerEngine:
                     self.matchers = {item["layoutId"]: self.matchers[item["layoutId"]] for item in self.geometry.layouts
                                      if item["layoutId"] in self.matchers}
                     if fired:
-                        self.triggered = True
+                        self._own_battle(confirmation, confirmation_rect, layout, now)
                     self._sample = self._candidate(bgr, now, layout, None, matched=True, fired=fired, code="LAYOUT_LEARNED")
                     if fired:
                         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
@@ -705,7 +788,7 @@ class TriggerEngine:
         self._sample = self._candidate(bgr, now, layout, evidence, matched=self.last_match.matched, fired=fired)
         if not fired:
             return None
-        self.triggered = True
+        self._own_battle(bgr, rect, layout, now)
         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
         return encode_action_png(crop(bgr, data_rect), self.limits)
 
@@ -719,47 +802,3 @@ class TriggerEngine:
         return triggered
 
 
-class PredictionTriggerEngine:
-    """Independent result trigger sharing the monitor frame and process."""
-
-    def __init__(self, value: dict[str, Any], limits: dict[str, Any]):
-        self.profile = TriggerProfile(value["triggerProfile"])
-        self.trigger_ratio = value["trigger"]
-        self.data_ratio = value["data"]
-        self.limits = limits
-        self.frame_interval = 1.0 / limits["fps"]
-        self.last_frame_time = -math.inf
-        self.gate = TemporalGate(2, 60.0)
-        self.last_match: MatchResult | None = None
-        self.configured_aspect = value["configuredFrameSize"]["width"] / value["configuredFrameSize"]["height"]
-        self.state = "active"
-        self.events = []
-
-    def process(self, frame: np.ndarray, now: float) -> tuple[bytes, int, int] | None:
-        if now - self.last_frame_time < self.frame_interval:
-            return None
-        self.last_frame_time = now
-        bgr = ensure_bgr(frame)
-        frame_height, frame_width = bgr.shape[:2]
-        actual_aspect = frame_width / frame_height
-        if abs(actual_aspect / self.configured_aspect - 1.0) > 0.02:
-            if self.state != "aspect_mismatch":
-                self.state = "aspect_mismatch"
-                self.events.append(("prediction_state", {"state": self.state}))
-            self.last_match = None
-            self.gate.confirmations = 0
-            return None
-        if self.state != "active":
-            self.state = "active"
-            self.events.append(("prediction_state", {"state": self.state}))
-        outer = ratio_rect(self.trigger_ratio, frame_width, frame_height)
-        inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
-        self.last_match = self.profile.evaluate(crop(bgr, inner))
-        if not self.gate.observe(self.last_match.matched, now):
-            return None
-        data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
-        return encode_action_png(crop(bgr, data_rect), self.limits)
-
-    def take_events(self):
-        events, self.events = self.events, []
-        return events

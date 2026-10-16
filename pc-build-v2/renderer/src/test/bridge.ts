@@ -35,7 +35,6 @@ export function profilesFixture(
         sourceLabel: 'BlueStacks App Player',
         sourceHealth: { state: 'available', reason: null },
         calibrationHealth: 'validated',
-        resultConfigured: false,
       }),
     ),
   }
@@ -122,7 +121,6 @@ export interface Bridge {
     deleteCaptureProfile: AsyncMock
     rebindCaptureProfile: AsyncMock
     setup: Record<
-      | 'startResult'
       | 'getSession'
       | 'getFrame'
       | 'setRegion'
@@ -249,7 +247,6 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
     deleteCaptureProfile: vi.fn(),
     rebindCaptureProfile: vi.fn(),
     setup: {
-      startResult: vi.fn(),
       getSession: vi.fn(() => Promise.reject(new Error('No setup is active'))),
       getFrame: vi.fn(),
       retryDetection: vi.fn(),

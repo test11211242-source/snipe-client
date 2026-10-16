@@ -26,7 +26,6 @@ import {
 import type { AuthSession } from './auth-session'
 import type { CaptureTargetResolver } from './capture-target-resolver'
 import type { MonitorSupervisor } from './monitor-supervisor'
-import { predictionResultMatchesCapture } from '../../../shared/models/prediction-result'
 import type { SetupRuntimeOutcome } from '../../../shared/models/setup'
 
 import type { GameLayoutWire } from '../../../shared/contracts/monitor-protocol'
@@ -51,7 +50,7 @@ export class CaptureProfileService {
     private readonly repository: CaptureConfigurationRepository,
     private readonly targetResolver: CaptureTargetResolver,
     private readonly monitor: MonitorSupervisor,
-    private readonly predictionState: () => string = () => 'stopped',
+    private readonly onContextChanged?: () => void,
     private readonly resultRepository?: PredictionResultConfigurationRepository,
   ) {}
 
@@ -64,41 +63,26 @@ export class CaptureProfileService {
       const sourceHealth = await this.targetResolver.resolveProfiles(
         status.profiles.map((profile) => profile.profileId),
       )
-      await Promise.all(
-        status.profiles.map(async (profile) => {
-          const error = sourceHealth.get(profile.profileId)
-          if (error === null) {
-            profile.sourceHealth = { state: 'available', reason: null }
-          } else {
-            const code =
-              error instanceof ApplicationError
-                ? error.code
-                : 'SOURCE_METADATA_UNAVAILABLE'
-            profile.sourceHealth = {
-              state:
-                code === 'SOURCE_NOT_FOUND'
-                  ? 'missing'
-                  : code === 'SOURCE_AMBIGUOUS'
-                    ? 'ambiguous'
-                    : 'metadata_unavailable',
-              reason: code,
-            }
-            if (code === 'SOURCE_REBIND_REQUIRED')
-              profile.calibrationHealth = 'needs_validation'
+      for (const profile of status.profiles) {
+        const error = sourceHealth.get(profile.profileId)
+        if (error === null) {
+          profile.sourceHealth = { state: 'available', reason: null }
+        } else {
+          const code =
+            error instanceof ApplicationError ? error.code : 'SOURCE_METADATA_UNAVAILABLE'
+          profile.sourceHealth = {
+            state:
+              code === 'SOURCE_NOT_FOUND'
+                ? 'missing'
+                : code === 'SOURCE_AMBIGUOUS'
+                  ? 'ambiguous'
+                  : 'metadata_unavailable',
+            reason: code,
           }
-          const result = await this.resultRepository?.load(user.id, profile.profileId)
-          profile.resultConfigured =
-            result != null &&
-            predictionResultMatchesCapture(result, {
-              profileId: profile.profileId,
-              configurationRevision: profile.configurationRevision,
-              configurationFingerprint: profile.configurationFingerprint,
-              ...(profile.calibrationId === undefined
-                ? {}
-                : { calibrationId: profile.calibrationId }),
-            })
-        }),
-      )
+          if (code === 'SOURCE_REBIND_REQUIRED')
+            profile.calibrationHealth = 'needs_validation'
+        }
+      }
     }
     this.assertAuthContext({ userId: user.id, generation })
     return CaptureProfilesViewSchema.parse(
@@ -113,11 +97,12 @@ export class CaptureProfileService {
   }
 
   assertCanChangeProfile(): void {
-    this.assertPredictionsStopped()
+    this.requireUserId()
   }
 
   async captureSetupCommitted(): Promise<SetupRuntimeOutcome> {
     this.monitor.invalidateCaptureTarget()
+    this.onContextChanged?.()
     const monitor = await this.monitor.getView()
     if (
       ACTIVE_MONITOR_STATES.includes(
@@ -134,8 +119,9 @@ export class CaptureProfileService {
 
   runCaptureCommit<T>(operation: () => Promise<T>): Promise<T> {
     return this.serialized(async () => {
-      this.assertPredictionsStopped()
-      return operation()
+      const result = await operation()
+      this.onContextChanged?.()
+      return result
     })
   }
 
@@ -219,7 +205,6 @@ export class CaptureProfileService {
     const context = this.requireAuthContext()
     return this.serialized(async () => {
       this.assertAuthContext(context)
-      this.assertPredictionsStopped()
       const userId = context.userId
       const current = await this.repository.list(userId)
       const changingProfile = current?.activeProfileId !== profileId
@@ -251,9 +236,6 @@ export class CaptureProfileService {
       if (current === null)
         throw this.publicFailure(new CaptureProfileNotFoundError(profileId))
       const deletingActive = current.activeProfileId === profileId
-      if (deletingActive) {
-        this.assertPredictionsStopped()
-      }
       this.assertAuthContext(context)
       try {
         await this.repository.delete(userId, profileId, expectedRevision)
@@ -301,7 +283,6 @@ export class CaptureProfileService {
       }
       const current = await this.repository.list(userId)
       const rebindingActive = current?.activeProfileId === profileId
-      if (rebindingActive) this.assertPredictionsStopped()
       this.assertAuthContext(context)
       try {
         await this.repository.rebind(
@@ -379,6 +360,7 @@ export class CaptureProfileService {
       this.monitor.getView(),
     ])
     this.assertAuthContext(context)
+    this.onContextChanged?.()
     return {
       profiles,
       monitor,
@@ -423,15 +405,6 @@ export class CaptureProfileService {
       throw new ApplicationError(
         'AUTH_CONTEXT_CHANGED',
         'The signed-in session changed during the capture profile operation',
-      )
-    }
-  }
-
-  private assertPredictionsStopped(): void {
-    if (['starting', 'active', 'unknown'].includes(this.predictionState())) {
-      throw new ApplicationError(
-        'PREDICTIONS_ACTIVE',
-        'Stop Twitch predictions before changing the capture profile',
       )
     }
   }

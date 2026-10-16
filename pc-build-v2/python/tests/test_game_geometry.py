@@ -11,7 +11,7 @@ from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import regions
 from synthetic_frames import arena, framed
 from test_trigger_engine import payload, profile_for, trigger_image
-from trigger_engine import PredictionTriggerEngine, TriggerEngine
+from trigger_engine import TriggerEngine
 
 
 def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10-13T12:00:00Z", chrome=None, cy=0.429):
@@ -28,7 +28,6 @@ def game_layout(width=360, height=640, *, source="setup", calibrated_at="2026-10
 def game_payload(layouts=None, *, learning=True):
     result = payload(profile_for(trigger_image((20, 80, 140))))
     result["selector"] = {"kind": "window", "windowHwnd": "123"}
-    result["prediction"] = None
     result["primary"] = {"kind": "game_relative", "profileCalibrationId": str(uuid.uuid4()),
                          "layouts": layouts or [game_layout()], "learning": {"enabled": learning, "maxLayouts": 4}}
     return result
@@ -141,17 +140,112 @@ def test_game_relative_confirmation_uses_current_nickname_frame_and_no_fatal_res
     assert engine.process(arena(480, 640, badge=False)[0], 0.2) is None
 
 
-def test_prediction_aspect_mismatch_pauses_and_resumes_without_fatal():
-    configured = payload(profile_for(trigger_image((60, 30, 160))))
-    primary = configured["primary"]
-    engine = PredictionTriggerEngine({"configuredFrameSize": primary["configuredFrameSize"], "trigger": primary["regions"]["trigger"],
-                                      "data": primary["regions"]["nicknameRegion"], "triggerProfile": primary["triggerProfile"]}, configured["limits"])
-    assert engine.process(np.zeros((256, 256, 3), np.uint8), 0) is None
-    assert engine.take_events() == [("prediction_state", {"state": "aspect_mismatch"})]
-    assert engine.process(np.zeros((256, 256, 3), np.uint8), 0.11) is None
-    assert engine.take_events() == []
-    assert engine.process(np.zeros((128, 256, 3), np.uint8), 0.22) is None
-    assert engine.take_events() == [("prediction_state", {"state": "active"})]
+@pytest.mark.parametrize("cy,kind", [(0.429, "battle"), (0.52, "spectate")])
+def test_trigger_records_the_fired_layout_kind(cy, kind):
+    frame, _ = arena(cy=cy)
+    engine = TriggerEngine(game_payload([game_layout(cy=cy)]))
+    assert engine.process(frame, 0) is None
+    assert engine.process(frame, 0.1) is not None
+    assert engine.take_triggered()
+    assert engine.triggered_kind == kind
+    # Own battles get the rank check (no rank icons here: empty lines) and arm
+    # the result reader; spectated battles never do.
+    if kind == "battle":
+        assert engine.triggered_rank == {"rank": "not_pol", "rankEvidence": {"opponent": "empty", "own": "empty"}}
+    else:
+        assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    assert engine.result_reader.armed is (kind == "battle")
+    assert engine.process(frame, 0.2) is None
+    assert engine.triggered_kind is None
+    assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+
+
+def test_result_screen_is_read_only_after_an_own_battle_and_never_on_a_fire_tick(monkeypatch):
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    calls = []
+    report = {"outcome": "win", "evidence": {"crowns": {"top": 0, "bottom": 1}, "deltaSign": "+",
+                                             "deltaIcon": "pol"}}
+
+    def process(_frame, rect, now):
+        calls.append(now)
+        engine.result_reader.diagnostics = {"endReason": "shift"}
+        return report if now >= 25 else None
+
+    monkeypatch.setattr(engine.result_reader, "process", process)
+    blank = arena(badge=False)[0]
+    assert engine.process(blank, 0) is None and engine.take_prediction_result() is None
+    assert calls == []                                    # never armed: nothing is read
+    engine.process(frame, 1.0)
+    engine.process(frame, 1.1)
+    assert engine.take_triggered() and engine.result_reader.armed
+    assert calls == []                                    # not on the fire tick
+    engine.process(blank, 1.2)
+    assert calls == [1.2] and engine.take_prediction_result() is None
+    engine.process(blank, 25.0)
+    assert engine.take_prediction_result() == (report, "shift")
+    assert engine.take_prediction_result() is None
+
+
+def test_a_spectate_fire_drops_the_pending_own_battle_result():
+    # Review m-13: own result missed, then a spectated battle (a layout learned
+    # from a spectate VS at another window aspect); its result screen must not
+    # be reported under the own battle's id.
+    own, spectate = game_layout(cy=0.429), game_layout(400, 640, cy=0.52)
+    engine = TriggerEngine(game_payload([own, spectate]))
+    battle_frame, spectate_frame = arena(cy=0.429)[0], arena(400, 640, cy=0.52)[0]
+    engine.process(battle_frame, 0)
+    engine.process(battle_frame, 0.1)
+    assert engine.take_triggered() and engine.triggered_kind == "battle" and engine.result_reader.armed
+    for now in (59.8, 59.9):                                             # the battle, then a spectated VS
+        engine.process(arena(400, 640, badge=False)[0], now)
+    kinds = []
+    for tick in range(20):
+        engine.process(spectate_frame, 60 + tick / 10)
+        if engine.take_triggered():
+            kinds.append(engine.triggered_kind)
+    assert kinds == ["spectate"]
+    assert not engine.result_reader.armed
+
+
+@pytest.mark.parametrize("broken", ["rank", "result", "both"])
+def test_a_missing_or_corrupt_c3_asset_never_stops_the_opponent_monitor(monkeypatch, capsys, broken):
+    # Review m-15: the asset loads used to raise in TriggerEngine.__init__
+    # (MONITOR_INTERNAL_FAILED), taking the M9 nickname search down.
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("pol_rank_v1.json")
+
+    def corrupt(*_args, **_kwargs):
+        raise ValueError("template hash mismatch")
+
+    if broken in ("rank", "both"):
+        monkeypatch.setattr("trigger_engine.RankTemplates.load", missing)
+    if broken in ("result", "both"):
+        monkeypatch.setattr("trigger_engine.ResultReader", corrupt)
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    assert capsys.readouterr().err.count("PREDICTION_ASSET_UNAVAILABLE") == (2 if broken == "both" else 1)
+    engine.process(frame, 0)
+    assert engine.process(frame, 0.1) is not None                       # the nickname action still goes out
+    assert engine.take_triggered() and engine.triggered_kind == "battle"
+    if broken == "result":
+        assert engine.triggered_rank["rank"] == "not_pol" and engine.result_reader is None
+    else:
+        assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    assert (engine.result_reader is not None and engine.result_reader.armed) is (broken == "rank")
+    assert engine.process(arena(badge=False)[0], 30) is None and engine.take_prediction_result() is None
+
+
+def test_prediction_failures_never_stop_the_monitor(monkeypatch):
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    monkeypatch.setattr("trigger_engine.check_rank", lambda *_args: 1 / 0)
+    engine.process(frame, 0)
+    assert engine.process(frame, 0.1) is not None
+    assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
+    monkeypatch.setattr(engine.result_reader, "process", lambda *_args: 1 / 0)
+    assert engine.process(arena(badge=False)[0], 30) is None
+    assert not engine.result_reader.armed and engine.take_prediction_result() is None
 
 
 def test_structural_game_relative_uses_existing_matcher():

@@ -106,28 +106,6 @@
     ]
   },
   {
-    "name": "profiles-zone-wide",
-    "width": 1100,
-    "height": 700,
-    "fixture": {
-      "profilesMode": "health"
-    },
-    "steps": [
-      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Зоны результата'); })()"
-    ]
-  },
-  {
-    "name": "profiles-zone-mini",
-    "width": 460,
-    "height": 700,
-    "fixture": {
-      "profilesMode": "health"
-    },
-    "steps": [
-      "(async () => { const h = window.__h; await h.openPanel(); h.rowMenu('Основной'); await h.sleep(150); h.click('Зоны результата'); })()"
-    ]
-  },
-  {
     "name": "profiles-player-wide",
     "width": 1100,
     "height": 700,
@@ -571,84 +549,6 @@
     },
     "steps": [
       "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше'); await h.sleep(900); h.click('BlueStacks'); await h.sleep(300); h.click('Заморозить кадр'); await h.sleep(600); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-wide",
-    "width": 1100,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "result"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-mini",
-    "width": 460,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "result"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-check-wide",
-    "width": 1100,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "resultRegions"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-check-mini",
-    "width": 460,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "resultRegions"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(600); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-ok-wide",
-    "width": 1100,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "resultRegions"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить зоны'); await h.sleep(500); })()"
-    ]
-  },
-  {
-    "name": "setup-zones-ok-mini",
-    "width": 460,
-    "height": 700,
-    "fixture": {
-      "setup": {
-        "session": "resultRegions"
-      }
-    },
-    "steps": [
-      "(async () => { const h = window.__h; h.click('Профиль:'); await h.sleep(200); h.click('Новый профиль'); await h.sleep(700); h.click('Дальше: проверка'); await h.sleep(400); h.click('Сохранить зоны'); await h.sleep(500); })()"
     ]
   },
   {

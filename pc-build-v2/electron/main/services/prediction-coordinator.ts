@@ -1,464 +1,485 @@
 import { z } from 'zod'
 
+import type {
+  MonitorPredictionResultEvent,
+  MonitorTriggeredEvent,
+} from '../../../shared/contracts/monitor-protocol'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { hasStreamerRole } from '../../../shared/models/auth'
+import type { CaptureConfiguration } from '../../../shared/models/capture'
+import type { MonitorView } from '../../../shared/models/monitor'
 import {
-  predictionResultMatchesCapture,
-  type PredictionRuntimeProfile,
-} from '../../../shared/models/prediction-result'
-import type { PredictionPreferences } from '../../../shared/models/streamer'
-import type { PredictionResultConfigurationRepository } from '../infrastructure/prediction-result-configuration-repository'
+  PredictionSettingsSchema,
+  PredictionStatusSchema,
+  type PredictionSettings,
+  type PredictionStatus,
+} from '../../../shared/models/streamer'
 import type { CaptureConfigurationRepository } from '../infrastructure/capture-configuration-repository'
-import type { AuthSession } from './auth-session'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
+import type { AuthSession } from './auth-session'
 import type { AuthenticatedApiClient } from './api-client'
-import type { MonitorAction } from './monitor-process-service'
 import type { MonitorSupervisor } from './monitor-supervisor'
 
-const SuccessSchema = z.object({ success: z.literal(true) }).loose()
-const TwitchSchema = z
-  .object({ connected: z.boolean(), success: z.boolean().optional() })
-  .loose()
+const CodeSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]*$/)
+  .max(64)
+const BattleStartResponseSchema = z
+  .object({
+    accepted: z.boolean(),
+    reason: CodeSchema,
+  })
+  .strip()
+const BattleResultResponseSchema = z
+  .object({
+    applied: z.boolean(),
+    finalOutcome: CodeSchema.nullable(),
+    reason: CodeSchema,
+  })
+  .strip()
+const ManualBattleRequestSchema = z
+  .object({
+    predictionId: z.number().int().positive(),
+    outcome: z.enum(['win', 'loss', 'not_ranked']),
+    requestId: z.uuid(),
+  })
+  .strict()
+const CurrentPredictionRequestSchema = z
+  .object({ predictionId: z.number().int().positive() })
+  .strict()
 
-export type PredictionRuntimeState =
-  'stopped' | 'starting' | 'active' | 'failed' | 'unknown'
+type BattleStart = MonitorTriggeredEvent['payload']
+type BattleResult = MonitorPredictionResultEvent['payload']
+interface BattleObservation {
+  event: BattleStart
+  observedAt: number
+}
+const MAX_VS_AGE_MS = 86_400_000
+interface Context {
+  userId: string
+  generation: number
+  signal: AbortSignal
+}
+type Operation =
+  | 'heartbeat'
+  | 'battle_start'
+  | 'battle_result'
+  | 'settings_save'
+  | 'manual_battle'
+  | 'cancel'
+/**
+ * `network` repeats once after 2 s on a transport failure; only for requests the
+ * server applies idempotently. `none` never repeats: a lost manual-settle response
+ * may already have advanced a streak, so a resend could count the battle twice.
+ */
+type RetryPolicy = 'network' | 'battle_event' | 'none'
+
+export interface PredictionReadiness {
+  ready: boolean
+  reason: 'ok' | 'monitor_not_ready' | 'profile_not_own_battle' | 'profile_full_frame'
+}
+
+/** C3 uses bundled result templates; legacy result-zone setup is not required. */
+export function getPredictionReadiness(
+  configuration: CaptureConfiguration | null,
+  monitor: Pick<MonitorView, 'state' | 'runIntent' | 'sourceMinimized'>,
+): PredictionReadiness {
+  if (monitor.state !== 'READY' || !monitor.runIntent || monitor.sourceMinimized)
+    return { ready: false, reason: 'monitor_not_ready' }
+  return getPredictionProfileReadiness(configuration)
+}
+
+export function getPredictionProfileReadiness(
+  configuration: CaptureConfiguration | null,
+): PredictionReadiness {
+  if (configuration === null) return { ready: false, reason: 'profile_not_own_battle' }
+  const calibration = configuration.calibration
+  if (calibration.coordinateSpace !== 'game_relative')
+    return { ready: false, reason: 'profile_full_frame' }
+  // Same own-battle band as python/geometry/zones.py:layout_kind. A structural
+  // trigger has no badge position and therefore cannot establish an own battle.
+  if (
+    calibration.layouts.length === 0 ||
+    !calibration.layouts.every(
+      (layout) =>
+        layout.trigger.kind === 'vs_edge_orientation' &&
+        layout.trigger.badge.cy >= 0.4 &&
+        layout.trigger.badge.cy < 0.46,
+    )
+  )
+    return { ready: false, reason: 'profile_not_own_battle' }
+  return { ready: true, reason: 'ok' }
+}
 
 export class PredictionCoordinator {
-  #state: PredictionRuntimeState = 'stopped'
-  #generation = 0
-  #observationGeneration = 0
-  #confirmedStopGeneration = -1
+  #context: Context | null = null
+  #controller = new AbortController()
+  #heartbeatController = new AbortController()
+  #heartbeatTimer: NodeJS.Timeout | undefined
   #eventQueue: Promise<void> = Promise.resolve()
-  #eventController = new AbortController()
-  #pendingBattle = false
-  #pendingResult: MonitorAction | null = null
-  #monitorOwned = false
-  #ownerUserId: string | null = null
-  #ownerAuthGeneration: number | null = null
-  #stopPromise: Promise<void> | null = null
-  #disposeBattle: (() => void) | null = null
-  #disposeResult: (() => void) | null = null
-  #disposeState: (() => void) | null = null
-  #disposeViews: (() => void) | null = null
-  #monitorPredictionState: 'active' | 'aspect_mismatch' | null = null
+  #disposers: (() => void)[] = []
+  #started = false
+  #monitorSignature: string | null = null
+  #unacknowledgedStarts = new Map<string, BattleObservation>()
+  #latestBattle: BattleObservation | null = null
 
   constructor(
     private readonly auth: AuthSession,
     private readonly api: AuthenticatedApiClient,
-    private readonly results: PredictionResultConfigurationRepository,
     private readonly monitor: MonitorSupervisor,
-    private readonly captures?: CaptureConfigurationRepository,
-    private readonly runLifecycle: (operation: () => Promise<void>) => Promise<void> = (
-      operation,
-    ) => operation(),
-    private readonly logger?: Pick<StructuredLogger, 'info'>,
+    private readonly captures: CaptureConfigurationRepository,
+    private readonly logger: Pick<StructuredLogger, 'info'>,
+    private readonly clientVersion: string,
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {}
 
-  get state(): PredictionRuntimeState {
-    return this.#state
-  }
-
-  get observationGeneration(): number {
-    return this.#observationGeneration
-  }
-
-  /** Predictions are active but the result trigger waits for the configured aspect ratio. */
-  get suspended(): boolean {
-    return this.#state === 'active' && this.#monitorPredictionState === 'aspect_mismatch'
-  }
-
-  observeServerState(
-    active: boolean,
-    userId: string,
-    generation = this.#observationGeneration,
-  ): void {
-    if (generation !== this.#observationGeneration) return
-    if (active) {
-      this.#ownerUserId = userId
-      this.#ownerAuthGeneration = this.auth.getContextGeneration()
-    } else if (this.#ownerUserId === userId) {
-      this.#ownerUserId = null
-      this.#ownerAuthGeneration = null
-    }
-    if (active && this.#state === 'stopped') this.#state = 'unknown'
-    else if (!active && this.#state === 'unknown' && !this.#monitorOwned)
-      this.#state = 'stopped'
-  }
-
   startLifecycle(): void {
-    if (this.#disposeBattle !== null) return
-    this.#disposeBattle = this.monitor.subscribeBattleStarts(() =>
-      this.enqueueBattleStart(),
-    )
-    this.#disposeResult = this.monitor.subscribePredictionResults((action) =>
-      this.enqueueResult(action),
-    )
-    // The result trigger pauses (without ending monitoring) while the game window has
-    // another aspect ratio than the configured result frame; surface that, never hide it.
-    this.#disposeState = this.monitor.subscribePredictionStates((state) => {
-      this.#monitorPredictionState = state
-    })
-    // A new monitor process starts its result trigger active again, without an event.
-    this.#disposeViews = this.monitor.subscribeViews((view) => {
-      if (view.state !== 'READY') this.#monitorPredictionState = null
-    })
+    if (this.#started) return
+    this.#started = true
+    this.#disposers = [
+      this.auth.subscribe(() => this.updateAuthContext()),
+      this.monitor.subscribeBattleStarts((event) => this.enqueueBattleStart(event)),
+      this.monitor.subscribePredictionResults((event) => this.enqueueResult(event)),
+      this.monitor.subscribeViews((view) => {
+        const signature = `${view.state}:${view.runIntent}:${view.sourceMinimized}`
+        if (signature === this.#monitorSignature) return
+        this.#monitorSignature = signature
+        this.notifyContextChanged()
+      }),
+    ]
+    this.updateAuthContext()
   }
 
-  start(settings: PredictionPreferences): Promise<void> {
-    const generation = ++this.#generation
-    this.#observationGeneration += 1
-    return this.runLifecycle(() => {
-      if (generation !== this.#generation) {
-        throw new ApplicationError(
-          'PREDICTION_CANCELLED',
-          'Prediction start was cancelled',
-        )
-      }
-      return this.performStart(settings, generation)
-    })
+  /** Profile commits call this as well as monitor and auth subscriptions. */
+  notifyContextChanged(): void {
+    if (!this.#started) return
+    this.#heartbeatController.abort()
+    this.#heartbeatController = new AbortController()
+    const context = this.currentContext()
+    if (context === null) return
+    const signal = AbortSignal.any([context.signal, this.#heartbeatController.signal])
+    void this.sendHeartbeat({ ...context, signal }).catch(() => undefined)
   }
 
-  private async performStart(
-    settings: PredictionPreferences,
-    generation: number,
-  ): Promise<void> {
-    this.#eventController.abort()
-    this.#eventController = new AbortController()
+  /** The server replaces the whole settings row, so a network retry is idempotent. */
+  async saveSettings(settings: PredictionSettings): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
+      'settings_save',
+      'PUT',
+      '/api/streamer/predictions/settings',
+      PredictionStatusSchema,
+      PredictionSettingsSchema.parse(settings),
+      'network',
+    )
+  }
+
+  /** Never retried: a lost response may already have advanced the streak. */
+  async manualBattle(
+    predictionId: number,
+    outcome: 'win' | 'loss' | 'not_ranked',
+    requestId: string,
+  ): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
+      'manual_battle',
+      'POST',
+      '/api/streamer/predictions/current/battle',
+      PredictionStatusSchema,
+      ManualBattleRequestSchema.parse({ predictionId, outcome, requestId }),
+      'none',
+    )
+  }
+
+  /** Never retried: a lost response is reconciled by the next status read. */
+  async cancel(predictionId: number): Promise<PredictionStatus> {
+    return this.request(
+      this.requireContext(),
+      'cancel',
+      'POST',
+      '/api/streamer/predictions/current/cancel',
+      PredictionStatusSchema,
+      CurrentPredictionRequestSchema.parse({ predictionId }),
+      'none',
+    )
+  }
+
+  shutdown(): Promise<void> {
+    this.#started = false
+    for (const dispose of this.#disposers) dispose()
+    this.#disposers = []
+    this.clearContext()
+    // Closing CR Tools never disables predictions or cancels viewers' bets.
+    return Promise.resolve()
+  }
+
+  private clearContext(): void {
+    this.#controller.abort()
+    this.#controller = new AbortController()
+    this.#heartbeatController.abort()
+    clearInterval(this.#heartbeatTimer)
+    this.#heartbeatTimer = undefined
+    this.#eventQueue = Promise.resolve()
+    this.#context = null
+    this.#monitorSignature = null
+    this.#unacknowledgedStarts.clear()
+    this.#latestBattle = null
+  }
+
+  private updateAuthContext(): void {
     const view = this.auth.getView()
-    if (!hasStreamerRole(view) || view.user === null) {
-      throw new ApplicationError('STREAMER_ROLE_REQUIRED', 'Streamer role is required')
-    }
-    const userId = view.user.id
-    const authGeneration = this.auth.getContextGeneration()
-    this.#state = 'starting'
-    try {
-      const configurationRequest =
-        this.captures === undefined
-          ? this.results.load(userId)
-          : this.captures.list(userId).then(async (profiles) => {
-              if (profiles === null) return null
-              const capture = profiles.profiles.find(
-                (profile) => profile.profileId === profiles.activeProfileId,
-              )
-              if (capture === undefined) return null
-              const result = await this.results.load(userId, profiles.activeProfileId)
-              return result !== null && predictionResultMatchesCapture(result, capture)
-                ? result
-                : null
-            })
-      const [configuration, twitch] = await Promise.all([
-        configurationRequest,
-        this.api.request({
-          method: 'GET',
-          path: '/api/streamer/auth/status',
-          schema: TwitchSchema,
-          signal: this.#eventController.signal,
-          authContextGuard: () => this.hasAuthContext(userId, authGeneration),
-        }),
-      ])
-      if (generation !== this.#generation) {
-        throw new ApplicationError(
-          'PREDICTION_CANCELLED',
-          'Prediction start was cancelled',
-        )
-      }
-      if (!this.hasAuthContext(userId, authGeneration)) {
-        throw new ApplicationError(
-          'PREDICTION_AUTH_CHANGED',
-          'The signed-in session changed while predictions were starting',
-        )
-      }
-      if (configuration === null) {
-        throw new ApplicationError(
-          'RESULT_SETUP_REQUIRED',
-          'Configure result trigger and data areas first',
-        )
-      }
-      if (!twitch.ok || !twitch.data.connected) {
-        throw new ApplicationError(
-          'TWITCH_REQUIRED',
-          'Connect Twitch before starting predictions',
-        )
-      }
-
-      const started = await this.api.request({
-        method: 'POST',
-        path: '/api/streamer/bot/start',
-        body: {
-          prediction_type: settings.predictionType,
-          prediction_window: settings.predictionWindow,
-          win_streak_count: settings.winStreakCount,
-          delay_between_predictions: settings.delayBetweenPredictions,
-          auto_create_next: settings.autoCreateNext,
-        },
-        schema: SuccessSchema,
-        signal: this.#eventController.signal,
-        authContextGuard: () => this.hasAuthContext(userId, authGeneration),
-      })
-      if (!started.ok) {
-        throw new ApplicationError('PREDICTION_START_FAILED', started.error.message)
-      }
-      this.#ownerUserId = userId
-      this.#ownerAuthGeneration = authGeneration
-      this.#observationGeneration += 1
-      if (!this.hasAuthContext(userId, authGeneration)) {
-        this.#state = 'unknown'
-        throw new ApplicationError(
-          'PREDICTION_AUTH_CHANGED',
-          'The signed-in session changed after predictions started',
-        )
-      }
-      if (generation !== this.#generation) {
-        await this.stopServer().catch(() => false)
-        throw new ApplicationError(
-          'PREDICTION_CANCELLED',
-          'Prediction start was cancelled',
-        )
-      }
-      const profile: PredictionRuntimeProfile = {
-        configuredFrameSize: configuration.frameSize,
-        trigger: configuration.trigger,
-        data: configuration.data,
-        triggerProfile: configuration.triggerProfile,
-      }
-      const monitorBefore = await this.monitor.getView()
-      const wasRunning = ['PREFLIGHT', 'STARTING', 'READY'].includes(monitorBefore.state)
-      try {
-        const configured = await this.monitor.configurePredictionRuntime(profile)
-        if (wasRunning && configured.state !== 'READY') {
-          throw new Error('monitor restart did not become ready')
-        }
-        if (!wasRunning) {
-          const monitorView = await this.monitor.start()
-          if (monitorView.state !== 'READY')
-            throw new Error('monitor did not become ready')
-        }
-        if (
-          generation !== this.#generation ||
-          !this.hasAuthContext(userId, authGeneration)
-        )
-          throw new Error('prediction start became stale')
-        this.#monitorOwned = !wasRunning
-        this.#state = 'active'
-      } catch (error) {
-        const rollback = await this.stopServer().catch(() => false)
-        await this.monitor.configurePredictionRuntime(null).catch(() => undefined)
-        if (generation !== this.#generation) {
-          this.#state = 'stopped'
-          throw new ApplicationError(
-            'PREDICTION_CANCELLED',
-            'Prediction start was cancelled',
-            { cause: error },
-          )
-        }
-        this.#state = rollback ? 'failed' : 'unknown'
-        throw new ApplicationError(
-          rollback ? 'PREDICTION_LOCAL_START_FAILED' : 'PREDICTION_ROLLBACK_UNKNOWN',
-          rollback
-            ? 'Predictions were stopped because the local monitor could not restart'
-            : 'Local monitor failed and server rollback could not be confirmed',
-          { cause: error },
-        )
-      }
-    } catch (error) {
-      this.resetStartingState(generation)
-      throw error
-    }
-  }
-
-  private resetStartingState(generation: number): void {
-    if (generation === this.#generation && this.#state === 'starting') {
-      this.#state = 'stopped'
-    }
-  }
-
-  stop(bestEffort = false): Promise<void> {
-    if (this.#stopPromise !== null) {
-      return bestEffort ? this.#stopPromise.catch(() => undefined) : this.#stopPromise
-    }
-    this.#observationGeneration += 1
-    const stopping = this.performStop(bestEffort)
-    const generation = this.#generation
-    const operation = stopping.finally(() => {
-      this.#observationGeneration += 1
-      if (this.#confirmedStopGeneration === generation) {
-        this.#ownerUserId = null
-        this.#ownerAuthGeneration = null
-      }
-      if (this.#stopPromise === operation) this.#stopPromise = null
-    })
-    this.#stopPromise = operation
-    return operation
-  }
-
-  private async performStop(bestEffort: boolean): Promise<void> {
-    ++this.#generation
-    this.#eventController.abort()
-    const locallyStopped = this.#state === 'stopped' && !this.#monitorOwned
-    const serverStopped = await this.stopServer().catch(() => false)
-    this.#pendingBattle = false
-    this.#pendingResult = null
-    if (locallyStopped) {
-      this.#state = serverStopped || bestEffort ? 'stopped' : 'unknown'
-      if (!serverStopped && !bestEffort) {
-        throw new ApplicationError(
-          'PREDICTION_STOP_UNKNOWN',
-          'The server did not confirm prediction stop',
-        )
-      }
+    const generation = this.auth.getContextGeneration()
+    const userId = hasStreamerRole(view) ? (view.user?.id ?? null) : null
+    if (userId === this.#context?.userId && generation === this.#context.generation)
       return
-    }
-    const wasRunning = this.monitor.isRunning()
-    try {
-      if (this.#monitorOwned) {
-        await this.monitor.stop()
-        await this.monitor.configurePredictionRuntime(null)
-      } else {
-        const configured = await this.monitor.configurePredictionRuntime(null)
-        if (wasRunning && configured.state !== 'READY') {
-          throw new ApplicationError(
-            'PREDICTION_MONITOR_RESTART_FAILED',
-            'Monitor could not restart without the prediction profile',
-          )
-        }
-      }
-      this.#monitorOwned = false
-      this.#state = serverStopped || bestEffort ? 'stopped' : 'unknown'
-    } catch (error) {
-      this.#state = 'failed'
-      if (!bestEffort) throw error
-    }
-    if (!serverStopped && !bestEffort) {
-      throw new ApplicationError(
-        'PREDICTION_STOP_UNKNOWN',
-        'The server did not confirm prediction stop',
-      )
-    }
+    this.clearContext()
+    if (userId === null || !this.#started) return
+    this.#context = { userId, generation, signal: this.#controller.signal }
+    this.#heartbeatTimer = setInterval(() => this.notifyContextChanged(), 30_000)
+    this.notifyContextChanged()
   }
 
-  async shutdown(): Promise<void> {
-    this.#disposeBattle?.()
-    this.#disposeResult?.()
-    this.#disposeState?.()
-    this.#disposeViews?.()
-    this.#disposeBattle = null
-    this.#disposeResult = null
-    this.#disposeState = null
-    this.#disposeViews = null
-    await Promise.race([
-      this.stop(true),
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ])
+  private currentContext(): Context | null {
+    return this.#context !== null && this.isCurrent(this.#context) ? this.#context : null
   }
 
-  private async stopServer(): Promise<boolean> {
-    const userId = this.#ownerUserId ?? this.auth.getView().user?.id
-    const authGeneration = this.#ownerAuthGeneration ?? this.auth.getContextGeneration()
-    if (userId === undefined || !this.hasAuthContext(userId, authGeneration)) return false
-    const result = await this.api.request({
-      method: 'POST',
-      path: '/api/streamer/bot/stop',
-      schema: SuccessSchema,
-      timeoutMs: 10_000,
-      authContextGuard: () => this.hasAuthContext(userId, authGeneration),
-    })
-    if (!result.ok) {
-      if (result.error.status !== 404) return false
-    }
-    this.#ownerUserId = null
-    this.#ownerAuthGeneration = null
-    this.#confirmedStopGeneration = this.#generation
-    this.#observationGeneration += 1
-    return true
+  private requireContext(): Context {
+    const context = this.currentContext()
+    if (context === null)
+      throw new ApplicationError('STREAMER_ROLE_REQUIRED', 'Streamer role is required')
+    return context
   }
 
-  private hasAuthContext(userId: string, generation: number): boolean {
+  private isCurrent(context: Context): boolean {
     return (
-      this.auth.getContextGeneration() === generation &&
-      this.auth.getView().user?.id === userId
+      !context.signal.aborted &&
+      this.auth.getContextGeneration() === context.generation &&
+      hasStreamerRole(this.auth.getView()) &&
+      this.auth.getView().user?.id === context.userId
     )
   }
 
-  private enqueueBattleStart(): void {
-    if (this.#state !== 'active') return
-    if (this.suspended) {
-      this.logger?.info('prediction.battle_start_skipped', { reason: 'aspect_mismatch' })
+  private async sendHeartbeat(context: Context): Promise<void> {
+    const [capture, monitor] = await Promise.allSettled([
+      this.captures.getActive(context.userId),
+      this.monitor.getView(),
+    ])
+    if (!this.isCurrent(context)) return
+    const readiness =
+      monitor.status === 'fulfilled'
+        ? getPredictionReadiness(
+            capture.status === 'fulfilled'
+              ? (capture.value?.profile.configuration ?? null)
+              : null,
+            monitor.value,
+          )
+        : { ready: false, reason: 'monitor_not_ready' as const }
+    await this.request(
+      context,
+      'heartbeat',
+      'POST',
+      '/api/streamer/predictions/heartbeat',
+      PredictionStatusSchema,
+      { clientVersion: this.clientVersion, ...readiness },
+      'network',
+    )
+  }
+
+  private enqueueBattleStart(event: BattleStart): void {
+    if (event.kind !== 'battle') {
+      this.log('battle_start', { code: 'skipped', reason: 'not_own_battle' })
       return
     }
-    if (this.#pendingBattle) return
-    this.#pendingBattle = true
-    const generation = this.#generation
+    if (this.currentContext() === null) {
+      this.log('battle_start', { code: 'skipped', reason: 'auth_context_changed' })
+      return
+    }
+    const observedAt = this.monotonicNow()
+    for (const [id, pending] of this.#unacknowledgedStarts) {
+      if (observedAt - pending.observedAt > MAX_VS_AGE_MS)
+        this.#unacknowledgedStarts.delete(id)
+    }
+    const observation: BattleObservation = { event, observedAt }
+    this.#latestBattle = observation
+    this.#unacknowledgedStarts.set(event.triggerId, observation)
+    this.enqueue('battle_start', (context) => this.sendBattleStart(context, observation))
+  }
+
+  private async sendBattleStart(
+    context: Context,
+    observation: BattleObservation,
+  ): Promise<void> {
+    const event = observation.event
+    await this.request(
+      context,
+      'battle_start',
+      'POST',
+      '/api/streamer/predictions/battle-start',
+      BattleStartResponseSchema,
+      () => ({
+        battleId: event.triggerId,
+        kind: 'battle',
+        rank: event.rank,
+        rankEvidence: event.rankEvidence,
+        vsAgeMs: this.vsAgeMs(observation),
+      }),
+      'battle_event',
+    )
+    if (this.#unacknowledgedStarts.get(event.triggerId) === observation)
+      this.#unacknowledgedStarts.delete(event.triggerId)
+  }
+
+  private enqueueResult(event: BattleResult): void {
+    const observation =
+      event.battleId === null
+        ? undefined
+        : (this.#unacknowledgedStarts.get(event.battleId) ??
+          (this.#latestBattle?.event.triggerId === event.battleId
+            ? this.#latestBattle
+            : undefined))
+    this.enqueue('battle_result', async (context) => {
+      if (
+        observation !== undefined &&
+        this.#unacknowledgedStarts.get(observation.event.triggerId) === observation
+      ) {
+        // A lost start must precede its result again; even a second outage must
+        // not suppress the result (the server records an unknown VS as missed).
+        await this.sendBattleStart(context, observation).catch(() => undefined)
+      }
+      await this.request(
+        context,
+        'battle_result',
+        'POST',
+        '/api/streamer/predictions/battle-result',
+        BattleResultResponseSchema,
+        () => ({ ...event, vsAgeMs: this.vsAgeMs(observation) }),
+        'battle_event',
+      )
+      if (observation !== undefined) {
+        if (this.#unacknowledgedStarts.get(observation.event.triggerId) === observation)
+          this.#unacknowledgedStarts.delete(observation.event.triggerId)
+        if (this.#latestBattle === observation) this.#latestBattle = null
+      }
+    })
+  }
+
+  private vsAgeMs(observation: BattleObservation | undefined): number {
+    return observation === undefined
+      ? 0
+      : Math.min(
+          MAX_VS_AGE_MS,
+          Math.max(0, Math.floor(this.monotonicNow() - observation.observedAt)),
+        )
+  }
+
+  private enqueue(
+    operation: Operation,
+    run: (context: Context) => Promise<unknown>,
+  ): void {
+    const context = this.currentContext()
+    if (context === null) {
+      this.log(operation, { code: 'skipped', reason: 'auth_context_changed' })
+      return
+    }
     this.#eventQueue = this.#eventQueue
       .then(async () => {
-        this.#pendingBattle = false
-        if (
-          generation !== this.#generation ||
-          this.#state !== 'active' ||
-          this.#ownerUserId === null ||
-          this.#ownerAuthGeneration === null ||
-          !this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration)
-        )
-          return
-        if (this.suspended) {
-          this.logger?.info('prediction.battle_start_skipped', {
-            reason: 'aspect_mismatch',
-          })
+        if (!this.isCurrent(context)) {
+          this.log(operation, { code: 'skipped', reason: 'auth_context_changed' })
           return
         }
-        await this.api.request({
-          method: 'POST',
-          path: '/api/streamer/bot/battle-start',
-          schema: SuccessSchema,
-          timeoutMs: 15_000,
-          signal: this.#eventController.signal,
-          authContextGuard: () =>
-            this.#ownerUserId !== null &&
-            this.#ownerAuthGeneration !== null &&
-            this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration),
-        })
+        await run(context)
       })
       .catch(() => undefined)
   }
 
-  private enqueueResult(action: MonitorAction): void {
-    if (this.#state !== 'active') return
-    this.#pendingResult = action
-    const generation = this.#generation
-    this.#eventQueue = this.#eventQueue
-      .then(async () => {
-        const current = this.#pendingResult
-        this.#pendingResult = null
-        if (
-          current === null ||
-          generation !== this.#generation ||
-          this.#state !== 'active'
-        )
-          return
-        if (
-          this.#ownerUserId === null ||
-          this.#ownerAuthGeneration === null ||
-          !this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration)
-        )
-          return
-        const body = new FormData()
-        body.set(
-          'screenshot',
-          new Blob([Uint8Array.from(current.image)], { type: 'image/png' }),
-          'result.png',
-        )
-        await this.api.request({
-          method: 'POST',
-          path: '/api/streamer/bot/battle-result',
-          body,
-          schema: SuccessSchema,
-          timeoutMs: 150_000,
-          signal: this.#eventController.signal,
-          authContextGuard: () =>
-            this.#ownerUserId !== null &&
-            this.#ownerAuthGeneration !== null &&
-            this.hasAuthContext(this.#ownerUserId, this.#ownerAuthGeneration),
+  private async request<T>(
+    context: Context,
+    operation: Operation,
+    method: 'POST' | 'PUT',
+    path: `/api/${string}`,
+    schema: z.ZodType<T>,
+    body: Record<string, unknown> | (() => Record<string, unknown>),
+    retry: RetryPolicy,
+  ): Promise<T> {
+    const attempts = retry === 'none' ? 1 : 2
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (!this.isCurrent(context)) {
+        this.log(operation, { code: 'AUTH_CANCELLED', attempt })
+        throw new ApplicationError('AUTH_CANCELLED', 'Prediction request was cancelled')
+      }
+      let code: string
+      let status: number | undefined
+      try {
+        const result = await this.api.request({
+          method,
+          path,
+          schema,
+          body: typeof body === 'function' ? body() : body,
+          timeoutMs: 15_000,
+          signal: context.signal,
+          authContextGuard: () => this.isCurrent(context),
         })
-      })
-      .catch(() => undefined)
+        if (result.ok) {
+          const data = result.data as Record<string, unknown>
+          if (!this.isCurrent(context)) {
+            code = 'AUTH_CANCELLED'
+          } else {
+            this.log(operation, {
+              code: 'ok',
+              attempt,
+              status: result.status,
+              ...(typeof data['accepted'] === 'boolean'
+                ? { accepted: data['accepted'] }
+                : {}),
+              ...(typeof data['applied'] === 'boolean'
+                ? { applied: data['applied'] }
+                : {}),
+              ...(CodeSchema.safeParse(data['reason']).success
+                ? { reason: data['reason'] }
+                : {}),
+              ...(CodeSchema.safeParse(data['finalOutcome']).success
+                ? { finalOutcome: data['finalOutcome'] }
+                : {}),
+            })
+            return result.data
+          }
+        } else {
+          code = result.error.code
+          status = result.error.status ?? undefined
+        }
+      } catch (error) {
+        code = error instanceof ApplicationError ? error.code : 'UNKNOWN'
+      }
+      this.log(operation, { code, attempt, ...(status === undefined ? {} : { status }) })
+      if (
+        attempt === attempts ||
+        (code !== 'NETWORK_UNAVAILABLE' &&
+          code !== 'REQUEST_TIMEOUT' &&
+          !(
+            retry === 'battle_event' &&
+            status !== undefined &&
+            status >= 500 &&
+            status <= 599
+          ))
+      )
+        throw new ApplicationError(code, 'Prediction request failed')
+      await this.retryDelay(context.signal)
+    }
+    throw new ApplicationError('UNKNOWN', 'Prediction request failed')
+  }
+
+  private async retryDelay(signal: AbortSignal): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<undefined>()
+    const finish = (): void => resolve(undefined)
+    const timer = setTimeout(finish, 2_000)
+    signal.addEventListener('abort', finish, { once: true })
+    if (signal.aborted) finish()
+    await promise
+    clearTimeout(timer)
+    signal.removeEventListener('abort', finish)
+  }
+
+  private log(operation: Operation, codes: Record<string, unknown>): void {
+    this.logger.info(`prediction.${operation}`, codes)
   }
 }

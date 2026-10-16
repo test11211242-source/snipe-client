@@ -11,6 +11,8 @@ import {
   GameLayoutWireSchema,
   MonitorStartPayloadSchema,
   type MonitorStartPayload,
+  type MonitorTriggeredEvent,
+  type MonitorPredictionResultEvent,
 } from '../../../shared/contracts/monitor-protocol'
 import {
   CaptureConfigurationSchema,
@@ -24,6 +26,24 @@ import { v4CaptureFixture } from '../../../tests/capture-fixtures'
 
 function deferred<T>() {
   return Promise.withResolvers<T>()
+}
+
+function battleStart(
+  timestamp = '2026-10-15T00:00:00.000Z',
+  triggerId: string = randomUUID(),
+): MonitorTriggeredEvent['payload'] {
+  return { timestamp, triggerId, kind: 'battle', rank: 'unknown', rankEvidence: null }
+}
+
+function predictionResult(
+  battleId: string | null = null,
+): MonitorPredictionResultEvent['payload'] {
+  return {
+    battleId,
+    gap: false,
+    outcome: 'win',
+    evidence: { crowns: { top: 0, bottom: 1 }, deltaSign: '+', deltaIcon: 'pol' },
+  }
 }
 
 const configuration = v4CaptureFixture({
@@ -525,10 +545,8 @@ describe('MonitorSupervisor game-relative runtime', () => {
     }
   })
 
-  it('keeps full-frame geometry null and forwards prediction state nonfatally', async () => {
+  it('keeps full-frame geometry null and ignores game-relative events', async () => {
     const test = harness()
-    const observe = vi.fn()
-    test.supervisor.subscribePredictionStates(observe)
     const append = vi.fn()
     test.supervisor.setLearnedLayoutHandler(append)
     await test.supervisor.start()
@@ -548,9 +566,6 @@ describe('MonitorSupervisor game-relative runtime', () => {
     test.listener()?.onLayoutLearned?.(learnedEvent(gameConfiguration()))
     expect(append).not.toHaveBeenCalled()
     const stops = test.process.stop.mock.calls.length
-    test.listener()?.onPredictionState?.({ state: 'aspect_mismatch' })
-    test.listener()?.onPredictionState?.({ state: 'active' })
-    expect(observe.mock.calls).toEqual([['aspect_mismatch'], ['active']])
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'READY',
       geometry: null,
@@ -587,7 +602,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     saving.resolve(2)
     await saving.promise
     await settle()
-    test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', randomUUID())
+    test.listener()?.onTriggered(battleStart('2026-10-13T00:01:00.000Z'))
     expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(2)
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'READY',
@@ -605,7 +620,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
     await settle()
     const triggerId = randomUUID()
-    test.listener()?.onTriggered('2026-10-13T00:01:00.000Z', triggerId)
+    test.listener()?.onTriggered(battleStart('2026-10-13T00:01:00.000Z', triggerId))
     expect(test.supervisor.getCurrentView().search?.calibrationRevision).toBe(7)
     test.ocr.process.mockResolvedValue(
       MonitorResultSchema.parse({
@@ -630,24 +645,26 @@ describe('MonitorSupervisor game-relative runtime', () => {
     )
   })
 
-  it('keeps persisting learned layouts when prediction-state listeners fail', async () => {
+  it('keeps persisting learned layouts when prediction-result listeners fail', async () => {
     const test = gameHarness()
     const prediction = vi.fn()
-    test.supervisor.subscribePredictionStates(() => {
+    test.supervisor.subscribePredictionResults(() => {
       throw new Error('synthetic listener failure')
     })
-    test.supervisor.subscribePredictionStates(() =>
+    test.supervisor.subscribePredictionResults(() =>
       Promise.reject(new Error('synthetic listener failure')),
     )
-    test.supervisor.subscribePredictionStates(prediction)
+    test.supervisor.subscribePredictionResults(prediction)
     await test.supervisor.start()
     const stops = test.process.stop.mock.calls.length
     const learned = learnedEvent(test.game)
     test.listener()?.onLayoutLearned?.(learned)
     await vi.waitFor(() => expect(test.append).toHaveBeenCalledOnce())
     await settle()
-    test.listener()?.onPredictionState?.({ state: 'aspect_mismatch' })
-    expect(prediction).toHaveBeenCalledWith('aspect_mismatch')
+    test.listener()?.onPredictionResult(predictionResult())
+    expect(prediction).toHaveBeenCalledWith(
+      expect.objectContaining({ battleId: null, gap: true }),
+    )
     expect(test.supervisor.getCurrentView()).toMatchObject({
       state: 'READY',
       runIntent: true,
@@ -885,7 +902,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
         message: 'Игрок не найден',
       }),
     )
-    test.listener()?.onTriggered(action.timestamp, action.triggerId)
+    test.listener()?.onTriggered(battleStart(action.timestamp, action.triggerId))
     test.listener()?.onAction(action)
     await vi.waitFor(() =>
       expect(test.supervisor.getCurrentView().results).toHaveLength(1),
@@ -911,7 +928,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       const saving = deferred<number>()
       test.append.mockReturnValueOnce(saving.promise)
       const prediction = vi.fn()
-      test.supervisor.subscribePredictionStates(prediction)
+      test.supervisor.subscribePredictionResults(prediction)
       await test.supervisor.start()
       const old = test.listener()
       old?.onLayoutLearned?.(learnedEvent(test.game))
@@ -933,7 +950,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
         rejectedCount: 3,
       })
       old?.onLayoutLearned?.(learnedEvent(test.game))
-      old?.onPredictionState?.({ state: 'aspect_mismatch' })
+      old?.onPredictionResult(predictionResult())
       expect(test.append).toHaveBeenCalledTimes(1)
       expect(prediction).not.toHaveBeenCalled()
       expect(test.supervisor.getCurrentView()).toMatchObject({
@@ -954,7 +971,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
     const saving = deferred<undefined>()
     test.append.mockReturnValue(saving.promise)
     const prediction = vi.fn()
-    test.supervisor.subscribePredictionStates(prediction)
+    test.supervisor.subscribePredictionResults(prediction)
     await test.supervisor.start()
     const old = test.listener()
     old?.onLayoutLearned?.(learnedEvent(test.game))
@@ -967,7 +984,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       reason: 'LEARN_TRIGGER_WEAK',
       rejectedCount: 3,
     })
-    old?.onPredictionState?.({ state: 'aspect_mismatch' })
+    old?.onPredictionResult(predictionResult())
     expect(test.append).toHaveBeenCalledTimes(1)
     expect(prediction).not.toHaveBeenCalled()
     expect(test.supervisor.getCurrentView().geometry).toBeNull()
@@ -984,7 +1001,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       )
     })
     const prediction = vi.fn()
-    test.supervisor.subscribePredictionStates(prediction)
+    test.supervisor.subscribePredictionResults(prediction)
     await test.supervisor.start()
     const before = test.supervisor.getCurrentView()
     expect(before.state).toBe('FAILED')
@@ -1004,7 +1021,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       rejectedCount: 3,
     })
     events.onLayoutLearned?.(learnedEvent(test.game))
-    events.onPredictionState?.({ state: 'aspect_mismatch' })
+    events.onPredictionResult(predictionResult())
     expect(test.append).not.toHaveBeenCalled()
     expect(prediction).not.toHaveBeenCalled()
     expect(test.supervisor.getCurrentView()).toMatchObject({
@@ -1130,29 +1147,6 @@ describe('MonitorSupervisor concurrency', () => {
     expect(test.process.start).toHaveBeenCalledTimes(1)
   })
 
-  it('restarts an in-flight preflight when the prediction runtime changes', async () => {
-    const target = deferred<{
-      configuration: typeof configuration
-      selector: { kind: 'window'; windowHwnd: string }
-    }>()
-    const test = harness(target.promise)
-    const starting = test.supervisor.start()
-    const configuring = test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.calibration.referenceFrameSize,
-      trigger: configuration.calibration.triggerRegion,
-      data: configuration.calibration.nicknameRegion,
-      triggerProfile: configuration.calibration.triggerProfile,
-    })
-    target.resolve({ configuration, selector: { kind: 'window', windowHwnd: '12' } })
-
-    await starting
-    await expect(configuring).resolves.toMatchObject({ state: 'READY' })
-    expect(test.process.start).toHaveBeenCalledTimes(1)
-    expect(test.process.start.mock.calls[0]?.[0].prediction?.configuredFrameSize).toEqual(
-      configuration.calibration.referenceFrameSize,
-    )
-  })
-
   it('does not restart when a user stop joins an internal restart', async () => {
     const test = harness()
     await test.supervisor.start()
@@ -1194,11 +1188,11 @@ describe('MonitorSupervisor concurrency', () => {
       height: 10,
       image: Buffer.from('private'),
     }
-    test.listener()?.onTriggered(action.timestamp)
+    test.listener()?.onTriggered(battleStart(action.timestamp))
     test.listener()?.onAction(action)
-    test.listener()?.onTriggered('2026-07-12T12:00:01.000Z')
+    test.listener()?.onTriggered(battleStart('2026-07-12T12:00:01.000Z'))
     test.listener()?.onAction({ ...action, timestamp: '2026-07-12T12:00:01.000Z' })
-    test.listener()?.onTriggered('2026-07-12T12:00:02.000Z')
+    test.listener()?.onTriggered(battleStart('2026-07-12T12:00:02.000Z'))
     test.listener()?.onAction({ ...action, timestamp: '2026-07-12T12:00:02.000Z' })
     expect(test.ocr.process).toHaveBeenCalledTimes(1)
     first.resolve({
@@ -1371,31 +1365,25 @@ describe('MonitorSupervisor concurrency', () => {
     expect((await test.supervisor.getView()).results).toHaveLength(1)
   })
 
-  it('restarts one worker with prediction profile and emits distinct private runtime events', async () => {
-    const test = harness()
-    await test.supervisor.start()
+  it('emits metadata-only prediction events without changing the normal OCR path', async () => {
+    const test = gameHarness()
     const battle = vi.fn()
     const result = vi.fn()
     test.supervisor.subscribeBattleStarts(battle)
     test.supervisor.subscribePredictionResults(result)
-    await test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.calibration.referenceFrameSize,
-      trigger: configuration.calibration.triggerRegion,
-      data: configuration.calibration.nicknameRegion,
-      triggerProfile: configuration.calibration.triggerProfile,
-    })
-    expect(test.process.start).toHaveBeenCalledTimes(2)
-    expect(test.process.start.mock.calls[1]?.[0]).toMatchObject({
-      prediction: { configuredFrameSize: configuration.calibration.referenceFrameSize },
-    })
+    await test.supervisor.start()
+    expect(test.process.start).toHaveBeenCalledTimes(1)
+    expect(test.process.start.mock.calls[0]?.[0]).not.toHaveProperty('prediction')
+    const start = battleStart()
     const action = {
-      timestamp: '2026-07-12T12:00:00.000Z',
+      timestamp: start.timestamp,
+      triggerId: start.triggerId,
       width: 10,
       height: 10,
-      image: Buffer.from('private'),
+      image: Buffer.from('private nickname'),
     }
     test.ocr.process.mockResolvedValue({
-      id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
+      id: randomUUID(),
       kind: 'player_not_found',
       timestamp: action.timestamp,
       searchMode: 'fast',
@@ -1403,26 +1391,242 @@ describe('MonitorSupervisor concurrency', () => {
       searchedNickname: null,
       message: 'not found',
     })
-    test.listener()?.onTriggered(action.timestamp)
+    test.listener()?.onTriggered(start)
     test.listener()?.onAction(action)
-    test.listener()?.onPredictionResult(action)
-    expect(battle).toHaveBeenCalledWith(action.timestamp)
-    expect((await test.supervisor.getView()).stats.triggers).toBe(1)
-    expect(result).toHaveBeenCalledWith(expect.objectContaining({ image: action.image }))
-    await vi.waitFor(async () =>
-      expect((await test.supervisor.getView()).results).toHaveLength(1),
+    const report = predictionResult(start.triggerId)
+    test.listener()?.onPredictionResult(report)
+    expect(battle).toHaveBeenCalledWith(start)
+    expect(test.supervisor.getCurrentView().stats.triggers).toBe(1)
+    expect(result).toHaveBeenCalledWith(report)
+    expect(result.mock.calls[0]?.[0]).not.toHaveProperty('image')
+    expect(result.mock.calls[0]?.[0]).not.toHaveProperty('imageBase64')
+    await vi.waitFor(() =>
+      expect(test.supervisor.getCurrentView().results).toHaveLength(1),
     )
+  })
+
+  it('tracks only the latest own VS and preserves a minimization gap through restore', async () => {
+    const test = gameHarness()
+    const result = vi.fn()
+    test.supervisor.subscribePredictionResults(result)
+    await test.supervisor.start()
+    test.listener()?.onPredictionResult(predictionResult())
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: null, gap: true }),
+    )
+    const own = battleStart()
+    test.listener()?.onTriggered(own)
+    test.listener()?.onTriggered({ ...battleStart(), kind: 'spectate' })
+    test.listener()?.onTriggered({ ...battleStart(), kind: null })
+    test.listener()?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: own.triggerId, gap: false }),
+    )
+    test.listener()?.onSourceState?.({ minimized: true })
+    test.listener()?.onSourceState?.({ minimized: false })
+    test.listener()?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: own.triggerId, gap: true }),
+    )
+    const next = battleStart()
+    test.listener()?.onTriggered(next)
+    test.listener()?.onPredictionResult(predictionResult(next.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: next.triggerId, gap: false }),
+    )
+    test.listener()?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: next.triggerId, gap: true }),
+    )
+  })
+
+  it.each(['stop', 'fatal', 'source_closed'] as const)(
+    'forwards a final result during %s only until the worker acknowledges stopped',
+    async (reason) => {
+      vi.useFakeTimers()
+      const test = gameHarness()
+      const observed = vi.fn()
+      test.supervisor.subscribePredictionResults(observed)
+      await test.supervisor.start()
+      const own = battleStart()
+      const worker = test.listener()
+      worker?.onTriggered(own)
+      const closing = deferred<undefined>()
+      test.process.stop.mockReturnValueOnce(closing.promise)
+      let stopping: Promise<unknown> | undefined
+      if (reason === 'stop') stopping = test.supervisor.stop()
+      else
+        worker?.onFatal(
+          new ApplicationError(
+            reason === 'source_closed' ? 'CAPTURE_SOURCE_CLOSED' : 'CAPTURE_FAILED',
+            'synthetic capture failure',
+          ),
+        )
+      expect(test.supervisor.getCurrentView().state).not.toBe('READY')
+      const report = {
+        ...predictionResult(own.triggerId),
+        evidence: {
+          crowns: { top: null, bottom: null },
+          deltaSign: '+' as const,
+          deltaIcon: 'pol' as const,
+        },
+      }
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledExactlyOnceWith(report)
+      worker?.onStopped?.()
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledTimes(1)
+      closing.resolve(undefined)
+      await stopping
+      await settle()
+      worker?.onPredictionResult(report)
+      expect(observed).toHaveBeenCalledTimes(1)
+      await test.supervisor.stop()
+    },
+  )
+
+  it('keeps an earlier minimization gap and the owned VS ID in a drained result', async () => {
+    const test = gameHarness()
+    const observed = vi.fn()
+    test.supervisor.subscribePredictionResults(observed)
+    await test.supervisor.start()
+    const own = battleStart()
+    const worker = test.listener()
+    worker?.onTriggered(own)
+    worker?.onSourceState?.({ minimized: true })
+    const closing = deferred<undefined>()
+    test.process.stop.mockReturnValueOnce(closing.promise)
+    const stopping = test.supervisor.stop()
+    worker?.onPredictionResult(predictionResult(randomUUID()))
+    expect(observed).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ battleId: own.triggerId, gap: true }),
+    )
+    closing.resolve(undefined)
+    await stopping
+  })
+
+  it('does not drain a previous user result after an authentication change', async () => {
+    const test = gameHarness()
+    const observed = vi.fn()
+    test.supervisor.subscribePredictionResults(observed)
+    await test.supervisor.start()
+    const own = battleStart()
+    const worker = test.listener()
+    worker?.onTriggered(own)
+    const closing = deferred<undefined>()
+    test.process.stop.mockReturnValueOnce(closing.promise)
+    const stopping = test.supervisor.stop('auth_change')
+    test.user('84')
+    worker?.onPredictionResult(predictionResult(own.triggerId))
+    expect(observed).not.toHaveBeenCalled()
+    closing.resolve(undefined)
+    await stopping
+  })
+
+  it('retains a non-ready gap across a restart until the next own VS', async () => {
+    const test = gameHarness()
+    const result = vi.fn()
+    test.supervisor.subscribePredictionResults(result)
+    await test.supervisor.start()
+    const own = battleStart()
+    test.listener()?.onTriggered(own)
+    await test.supervisor.restart()
+    test.listener()?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: own.triggerId, gap: true }),
+    )
+    const next = battleStart()
+    test.listener()?.onTriggered(next)
+    test.listener()?.onPredictionResult(predictionResult(next.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: next.triggerId, gap: false }),
+    )
+    await test.supervisor.stop('auth_change')
+    test.user('84')
+    test.supervisor.setUserContext('84')
+    await test.supervisor.start()
+    test.listener()?.onPredictionResult(predictionResult())
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({ battleId: null, gap: true }),
+    )
+  })
+
+  it('isolates nested battle and result evidence between private subscribers', async () => {
+    const test = gameHarness()
+    const battle = vi.fn()
+    const result = vi.fn()
+    const start = {
+      ...battleStart(),
+      rankEvidence: { opponent: 'league' as const, own: 'medal' as const },
+    }
+    const report = predictionResult(start.triggerId)
+    test.supervisor.subscribeBattleStarts((event) => {
+      if (event.rankEvidence !== null) event.rankEvidence.opponent = 'other'
+    })
+    test.supervisor.subscribeBattleStarts(battle)
+    test.supervisor.subscribePredictionResults((event) => {
+      event.evidence.crowns.bottom = 3
+    })
+    const unsubscribe = test.supervisor.subscribePredictionResults(result)
+    await test.supervisor.start()
+    test.listener()?.onTriggered(start)
+    test.listener()?.onPredictionResult(report)
+    expect(battle).toHaveBeenCalledWith(start)
+    expect(result).toHaveBeenCalledWith(report)
+    expect(start.rankEvidence.opponent).toBe('league')
+    expect(report.evidence.crowns.bottom).toBe(1)
+    unsubscribe()
+    test.listener()?.onPredictionResult(report)
+    expect(result).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a startup VS gapped and ignores results while non-ready or from a stale worker', async () => {
+    const test = gameHarness()
+    const starting = deferred<string>()
+    const own = battleStart()
+    const result = vi.fn()
+    test.supervisor.subscribePredictionResults(result)
+    test.process.start.mockImplementationOnce((_payload, listener) => {
+      listener.onTriggered(own)
+      listener.onPredictionResult(predictionResult(own.triggerId))
+      return starting.promise
+    })
+    const started = test.supervisor.start()
+    await vi.waitFor(() => expect(test.process.start).toHaveBeenCalledTimes(1))
+    expect(result).not.toHaveBeenCalled()
+    starting.resolve('session')
+    await started
+    // The test process mock above owns the initial listener; use the callbacks
+    // it received directly instead of the harness's subsequent-listener slot.
+    const old = test.process.start.mock.calls[0]?.[1]
+    old?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        battleId: own.triggerId,
+        gap: true,
+      }),
+    )
+    await test.supervisor.restart()
+    result.mockClear()
+    old?.onTriggered(battleStart())
+    old?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).not.toHaveBeenCalled()
+    test.listener()?.onPredictionResult({ ...predictionResult(own.triggerId), gap: true })
+    expect(result).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        battleId: own.triggerId,
+        gap: true,
+      }),
+    )
+    await test.supervisor.stop()
+    result.mockClear()
+    test.listener()?.onPredictionResult(predictionResult(own.triggerId))
+    expect(result).not.toHaveBeenCalled()
   })
 
   it('clears retained user state on A -> logout -> B but preserves it on ordinary stop', async () => {
     const test = harness()
     await test.supervisor.start()
-    await test.supervisor.configurePredictionRuntime({
-      configuredFrameSize: configuration.calibration.referenceFrameSize,
-      trigger: configuration.calibration.triggerRegion,
-      data: configuration.calibration.nicknameRegion,
-      triggerProfile: configuration.calibration.triggerProfile,
-    })
     const result = {
       id: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
       kind: 'player_not_found' as const,
@@ -1447,10 +1651,7 @@ describe('MonitorSupervisor concurrency', () => {
     test.user('84')
     expect(test.supervisor.setUserContext('84')).toBe(true)
     await test.supervisor.start()
-    expect(test.process.start).toHaveBeenLastCalledWith(
-      expect.objectContaining({ prediction: null }),
-      expect.anything(),
-    )
+    expect(test.process.start.mock.calls.at(-1)?.[0]).not.toHaveProperty('prediction')
     expect(test.supervisor.getRetainedResult(result.id)).toBeNull()
   })
 
@@ -1701,7 +1902,7 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       authBlocked: false,
     })
     test.ocr.process.mockResolvedValueOnce(firstResult)
-    test.listener()?.onTriggered(action.timestamp, triggerId)
+    test.listener()?.onTriggered(battleStart(action.timestamp, triggerId))
     const capturing = test.supervisor.getCurrentView().search
     test.listener()?.onAction(action)
     await Promise.resolve()
@@ -2020,12 +2221,12 @@ describe('review regression monitor ownership and persistence', () => {
       height: 10,
       image: Buffer.from('crop'),
     }
-    test.listener()?.onTriggered(action.timestamp, action.triggerId)
+    test.listener()?.onTriggered(battleStart(action.timestamp, action.triggerId))
     test.listener()?.onAction(action)
     const attemptId = test.supervisor.getCurrentView().search?.attemptId
     if (attemptId === undefined) throw new Error('Missing attempt')
     const newer = { ...action, triggerId: randomUUID() }
-    test.listener()?.onTriggered(newer.timestamp, newer.triggerId)
+    test.listener()?.onTriggered(battleStart(newer.timestamp, newer.triggerId))
     test.listener()?.onAction(newer)
     old.resolve(
       MonitorResultSchema.parse({

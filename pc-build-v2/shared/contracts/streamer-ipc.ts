@@ -3,7 +3,7 @@ import { z } from 'zod'
 import {
   OverlaySettingsSchema,
   OverlayUrlKindSchema,
-  PredictionPreferencesSchema,
+  PredictionSettingsSchema,
   StreamerViewSchema,
   StreamTitlePreviewSchema,
   StreamTitleSettingsSchema,
@@ -64,11 +64,25 @@ export const StreamerCommandSchema = z.discriminatedUnion('action', [
     .strict(),
   z
     .object({
-      action: z.literal('predictions.start'),
-      settings: PredictionPreferencesSchema,
+      action: z.literal('predictions.settings.save'),
+      settings: PredictionSettingsSchema,
     })
     .strict(),
-  z.object({ action: z.literal('predictions.stop') }).strict(),
+  z
+    .object({
+      action: z.literal('predictions.battle'),
+      predictionId: z.number().int().positive(),
+      outcome: z.enum(['win', 'loss', 'not_ranked']),
+      requestId: z.uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('predictions.cancel'),
+      predictionId: z.number().int().positive(),
+      confirmed: z.literal(true),
+    })
+    .strict(),
   z
     .object({
       action: z.enum(['title.save', 'title.preview', 'title.apply']),
@@ -116,19 +130,11 @@ export const StreamerCommandErrorCodeSchema = z.enum([
   'STREAMER_COMMAND_FAILED',
   'TWITCH_OAUTH_URL_REJECTED',
   'TWITCH_REQUIRED',
-  'RESULT_SETUP_REQUIRED',
   'CAPTURE_NOT_CONFIGURED',
-  'PREDICTION_CANCELLED',
-  'PREDICTION_AUTH_CHANGED',
-  'PREDICTION_START_FAILED',
-  'PREDICTION_LOCAL_START_FAILED',
-  'PREDICTION_ROLLBACK_UNKNOWN',
-  'PREDICTION_ALREADY_ACTIVE',
-  'PREDICTION_STOP_UNKNOWN',
-  'PREDICTION_MONITOR_RESTART_FAILED',
   'OVERLAY_URL_UNAVAILABLE',
   'TITLE_ACCOUNT_SELECTION_CONFLICT',
   'TITLE_APPLY_UNAVAILABLE',
+  'PREDICTION_NO_BATTLE_TO_SKIP',
 ])
 export const StreamerWarningCodeSchema = z.enum([
   'TITLE_UPDATE_FAILED',
@@ -163,7 +169,7 @@ export const StreamerReadinessSchema = z
     accountsCount: z.number().int().min(0).max(20).nullable(),
     monitoring: z.boolean().nullable(),
     captureConfigured: z.boolean().nullable(),
-    resultZonesConfigured: z.boolean().nullable(),
+    predictionProfileReady: z.boolean().nullable(),
     activeProfileId: z.uuid().nullable(),
   })
   .strict()

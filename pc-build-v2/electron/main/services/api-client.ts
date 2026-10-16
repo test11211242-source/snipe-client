@@ -43,7 +43,41 @@ function readServerMessage(value: unknown): string | undefined {
   return undefined
 }
 
-function statusError(status: number, body: unknown, path: `/api/${string}`): ApiError {
+type ErrorRoute = Pick<ApiRequest<unknown>, 'method' | 'path'>
+
+/**
+ * The manual «Бой не считается» command reports «nothing to skip» as HTTP 409 with
+ * `detail.code`, only after the current prediction ID was validated. A stale prediction
+ * stays a plain-string 409 (`VALIDATION_FAILED`). The message is a fixed diagnostic;
+ * the renderer maps the code to its own phrase.
+ */
+function isNoBattleToSkip(status: number, body: unknown, route: ErrorRoute): boolean {
+  if (
+    status !== 409 ||
+    route.method !== 'POST' ||
+    route.path !== '/api/streamer/predictions/current/battle' ||
+    body === null ||
+    typeof body !== 'object'
+  )
+    return false
+  const detail = (body as Record<string, unknown>)['detail']
+  return (
+    detail !== null &&
+    typeof detail === 'object' &&
+    !Array.isArray(detail) &&
+    (detail as Record<string, unknown>)['code'] === 'PREDICTION_NO_BATTLE_TO_SKIP'
+  )
+}
+
+function statusError(status: number, body: unknown, route: ErrorRoute): ApiError {
+  if (isNoBattleToSkip(status, body, route))
+    return createApiError(
+      'PREDICTION_NO_BATTLE_TO_SKIP',
+      'No prediction battle to skip',
+      false,
+      status,
+    )
+  const { path } = route
   if (body !== null && typeof body === 'object') {
     const code = (body as Record<string, unknown>)['code']
     if (
@@ -235,7 +269,7 @@ export class ApiClient {
         (response.status === 404 || response.status === 429)
       ) {
         await response.body?.cancel().catch(() => undefined)
-        const error = statusError(response.status, null, request.path)
+        const error = statusError(response.status, null, request)
         if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds
         return { ok: false, error }
       }
@@ -243,6 +277,8 @@ export class ApiClient {
       const declaredLength = Number(response.headers.get('content-length'))
       if (Number.isFinite(declaredLength) && declaredLength > this.maxJsonBytes) {
         await response.body?.cancel().catch(() => undefined)
+        if (response.status >= 500 && response.status <= 599)
+          return { ok: false, error: statusError(response.status, null, request) }
         return {
           ok: false,
           error: createApiError(
@@ -255,6 +291,8 @@ export class ApiClient {
 
       const text = await readBoundedBody(response, this.maxJsonBytes)
       if (text === null) {
+        if (response.status >= 500 && response.status <= 599)
+          return { ok: false, error: statusError(response.status, null, request) }
         return {
           ok: false,
           error: createApiError(
@@ -270,6 +308,8 @@ export class ApiClient {
         try {
           json = JSON.parse(text) as unknown
         } catch {
+          if (response.status >= 500 && response.status <= 599)
+            return { ok: false, error: statusError(response.status, null, request) }
           return {
             ok: false,
             error: createApiError(
@@ -282,7 +322,7 @@ export class ApiClient {
       }
 
       if (!response.ok) {
-        const error = statusError(response.status, json, request.path)
+        const error = statusError(response.status, json, request)
         if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds
         return { ok: false, error }
       }

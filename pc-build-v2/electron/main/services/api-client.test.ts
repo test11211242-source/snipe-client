@@ -83,6 +83,49 @@ describe('ApiClient', () => {
     ).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_RESPONSE' } })
   })
 
+  it.each([500, 502, 503, 504])(
+    'preserves HTTP %s for idempotent retries when its body is not JSON',
+    async (status) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response('Internal Server Error', { status }))
+      const client = new ApiClient(createProductionServerConfig(), fetchMock, logger)
+      await expect(
+        client.request({
+          method: 'POST',
+          path: '/api/streamer/predictions/battle-start',
+          schema,
+        }),
+      ).resolves.toMatchObject({ ok: false, error: { code: 'SERVER_ERROR', status } })
+    },
+  )
+
+  it.each([true, false])(
+    'preserves bounded HTTP 5xx when the response is oversized (declared=%s)',
+    async (declared) => {
+      const response = new Response('x'.repeat(200), {
+        status: 503,
+        ...(declared ? { headers: { 'content-length': '9999' } } : {}),
+      })
+      const client = new ApiClient(
+        createProductionServerConfig(),
+        vi.fn<typeof fetch>().mockResolvedValue(response),
+        logger,
+        100,
+      )
+      await expect(
+        client.request({
+          method: 'POST',
+          path: '/api/streamer/predictions/battle-result',
+          schema,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'SERVER_ERROR', status: 503 },
+      })
+    },
+  )
+
   it('aborts requests at the configured deadline', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(
@@ -260,6 +303,153 @@ describe('review regression title receipt endpoint ownership', () => {
         ok: false,
         error: { code: 'SERVER_ERROR', status: 502 },
       })
+    },
+  )
+})
+
+describe('review regression R1-C4 manual battle «nothing to skip»', () => {
+  const BATTLE = '/api/streamer/predictions/current/battle'
+  const LEAK = 'raw-server-text-must-not-reach-the-ui'
+  const answering = (status: number, body: string) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(body, { status }))
+    return {
+      fetchMock,
+      client: new ApiClient(createProductionServerConfig(), fetchMock, logger),
+    }
+  }
+
+  it('preserves the nested code on POST current/battle 409 with a fixed message', async () => {
+    const { fetchMock, client } = answering(
+      409,
+      JSON.stringify({ detail: { code: 'PREDICTION_NO_BATTLE_TO_SKIP', message: LEAK } }),
+    )
+    const result = await client.request({ method: 'POST', path: BATTLE, schema })
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'PREDICTION_NO_BATTLE_TO_SKIP',
+        message: 'No prediction battle to skip',
+        retryable: false,
+        status: 409,
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain(LEAK)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the nested code through the authenticated client without a retry', async () => {
+    const { fetchMock, client } = answering(
+      409,
+      JSON.stringify({ detail: { code: 'PREDICTION_NO_BATTLE_TO_SKIP' } }),
+    )
+    const authenticated = new AuthenticatedApiClient(client, {
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    })
+    await expect(
+      authenticated.request({ method: 'POST', path: BATTLE, schema }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'PREDICTION_NO_BATTLE_TO_SKIP', status: 409, retryable: false },
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a stale plain-string 409 as VALIDATION_FAILED', async () => {
+    const { client } = answering(409, JSON.stringify({ detail: 'Prediction changed' }))
+    await expect(
+      client.request({ method: 'POST', path: BATTLE, schema }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'VALIDATION_FAILED', status: 409, retryable: false },
+    })
+  })
+
+  it.each([
+    [
+      'unknown nested code',
+      { detail: { code: 'PREDICTION_FUTURE_CODE', message: LEAK } },
+    ],
+    [
+      'lower-case code',
+      { detail: { code: 'prediction_no_battle_to_skip', message: LEAK } },
+    ],
+    ['top-level code', { code: 'PREDICTION_NO_BATTLE_TO_SKIP', message: { text: LEAK } }],
+    [
+      'code in an array detail',
+      { detail: [{ code: 'PREDICTION_NO_BATTLE_TO_SKIP' }, LEAK] },
+    ],
+    [
+      'code one level deeper',
+      { detail: { detail: { code: 'PREDICTION_NO_BATTLE_TO_SKIP' } } },
+    ],
+    [
+      'non-string code',
+      { detail: { code: ['PREDICTION_NO_BATTLE_TO_SKIP'], message: LEAK } },
+    ],
+    ['null detail', { detail: null, error: { message: LEAK } }],
+  ])('does not accept a spoofed code on current/battle: %s', async (_case, body) => {
+    const { client } = answering(409, JSON.stringify(body))
+    const result = await client.request({ method: 'POST', path: BATTLE, schema })
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'VALIDATION_FAILED', status: 409 },
+    })
+    expect(JSON.stringify(result)).not.toContain(LEAK)
+  })
+
+  it.each([
+    ['POST', '/api/streamer/predictions/current/cancel', 409, 'VALIDATION_FAILED'],
+    ['POST', '/api/streamer/predictions/battle-result', 409, 'VALIDATION_FAILED'],
+    ['POST', '/api/streamer/predictions/battle-start', 409, 'VALIDATION_FAILED'],
+    ['POST', '/api/streamer/accounts', 409, 'VALIDATION_FAILED'],
+    ['PUT', BATTLE, 409, 'VALIDATION_FAILED'],
+    ['DELETE', BATTLE, 409, 'VALIDATION_FAILED'],
+    ['POST', BATTLE, 400, 'VALIDATION_FAILED'],
+    ['POST', BATTLE, 422, 'VALIDATION_FAILED'],
+    ['POST', BATTLE, 404, 'SERVER_ERROR'],
+    ['POST', BATTLE, 403, 'FORBIDDEN'],
+    ['POST', BATTLE, 503, 'SERVER_ERROR'],
+  ] as const)(
+    'keeps the generic mapping for %s %s HTTP %s',
+    async (method, path, status, code) => {
+      const { client } = answering(
+        status,
+        JSON.stringify({
+          detail: { code: 'PREDICTION_NO_BATTLE_TO_SKIP', message: LEAK },
+        }),
+      )
+      const result = await client.request({ method, path, schema })
+      expect(result).toMatchObject({ ok: false, error: { code, status } })
+      expect(JSON.stringify(result)).not.toContain(LEAK)
+    },
+  )
+
+  it('keeps a non-JSON 409 on current/battle an invalid response', async () => {
+    const { client } = answering(409, 'PREDICTION_NO_BATTLE_TO_SKIP')
+    await expect(
+      client.request({ method: 'POST', path: BATTLE, schema }),
+    ).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_RESPONSE' } })
+  })
+
+  it.each([
+    ['non-JSON', 'Service Unavailable', {}],
+    ['oversized', 'x'.repeat(200), { 'content-length': '9999' }],
+  ] as const)(
+    'keeps a %s 503 on current/battle a single SERVER_ERROR with its status',
+    async (_case, body, headers) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(body, { status: 503, headers }))
+      const client = new ApiClient(createProductionServerConfig(), fetchMock, logger, 100)
+      await expect(
+        client.request({ method: 'POST', path: BATTLE, schema }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'SERVER_ERROR', status: 503, retryable: true },
+      })
+      expect(fetchMock).toHaveBeenCalledOnce()
     },
   )
 })

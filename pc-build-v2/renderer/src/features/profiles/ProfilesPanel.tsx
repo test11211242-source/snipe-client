@@ -7,28 +7,24 @@ import {
 import { presentedMonitorState } from '../../../../shared/models/monitor'
 import { useRouter, type SetupIntent } from '../../app/router'
 import { Button, ConfirmDialog, Icon, Panel, State, useToast } from '../../ui'
-import { useRole } from '../auth'
 import { useMonitorView } from '../monitor'
-import { ResultZoneDialog, DuplicateDialog, type ResultZoneStart } from './ProfileDialogs'
+import { DuplicateDialog } from './ProfileDialogs'
 import { ProfileRow } from './ProfileRow'
 import styles from './ProfilesPanel.module.css'
 import { useProfiles } from './index'
 
 type Dialog =
-  | { kind: 'duplicate'; profileId: string }
-  | { kind: 'delete'; profileId: string }
-  | { kind: 'zone'; profileId: string }
+  { kind: 'duplicate'; profileId: string } | { kind: 'delete'; profileId: string }
 
 /**
  * Profiles side panel: list, activate, rename, duplicate, delete (with confirmation),
- * rebind source, re-calibrate and per-profile result zones. Health comes from main's
- * profile fields; nothing is inferred here. Setup itself is the full-window `setup` route.
+ * rebind source and re-calibrate. Health comes from main's profile fields; nothing is
+ * inferred here. Setup itself is the full-window `setup` route.
  */
 export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const profiles = useProfiles()
   const { value, error, activate, pending, actionError, reload } = profiles
   const monitor = useMonitorView()
-  const { isStreamer } = useRole()
   const { navigate } = useRouter()
   const toast = useToast()
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -68,44 +64,6 @@ export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.E
   ): void => {
     const intent = intentFor(kind, profile)
     if (intent !== null) openSetup(intent)
-  }
-
-  const startResultZone = async (
-    profile: CaptureProfileSummary,
-  ): Promise<ResultZoneStart | null> => {
-    if (value?.revision == null)
-      return { message: 'Список профилей ещё не загружен.', activeSetup: false }
-    try {
-      await window.crTools.setup.startResult({
-        profileId: profile.profileId,
-        expectedRevision: value.revision,
-      })
-    } catch (cause) {
-      const text = cause instanceof Error ? cause.message : ''
-      void reload()
-      if (text.includes('already active'))
-        return {
-          message: 'Уже открыта другая настройка. Завершите её или отмените.',
-          activeSetup: true,
-        }
-      if (text.includes('Capture profiles changed'))
-        return {
-          message: 'Список профилей изменился. Мы его обновили — повторите.',
-          activeSetup: false,
-        }
-      if (text.includes('different aspect') || text.includes('rebind'))
-        return {
-          message: 'Источник профиля нужно выбрать заново.',
-          activeSetup: false,
-        }
-      return {
-        message:
-          'Не удалось сделать кадр. Откройте игру, не сворачивайте окно и повторите.',
-        activeSetup: false,
-      }
-    }
-    openSetup({ kind: 'resume' })
-    return null
   }
 
   return (
@@ -190,8 +148,6 @@ export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.E
                         setDialog({ kind: 'duplicate', profileId: profile.profileId }),
                       rebind: () => startSetup('rebind', profile),
                       recalibrate: () => startSetup('recalibrate', profile),
-                      resultZone: () =>
-                        setDialog({ kind: 'zone', profileId: profile.profileId }),
                       remove: () => {
                         setDeleteError(null)
                         setDialog({ kind: 'delete', profileId: profile.profileId })
@@ -201,7 +157,6 @@ export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.E
                     busy={pending}
                     canDelete={count > 1}
                     editing={editingId === profile.profileId}
-                    isStreamer={isStreamer}
                     profile={profile}
                     waiting={waiting}
                   />
@@ -271,15 +226,6 @@ export function ProfilesPanel({ onClose }: { onClose: () => void }): React.JSX.E
               : 'Источник и области этого профиля придётся настраивать заново. Остальные профили не изменятся.'
           }
           title={`Удалить профиль «${target.profileName}»?`}
-        />
-      ) : null}
-
-      {dialog?.kind === 'zone' && target !== null ? (
-        <ResultZoneDialog
-          onClose={() => setDialog(null)}
-          onResume={() => openSetup({ kind: 'resume' })}
-          onStart={() => startResultZone(target)}
-          profile={target}
         />
       ) : null}
     </>

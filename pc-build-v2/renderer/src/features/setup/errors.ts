@@ -60,7 +60,6 @@ const COMMAND_FRAGMENTS: readonly (readonly [fragment: string, text: string])[] 
     'different aspect ratio',
     'У нового источника другие пропорции. Перенастройте области профиля.',
   ],
-  ['Stop Twitch predictions', 'Остановите прогнозы Twitch, чтобы менять профили.'],
   ['name already exists', 'Профиль с таким названием уже есть. Выберите другое.'],
   ['limit has been reached', 'Достигнут предел — 20 профилей.'],
   ['atomic save', 'Сохранение ещё идёт. Подождите несколько секунд.'],

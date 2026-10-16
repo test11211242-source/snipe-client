@@ -78,13 +78,7 @@ export const CaptureSourcePreviewSchema = z
   })
   .strict()
 
-export const RegionKindSchema = z.enum([
-  'trigger',
-  'nickname',
-  'topLeftEvidence',
-  'resultTrigger',
-  'resultData',
-])
+export const RegionKindSchema = z.enum(['trigger', 'nickname', 'topLeftEvidence'])
 export const NormalizedRegionsSchema = z
   .object({
     trigger: NormalizedRectSchema,
@@ -482,7 +476,6 @@ export const CaptureProfileSummarySchema = z
       })
       .strict(),
     calibrationHealth: z.enum(['validated', 'imported', 'needs_validation']),
-    resultConfigured: z.boolean(),
   })
   .strict()
 

@@ -47,7 +47,6 @@ describe('monitor protocol v4', () => {
           confirmationDecay: 0.5,
           cooldownSeconds: 15,
         },
-        prediction: null,
       },
     }
     expect(MonitorStartCommandSchema.parse(command)).toEqual(command)
@@ -57,7 +56,12 @@ describe('monitor protocol v4', () => {
     expect(MonitorStartCommandSchema.safeParse({ ...command, sequence: 1 }).success).toBe(
       false,
     )
-    for (const field of ['regions', 'triggerProfile', 'configuredFrameSize']) {
+    for (const field of [
+      'regions',
+      'triggerProfile',
+      'configuredFrameSize',
+      'prediction',
+    ]) {
       expect(
         MonitorStartCommandSchema.safeParse({
           ...command,
@@ -312,8 +316,39 @@ describe('monitor protocol v4', () => {
         triggerId: sessionId,
       },
     ],
-    ['prediction_state', { state: 'aspect_mismatch' }],
-    ['prediction_state', { state: 'active' }],
+    ['source_state', { minimized: true }],
+    [
+      'triggered',
+      {
+        timestamp: '2026-10-15T00:00:00.000Z',
+        triggerId: sessionId,
+        kind: 'battle',
+        rank: 'unknown',
+        rankEvidence: null,
+      },
+    ],
+    [
+      'prediction_result',
+      {
+        battleId: sessionId,
+        gap: false,
+        outcome: 'win',
+        evidence: { crowns: { top: 0, bottom: 3 }, deltaSign: '+', deltaIcon: 'pol' },
+      },
+    ],
+    [
+      'prediction_result',
+      {
+        battleId: null,
+        gap: true,
+        outcome: 'unknown',
+        evidence: {
+          crowns: { top: null, bottom: null },
+          deltaSign: null,
+          deltaIcon: 'unreadable',
+        },
+      },
+    ],
   ] as const)('accepts strict %s event payloads', (type, payload) => {
     const value = event(type, payload)
     expect(MonitorProcessEventSchema.parse(value)).toEqual(value)
@@ -373,6 +408,149 @@ describe('monitor protocol v4', () => {
     ['prediction_state', { state: 'paused' }],
   ] as const)('rejects malformed %s payloads', (type, payload) => {
     expect(MonitorProcessEventSchema.safeParse(event(type, payload)).success).toBe(false)
+  })
+
+  it.each(['battle', 'spectate', null] as const)(
+    'accepts kind %s and validates future rank metadata strictly',
+    (kind) => {
+      const payload = {
+        timestamp: '2026-10-15T00:00:00.000Z',
+        triggerId: sessionId,
+        kind,
+        rank: 'unknown',
+        rankEvidence: null,
+      }
+      expect(
+        MonitorProcessEventSchema.safeParse(event('triggered', payload)).success,
+      ).toBe(true)
+      for (const rank of ['pol', 'not_pol', 'unknown']) {
+        expect(
+          MonitorProcessEventSchema.safeParse(
+            event('triggered', {
+              ...payload,
+              rank,
+              rankEvidence: { opponent: 'league', own: 'medal' },
+            }),
+          ).success,
+        ).toBe(true)
+      }
+      const lines = ['medal', 'league', 'trophy', 'empty', 'other', 'unknown']
+      for (const opponent of lines) {
+        for (const own of lines) {
+          expect(
+            MonitorProcessEventSchema.safeParse(
+              event('triggered', { ...payload, rankEvidence: { opponent, own } }),
+            ).success,
+          ).toBe(true)
+        }
+      }
+      for (const patch of [
+        { kind: 'replay' },
+        { rank: 'ranked' },
+        { rankEvidence: {} },
+        { rankEvidence: { opponent: 'cup', own: 'league' } },
+        { rankEvidence: { opponent: 'league', own: 'empty', color: 'purple' } },
+      ]) {
+        expect(
+          MonitorProcessEventSchema.safeParse(
+            event('triggered', {
+              ...payload,
+              ...patch,
+            }),
+          ).success,
+        ).toBe(false)
+      }
+      const { rank: _rank, ...missingRank } = payload
+      void _rank
+      expect(
+        MonitorProcessEventSchema.safeParse(event('triggered', missingRank)).success,
+      ).toBe(false)
+    },
+  )
+
+  it.each(['win', 'loss', 'draw', 'unknown'] as const)(
+    'reserves the %s JSON result contract with nullable per-row counts',
+    (outcome) => {
+      for (const top of [0, 1, 2, 3, null]) {
+        for (const bottom of [0, 1, 2, 3, null]) {
+          const report = {
+            battleId: null,
+            gap: true,
+            outcome,
+            evidence: {
+              crowns: { top, bottom },
+              deltaSign: null,
+              deltaIcon: 'unreadable',
+            },
+          }
+          expect(
+            MonitorProcessEventSchema.parse(event('prediction_result', report)).payload,
+          ).toEqual(report)
+          for (const field of ['battleId', 'gap', 'outcome', 'evidence'] as const) {
+            const { [field]: omitted, ...incomplete } = report
+            void omitted
+            expect(
+              MonitorProcessEventSchema.safeParse(event('prediction_result', incomplete))
+                .success,
+            ).toBe(false)
+          }
+        }
+      }
+    },
+  )
+
+  it('rejects prediction image reports and malformed future result metadata', () => {
+    const report = {
+      battleId: sessionId,
+      gap: false,
+      outcome: 'loss',
+      evidence: { crowns: { top: 2, bottom: 1 }, deltaSign: '-', deltaIcon: 'pol' },
+    }
+    for (const patch of [
+      { battleId: 'invalid' },
+      { gap: 1 },
+      { outcome: 'not_ranked' },
+      { imageBase64: 'AAAA' },
+      { evidence: { ...report.evidence, digits: 30 } },
+      { evidence: { crown: 'top', deltaSign: '-', deltaIcon: 'pol' } },
+      { evidence: { ...report.evidence, crowns: { top: -1, bottom: 0 } } },
+      { evidence: { ...report.evidence, crowns: { top: 0, bottom: 4 } } },
+      { evidence: { ...report.evidence, crowns: { top: 1.5, bottom: 0 } } },
+      { evidence: { ...report.evidence, crowns: { top: true, bottom: 0 } } },
+      { evidence: { ...report.evidence, crowns: { top: 1 } } },
+      { evidence: { ...report.evidence, crowns: { bottom: 1 } } },
+      { evidence: { ...report.evidence, crowns: { top: 1, bottom: 0, winner: 'top' } } },
+      { evidence: { ...report.evidence, deltaSign: '−' } },
+      { evidence: { ...report.evidence, deltaIcon: 'league' } },
+    ]) {
+      expect(
+        MonitorProcessEventSchema.safeParse(
+          event('prediction_result', {
+            ...report,
+            ...patch,
+          }),
+        ).success,
+      ).toBe(false)
+    }
+    expect(
+      MonitorProcessEventSchema.safeParse(
+        event('prediction_result', {
+          timestamp: '2026-10-15T00:00:00.000Z',
+          triggerId: sessionId,
+          width: 1,
+          height: 1,
+          byteLength: 3,
+          imageBase64: 'AAAA',
+        }),
+      ).success,
+    ).toBe(false)
+    expect(
+      MonitorProcessEventSchema.safeParse(
+        event('prediction_state', {
+          state: 'active',
+        }),
+      ).success,
+    ).toBe(false)
   })
 
   it('requires diagnostic matcher and permits nullable structural metrics', () => {

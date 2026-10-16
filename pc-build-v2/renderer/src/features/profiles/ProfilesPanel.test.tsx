@@ -9,7 +9,6 @@ import type {
 } from '../../../../shared/models/capture'
 import { monitorViewFixture } from '../../../../tests/monitor-fixtures'
 import { authFixture, profilesFixture } from '../../test/bridge'
-import { sessionView } from '../../test/setupFake'
 import { mountSetup, stubStageGeometry, type SetupWorld } from '../../test/setupWorld'
 
 type Patch = Partial<CaptureProfileSummary>
@@ -105,33 +104,22 @@ describe('profiles panel: health from main', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('shows the result-zone state of each profile to a streamer only', async () => {
+  it('offers no result-zone setup, even to a streamer', async () => {
     const world = mountSetup(
       { name: 'main' },
-      {
-        auth: authFixture(['user', 'streamer']),
-        profiles: profiles(2, { 1: { resultConfigured: true } }),
-      },
+      { auth: authFixture(['user', 'streamer']), profiles: profiles(2) },
     )
     const panel = await openPanel(world)
-    const first = rowOf(panel, 'Профиль 1')
-    expect(within(first).getByText(/Зоны результата: нет/)).toBeVisible()
-    expect(within(first).getByRole('button', { name: 'Настроить' })).toBeVisible()
-    const second = rowOf(panel, 'Профиль 2')
-    expect(within(second).getByText(/Зоны результата: настроены/)).toBeVisible()
-    expect(
-      within(second).queryByRole('button', { name: 'Настроить' }),
-    ).not.toBeInTheDocument()
-  })
-
-  it('hides result zones from a player', async () => {
-    const world = mountSetup({ name: 'main' }, { profiles: profiles(2) })
-    const panel = await openPanel(world)
     expect(within(panel).queryByText(/Зоны результата/)).not.toBeInTheDocument()
-    openMenu(rowOf(panel, 'Профиль 1'), 'Профиль 1')
     expect(
-      screen.queryByRole('menuitem', { name: /Зоны результата/ }),
+      within(rowOf(panel, 'Профиль 1')).queryByRole('button', { name: 'Настроить' }),
     ).not.toBeInTheDocument()
+    openMenu(rowOf(panel, 'Профиль 1'), 'Профиль 1')
+    expect(await screen.findByRole('menuitem', { name: /Перенастроить/ })).toBeVisible()
+    expect(
+      screen.queryByRole('menuitem', { name: /зоны результата/i }),
+    ).not.toBeInTheDocument()
+    expect(world.bridge.crTools.setup).not.toHaveProperty('startResult')
   })
 })
 
@@ -421,7 +409,7 @@ describe('profiles panel: limit of 20 and new profile', () => {
   })
 })
 
-describe('profiles panel: rebind, recalibrate and result zones', () => {
+describe('profiles panel: rebind and recalibrate', () => {
   it('opens a source-only setup to rebind and the full one to recalibrate', async () => {
     const world = mountSetup(
       { name: 'main' },
@@ -452,105 +440,6 @@ describe('profiles panel: rebind, recalibrate and result zones', () => {
     )
     expect(
       await screen.findByRole('heading', { name: 'Перенастройка «Профиль 1»' }),
-    ).toBeVisible()
-  })
-
-  it('takes a real frame for result zones and continues in the setup route', async () => {
-    const world = mountSetup(
-      { name: 'main' },
-      { auth: authFixture(['user', 'streamer']), profiles: profiles(2) },
-    )
-    world.bridge.crTools.setup.startResult.mockImplementation(() => {
-      world.fake.replace(
-        sessionView({ kind: 'predictionResult', profileName: 'Профиль 2' }),
-      )
-      return Promise.resolve(world.fake.current())
-    })
-    const panel = await openPanel(world)
-    fireEvent.click(
-      within(rowOf(panel, 'Профиль 2')).getByRole('button', { name: 'Настроить' }),
-    )
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Зоны результата — «Профиль 2»',
-    })
-    expect(within(dialog).getByText(/Откройте в игре экран с итогом боя/)).toBeVisible()
-    expect(world.bridge.crTools.setup.startResult).not.toHaveBeenCalled()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Сделать кадр' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Отметьте области вручную' }),
-    ).toBeVisible()
-    expect(world.bridge.crTools.setup.startResult).toHaveBeenCalledWith({
-      profileId: uuid(2),
-      expectedRevision: 1,
-    })
-    expect(screen.getByRole('button', { name: /^Триггер результата/ })).toBeVisible()
-    // The profile is neither activated nor rebound.
-    expect(world.bridge.crTools.activateCaptureProfile).not.toHaveBeenCalled()
-    expect(world.bridge.crTools.rebindCaptureProfile).not.toHaveBeenCalled()
-  })
-
-  it('explains a refused frame and lets the user continue an open setup', async () => {
-    const world = mountSetup(
-      { name: 'main' },
-      { auth: authFixture(['user', 'streamer']), profiles: profiles(1) },
-    )
-    world.bridge.crTools.setup.startResult.mockRejectedValue(
-      new Error('A capture setup is already active'),
-    )
-    const panel = await openPanel(world)
-    fireEvent.click(
-      within(rowOf(panel, 'Профиль 1')).getByRole('button', { name: 'Настроить' }),
-    )
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Зоны результата — «Профиль 1»',
-    })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Сделать кадр' }))
-    expect(
-      await within(dialog).findByText(
-        'Уже открыта другая настройка. Завершите её или отмените.',
-      ),
-    ).toBeVisible()
-    expect(
-      within(dialog).getByRole('button', { name: 'Открыть начатую настройку' }),
-    ).toBeVisible()
-  })
-
-  it('blocks the frame when the profile source cannot be used', async () => {
-    const world = mountSetup(
-      { name: 'main' },
-      {
-        auth: authFixture(['user', 'streamer']),
-        profiles: profiles(1, {
-          0: { sourceHealth: { state: 'missing', reason: null } },
-        }),
-      },
-    )
-    const panel = await openPanel(world)
-    fireEvent.click(
-      within(rowOf(panel, 'Профиль 1')).getByRole('button', { name: 'Настроить' }),
-    )
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Зоны результата — «Профиль 1»',
-    })
-    expect(within(dialog).getByText('Источник профиля недоступен')).toBeVisible()
-    expect(within(dialog).getByRole('button', { name: 'Сделать кадр' })).toBeDisabled()
-  })
-
-  it('offers result zones from the row menu of a profile that already has them', async () => {
-    const world = mountSetup(
-      { name: 'main' },
-      {
-        auth: authFixture(['user', 'streamer']),
-        profiles: profiles(1, { 0: { resultConfigured: true } }),
-      },
-    )
-    const panel = await openPanel(world)
-    openMenu(rowOf(panel, 'Профиль 1'), 'Профиль 1')
-    fireEvent.click(
-      await screen.findByRole('menuitem', { name: /Перенастроить зоны результата/ }),
-    )
-    expect(
-      await screen.findByRole('dialog', { name: 'Зоны результата — «Профиль 1»' }),
     ).toBeVisible()
   })
 })

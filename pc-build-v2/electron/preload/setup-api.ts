@@ -1,6 +1,5 @@
 import { ipcRenderer } from 'electron'
 import {
-  CaptureProfileCommandSchema,
   EmptyCapturePayloadSchema,
   DetectionPreviewPayloadSchema,
   DetectionPreviewResultSchema,
@@ -19,13 +18,6 @@ const command = (channel: string) => async (raw: unknown) =>
     await ipcRenderer.invoke(channel, SetupCommandSchema.parse(raw)),
   )
 export const setupApi: CrToolsSetupApi = Object.freeze<CrToolsSetupApi>({
-  startResult: async (raw) =>
-    SetupSessionResultSchema.parse(
-      await ipcRenderer.invoke(
-        SETUP_IPC_CHANNELS.startResult,
-        CaptureProfileCommandSchema.parse(raw),
-      ),
-    ),
   getSession: async () =>
     SetupSessionResultSchema.parse(
       await ipcRenderer.invoke(

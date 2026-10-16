@@ -1,4 +1,6 @@
 import type { StreamerCommandResult } from '../../../../shared/contracts/streamer-ipc'
+import type { PredictionSettings, StreamerView } from '../../../../shared/models/streamer'
+import type { Tone } from '../../ui'
 
 export type CommandErrorCode = Extract<
   StreamerCommandResult,
@@ -38,24 +40,12 @@ const COMMAND_ERRORS: Record<StreamerFailureCode, string> = {
   REQUEST_TIMEOUT: 'Сервер слишком долго отвечает. Подождите минуту и повторите.',
   SERVER_ERROR: 'На сервере что-то пошло не так. Повторите через пару минут.',
   INVALID_RESPONSE: 'Сервер ответил неожиданно. Повторите через минуту.',
+  PREDICTION_NO_BATTLE_TO_SKIP: 'Нет боя, который можно пропустить',
   STREAMER_COMMAND_FAILED: 'Не удалось выполнить действие. Повторите попытку.',
   TWITCH_OAUTH_URL_REJECTED:
     'Не удалось открыть страницу входа в Twitch: адрес не прошёл проверку. Повторите позже.',
   TWITCH_REQUIRED: 'Сначала подключите Twitch-канал.',
-  RESULT_SETUP_REQUIRED: 'Сначала настройте зоны результата в профиле.',
   CAPTURE_NOT_CONFIGURED: 'Сначала создайте и настройте профиль мониторинга.',
-  PREDICTION_CANCELLED: 'Запуск прогнозов отменён. Повторите, когда будете готовы.',
-  PREDICTION_AUTH_CHANGED: 'Аккаунт изменился во время запуска. Повторите действие.',
-  PREDICTION_START_FAILED: 'Не удалось включить прогнозы. Ничего не изменилось.',
-  PREDICTION_LOCAL_START_FAILED:
-    'Прогнозы не запустились на этом компьютере. Проверьте мониторинг и повторите.',
-  PREDICTION_ROLLBACK_UNKNOWN:
-    'Прогнозы остановились с ошибкой, и состояние неизвестно. Обновите страницу и проверьте.',
-  PREDICTION_ALREADY_ACTIVE: 'Прогнозы уже идут. Выключите их, чтобы изменить параметры.',
-  PREDICTION_STOP_UNKNOWN:
-    'Не удалось подтвердить остановку прогнозов. Обновите страницу и проверьте.',
-  PREDICTION_MONITOR_RESTART_FAILED:
-    'Прогнозы выключены, но мониторинг не перезапустился. Запустите его кнопкой сверху.',
   OVERLAY_URL_UNAVAILABLE:
     'Сервер ещё не выдал ссылку для OBS. Нажмите «Обновить» или попробуйте через минуту.',
   TITLE_ACCOUNT_SELECTION_CONFLICT:
@@ -101,4 +91,103 @@ export const REFRESH_SECTION_LABELS: Record<string, string> = {
   title: 'название стрима',
   deckSharing: 'колоды в чат',
   overlay: 'виджеты OBS',
+}
+
+export type PredictionStatusView = Pick<
+  StreamerView['predictions'],
+  'enabled' | 'live' | 'clientReady' | 'phase' | 'attention' | 'prediction'
+>
+
+/** The only phrases the status pill may show (predictions plan §3.8). */
+export const PREDICTION_PHRASES = {
+  voting: 'Ставки открыты',
+  locked: 'Ставки закрыты, ждём итог боя',
+  unknown: 'Итог не распознан — выберите сами',
+  settle: 'Есть ставки — закройте прогноз сами',
+  waitingStream: 'Ждём начала трансляции',
+  openMonitor: 'Откройте мониторинг',
+  disabled: 'Прогнозы выключены',
+  twitch: 'Twitch не отвечает',
+  notEligible: 'Прогнозы недоступны для этого канала',
+  reconnectTwitch: 'Переподключите Twitch',
+  twitchPredictionExists: 'На Twitch уже идёт прогноз',
+} as const
+
+/** «Серия: k из N» for a streak prediction. */
+export function streakProgress(wins: number, target: number): string {
+  return `Серия: ${Math.min(wins, target)} из ${target}`
+}
+
+/**
+ * The status pill of predictions. Only the fixed phrases of §3.8 are returned; server
+ * phase and attention codes never reach the screen. `null` means there is nothing to say
+ * (the next prediction is about to open).
+ */
+export function predictionStatusText(
+  status: PredictionStatusView,
+): { tone: Tone; label: string } | null {
+  const { prediction, attention } = status
+  if (prediction?.source === 'twitch')
+    return { tone: 'warn', label: PREDICTION_PHRASES.twitchPredictionExists }
+  switch (attention) {
+    case 'channel_not_eligible':
+      return { tone: 'danger', label: PREDICTION_PHRASES.notEligible }
+    case 'twitch_unavailable':
+      return { tone: 'danger', label: PREDICTION_PHRASES.twitch }
+    case 'reconnect_twitch':
+      return { tone: 'danger', label: PREDICTION_PHRASES.reconnectTwitch }
+    case 'twitch_prediction_exists':
+      return { tone: 'danger', label: PREDICTION_PHRASES.twitchPredictionExists }
+    default:
+      break
+  }
+  if (prediction !== null) {
+    switch (attention) {
+      case 'result_unknown':
+      case 'result_missed':
+        return { tone: 'warn', label: PREDICTION_PHRASES.unknown }
+      case 'settle_after_disable':
+        return { tone: 'warn', label: PREDICTION_PHRASES.settle }
+      case 'stream_ended':
+      case 'client_lost':
+        return prediction.hasBets
+          ? { tone: 'warn', label: PREDICTION_PHRASES.settle }
+          : { tone: 'warn', label: PREDICTION_PHRASES.unknown }
+      default:
+        break
+    }
+    if (!status.clientReady)
+      return { tone: 'warn', label: PREDICTION_PHRASES.openMonitor }
+    if (!status.live) return { tone: 'neutral', label: PREDICTION_PHRASES.waitingStream }
+    if (status.phase === 'voting') return { tone: 'ok', label: PREDICTION_PHRASES.voting }
+    if (prediction.mode === 'streak')
+      return { tone: 'ok', label: streakProgress(prediction.wins, prediction.target) }
+    return { tone: 'neutral', label: PREDICTION_PHRASES.locked }
+  }
+  switch (status.phase) {
+    case 'disabled':
+      return { tone: 'neutral', label: PREDICTION_PHRASES.disabled }
+    case 'client_not_ready':
+      return { tone: 'warn', label: PREDICTION_PHRASES.openMonitor }
+    case 'waiting_stream':
+      return { tone: 'neutral', label: PREDICTION_PHRASES.waitingStream }
+    default:
+      return null
+  }
+}
+
+export type VotingSeconds = PredictionSettings['votingSeconds']
+
+/** «Время на ставки» choices (§3.3, O14). */
+export const VOTING_CHOICES: readonly { value: VotingSeconds; label: string }[] = [
+  { value: 30, label: '30 с' },
+  { value: 45, label: '45 с' },
+  { value: 60, label: '1 мин' },
+  { value: 90, label: '1,5 мин' },
+  { value: 120, label: '2 мин' },
+  { value: 180, label: '3 мин' },
+]
+
+export function votingLabel(seconds: VotingSeconds): string {
+  return VOTING_CHOICES.find((choice) => choice.value === seconds)?.label ?? ''
 }

@@ -26,13 +26,12 @@ export interface OutcomeDescription {
  */
 export function describeOutcome(view: SetupSessionView): OutcomeDescription {
   const outcome = view.saveOutcome
-  const result = view.kind === 'predictionResult'
   const staleSync = view.error?.code === 'CAPTURE_PROFILE_STALE'
 
   if (outcome === null)
     return {
       tone: 'ok',
-      title: result ? 'Зоны результата сохранены' : 'Профиль сохранён',
+      title: 'Профиль сохранён',
       text: 'Приложение подтвердило сохранение на этом компьютере.',
       lines: [],
       canRetrySync: false,
@@ -85,7 +84,7 @@ export function describeOutcome(view: SetupSessionView): OutcomeDescription {
   if (outcome.local === 'failed')
     return {
       tone: 'danger',
-      title: result ? 'Зоны результата не сохранены' : 'Профиль не сохранён',
+      title: 'Профиль не сохранён',
       text: 'Настройка не сохранена на этом компьютере; серверные данные не изменились.',
       lines,
       canRetrySync: false,
@@ -97,13 +96,7 @@ export function describeOutcome(view: SetupSessionView): OutcomeDescription {
     outcome.runtime !== 'waiting_source'
   return {
     tone: clean ? 'ok' : 'warn',
-    title: clean
-      ? result
-        ? 'Зоны результата сохранены'
-        : 'Профиль сохранён'
-      : result
-        ? 'Зоны результата сохранены на этом компьютере'
-        : 'Профиль сохранён на этом компьютере',
+    title: clean ? 'Профиль сохранён' : 'Профиль сохранён на этом компьютере',
     text: clean
       ? 'Сохранение завершено без ошибок.'
       : 'Сохранение прошло, но не всё завершилось. Подробности ниже.',

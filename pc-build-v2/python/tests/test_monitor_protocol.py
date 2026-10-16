@@ -33,7 +33,6 @@ def payload():
             "confirmationDecay": 0.5,
             "cooldownSeconds": 15,
         },
-        "prediction": None,
     }
 
 
@@ -64,7 +63,8 @@ def test_strict_versioned_start_and_stop() -> None:
             session_id,
             2,
             "triggered",
-            {"timestamp": "2026-07-12T12:00:00.000Z", "triggerId": str(uuid.uuid4())},
+            {"timestamp": "2026-07-12T12:00:00.000Z", "triggerId": str(uuid.uuid4()),
+             "kind": "battle", "rank": "unknown", "rankEvidence": None},
         )
     )
     assert triggered["protocolVersion"] == 4
@@ -116,7 +116,7 @@ def test_rejects_obsolete_capture_delay_and_search_mode() -> None:
         "payload": payload(),
     }
     assert read_command(line(command))["payload"]["capturePolicy"] == "immediate_nickname"
-    for obsolete in ({"captureDelaySeconds": 2.2}, {"searchMode": "fast"}):
+    for obsolete in ({"captureDelaySeconds": 2.2}, {"searchMode": "fast"}, {"prediction": None}):
         command["payload"] = {**payload(), **obsolete}
         with pytest.raises(MonitorProtocolError, match="fields"):
             read_command(line(command))
@@ -234,3 +234,90 @@ def test_command_limit_accepts_more_than_old_256_kib():
     # Legal JSON whitespace consumes bounded wire bytes without changing the payload.
     encoded = (" " * (256 * 1024) + json.dumps(command) + "\n").encode()
     assert read_command(io.BytesIO(encoded))["protocolVersion"] == 4
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 5])
+def test_rejects_other_protocol_versions(version):
+    command = {"protocolVersion": version, "sessionId": str(uuid.uuid4()),
+               "sequence": 0, "type": "start", "payload": payload()}
+    with pytest.raises(MonitorProtocolError, match="version"):
+        read_command(line(command))
+
+
+@pytest.mark.parametrize("kind", ["battle", "spectate", None])
+@pytest.mark.parametrize("rank", ["unknown", "pol", "not_pol"])
+def test_triggered_metadata_roundtrip(kind, rank):
+    value = {"timestamp": "2026-10-15T00:00:00.000Z", "triggerId": str(uuid.uuid4()),
+             "kind": kind, "rank": rank, "rankEvidence": None}
+    assert json.loads(encode_event(str(uuid.uuid4()), 1, "triggered", value))["payload"] == value
+    value["rankEvidence"] = {"opponent": "league", "own": "medal"}
+    assert json.loads(encode_event(str(uuid.uuid4()), 1, "triggered", value))["payload"] == value
+
+
+@pytest.mark.parametrize("opponent", ["medal", "league", "trophy", "empty", "other", "unknown"])
+@pytest.mark.parametrize("own", ["medal", "league", "trophy", "empty", "other", "unknown"])
+def test_triggered_accepts_all_c3_rank_line_outputs(opponent, own):
+    value = {"timestamp": "2026-10-15T00:00:00.000Z", "triggerId": str(uuid.uuid4()),
+             "kind": "battle", "rank": "unknown",
+             "rankEvidence": {"opponent": opponent, "own": own}}
+    assert json.loads(encode_event(str(uuid.uuid4()), 1, "triggered", value))["payload"] == value
+
+
+@pytest.mark.parametrize("patch", [
+    {"kind": "replay"}, {"rank": "ranked"}, {"rankEvidence": {}},
+    {"rankEvidence": {"opponent": "cup", "own": "league"}},
+    {"rankEvidence": {"opponent": "league", "own": "medal", "color": "purple"}},
+    {"imageBase64": "AAAA"}, {"triggerId": "invalid"},
+    {"timestamp": "invalid"}, {"timestamp": None},
+])
+def test_rejects_invalid_triggered_metadata(patch):
+    value = {"timestamp": "2026-10-15T00:00:00.000Z", "triggerId": str(uuid.uuid4()),
+             "kind": "battle", "rank": "unknown", "rankEvidence": None}
+    with pytest.raises(MonitorProtocolError):
+        encode_event(str(uuid.uuid4()), 1, "triggered", {**value, **patch})
+
+
+def result_payload():
+    return {"battleId": str(uuid.uuid4()), "gap": False, "outcome": "win",
+            "evidence": {"crowns": {"top": 0, "bottom": 3}, "deltaSign": "+", "deltaIcon": "pol"}}
+
+
+@pytest.mark.parametrize("outcome", ["win", "loss", "draw", "unknown"])
+@pytest.mark.parametrize("top,bottom", [(0, 3), (3, 0), (1, 1), (None, 2), (0, None), (None, None)])
+@pytest.mark.parametrize("sign", ["+", "-", None])
+def test_reserved_prediction_result_count_contract(outcome, top, bottom, sign):
+    value = result_payload()
+    value.update(battleId=None, gap=True, outcome=outcome)
+    value["evidence"]["crowns"] = {"top": top, "bottom": bottom}
+    value["evidence"]["deltaSign"] = sign
+    value["evidence"]["deltaIcon"] = "unreadable"
+    assert json.loads(encode_event(str(uuid.uuid4()), 1, "prediction_result", value))["payload"] == value
+
+
+@pytest.mark.parametrize("counts", [
+    {"top": -1, "bottom": 0}, {"top": 0, "bottom": 4},
+    {"top": 1.5, "bottom": 0}, {"top": True, "bottom": 0},
+    {"top": "1", "bottom": 0}, {"top": 0},
+    {"top": 0, "bottom": 1, "winner": "bottom"}, None,
+])
+def test_rejects_malformed_crown_counts(counts):
+    value = result_payload()
+    value["evidence"]["crowns"] = counts
+    with pytest.raises(MonitorProtocolError):
+        encode_event(str(uuid.uuid4()), 1, "prediction_result", value)
+
+
+@pytest.mark.parametrize("patch", [
+    {"battleId": "invalid"}, {"gap": 1}, {"outcome": "not_ranked"}, {"imageBase64": "AAAA"},
+    {"evidence": {"crown": "bottom", "deltaSign": "+", "deltaIcon": "pol"}},
+    {"evidence": {"crowns": {"top": 0, "bottom": 1}, "deltaSign": "−", "deltaIcon": "pol"}},
+    {"evidence": {"crowns": {"top": 0, "bottom": 1}, "deltaSign": "+", "deltaIcon": "league"}},
+])
+def test_rejects_obsolete_and_invalid_result_metadata(patch):
+    with pytest.raises(MonitorProtocolError):
+        encode_event(str(uuid.uuid4()), 1, "prediction_result", {**result_payload(), **patch})
+
+
+def test_rejects_obsolete_prediction_state_events():
+    with pytest.raises(MonitorProtocolError):
+        encode_event(str(uuid.uuid4()), 1, "prediction_state", {"state": "active"})

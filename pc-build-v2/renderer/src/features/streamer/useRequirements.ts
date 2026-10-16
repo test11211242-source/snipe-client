@@ -8,7 +8,8 @@ import { useMonitorView } from '../monitor'
 import { useProfiles } from '../profiles'
 import { useStreamer } from './streamerContext'
 
-export type FoundationId = 'twitch' | 'accounts' | 'profile' | 'zones' | 'monitoring'
+export type FoundationId =
+  'twitch' | 'accounts' | 'profile' | 'predictionProfile' | 'monitoring'
 export type FeatureId = 'predictions' | 'title' | 'chat' | 'widgets'
 
 /** A requirement plus the one place that owns it ("Управлять"). */
@@ -17,14 +18,14 @@ export interface FoundationItem extends Requirement {
 }
 
 const FEATURE_NEEDS: Record<FeatureId, readonly FoundationId[]> = {
-  predictions: ['twitch', 'profile', 'zones', 'monitoring'],
+  predictions: ['twitch', 'profile', 'predictionProfile', 'monitoring'],
   title: ['twitch', 'accounts'],
   chat: ['twitch', 'monitoring'],
   widgets: ['accounts'],
 }
 
 /**
- * Foundations (Twitch, accounts, profile, result zones, monitoring) from the main-process
+ * Foundations (Twitch, accounts, profile, prediction profile, monitoring) from the main-process
  * readiness. A `null` readiness section means "could not check" and is never shown as
  * "not connected". Each item links to its single owning page.
  */
@@ -101,16 +102,17 @@ export function useFoundations(): Record<FoundationId, FoundationItem> {
             home: openProfiles,
           }
 
-    const zonesOk = readiness?.resultZonesConfigured
-    const zones: FoundationItem =
-      zonesOk === undefined || zonesOk === null
-        ? unknown('zones', 'Зоны результата', openProfiles)
+    // Predictions need the active profile to watch the streamer's own battles only.
+    const ownBattles = readiness?.predictionProfileReady
+    const predictionProfile: FoundationItem =
+      ownBattles === undefined || ownBattles === null
+        ? unknown('predictionProfile', 'Профиль для прогнозов', openProfiles)
         : {
-            id: 'zones',
-            name: 'Зоны результата',
-            state: zonesOk ? 'настроены' : 'не настроены в профиле',
-            ok: zonesOk,
-            action: { label: 'Настроить в профиле', onAction: openProfiles },
+            id: 'predictionProfile',
+            name: 'Профиль для прогнозов',
+            state: ownBattles ? 'подходит' : 'нужен профиль своих боёв',
+            ok: ownBattles,
+            action: { label: 'Профили', onAction: openProfiles },
             home: openProfiles,
           }
 
@@ -130,7 +132,7 @@ export function useFoundations(): Record<FoundationId, FoundationItem> {
             home: () => navigate({ name: 'main' }),
           }
 
-    return { twitch, accounts, profile, zones, monitoring }
+    return { twitch, accounts, profile, predictionProfile, monitoring }
   }, [readiness, view, profileName, navigate, openProfiles, monitor, reload])
 }
 

@@ -16,7 +16,7 @@ export type SetupIntent =
     }
   /** Only change the source binding of an existing profile. */
   | { kind: 'rebind'; profileId: string; profileName: string; expectedRevision: number }
-  /** A setup session already exists in main (prediction result zones, streamer link). */
+  /** A setup session already exists in main (streamer link). */
   | { kind: 'resume' }
 
 export type AppRoute =

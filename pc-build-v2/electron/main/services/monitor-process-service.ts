@@ -13,7 +13,8 @@ import {
   type MonitorGeometryEvent,
   type MonitorLearningEvent,
   type MonitorLayoutLearnedEvent,
-  type MonitorPredictionStateEvent,
+  type MonitorTriggeredEvent,
+  type MonitorPredictionResultEvent,
   type MonitorSourceStateEvent,
 } from '../../../shared/contracts/monitor-protocol'
 import { pythonWorkerEnvironment } from './python-environment'
@@ -26,6 +27,7 @@ const KILLER_TIMEOUT_MS = 1_000
 const MAX_STDOUT_LINE_BYTES = 14 * 1024 * 1024
 const MAX_STDERR_LINE_BYTES = 2 * 1024
 const STDERR_REPORT_INTERVAL_MS = 5_000
+const MAX_ASSET_DIAGNOSTIC_BYTES = 128
 
 export interface MonitorProcessLogger {
   info: (message: string, context?: unknown) => void
@@ -91,14 +93,14 @@ export interface MonitorAction {
 }
 
 export interface MonitorProcessListener {
-  onTriggered: (timestamp: string, triggerId?: string) => void
+  onTriggered: (payload: MonitorTriggeredEvent['payload']) => void
   onAction: (action: MonitorAction) => void
-  onPredictionResult: (action: MonitorAction) => void
+  onPredictionResult: (payload: MonitorPredictionResultEvent['payload']) => void
   onGeometry?: (payload: MonitorGeometryEvent['payload']) => void
   onLearning?: (payload: MonitorLearningEvent['payload']) => void
   onLayoutLearned?: (payload: MonitorLayoutLearnedEvent['payload']) => void
-  onPredictionState?: (payload: MonitorPredictionStateEvent['payload']) => void
   onSourceState?: (payload: MonitorSourceStateEvent['payload']) => void
+  onStopped?: () => void
   onFatal: (error: ApplicationError) => void
   onExit: (error: ApplicationError | null) => void
 }
@@ -116,6 +118,10 @@ interface OwnedProcess {
   loggedGeometry: string | null
   stdoutBuffer: Buffer
   stderrLineBytes: number
+  stopped: boolean
+  stderrDiagnosticLine: string
+  stderrDiagnosticOverflow: boolean
+  assetDiagnosticReported: boolean
   stderrReportAt: number
   stderrBytes: number
   stderrLines: number
@@ -308,6 +314,10 @@ export class MonitorProcessService {
       loggedGeometry: null,
       stdoutBuffer: Buffer.alloc(0),
       stderrLineBytes: 0,
+      stopped: false,
+      stderrDiagnosticLine: '',
+      stderrDiagnosticOverflow: false,
+      assetDiagnosticReported: false,
       stderrReportAt: 0,
       stderrBytes: 0,
       stderrLines: 0,
@@ -465,6 +475,12 @@ export class MonitorProcessService {
   }
 
   private dispatchEvent(owned: OwnedProcess, event: MonitorProcessEvent): void {
+    if (owned.stopped) return
+    if (event.type === 'stopped') {
+      owned.stopped = true
+      owned.listener.onStopped?.()
+      return
+    }
     if (event.type === 'ready') {
       if (owned.ready) {
         this.protocolFailure(
@@ -479,7 +495,7 @@ export class MonitorProcessService {
       owned.resolveReady()
       return
     }
-    if (!owned.ready && event.type !== 'fatal' && event.type !== 'stopped') {
+    if (!owned.ready && event.type !== 'fatal') {
       this.protocolFailure(
         owned,
         'MONITOR_PROTOCOL_ORDER',
@@ -488,7 +504,7 @@ export class MonitorProcessService {
       return
     }
     if (event.type === 'triggered') {
-      owned.listener.onTriggered(event.payload.timestamp, event.payload.triggerId)
+      owned.listener.onTriggered(event.payload)
     } else if (event.type === 'diagnostic') {
       this.logger.info('Trigger diagnostic', event.payload)
     } else if (event.type === 'vs_candidate') {
@@ -510,12 +526,12 @@ export class MonitorProcessService {
         fired: event.payload.triggerId !== null,
       })
       owned.listener.onLayoutLearned?.(event.payload)
-    } else if (event.type === 'prediction_state') {
-      owned.listener.onPredictionState?.(event.payload)
+    } else if (event.type === 'prediction_result') {
+      owned.listener.onPredictionResult(event.payload)
     } else if (event.type === 'source_state') {
       this.logger.info('Monitor source state', { minimized: event.payload.minimized })
       owned.listener.onSourceState?.(event.payload)
-    } else if (event.type === 'action' || event.type === 'prediction_result') {
+    } else if (event.type === 'action') {
       const image = Buffer.from(event.payload.imageBase64, 'base64')
       const dimensions = pngDimensions(image)
       if (
@@ -539,9 +555,8 @@ export class MonitorProcessService {
         height: event.payload.height,
         image,
       }
-      if (event.type === 'action') owned.listener.onAction(action)
-      else owned.listener.onPredictionResult(action)
-    } else if (event.type === 'fatal') {
+      owned.listener.onAction(action)
+    } else {
       this.logger.warn('Monitor worker fatal', {
         code: event.payload.code,
         stage: event.payload.stage,
@@ -588,10 +603,12 @@ export class MonitorProcessService {
     let newline = bytes.indexOf(10)
     while (newline >= 0) {
       owned.stderrLines = Math.min(Number.MAX_SAFE_INTEGER, owned.stderrLines + 1)
+      this.inspectAssetDiagnostic(owned, bytes.subarray(offset, newline), true)
       owned.stderrLineBytes = 0
       offset = newline + 1
       newline = bytes.indexOf(10, offset)
     }
+    this.inspectAssetDiagnostic(owned, bytes.subarray(offset), false)
     owned.stderrLineBytes = Math.min(
       MAX_STDERR_LINE_BYTES,
       owned.stderrLineBytes + bytes.length - offset,
@@ -607,6 +624,36 @@ export class MonitorProcessService {
       owned.stderrLines = 0
       owned.stderrReportAt = now + STDERR_REPORT_INTERVAL_MS
     }
+  }
+
+  private inspectAssetDiagnostic(
+    owned: OwnedProcess,
+    bytes: Buffer,
+    complete: boolean,
+  ): void {
+    if (!owned.stderrDiagnosticOverflow) {
+      if (owned.stderrDiagnosticLine.length + bytes.length <= MAX_ASSET_DIAGNOSTIC_BYTES)
+        owned.stderrDiagnosticLine += bytes.toString('utf8')
+      else {
+        owned.stderrDiagnosticLine = ''
+        owned.stderrDiagnosticOverflow = true
+      }
+    }
+    if (!complete) return
+    const match = owned.stderrDiagnosticOverflow
+      ? null
+      : /^PREDICTION_ASSET_UNAVAILABLE ([A-Za-z_][A-Za-z0-9_]{0,63})\r?$/.exec(
+          owned.stderrDiagnosticLine,
+        )
+    if (match && !owned.assetDiagnosticReported) {
+      owned.assetDiagnosticReported = true
+      this.logger.warn('Monitor prediction assets unavailable', {
+        code: 'PREDICTION_ASSET_UNAVAILABLE',
+        errorClass: match[1],
+      })
+    }
+    owned.stderrDiagnosticLine = ''
+    owned.stderrDiagnosticOverflow = false
   }
 
   private handleChildError(owned: OwnedProcess, error: Error): void {

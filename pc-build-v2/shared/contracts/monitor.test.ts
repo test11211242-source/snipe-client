@@ -103,7 +103,6 @@ describe('monitor renderer contracts', () => {
         confirmationDecay: 0.5,
         cooldownSeconds: 15,
       },
-      prediction: null,
     }
     expect(MonitorStartPayloadSchema.parse(base).capturePolicy).toBe('immediate_nickname')
     const gamePrimary = monitorGamePrimaryFixture()
@@ -136,7 +135,7 @@ describe('monitor renderer contracts', () => {
     }
   })
 
-  it('accepts only protocol v4 triggered events with correlation identity', () => {
+  it('accepts only protocol v4 triggered events with battle metadata and correlation identity', () => {
     const event = {
       protocolVersion: 4,
       sessionId: '29d970c1-fc4f-4bea-a767-8f108d3b8739',
@@ -145,6 +144,9 @@ describe('monitor renderer contracts', () => {
       payload: {
         timestamp: '2026-07-12T12:00:00.000Z',
         triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+        kind: 'battle',
+        rank: 'unknown',
+        rankEvidence: null,
       },
     }
     expect(MonitorProcessEventSchema.parse(event)).toEqual(event)

@@ -156,9 +156,10 @@ single-config imports preserve IDs, names, timestamps, active profile, geometry,
 and template quality. Old capture and prediction-result roots remain untouched.
 Imports use strict schemas and exact validated old fingerprints, with resumable
 results-first then atomic capture rename; no migration contacts the server.
-Game-relative result zones bind to profile/calibration identity, so learned-layout
-append requires only one atomic capture write and no monitor restart or result
-rewrite. Full-frame result zones retain revision/fingerprint binding. Every setup
+Retained legacy game-relative result geometry binds to profile/calibration identity
+for migration; full-frame legacy geometry retains revision/fingerprint binding.
+Neither is an active result setup/runtime path. Learned-layout append requires only
+one atomic capture write and no monitor restart or legacy result rewrite. Every setup
 or recalibration creates a fresh calibration identity. Only the oldest learned
 layout may be evicted; setup layouts and transferred manual-zone provenance survive.
 Game-relative recovery intentionally reloads current source/zones under the same
@@ -215,7 +216,8 @@ recognized badge, otherwise the structural trigger. Both cases retain the legacy
 analysis for the unchanged server projection, derived from the saved setup layout.
 The renderer contract includes `game`, `regionOrigins`, and `triggerKind`; game outlines,
 VS-specific review text and frame-retry actions are separate UI-session work. Existing
-migrated full-frame profiles and full-frame prediction-result setup remain unchanged.
+migrated full-frame profiles remain supported for opponent search. Legacy result geometry
+is retained for migration only; its setup UI and runtime matcher have been removed.
 
 Automatic setup transfers ownership of the warm capture process to a `DETECTING` session.
 Prepared-capture protocol 2 analyzes the latest live frame at up to 10 fps for a real
@@ -237,9 +239,10 @@ and name-check results are diagnostic-only. One `setup.name_check` main-log reco
 only status and HTTP status or reason, never nickname text or pixels; saving aborts pending
 checks. Ancillary analyzer failure codes are logged as `setup.auto_analysis_failed`.
 The renderer follows the minimal user-facing wording in M9 specification §1.3.
-While the prediction-result trigger has an aspect mismatch, new battle starts are not
-enqueued or sent; already-open predictions retain their existing result-resolution path.
-The suspension state also covers a mismatch that began before predictions were enabled.
+Predictions follow server state and never start, restart or stop monitoring. Readiness requires
+a running, unminimised game-relative own-battle profile; result reading needs no extra setup
+(bundled shape templates, `python/README.md`). An unreadable result is `unknown` and is settled
+manually.
 
 Install the Python environment on Windows with Python 3.10 or newer:
 
@@ -291,9 +294,9 @@ next captured attempt; an in-flight attempt and its manual retry keep their orig
 parameters. Renderer views contain no tokens, HWNDs, selectors, trigger templates,
 source images or raw OCR/model responses.
 
-The private monitor protocol is JSON-lines version 3. Main sends one validated start
+The private monitor protocol is JSON-lines version 4. Main sends one validated start
 command and an eventual stop command. Python emits monotonic, session-bound `ready`,
-`triggered`, `action`, prediction, diagnostic, `source_state`, `fatal` and `stopped` events
+`triggered`, `action`, diagnostic, `source_state`, `fatal` and `stopped` events
 with trigger IDs. Diagnostics are sent only when a profile's match state (matcher, matched,
 reason) changes. Game-relative profiles also send one `vs_candidate` record per VS
 candidate or near miss (orientation score ≥ 0.30, or a learning decision), logged as
@@ -409,9 +412,9 @@ using temporary userData and synthetic encounters without contacting the server.
 
 ## Streamer Workspace
 
-The v1 streamer area has dedicated pages (not the old duplicate Twitch/accounts home) for
-Twitch connect/status/disconnect, automatic predictions, result-region calibration, automatic
-stream titles and Clash accounts, deck sharing, and adaptive OBS opponent/stats overlays.
+The streamer area has dedicated pages (not the old duplicate Twitch/accounts home) for
+Twitch connect/status/disconnect, automatic predictions, automatic stream titles and Clash
+accounts, deck sharing, and adaptive OBS opponent/stats overlays.
 Alerts, Discord, the old generic OBS placeholder, and `smart_predictions` are intentionally not
 ported.
 
@@ -427,20 +430,101 @@ system-browser `shell.openExternal`. The callback remains server-owned, and main
 non-overlapping status polling while the Streamer page is active or a connection attempt is
 pending. No remote `BrowserWindow` or `window.open` is used.
 
-Prediction preferences and result profiles are strict per-user atomic files under
-`userData/prediction-preferences.v1/` and `userData/prediction-result-config.v1/`. Result setup
-resolves the explicitly selected capture profile (including inactive profiles) and edits a real
-captured result frame in the same main-window setup namespace. Result geometry is saved locally
-first. Only an active profile updates the server's legacy mirror, in trigger/data order; those
-two endpoints are not transactional. A partial remote failure is a synchronization warning,
-not a false local-save failure, and the same fenced retry resends the saved mirror.
+Prediction settings and status come only from `/api/streamer/predictions/*`; old local
+`prediction-preferences.v1` files are ignored and left untouched. Defaults are enabled,
+each battle, fixed streak length 3 (range 2–5 for random), 30 seconds for voting, and chat
+progress enabled. Voting choices are 30, 45, 60, 90, 120 and 180 seconds; fixed streaks
+allow 2–10 wins, random bounds 1–10 with an ordered range. Changes apply to the next
+prediction. Voting closes only on the server/Twitch timer; no trigger locks voting.
 
-Predictions reuse the single monitor process. Normal battle triggers notify the server through a
-serialized main-only coordinator. The optional result profile has one confirmation and a 60-second
-cooldown; its cropped PNG is emitted on the private process pipe and posted as multipart with a
-150-second deadline, never exposed to a renderer. Start rolls the server back if local monitor
-configuration fails. Stop removes prediction runtime while preserving a monitor that was already
-running.
+The prediction page renders server phases, attention, streak progress and persisted
+yes/no/canceled counts. Own unsettled predictions have manual win/loss, «Бой не считается»
+and refund controls, including disabled predictions with bets. Server `source` and
+`canSettle` metadata survive through main to the renderer. Predictions started on Twitch
+show only the refund control, even with a verified win/loss mapping; an explicit settlement
+refusal also hides win/loss for an own prediction. A refund confirmation binds the selected
+prediction ID; a stale-ID failure closes it and shows a page banner.
+The main IPC commands are `predictions.settings.save`, `predictions.battle` and
+`predictions.cancel`. Manual settlement is never automatically retried. Each account,
+displayed prediction/progress and outcome keeps its UUID intent after an uncertain answer,
+even across page navigation; a confirmed skip starts a new intent because it changes no wins.
+After a failed command, main refreshes server state and the renderer consumes that view
+before unlocking controls. Uncertain outcomes say the action may still execute and ask
+the streamer to check the result. An empty skip has its own allowlisted server code and
+fixed phrase, distinct from a genuinely stale prediction ID.
+Server response schemas strip additive fields recursively while preserving known-field
+validation; outgoing settings, manual commands and the main-to-renderer view stay strict.
+Older server responses default a missing source to `snipe` and a missing settlement
+capability to true only for `snipe` (false for `twitch`); explicit server values are kept.
+
+`PredictionResultConfigurationRepository` and its existing
+`prediction-result-config.v1` files remain for the v5 capture migration contract, without
+a result-zone setup command, renderer entry point or legacy server projection writer.
+
+The main-only prediction coordinator sends a heartbeat every 30 seconds and immediately on
+monitor/profile changes while signed in as a streamer. Own-battle VS events use their shared
+trigger UUID as `battleId` and send kind, rank and rank evidence to `/predictions/battle-start`.
+Spectate and full-frame events are never forwarded. The old full-frame result matcher and
+prediction image uploads are removed. The worker emits one strict `prediction_result` JSON
+event per read result screen of an own battle (no images), with `battleId`, `gap`, `outcome`
+and evidence containing nullable crown counts `crowns:{top,bottom}` (0–3), `deltaSign` and
+`deltaIcon`. Actual capture pauses and minimisation mark the own battle as having a gap.
+On Stop or capture failure, main accepts the current worker's final result until its
+`stopped` acknowledgement (or exit), preserving the pre-stop gap and own VS ID; the
+stop request itself does not manufacture a gap. Auth changes and older workers stay fenced.
+Missing or corrupt bundled prediction assets keep nickname search running. Main logs the
+allowlisted `PREDICTION_ASSET_UNAVAILABLE` code and bounded error class once per worker;
+all other stderr stays suppressed as byte/line counters, with no asset paths or raw text.
+Heartbeat, VS and result network failures get one retry after two seconds. Idempotent
+VS/result reports also retry once on HTTP 5xx, including non-JSON server errors; manual
+actions never do. Outcomes are logged as codes, not user data. The server owns voting
+timers and settlement.
+
+Battle reports carry `vsAgeMs`: monotonic milliseconds since CR Tools observed the own VS,
+recomputed for every attempt and capped at 24 hours. An unacknowledged start is kept and
+resent before its result; if that resend also fails, the result still reaches the server
+so the missing battle requires manual attention instead of silently counting the next one.
+Pending observations are cleared on logout/account change; wall-clock adjustments never
+make a delayed VS look newer.
+
+The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
+schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake Helix.
+Creation is polled/ticked for at most five seconds because a ready heartbeat can still
+own the live-operation lease. The coordinator's result log is awaited separately for at
+most five seconds: server settlement can be visible before the HTTP response is logged.
+The fixture applies prediction migrations 077–082 to its own schema and clears its
+operation/manual-request rows on reset. It exercises win, loss, empty/non-ranked skip
+(including repeating the same UUID intent), refund and streak settlement, then adopts
+an external 61-second prediction with unrelated outcomes, preserves its metadata, rejects
+an unsafe win and refunds it. A second external prediction resolved on the fake Twitch
+closes as history phase `resolved_external` (`settledBy: twitch`), counted in no stat.
+It never connects to Twitch or reads owner configuration.
+From `pc-build-v2`, start the fixture in one terminal
+(requires the server Windows venv and local Docker compose):
+
+```powershell
+& C:\Dev\Snipe\server\.venv\Scripts\python.exe tests\fixtures\predictions-server.py --server-worktree C:\Dev\Snipe\worktrees\server\predictions-v2 *> "$env:TEMP\predictions-local-api.log"
+```
+
+In another terminal, run the real main API/coordinator/service smoke, then shut the fixture
+down so its owned database schema is removed:
+
+```powershell
+$env:SNIPE_PREDICTIONS_SMOKE_URL = 'http://127.0.0.1:18764'
+npm test -- tests/predictions-http-smoke.test.ts *> "$env:TEMP\predictions-http-smoke.log"
+Invoke-RestMethod -Method Post http://127.0.0.1:18764/__smoke/shutdown | Out-Null
+Remove-Item Env:SNIPE_PREDICTIONS_SMOKE_URL
+```
+
+The ordinary suite skips this one explicitly opt-in integration test. The fixture's health
+marker and loopback check prevent accidentally pointing the smoke at an ordinary server.
+
+Set `CR_C3_EVENTS_JSONL` to the C3 replay's external `wired-events.jsonl` to additionally
+feed an unchanged captured `prediction_result` through the coordinator and server and
+assert settlement with source `screen`. The smoke binds a synthetic own VS with unknown
+rank: the available start clips are Cheddar, not the ranked battle whose ending was
+recorded. This proves result delivery and automatic settlement, not a continuous ranked
+recording. `tests/monitor-events-replay.test.ts` validates every event in the same file.
 
 Known server limitations are not hidden by client fallbacks. The OAuth state now uses one-time,
 expiring server records, but the previously exposed Twitch client secret must still be rotated.
@@ -503,14 +587,14 @@ The main window is frameless (default 1100×700, minimum 420×360); auth default
 `crTools.window.command()` accepts only `get`, `minimize`, `maximize`, `restore`, and `close`.
 Close uses the native close event and the existing close-to-tray policy, never a direct destroy.
 Setup start does not create another window. `crTools.setup` exposes strict session/generation
-commands, selected-profile result setup, and saved-projection retry; auth and widget cannot invoke it.
+commands and saved capture-projection retry; auth and widget cannot invoke it.
 
 `crTools.streamer.command()` is the single typed mutation boundary for Twitch, predictions,
 title settings/preview/apply/undo, chat, OBS widgets, and accounts. Its allowlisted errors preserve
 M0 account codes; successful committed mutations can carry `TITLE_UPDATE_FAILED` or
 `REFRESH_FAILED`. `getReadiness()` projects Twitch, enabled account count, running-monitor
-readiness, capture presence, and the active capture/result association in main. Unknown or
-unavailable sections are null, not disconnected.
+readiness, capture presence, and game-relative own-battle profile readiness in main.
+Unknown or unavailable sections are null, not disconnected.
 Title presets/chips compile to the existing server template/include/account-selection fields.
 Decompilation preserves arbitrary existing templates through explicit raw mode. There is only
 one `{account}` token: active-account and best-account chips cannot be promised simultaneously.
@@ -558,8 +642,8 @@ flushed again later if Windows cancels logoff and the user continues working.
 Legacy v2 widget settings that fail JSON/schema validation return defaults without changing
 the old file. Invalid/unreadable optional legacy prediction-result geometry is left unattached
 and logs only the error type; it does not invalidate the capture-profile migration. Nickname
-confirmation/action share their trigger UUID, while `prediction_result` has an independent
-event UUID and must not be correlated by it.
+confirmation/action share their trigger UUID. `prediction_result` events carry the
+own-battle `battleId` explicitly; event-envelope IDs are not battle IDs.
 
 ## v1 scope and future work
 

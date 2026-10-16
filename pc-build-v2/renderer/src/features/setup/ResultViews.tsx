@@ -3,7 +3,7 @@ import { Banner, Button, Icon, cx, type IconName } from '../../ui'
 import { FrameStage, type StageBox } from './FrameStage'
 import { saveRetryable } from './errors'
 import { describeOutcome } from './outcome'
-import { regionsOf } from './regions'
+import { CAPTURE_REGIONS } from './regions'
 import styles from './Setup.module.css'
 import type { SetupSession } from './useSetupSession'
 
@@ -55,8 +55,6 @@ export function CheckStep({
   onBack: () => void
   auto?: boolean
 }): React.JSX.Element {
-  const defs = regionsOf(view.kind)
-  const result = view.kind === 'predictionResult'
   const inReview = view.state === 'REVIEW'
   const retryable = saveRetryable(view.error?.code)
   const { busy } = session
@@ -67,7 +65,7 @@ export function CheckStep({
     await session.commit()
   }
 
-  const boxes: StageBox[] = defs.map((def) => ({
+  const boxes: StageBox[] = CAPTURE_REGIONS.map((def) => ({
     id: def.id,
     label: def.label,
     rect: view.regions[def.id],
@@ -128,9 +126,7 @@ export function CheckStep({
                 ? 'Повторить сохранение'
                 : auto
                   ? 'Сохранить'
-                  : result
-                    ? 'Сохранить зоны'
-                    : 'Сохранить профиль'}
+                  : 'Сохранить профиль'}
             </Button>
           )}
         </div>
