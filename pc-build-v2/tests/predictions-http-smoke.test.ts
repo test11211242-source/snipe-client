@@ -97,13 +97,17 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       { openExternal: vi.fn() },
       { writeText: vi.fn() },
     )
-    const nextPrediction = async (): Promise<number> => {
-      const response = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
-      expect(response.ok).toBe(true)
-      const next = PredictionStatusSchema.parse(await response.json())
-      if (next.prediction === null) throw new Error('No open synthetic prediction')
-      return next.prediction.id
-    }
+    const nextPrediction = (): Promise<number> =>
+      vi.waitFor(
+        async () => {
+          const response = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
+          expect(response.ok).toBe(true)
+          const next = PredictionStatusSchema.parse(await response.json())
+          if (next.prediction === null) throw new Error('No open synthetic prediction')
+          return next.prediction.id
+        },
+        { timeout: 5_000 },
+      )
     try {
       coordinator.startLifecycle()
       await vi.waitFor(
@@ -120,10 +124,7 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         },
         { timeout: 5_000 },
       )
-      const tick = await fetch(`${url.origin}/__smoke/tick`, { method: 'POST' })
-      expect(tick.ok).toBe(true)
-      const status = PredictionStatusSchema.parse(await tick.json())
-      expect(status.prediction).not.toBeNull()
+      const firstId = await nextPrediction()
       expect(battleListener).not.toBeNull()
       const listener = battleListener as unknown as (
         event: MonitorTriggeredEvent['payload'],
@@ -173,8 +174,6 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
         'prediction.battle_start',
         expect.anything(),
       )
-      const firstId = status.prediction?.id
-      if (firstId === undefined) throw new Error('Missing synthetic prediction')
       const skipIntent = {
         action: 'predictions.battle' as const,
         predictionId: firstId,
@@ -369,9 +368,13 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
           },
           { timeout: 5_000 },
         )
-        expect(logger.info).toHaveBeenCalledWith(
-          'prediction.battle_result',
-          expect.objectContaining({ code: 'ok', applied: true, finalOutcome: 'win' }),
+        await vi.waitFor(
+          () =>
+            expect(logger.info).toHaveBeenCalledWith(
+              'prediction.battle_result',
+              expect.objectContaining({ code: 'ok', applied: true, finalOutcome: 'win' }),
+            ),
+          { timeout: 5_000 },
         )
       }
     } finally {

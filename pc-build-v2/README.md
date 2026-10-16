@@ -482,6 +482,9 @@ make a delayed VS look newer.
 
 The opt-in HTTP smoke uses the real server prediction router/service/repository, an isolated
 schema in local Docker PostgreSQL, synthetic authentication and the server tests' fake Helix.
+Creation is polled/ticked for at most five seconds because a ready heartbeat can still
+own the live-operation lease. The coordinator's result log is awaited separately for at
+most five seconds: server settlement can be visible before the HTTP response is logged.
 The fixture applies prediction migrations 077–080 to its own schema and clears its
 operation/manual-request rows on reset. It exercises win, loss, non-ranked skip (including
 repeating the same UUID intent), refund and streak settlement. It never connects to Twitch
