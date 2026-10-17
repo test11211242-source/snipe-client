@@ -198,7 +198,12 @@ corrupt C3 asset turns that part off and writes
   only after a seen shift or the cap with the last read ≥ 1.0 s into the burst
   and the «vs» unread for at most one tick before it (a landing crown hides it
   longer); any other end leaves them `null`, so a cut-short count never becomes
-  a draw. A detected PoL icon always counts as a seen pill.
+  a draw. A detected PoL icon always counts as a seen pill. If no sign is
+  confirmed, a confirmed PoL VS and different final crown counts decide
+  win/loss (the streamer is the bottom row), including an absent or unreadable
+  pill. Conflicting confirmed signs, non-ranked/unknown VS rank, unfinished
+  counts, and trophy evidence never use this fallback. The server verifies
+  the same rule; explicit unknown reports remain unknown.
 - `prediction_values.py` holds every wire value, matching the server validation.
 - `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
   orientation fields only (no pixels, no names), generated once by

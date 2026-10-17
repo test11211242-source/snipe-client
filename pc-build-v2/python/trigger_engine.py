@@ -665,7 +665,7 @@ class TriggerEngine:
             except Exception:  # predictions must never stop opponent monitoring
                 self.triggered_rank = NO_RANK
         if reader is not None:
-            reader.arm(now)
+            reader.arm(now, rank=self.triggered_rank["rank"])
 
     def _read_result(self, bgr, now) -> None:
         if self.result_reader is None or not self.result_reader.armed:

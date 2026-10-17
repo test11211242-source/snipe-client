@@ -161,6 +161,19 @@ def test_trigger_records_the_fired_layout_kind(cy, kind):
     assert engine.triggered_rank == {"rank": "unknown", "rankEvidence": None}
 
 
+def test_ranked_start_is_retained_for_crowns_after_trigger_tick(monkeypatch):
+    frame, _ = arena(cy=0.429)
+    engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))
+    ranked = {"rank": "pol", "rankEvidence": {"opponent": "medal", "own": "medal"}}
+    monkeypatch.setattr("trigger_engine.check_rank", lambda *_args: ranked)
+    engine.process(frame, 0)
+    assert engine.process(frame, 0.1) is not None
+    assert engine.result_reader.armed and engine.result_reader.rank == "pol"
+    engine.process(frame, 0.2)
+    assert engine.triggered_rank["rank"] == "unknown"
+    assert engine.result_reader.rank == "pol"
+
+
 def test_result_screen_is_read_only_after_an_own_battle_and_never_on_a_fire_tick(monkeypatch):
     frame, _ = arena(cy=0.429)
     engine = TriggerEngine(game_payload([game_layout(cy=0.429)]))

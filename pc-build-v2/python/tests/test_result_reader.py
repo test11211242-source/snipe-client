@@ -132,6 +132,47 @@ def run(reader: ResultReader, screen: Screen, start: float, stop: float, rect=(0
     return reports
 
 
+@pytest.mark.parametrize("score,pill_icon,expected_icon", [
+    (0.46, None, "absent"), (0.56, None, "unreadable"), (0.8, "medal", "pol"),
+])
+@pytest.mark.parametrize("top,bottom,outcome", [(0, 1, "win"), (1, 0, "loss")])
+@pytest.mark.parametrize("ending", ["shift", "cap"])
+def test_ranked_reader_without_sign_uses_only_settled_crowns(
+        monkeypatch, score, pill_icon, expected_icon, top, bottom, outcome, ending) -> None:
+    screen = Screen(monkeypatch, crowns=((0.8 * top, 0, 0), (0.8 * bottom, 0, 0)),
+                    pill=PillReading(score, pill_icon, None, None))
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, delay=0, rank="pol")
+    screen.vs = {round(30 + t / 10, 1): (0.85, 0.024) for t in range(32)}
+    if ending == "shift":
+        screen.vs[31.6] = (0.8, 0.01)
+    (_, report, reason), = run(reader, screen, 30.0, 33.0)
+    assert reason == ending
+    assert report == {"outcome": outcome, "evidence": {
+        "crowns": {"top": top, "bottom": bottom}, "deltaSign": None, "deltaIcon": expected_icon}}
+    assert not reader.armed and reader.rank == "unknown"
+
+
+@pytest.mark.parametrize("final,rank", [(False, "pol"), (True, "not_pol"), (True, "unknown")])
+def test_crowns_fallback_rejects_unfinished_or_unconfirmed_rank(final, rank) -> None:
+    report = decide(samples(*[(0, 1, False, None)] * 16), final=final, pill_seen=False, rank=rank)
+    assert report["outcome"] == "unknown"
+
+
+def test_conflicting_confirmed_signs_cannot_use_crowns_fallback() -> None:
+    rows = [(0, 0, True, "+")] * 4 + [(1, 0, True, "-")] * 12
+    report = decide(samples(*rows), final=True, pill_seen=True, rank="pol")
+    assert report["evidence"]["crowns"] == {"top": 1, "bottom": 0}
+    assert report["outcome"] == "unknown"
+
+
+def test_next_battle_cannot_inherit_previous_rank() -> None:
+    reader = ResultReader(templates=object())
+    reader.arm(0.0, rank="pol")
+    reader.arm(10.0)
+    assert reader.rank == "unknown"
+
+
 def test_idle_reader_does_nothing_until_armed_window(monkeypatch) -> None:
     screen = Screen(monkeypatch)
     reader = ResultReader(templates=object())
