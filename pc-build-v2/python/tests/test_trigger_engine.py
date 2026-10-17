@@ -247,3 +247,29 @@ def test_blank_frame_is_rejected_without_numeric_overflow() -> None:
     assert result.matched is False
     assert result.support == 0.0
     assert np.isfinite(result.score)
+
+
+def test_vs_candidate_without_fire_drops_an_inferred_band(monkeypatch):
+    # Safety net behind band re-validation: a band that somehow survives it
+    # (forced here) costs the one VS it misplaced, not the rest of the session.
+    from game_geometry import GameGeometry
+    from synthetic_frames import F11_GAME, F11_WIDTH, arena, f11_frame, moving_noise, phantom_band_menu
+    from test_game_geometry import game_layout, game_payload
+
+    monkeypatch.setattr(GameGeometry, "_band_holds", lambda self, frame, raw: True)
+    engine = TriggerEngine(game_payload([game_layout(F11_WIDTH, F11_GAME)]))
+    vs = [f11_frame(arena(F11_WIDTH, F11_GAME, seed=index)[0]) for index in range(20)]
+    calm = [f11_frame(moving_noise(700 + index)) for index in range(30)]
+    frames = [phantom_band_menu(index, 17) for index in range(40)] + vs + calm + vs + calm
+    fires, records = [], []
+    for index, frame in enumerate(frames):
+        engine.process(frame, index / 10)
+        if engine.take_triggered():
+            fires.append(index)
+        records += [value["reason"] for kind, value in engine.take_events() if kind == "vs_candidate"]
+        if index == 40:
+            assert engine.geometry.inferred_band
+    assert records[0] in ("confirm", "score")
+    assert not engine.geometry.inferred_band
+    assert fires == [91]
+    assert records[1:] == ["fired"]

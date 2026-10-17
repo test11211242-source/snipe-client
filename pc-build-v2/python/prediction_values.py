@@ -53,16 +53,21 @@ def rank_from_lines(opponent: str, own: str) -> str:
     return RANK_UNKNOWN
 
 
-def outcome_from_evidence(top: int | None, bottom: int | None, sign: str | None) -> str:
+def outcome_from_evidence(top: int | None, bottom: int | None, sign: str | None, *,
+                          icon: str | None = None, rank: str = RANK_UNKNOWN) -> str:
     """The pill sign decides; final crown counts cross-check it or mark a draw.
 
-    Mirrors the consistency checks of the server's `classify_battle`, so the
-    client never reports an outcome the server would turn into `unknown`.
+    Without a read sign, a ranked (PoL) battle without a trophy icon
+    is decided by different final crown counts alone:
+    more crowns wins. Non-final (null) or equal counts never yield win/loss.
+    Otherwise mirrors the consistency checks of the server's `classify_battle`.
     """
     readable = top is not None and bottom is not None
     if readable and top == bottom:
         return OUTCOME_UNKNOWN if sign == SIGN_PLUS else OUTCOME_DRAW
     if sign is SIGN_UNREADABLE:
+        if readable and rank == RANK_POL and icon in (ICON_POL, ICON_ABSENT, ICON_UNREADABLE):
+            return OUTCOME_WIN if bottom > top else OUTCOME_LOSS
         return OUTCOME_UNKNOWN
     if readable and ((sign == SIGN_PLUS) != (bottom > top)):
         return OUTCOME_UNKNOWN

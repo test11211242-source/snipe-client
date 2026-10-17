@@ -58,8 +58,23 @@ def test_rank_combination_equals_server_classify_rank_evidence(opponent: str, ow
     (1, 2, "+", "win"), (3, 1, "-", "loss"), (None, None, "+", "win"), (None, None, "-", "loss"),
     (2, 1, "+", "unknown"), (0, 3, "-", "unknown"),            # crowns contradict the pill
     (1, 1, "-", "draw"), (0, 0, None, "draw"), (1, 1, "+", "unknown"),
-    (0, 3, None, "unknown"), (None, None, None, "unknown"),   # unreadable sign never falls back
+    (0, 3, None, "unknown"), (None, None, None, "unknown"),   # no fallback without the PoL rank and icon
     (None, 2, "+", "win"),                                       # one row unreadable = unreadable counts
 ])
 def test_outcome_mirrors_server_classify_battle(top, bottom, sign, outcome) -> None:
     assert outcome_from_evidence(top, bottom, sign) == outcome
+
+
+# Owner rule (prediction 29): no read sign, iconless pill, PoL VS -> different
+# final crowns decide; the streamer is the bottom row.
+@pytest.mark.parametrize("top,bottom,sign,icon,rank,outcome", [
+    (0, 1, None, "absent", "pol", "win"), (2, 1, None, "absent", "pol", "loss"),           # absent + final + different
+    (1, 3, None, "unreadable", "pol", "win"), (3, 0, None, "unreadable", "pol", "loss"),   # unreadable + final + different
+    (1, 1, None, "absent", "pol", "draw"), (0, 0, None, "unreadable", "pol", "draw"),      # equal: never win/loss
+    (None, None, None, "absent", "pol", "unknown"), (None, 1, None, "unreadable", "pol", "unknown"),  # not final
+    (0, 1, None, "absent", "not_pol", "unknown"), (0, 1, None, "unreadable", "unknown", "unknown"),  # not ranked
+    (0, 1, None, "pol", "pol", "win"), (0, 1, None, "trophy", "pol", "unknown"),          # unread sign / contradictory trophy
+    (0, 1, "-", "absent", "pol", "unknown"), (2, 1, "-", "unreadable", "pol", "loss"),     # a read sign still decides
+])
+def test_unread_sign_falls_back_to_final_crowns_only_for_pol(top, bottom, sign, icon, rank, outcome) -> None:
+    assert outcome_from_evidence(top, bottom, sign, icon=icon, rank=rank) == outcome

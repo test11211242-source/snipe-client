@@ -135,6 +135,8 @@ const captureConfigurations = new CaptureConfigurationRepository(
     legacyDirectory: join(app.getPath('userData'), 'capture-profiles.v3'),
     migratePredictionReference: (...args) =>
       predictionResults.migrateCaptureReference(...args),
+    onPhantomChromeLayoutsRemoved: (removed) =>
+      logger.info('Capture phantom-chrome layouts removed', { removed }),
   },
 )
 const pythonRoot = import.meta.env.PROD

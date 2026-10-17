@@ -392,6 +392,9 @@ class TemporalGate:
 CANDIDATE_T = 0.30
 # Diagnostics score a mismatched game with the closest layout only this close.
 SHADOW_ASPECT_TOL = 0.15
+# A VS candidate that ends this way without firing disproves an inferred
+# chrome band: the zones it placed missed the badge (owner F11, 17.10.2026).
+BAND_MISS_REASONS = frozenset({"confirm", "score", "learning", "aspect"})
 
 
 class VsCandidateLog:
@@ -410,9 +413,12 @@ class VsCandidateLog:
         self.quiet = 0
         self.emitted: list[float] = []
         self.suppressed = 0
+        # Reason of the episode that ended on the last observed frame, emitted or not.
+        self.ended: str | None = None
 
     def observe(self, now: float, sample: dict[str, Any] | None) -> dict[str, Any] | None:
         """`sample` is None for a frame without candidate evidence."""
+        self.ended = None
         if sample is not None:
             if self.episode is None:
                 # Seconds since the previous fire when this candidate began (cooldown evidence).
@@ -439,13 +445,14 @@ class VsCandidateLog:
             if self.quiet < self.END_FRAMES:
                 return None
         episode, self.episode, self.quiet = self.episode, None, 0
+        self.ended = self._reason(episode)
         self.emitted = [moment for moment in self.emitted if now - moment < 60]
         if (self.emitted and now - self.emitted[-1] < self.MIN_INTERVAL) or len(self.emitted) >= self.PER_MINUTE:
             self.suppressed += 1
             return None
         self.emitted.append(now)
         best, suppressed, self.suppressed = episode["best"], self.suppressed, 0
-        return {"reason": self._reason(episode), "state": best["state"],
+        return {"reason": self.ended, "state": best["state"],
                 "score": None if best["score"] is None else round(best["score"], 4),
                 "frames": episode["frames"], "matchedFrames": episode["matched"],
                 "sinceFireS": episode["sinceFireS"], "frameWidth": best["frameWidth"], "frameHeight": best["frameHeight"],
@@ -632,6 +639,9 @@ class TriggerEngine:
         record = self.candidates.observe(now, self._sample)
         if record is not None:
             self.events.append(("vs_candidate", record))
+        if self.candidates.ended in BAND_MISS_REASONS and self.geometry.inferred_band:
+            # Whatever let the band survive re-validation, it costs one VS, not a session.
+            self.geometry.drop_band()
         if not self.triggered:
             # The result screen is read only on ticks without a VS fire; an own
             # VS fire re-arms the reader (a pending battle is then missed).
@@ -655,7 +665,7 @@ class TriggerEngine:
             except Exception:  # predictions must never stop opponent monitoring
                 self.triggered_rank = NO_RANK
         if reader is not None:
-            reader.arm(now)
+            reader.arm(now, rank=self.triggered_rank["rank"])
 
     def _read_result(self, bgr, now) -> None:
         if self.result_reader is None or not self.result_reader.armed:

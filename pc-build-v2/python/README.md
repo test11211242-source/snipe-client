@@ -59,6 +59,14 @@ confirmed by the saved thickness or by a static band above a moving game. A band
 on the frame's own edge must also continue through uniform letterbox bars peeled
 off the perpendicular sides (window chrome spans the whole window): a still menu
 column inside an emulator's fullscreen bars is game content, not a toolbar.
+An inferred band stays a hypothesis: every detection re-proves it on the current
+raw rect and drops it when the raw edge on its side moves more than 2 px (chrome
+hangs on the window edge; a peeled dark game margin does not), when it no longer
+crosses the letterbox bars, or when the band shows game motion on rechecks at
+least a second apart. Only setup layouts and learned layouts without
+template-less chrome imply a band: a learned layout whose chrome has no edge
+template was learned through a phantom band (owner F11, 17.10.2026: a 96-px left
+"toolbar" stayed trimmed through every later battle).
 Unknown aspects block primary firing after detection
 and enter `aspect_unknown` after 20 mismatching frames. `layout_learning.py` searches
 at 5 Hz, reuses setup acceptance and self-checks, learns only from the profile's
@@ -125,7 +133,12 @@ rows between black bars, after a menu whose side column stays still): with no
 phantom band, both battles fire within 0.1 s on the windowed/spectate layout
 (gap 1.030 is inside the match band) without learning; a battle within the
 15-second cooldown is recorded as `cooldown`; own battles never fire the spectate
-profile.
+profile. Four `phantomBand` cells replay the 17.10.2026 stop on a profile set up
+in F11: a dark menu peeled to an inset rect, with a still strip bordered where a
+layout aspect places a left band (the setup aspect, or with the owner's stale
+0.5488 phantom learned layout, its aspect), optionally a matchmaking screen,
+then a battle, twice 16 s apart. Each VS fires once within 0.2 s on the setup
+layout, no band remains and nothing is learned.
 
 `boundary` mode sweeps game aspects at gaps 1.025–1.055 (squash as F11, taller,
 and unscaled crop; letterbox bars) for an own-battle and a spectate profile with
@@ -185,7 +198,12 @@ corrupt C3 asset turns that part off and writes
   only after a seen shift or the cap with the last read ≥ 1.0 s into the burst
   and the «vs» unread for at most one tick before it (a landing crown hides it
   longer); any other end leaves them `null`, so a cut-short count never becomes
-  a draw. A detected PoL icon always counts as a seen pill.
+  a draw. A detected PoL icon always counts as a seen pill. If no sign is
+  confirmed, a confirmed PoL VS and different final crown counts decide
+  win/loss (the streamer is the bottom row), including an absent or unreadable
+  pill. Conflicting confirmed signs, non-ranked/unknown VS rank, unfinished
+  counts, and trophy evidence never use this fallback. The server verifies
+  the same rule; explicit unknown reports remain unknown.
 - `prediction_values.py` holds every wire value, matching the server validation.
 - `assets/result_screen_v1.json` and `assets/pol_rank_v1.json` hold quantised
   orientation fields only (no pixels, no names), generated once by

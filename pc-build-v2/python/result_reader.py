@@ -19,7 +19,8 @@ above its band counts too) or is missing for `MISSING_S`. Ticks without the
 «vs» at its place are never read. A pause in the frames longer than
 `MISSING_S` (minimised source, stalled capture) ends the burst on what was read
 before it (`endReason == "gap"`). Crown counts are reported only after a seen
-shift or the cap; the pill sign decides either way.
+shift or the cap; the pill sign decides. Without a read sign, a battle armed
+with a PoL VS rank and no trophy icon is decided by different final crowns.
 """
 from __future__ import annotations
 
@@ -30,8 +31,8 @@ import numpy as np
 
 from geometry.result_screen import (ICON_SEEN_T, VS_FIRE_T, VS_KEEP_T, VS_SHIFTED_BAND, ResultTemplates, count_crowns,
                                     crown_scores, find_vs, read_pill)
-from prediction_values import (CROWNS_UNREADABLE, ICON_ABSENT, ICON_POL, ICON_UNREADABLE, SIGN_UNREADABLE,
-                               outcome_from_evidence)
+from prediction_values import (CROWNS_UNREADABLE, ICON_ABSENT, ICON_POL, ICON_UNREADABLE, RANK_UNKNOWN,
+                               SIGN_UNREADABLE, outcome_from_evidence)
 
 ARM_DELAY_S = 20.0          # no battle ends sooner than 20 s after its VS
 ARM_WINDOW_S = 7 * 60.0     # nor later than 7 min
@@ -80,7 +81,7 @@ class _Burst:
     last: float = 0.0
 
 
-def decide(samples: list[_Sample], *, final: bool, pill_seen: bool) -> dict[str, Any]:
+def decide(samples: list[_Sample], *, final: bool, pill_seen: bool, rank: str = RANK_UNKNOWN) -> dict[str, Any]:
     """Pure decision over the burst samples (in tick order); `final` = the
     burst ended where the crowns have all landed (shift seen, or the cap)."""
     last_read = samples[-1].t if samples else 0.0
@@ -112,7 +113,10 @@ def decide(samples: list[_Sample], *, final: bool, pill_seen: bool) -> dict[str,
     if (final and last_read >= CROWNS_FINAL_S and len(counts) >= CONFIRM and growing
             and counts[-1] == counts[-2]):
         top, bottom = counts[-1]
-    return {"outcome": outcome_from_evidence(top, bottom, sign),
+    # Conflicting confirmed signs are contradictory evidence, not a missing sign.
+    outcome = ("unknown" if len(confirmed) > 1 else
+               outcome_from_evidence(top, bottom, sign, icon=delta_icon, rank=rank))
+    return {"outcome": outcome,
             "evidence": {"crowns": {"top": top, "bottom": bottom}, "deltaSign": sign, "deltaIcon": delta_icon}}
 
 
@@ -122,21 +126,24 @@ class ResultReader:
         self.armed_from: float | None = None
         self.armed_until: float | None = None
         self.burst: _Burst | None = None
+        self.rank = RANK_UNKNOWN   # VS rank of the armed battle (`rank_from_lines`)
         self.diagnostics: dict[str, Any] | None = None
 
     @property
     def armed(self) -> bool:
         return self.armed_until is not None
 
-    def arm(self, now: float, *, delay: float = ARM_DELAY_S) -> None:
+    def arm(self, now: float, *, delay: float = ARM_DELAY_S, rank: str = RANK_UNKNOWN) -> None:
         """Own-battle VS seen: watch for its result screen. Re-arming at the
         next VS drops an unreported battle (the server marks it missed)."""
         self.armed_from, self.armed_until = now + delay, now + ARM_WINDOW_S
         self.burst = None
+        self.rank = rank
 
     def disarm(self) -> None:
         self.armed_from = self.armed_until = None
         self.burst = None
+        self.rank = RANK_UNKNOWN
 
     def finish(self, now: float) -> dict[str, Any] | None:
         """Capture stopped mid-burst: report what was read so far."""
@@ -199,7 +206,7 @@ class ResultReader:
         elapsed = now - burst.start
         final = reason in FINAL_REASONS and (
             burst.missing_since is None or now - burst.missing_since <= FINAL_GAP_S)
-        report = decide(burst.samples, final=final, pill_seen=burst.pill_seen)
+        report = decide(burst.samples, final=final, pill_seen=burst.pill_seen, rank=self.rank)
         self.diagnostics = {"endReason": reason, "startS": round(burst.start, 3), "elapsedS": round(elapsed, 3),
                             "ticks": burst.ticks,
                             "trace": [[s.t, s.top, s.bottom, int(s.icon), s.sign] for s in burst.samples]}

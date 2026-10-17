@@ -416,6 +416,65 @@ describe.skipIf(baseUrl === undefined)('predictions local HTTP smoke', () => {
       })
       expect(externalView.stats).toEqual({ resolved: 0, yes: 0, no: 0, canceled: 0 })
 
+      // A ranked result without a +/- pill must settle through the actual
+      // coordinator, HTTP API, database and fake Twitch, without manual input.
+      for (const [top, bottom, outcome, phase] of [
+        [0, 1, 'win', 'resolved_yes'],
+        [1, 0, 'loss', 'resolved_no'],
+      ] as const) {
+        expect((await fetch(`${url.origin}/__smoke/reset`, { method: 'POST' })).ok).toBe(
+          true,
+        )
+        coordinator.notifyContextChanged()
+        await vi.waitFor(
+          async () => {
+            const ready = await api.request({
+              method: 'GET',
+              path: '/api/streamer/predictions/status',
+              schema: PredictionStatusSchema,
+            })
+            expect(ready).toMatchObject({ ok: true, data: { clientReady: true } })
+          },
+          { timeout: 5_000 },
+        )
+        const automaticId = await nextPrediction()
+        const rankedBattleId = randomUUID()
+        listener({
+          triggerId: rankedBattleId,
+          timestamp: new Date().toISOString(),
+          kind: 'battle',
+          rank: 'pol',
+          rankEvidence: { opponent: 'medal', own: 'medal' },
+        })
+        expect(resultListener).not.toBeNull()
+        const deliverResult = resultListener as unknown as (
+          event: MonitorPredictionResultEvent['payload'],
+        ) => unknown
+        deliverResult({
+          battleId: rankedBattleId,
+          gap: false,
+          outcome,
+          evidence: { crowns: { top, bottom }, deltaSign: null, deltaIcon: 'absent' },
+        })
+        await vi.waitFor(
+          async () => {
+            const resolved = await api.request({
+              method: 'GET',
+              path: '/api/streamer/predictions/status',
+              schema: PredictionStatusSchema,
+            })
+            if (!resolved.ok) throw new Error(resolved.error.code)
+            expect(
+              resolved.data.history.find((item) => item.id === automaticId),
+            ).toMatchObject({
+              phase,
+              settledBy: 'screen',
+            })
+          },
+          { timeout: 5_000 },
+        )
+      }
+
       const eventsFile = process.env['CR_C3_EVENTS_JSONL']
       if (eventsFile !== undefined) {
         const replayed = readFileSync(eventsFile, 'utf8')
