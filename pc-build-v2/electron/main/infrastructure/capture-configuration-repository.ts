@@ -25,6 +25,7 @@ import {
   assertLegacyFingerprint,
   createLayoutCalibration,
   LegacyCaptureCollectionSchema,
+  isPhantomChromeLayout,
   LegacyCaptureConfigurationSchema,
   V4CaptureCollectionSchema,
 } from './capture-profile-migration'
@@ -61,6 +62,8 @@ export interface CaptureConfigurationRepositoryOptions {
   ) => Promise<void>
   now?: () => Date
   createProfileId?: () => string
+  /** Called once with the count when stored phantom-chrome layouts are removed. */
+  onPhantomChromeLayoutsRemoved?: (removed: number) => void
 }
 
 export interface SaveCaptureConfigurationOptions {
@@ -697,17 +700,18 @@ export class CaptureConfigurationRepository {
       join(this.directory, profileUserFileName(userId)),
     )
     if (profileContent !== null) {
+      let collection: CaptureProfileCollection
       try {
-        const collection = validateCollection(
+        collection = validateCollection(
           CaptureProfileCollectionSchema.parse(JSON.parse(profileContent) as unknown),
         )
         if (collection.userId !== userId) {
           throw new Error('Capture profile collection userId does not match its file')
         }
-        return collection
       } catch (error) {
         throw new CaptureProfileStoreCorruptError(userId, 'profile store', error)
       }
+      return this.removePhantomChromeLayouts(collection)
     }
 
     const previousProfiles = await this.readOptional(
@@ -851,6 +855,41 @@ export class CaptureConfigurationRepository {
     } catch (error) {
       throw new CaptureProfileStoreCorruptError(userId, 'legacy configuration', error)
     }
+  }
+
+  /**
+   * Learned layouts proven to be a setup game seen through a phantom chrome band
+   * (`isPhantomChromeLayout`) can never fire on the right zones; they are removed
+   * once, with the same revision and signing rules as appending a learned layout.
+   * The calibration identity is kept, so prediction bindings stay valid.
+   */
+  private async removePhantomChromeLayouts(
+    collection: CaptureProfileCollection,
+  ): Promise<CaptureProfileCollection> {
+    let removed = 0
+    const profiles = collection.profiles.map((profile) => {
+      const calibration = profile.configuration.calibration
+      if (calibration.coordinateSpace !== 'game_relative') return profile
+      const layouts = calibration.layouts.filter(
+        (layout) => !isPhantomChromeLayout(layout, calibration.layouts),
+      )
+      if (layouts.length === calibration.layouts.length) return profile
+      removed += calibration.layouts.length - layouts.length
+      const { fingerprint: _fingerprint, ...unsigned } = profile.configuration
+      void _fingerprint
+      const configuration = signConfiguration({
+        ...unsigned,
+        revision: unsigned.revision + 1,
+        committedAt: this.timestamp(),
+        calibration: { ...calibration, revision: calibration.revision + 1, layouts },
+      })
+      return { ...profile, updatedAt: configuration.committedAt, configuration }
+    })
+    if (removed === 0) return collection
+    const revised = this.reviseCollection(collection, profiles)
+    await this.writeCollection(revised)
+    this.options.onPhantomChromeLayoutsRemoved?.(removed)
+    return revised
   }
 
   private async readOptional(path: string): Promise<string | null> {
