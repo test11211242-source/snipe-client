@@ -4,12 +4,13 @@ import cv2
 import numpy as np
 import pytest
 
-from game_geometry import GameGeometry
+from game_geometry import GameGeometry, phantom_chrome
 from geometry.aspect import ASPECT_MATCH_TOL, aspect_gap, aspects_overlap
 from geometry.game_rect import detect
 from geometry.vs_orient_trigger import OrientationTrigger
 from geometry.zones import regions
-from synthetic_frames import arena, framed
+from synthetic_frames import (F11_BAR, F11_GAME, F11_WIDTH, NO_CHROME, arena, f11_frame, framed, moving_noise,
+                              phantom_band_menu, pre_battle)
 from test_trigger_engine import payload, profile_for, trigger_image
 from trigger_engine import TriggerEngine
 
@@ -509,3 +510,126 @@ def test_side_toolbar_spanning_the_letterboxed_window_is_still_trimmed():
     assert geometry._band == ("right", 348)
     assert geometry.rect == (0, 10, 348, 619)
     assert geometry.state == "armed_provisional"
+
+
+def owner_f11_layouts():
+    """The owner's `ranked` profile: the F11 setup layout and the layout learned
+    on 14.10 through a phantom 57-px left band (one third scale: 19 px)."""
+    setup = game_layout(F11_WIDTH, F11_GAME)
+    phantom = game_layout(F11_WIDTH - 19, F11_GAME, source="learned", chrome={**NO_CHROME, "left": 19})
+    return setup, phantom
+
+
+def test_phantom_chrome_is_template_less_chrome_of_a_learned_layout():
+    setup, phantom = owner_f11_layouts()
+    assert phantom_chrome(phantom)
+    assert not phantom_chrome(setup)
+    assert not phantom_chrome({**setup, "windowChrome": {**NO_CHROME, "left": 19}})
+    templated = detect([emulator_window(moving_game(index), 360) for index in range(8)]).chrome
+    assert not phantom_chrome({**phantom, "windowChrome": templated})
+
+
+def test_learned_phantom_chrome_layout_never_seeds_a_band():
+    # 03:57 on 17.10: the 0.5488 layout learned through a phantom band implied a
+    # 96-px left "toolbar" on a menu whose dark left margin had been peeled.
+    geometry = GameGeometry(list(owner_f11_layouts()))
+    for index in range(40):
+        geometry.process(phantom_band_menu(index), index / 10)
+        assert geometry._band is None
+    assert geometry.rect == (7, F11_BAR, 339, F11_GAME - 51)
+
+
+@pytest.mark.parametrize("edge, seeds", [(32, "owner"), (17, "setup")])
+def test_phantom_band_from_a_peeled_dark_margin_is_dropped_once_the_game_fills_the_frame(edge, seeds):
+    # The band's raw outer edge sat on the peeled margin (x = 7). When the game
+    # fills the frame the edge moves to x = 0 and the band would now have to
+    # cross MuMu's black bars, which it does not: it was game content.
+    setup, phantom = owner_f11_layouts()
+    geometry = GameGeometry([setup, phantom] if seeds == "owner" else [setup])
+    for index in range(40):
+        geometry.process(phantom_band_menu(index, edge), index / 10)
+    if seeds == "setup":
+        assert geometry._band == ("left", 15)
+    for index in range(40, 80):
+        geometry.process(f11_frame(moving_noise(index)), index / 10)
+    assert geometry._band is None
+    assert geometry.rect == (0, F11_BAR, F11_WIDTH, F11_GAME)
+    assert (geometry.state, geometry.layout) == ("armed", setup)
+
+
+STILL_COLUMN = np.random.default_rng(91).integers(20, 120, (640, 12, 3), dtype=np.uint8)
+
+
+def column_window(index: int, *, moving: bool = False, dark_rows: int = 0, toolbar: bool = False) -> np.ndarray:
+    """A plain window capture (no letterbox): the game and a 12-px right column
+    that is either a still game column or a real toolbar."""
+    frame = np.empty((640, 372, 3), np.uint8)
+    frame[:, :360] = moving_game(index)
+    frame[:, 360:] = moving_game(5000 + index)[:, :12] if moving else STILL_COLUMN
+    if toolbar:
+        frame[:, 360:] = (92, 88, 84)
+        frame[100:200, 360:] = 220
+    if dark_rows:
+        # Dark first game rows; a real toolbar continues beside them.
+        frame[:dark_rows, :360 if toolbar else 372] = 0
+    return frame
+
+
+def test_inferred_band_is_dropped_after_game_motion_on_rechecks_a_second_apart():
+    geometry = GameGeometry([game_layout()])
+    for index in range(30):
+        geometry.process(column_window(index), index / 10)
+    assert geometry._band == ("right", 360)
+    history = []
+    for index in range(30, 70):
+        geometry.process(column_window(index, moving=True), index / 10)
+        history.append(geometry._band)
+    # One moving recheck is not enough; the next one, a second later, is.
+    assert history[9] == ("right", 360) and history[-1] is None
+    assert geometry.rect == (0, 0, 372, 640)
+
+
+def test_inferred_band_is_dropped_when_dark_game_rows_cover_it_too():
+    geometry = GameGeometry([game_layout()])
+    for index in range(30):
+        geometry.process(column_window(index), index / 10)
+    assert geometry._band == ("right", 360)
+    for index in range(30, 50):
+        geometry.process(column_window(index, dark_rows=40), index / 10)
+    assert geometry._band is None
+    assert geometry.rect == (0, 40, 372, 600)
+
+
+def test_real_side_toolbar_band_survives_rechecks_and_dark_game_rows():
+    geometry = GameGeometry([game_layout()])
+    for index in range(120):
+        geometry.process(column_window(index, toolbar=True, dark_rows=40 if (index // 15) % 2 else 0), index / 10)
+        if index >= 8:
+            assert geometry._band == ("right", 360)
+
+
+def test_owner_f11_phantom_band_menu_then_every_vs_fires_on_the_setup_layout():
+    # 03:57–04:13 on 17.10, synthetic: after the menu every VS ended `confirm`
+    # on the phantom layout, 21 px off the badge, and no deck was requested.
+    setup, phantom = owner_f11_layouts()
+
+    def battle(seed):
+        return ([phantom_band_menu(index) for index in range(40)] + [pre_battle(index) for index in range(30)]
+                + [f11_frame(moving_noise(800 + index)) for index in range(30)]
+                + [f11_frame(arena(F11_WIDTH, F11_GAME, seed=seed + index)[0]) for index in range(20)]
+                + [f11_frame(moving_noise(700 + index)) for index in range(30)])
+
+    first, second = battle(0), battle(100)
+    engine = TriggerEngine(game_payload([setup, phantom]))
+    fires, records, learned = [], [], []
+    for index, frame in enumerate(first + second):
+        engine.process(frame, index / 10 + (16 if index >= len(first) else 0))
+        if engine.take_triggered():
+            fires.append(index)
+        for kind, value in engine.take_events():
+            if kind == "vs_candidate":
+                records.append((value["reason"], value["learnedLayout"]))
+            learned += [value] if kind == "layout_learned" else []
+    assert fires == [101, len(first) + 101]
+    assert records == [("fired", False), ("fired", False)]
+    assert learned == []

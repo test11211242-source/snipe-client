@@ -417,6 +417,62 @@ def _still_column_menu(frames: list[np.ndarray], count: int = 40) -> list[np.nda
     return menu
 
 
+# Deck search stopped (owner MuMu F11, 17.10.2026): a dark menu, peeled to an
+# inset rect, let a layout aspect invent a left band up to a still strip's
+# border. Owner pixels at 1080 columns: inset 20, right 43, bottom 153 rows.
+PHANTOM_INSET, PHANTOM_RIGHT, PHANTOM_BOTTOM = 20 / 1080, 43 / 1080, 153 / 1864
+# The phantom left band of the owner's stale learned layout (14.10.2026).
+PHANTOM_LEARNED_BAND = 57 / 1080
+
+
+def _phantom_band_menu(frames: list[np.ndarray], aspect: float, count: int = 40) -> list[np.ndarray]:
+    """F11 frames turned into the 03:57 trap for a layout of `aspect`: black
+    inset, right margin and bottom rows, and a still strip whose bright
+    border sits exactly where that aspect places a band on the peeled rect."""
+    height, width = frames[0].shape[:2]
+    bar, game = round(height * F11_BAR), round(height * F11_GAME)
+    inset, right, bottom = (round(width * PHANTOM_INSET), round(width * PHANTOM_RIGHT),
+                            round(game * PHANTOM_BOTTOM))
+    edge = inset + round((width - inset - right) - (game - bottom) * aspect)
+    if not inset + 4 < edge < width // 3:
+        raise ValueError("Phantom band menu needs a narrow left band")
+    still = frames[0][bar:bar + game, inset:edge].copy()
+    menu = []
+    for index in range(count):
+        frame = frames[index % len(frames)].copy()
+        rows = frame[bar:bar + game]
+        rows[:, inset:edge] = still
+        rows[:, edge - 2:edge] = 230
+        rows[:, :inset] = 0
+        rows[:, width - right:] = 0
+        rows[game - bottom:] = 0
+        menu.append(frame)
+    return menu
+
+
+def _phantom_learned_layout(layout: dict[str, Any], vs_frame: np.ndarray) -> dict[str, Any]:
+    """What learning stored through the owner's phantom band on an F11 frame:
+    the setup game minus a template-less left band, its zones re-fitted."""
+    height, width = vs_frame.shape[:2]
+    bar, game = round(height * F11_BAR), round(height * F11_GAME)
+    band = round(width * PHANTOM_LEARNED_BAND)
+    trimmed: PixelRect = (band, bar, width - band, game)
+    old = layout["badge"]
+    badge = Badge((old["cx"] * width - band) / (width - band), old["cy"],
+                  old["width"] * width / (width - band), old["height"])
+    aspect = (width - band) / game
+    zones = regions(badge, aspect)
+    chrome = {"top": 0, "bottom": 0, "left": band, "right": 0,
+              "topEdges": None, "bottomEdges": None, "leftEdges": None, "rightEdges": None}
+    return {
+        **layout, "layoutId": str(uuid.uuid5(uuid.NAMESPACE_URL, "cr-tools-m9-replay:phantom-learned")),
+        "layoutSource": "learned", "calibratedAt": "2026-10-14T00:00:00Z", "gameAspect": aspect,
+        "windowChrome": chrome,
+        "regions": {"trigger": zones["trigger"].to_dict(), "nicknameRegion": zones["nickname"].to_dict(),
+                    "topLeftEvidenceRegion": zones["topLeftEvidence"].to_dict()},
+        "trigger": OrientationTrigger.build(vs_frame, trimmed, badge).to_dict(), "badge": badge.to_dict(),
+    }
+
 
 def _runtime_profile(frames: list[np.ndarray], record: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     game, geometry = _geometry(frames)
@@ -441,14 +497,15 @@ def _runtime_profile(frames: list[np.ndarray], record: dict[str, Any]) -> tuple[
     return layout, setup
 
 
-def _runtime_payload(layout: dict[str, Any], *, learning: bool) -> dict[str, Any]:
+def _runtime_payload(layout: dict[str, Any], *, learning: bool,
+                     extra_layouts: tuple[dict[str, Any], ...] = ()) -> dict[str, Any]:
     return validate_start_payload({
         "selector": {"kind": "window", "windowHwnd": "1"}, "capturePolicy": "immediate_nickname",
         "limits": {"fps": 10, "maxImageBytes": 10 * 1024 * 1024, "maxImagePixels": 20_000_000,
                    "maxImageWidth": 8192, "maxImageHeight": 8192, "confirmationsNeeded": 2,
                    "confirmationDecay": 0.5, "cooldownSeconds": 15},
         "primary": {"kind": "game_relative", "profileCalibrationId": layout["layoutId"],
-                    "layouts": [layout], "learning": {"enabled": learning, "maxLayouts": 4}},
+                    "layouts": [layout, *extra_layouts], "learning": {"enabled": learning, "maxLayouts": 4}},
     })
 
 
@@ -460,11 +517,12 @@ def _runtime_windows(record: dict[str, Any], offset: int = 0) -> list[tuple[int,
 
 def _runtime_run(layout: dict[str, Any], frames, windows: list[tuple[int, int]], *,
                  learning: bool = False, output: Path | None = None,
-                 overlay_number: int = 0, gap_at: int | list[int] | None = None) -> dict[str, Any]:
+                 overlay_number: int = 0, gap_at: int | list[int] | None = None,
+                 extra_layouts: tuple[dict[str, Any], ...] = ()) -> dict[str, Any]:
     """Only TriggerEngine decides geometry, learning, firing and action pixels.
     Frames run through the worker's `FrameEvents`; every emitted event passes
     the protocol validation of `encode_event`."""
-    engine = TriggerEngine(_runtime_payload(layout, learning=learning))
+    engine = TriggerEngine(_runtime_payload(layout, learning=learning, extra_layouts=extra_layouts))
     wired = FrameEvents(engine)
     gaps = [] if gap_at is None else [gap_at] if isinstance(gap_at, int) else list(gap_at)
 
@@ -612,18 +670,20 @@ def evaluate_runtime(result: dict[str, Any]) -> dict[str, Any]:
     setup_ok = len(result["setups"]) == 9 and all(
         setup.get("code") is None for setup in result["setups"].values())
     fullscreen_ok = _fullscreen_ok(list(result["fullscreenLetterbox"].values()))
+    phantom_ok = _phantom_band_ok(list(result["phantomBand"].values()))
     checks = {"setupAccepted": setup_ok, "runtime22OneFirePerVs": positive_ok,
               "crossSpectateZeroOf6": cross_ok, "aspectBlocked4Within2S": blocked_ok,
               "secondRecordingLearned4WithSameVsFire": learning_ok,
               "crossAspectSpectateIgnored3": rejection_ok,
               "spectateProfile3FireOwnBattles0": spectate_ok,
               "windowResize16OneFirePerVs": resize_ok,
-              "fullscreenLetterbox6": fullscreen_ok}
+              "fullscreenLetterbox6": fullscreen_ok, "phantomBand4": phantom_ok}
     prediction_checks, predictions = _runtime_predictions(result)
     checks.update(prediction_checks)
     return {"passed": all(checks.values()), "checks": checks, "positiveRequired": 22,
             "crossRequired": 6, "aspectRequired": 4, "learningRequired": 4,
             "learningSpectateRequired": 3, "windowResizeRequired": 16, "fullscreenLetterboxRequired": 6,
+            "phantomBandRequired": 4,
             "maxPositiveDelayS": 0.2, "maxSameCanvasUnknownFrames": 45, "maxNewFrameUnknownFrames": 20,
             "predictions": predictions}
 
@@ -675,6 +735,19 @@ def _fullscreen_ok(cells: list[dict[str, Any]]) -> bool:
     return battles_ok and back_ok and own_ok
 
 
+def _phantom_band_ok(cells: list[dict[str, Any]]) -> bool:
+    """Every VS after the trap fires once, aligned, on the setup layout; no
+    band is left and nothing is learned, also with a stale phantom layout."""
+    return len(cells) == 4 and all(
+        cell["vsFireCounts"] == [1, 1] and cell["falseFires"] == 0 and not cell["blockedFires"]
+        and cell["chromeBand"] is None and max(cell["delayS"]) <= 0.2
+        and all(fire["source"] == "setup" for fire in cell["fireLayouts"])
+        and not any(event["type"] == "layout_learned" for event in cell["events"])
+        and [(event["reason"], event["learnedLayout"]) for event in cell["events"] if event["type"] == "vs_candidate"]
+        == [("fired", False)] * 2
+        and [action["frame"] for action in cell["actions"]] == cell["fires"] for cell in cells)
+
+
 def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
                    prototype_jpeg92: bool = False, titlebar_image: Path | None = None,
                    titlebar_rect: list[int] | None = None) -> dict[str, Any]:
@@ -705,7 +778,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     result: dict[str, Any] = {
         "mode": "runtime", "sampling": "prototype-jpeg92" if prototype_jpeg92 else "direct-video",
         "setups": {}, "positive": {}, "cross": {}, "aspectBlocked": {}, "learning": {}, "learningSpectate": {},
-        "windowResize": {}, "spectateProfile": {}, "fullscreenLetterbox": {},
+        "windowResize": {}, "spectateProfile": {}, "fullscreenLetterbox": {}, "phantomBand": {},
     }
     profiles: dict[str, dict[str, Any]] = {}
     rects: dict[str, PixelRect] = {}
@@ -714,13 +787,15 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
     def load(key: str) -> list[np.ndarray]:
         return decode(manifest.parent / records[key]["path"], prototype_jpeg92=prototype_jpeg92)
 
-    def run(group: str, name: str, source: str, frames, windows, *, learn: bool = False, gap_at: int | None = None) -> dict[str, Any]:
+    def run(group: str, name: str, source: str, frames, windows, *, learn: bool = False,
+            gap_at: int | None = None, extra_layouts: tuple[dict[str, Any], ...] = ()) -> dict[str, Any]:
         nonlocal run_number
         run_number += 1
         if source not in profiles:
             return {}
         cell = _runtime_run(profiles[source], frames, windows, learning=learn,
-                            output=output if overlays else None, overlay_number=run_number, gap_at=gap_at)
+                            output=output if overlays else None, overlay_number=run_number, gap_at=gap_at,
+                            extra_layouts=extra_layouts)
         result[group][name] = cell
         print(f"{group}/{name} fires={len(cell['fires'])} false={cell['falseFires']} "
               f"delay={cell['delayS']} unknown={cell['firstUnknownFrame']}", flush=True)
@@ -849,6 +924,39 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
         if cell:
             cell["expectKind"] = kind
         del frames, fullscreen, menu
+    # Deck search stopped (owner F11, 17.10.2026), on a profile set up in F11
+    # like the owner's. Each case: trap menu, (matchmaking,) battle; 16 s; the
+    # same again. The setup-only profile's own aspect places the band; with
+    # the owner's stale phantom layout its aspect does, as on 17.10. Learning
+    # stays enabled, as in production.
+    if "windowed_1080x1920" in rects:
+        record = records["windowed_1080x1920"]
+        frames = load("windowed_1080x1920")
+        fullscreen = [_fullscreen_variant(frame, rects["windowed_1080x1920"]) for frame in frames]
+        source = "windowed_1080x1920_f11_setup"
+        layout, _ = _runtime_profile(fullscreen, {**record, "key": source})
+        if layout is not None:
+            profiles[source] = layout
+            onset = _runtime_windows(record)[0][0]
+            stale = _phantom_learned_layout(layout, fullscreen[onset + 3])
+            height = fullscreen[0].shape[0]
+            bar = round(height * F11_BAR)
+            matchmaking = []
+            for frame in fullscreen[:30]:
+                frame = frame.copy()
+                frame[bar:bar + round(height * .07)] = 0
+                frame[height - bar - round(height * .06):height - bar] = 0
+                matchmaking.append(frame)
+            for seeded, extra in (("setup_seed", ()), ("stale_learned_seed", (stale,))):
+                aspect = (extra[0] if extra else layout)["gameAspect"]
+                menu = _phantom_band_menu(fullscreen[:max(1, min(20, onset - 5))], aspect)
+                for prefix in ("", "matchmaking_"):
+                    lead = menu + (matchmaking if prefix else [])
+                    episode = lead + fullscreen
+                    run("phantomBand", f"{source}_{prefix}{seeded}", source, episode + episode,
+                        _runtime_windows(record, len(lead)) + _runtime_windows(record, len(episode) + len(lead)),
+                        learn=True, gap_at=len(episode), extra_layouts=extra)
+        del frames, fullscreen
     if "spectate_profile" in profiles:
         first, second = load(_RUNTIME_SPECTATE[0]), load(_RUNTIME_SPECTATE[1])
         first = [_fullscreen_variant(frame, _geometry(first)[0].rect) for frame in first]
@@ -896,7 +1004,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
         "positiveCases": len(positive), "positiveFires": sum(len(cell["fires"]) for cell in positive),
         "falseFires": sum(cell["falseFires"] for group in ("positive", "cross", "aspectBlocked", "learning",
                                                            "learningSpectate", "windowResize", "spectateProfile",
-                                                           "fullscreenLetterbox")
+                                                           "fullscreenLetterbox", "phantomBand")
                           for cell in result[group].values()),
         "crossCases": len(cross), "crossFires": sum(len(cell["fires"]) for cell in cross),
         "aspectBlockedCases": len(result["aspectBlocked"]), "learningCases": len(result["learning"]),
@@ -905,6 +1013,7 @@ def runtime_replay(manifest: Path, output: Path, *, overlays: bool = False,
         "learningSpectateCases": len(result["learningSpectate"]),
         "fullscreenLetterboxCases": len(result["fullscreenLetterbox"]),
         "fullscreenLetterboxFires": [cell["vsFireCounts"] for cell in result["fullscreenLetterbox"].values()],
+        "phantomBandFires": [cell["vsFireCounts"] for cell in result["phantomBand"].values()],
         "delayS": sorted({delay for cell in positive for delay in cell["delayS"]}),
         "nonMax": max((cell["nonMax"] for cell in positive if cell["nonMax"] is not None), default=None),
         "stableVsMin": min((cell["stableVsMin"] for cell in positive if cell["stableVsMin"] is not None), default=None),
