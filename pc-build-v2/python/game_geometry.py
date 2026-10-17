@@ -30,6 +30,28 @@ CHROME_EDGE = 8
 # most LETTERBOX_LINES bar lines next to the game are compared with a band.
 LETTERBOX_MIN = 8
 LETTERBOX_LINES = 64
+# An inferred band is a hypothesis about window chrome, and chrome hangs on the
+# window edge: the raw game edge on the band side may move this many pixels
+# before the band is re-inferred. Game motion inside the band, seen on rechecks
+# at least BAND_MOTION_SPAN seconds apart, disproves it too (owner F11
+# 17.10.2026: a still menu strip beside a peeled dark margin stayed trimmed as a
+# 96-px toolbar through every later battle).
+BAND_OUTER_TOL = 2
+BAND_MOTION_SPAN = 1.0
+SIDES = ("top", "bottom", "left", "right")
+
+
+def phantom_chrome(layout: dict[str, Any]) -> bool:
+    """A learned layout whose chrome has no edge template was learned through an
+    inferred band. Such a band trims the game to its seed layout's aspect, so a
+    rect it trims to a new aspect is a stale band, never a new game."""
+    chrome = layout["windowChrome"]
+    return layout["layoutSource"] == "learned" and any(chrome[side] and chrome[side + "Edges"] is None for side in SIDES)
+
+
+def _outer(raw, side: str) -> int:
+    x, y, w, h = raw
+    return {"left": x, "right": x + w, "top": y, "bottom": y + h}[side]
 
 
 def union(left, right):
@@ -114,6 +136,10 @@ class GameGeometry:
         self._trimmed = False
         self._history: list[tuple[float, np.ndarray]] = []
         self._band = None
+        self._band_outer = None
+        self._band_moving_since = None
+        self._band_detected = False
+        self._band_trimmed = False
 
     def _remember(self, frame, now):
         if self._history and now - self._history[-1][0] < CHROME_SPACING:
@@ -124,10 +150,10 @@ class GameGeometry:
         gray = cv2.cvtColor(cv2.resize(frame[:, :, :3], size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
         self._history = (self._history + [(now, gray)])[-CHROME_HISTORY:]
 
-    def _band_static(self, raw, side, size) -> bool:
-        """The band stays identical across spaced frames while the game moves."""
+    def _band_diffs(self, raw, side, size):
+        """Coarse history spread inside the band and in the game's middle quarter."""
         if len(self._history) < 3 or self._history[-1][0] - self._history[0][0] < 0.8:
-            return False
+            return None, None
         stack = np.stack([gray for _, gray in self._history]).astype(np.int16)
         difference = stack.max(axis=0) - stack.min(axis=0)
         scale = difference.shape[1] / self.shape[1]
@@ -145,11 +171,47 @@ class GameGeometry:
             x1, y1 = math.floor((rx + rw) * scale) - 1, math.floor((ry + rh) * scale) - 1
             return difference[y0:y1, x0:x1] if x1 > x0 and y1 > y0 else None
 
-        band_diff, game_diff = inner(band), inner(game, quarter=True)
+        return inner(band), inner(game, quarter=True)
+
+    def _band_static(self, raw, side, size) -> bool:
+        """The band stays identical across spaced frames while the game moves."""
+        band_diff, game_diff = self._band_diffs(raw, side, size)
         if band_diff is None or game_diff is None:
             return False
         return (float((game_diff > 30).mean()) >= CHROME_MOTION
                 and float((band_diff <= STATIC_TOL).mean()) >= CHROME_STATIC)
+
+    def _band_holds(self, frame, raw) -> bool:
+        """Re-prove the inferred band on the current raw rect: chrome stays on the
+        window edge, keeps crossing the letterbox bars and never shows game motion."""
+        side, edge = self._band
+        if abs(_outer(raw, side) - self._band_outer) > BAND_OUTER_TOL:
+            return False
+        x, y, w, h = raw
+        size = {"top": edge - y, "bottom": y + h - edge, "left": edge - x, "right": x + w - edge}[side]
+        if size <= 0 or not crosses_letterbox(frame, raw, side, size):
+            return False
+        band_diff, _ = self._band_diffs(raw, side, size)
+        if band_diff is None or float((band_diff > 30).mean()) < CHROME_MOTION:
+            self._band_moving_since = None
+            return True
+        newest = self._history[-1][0]
+        if self._band_moving_since is None:
+            self._band_moving_since = newest
+        return newest - self._band_moving_since < BAND_MOTION_SPAN
+
+    @property
+    def inferred_band(self) -> bool:
+        """The tracked rect is trimmed by an inferred (template-less) band."""
+        return self._band is not None and self._band_trimmed
+
+    def drop_band(self) -> None:
+        """Forget the inferred band and locate the game afresh."""
+        if self._band is None:
+            return
+        self._band = None
+        self._band_trimmed = False
+        self.rect, self.raw_rect, self.frames = None, None, 0
 
     def _infer_band(self, frame, raw, layout):
         """Return (side, absolute game edge) of a chrome band the layout aspect implies."""
@@ -202,6 +264,7 @@ class GameGeometry:
     def _detect(self, frame):
         result = detect([frame], trim_chrome=False)
         self._detected_raw_rect = result.rect
+        self._band_detected = False
         if result.rect is None:
             return result
         for layout in self.layouts:
@@ -220,14 +283,22 @@ class GameGeometry:
             aspect = nw / nh
             if any(matched.values()) and aspect_matches(aspect, layout["gameAspect"]):
                 return RectResult((x + matched["left"], y + matched["top"], nw, nh), aspect, "ok", chrome)
+        if self._band is not None and not self._band_holds(frame, result.rect):
+            self._band = None
         if self._band is None:
-            self._band = next((band for band in (self._infer_band(frame, result.rect, layout) for layout in self.layouts)
+            # Only layouts whose aspect is real game evidence imply a band.
+            seeds = (layout for layout in self.layouts if not phantom_chrome(layout))
+            self._band = next((band for band in (self._infer_band(frame, result.rect, layout) for layout in seeds)
                                if band is not None), None)
+            if self._band is not None:
+                self._band_outer = _outer(result.rect, self._band[0])
+                self._band_moving_since = None
         if self._band is not None:
             # Chrome is fixed to the window: its game edge stays put while the
             # peeled game bounds vary with dark first/last rows.
             trimmed = self._apply_band(result.rect)
             if trimmed is not None:
+                self._band_detected = True
                 return trimmed
             self._band = None
         return result
@@ -240,7 +311,7 @@ class GameGeometry:
             self.frames, self.mismatch_frames = 0, 0
             self._aspect_change_checks = 0
             self._missing_checks = 0
-            self._history, self._band = [], None
+            self._history, self._band, self._band_trimmed = [], None, False
             self.state = "locating"
         self._remember(frame, now)
         if self.frames < DETECT_FRAMES or self.tick % RECHECK_EVERY == 0:
@@ -275,6 +346,7 @@ class GameGeometry:
                 if restart:
                     self.rect, self.raw_rect, self.frames = found, raw_found, 1
                     self._trimmed = trimmed
+                    self._band_trimmed = self._band_detected
                     self._aspect_change_checks = 0
                 elif self.frames < DETECT_FRAMES:
                     self.rect = union(self.rect, found)

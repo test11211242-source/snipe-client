@@ -9,6 +9,7 @@ import {
   NormalizedRectSchema,
   PixelSizeSchema,
   TriggerProfileSchema,
+  type GameLayout,
   type NormalizedRegions,
   type PixelSize,
   type TriggerProfile,
@@ -150,4 +151,45 @@ export function createLayoutCalibration(
     validationStatus: origin === 'imported' ? 'imported' : 'validated',
     calibratedAt,
   }
+}
+
+const CHROME_SIDES = ['top', 'bottom', 'left', 'right'] as const
+const PHANTOM_RECT_TOLERANCE_PX = 2
+
+/**
+ * A learned layout is a proven phantom-chrome layout when some window-chrome
+ * side has a thickness but no edge template (only an inferred band produces
+ * that) and its game rect, grown back by exactly those template-less sides, is
+ * a setup layout's game rect in the same reference frame. It is then the setup
+ * game seen through a band that was never chrome (owner MuMu F11, 14.10.2026:
+ * 0.5488 = the 0.5794 game minus a phantom 57-px left band). Real chrome grown
+ * back never reproduces the setup game rect, so such layouts are kept.
+ */
+export function isPhantomChromeLayout(
+  layout: GameLayout,
+  layouts: readonly GameLayout[],
+): boolean {
+  if (layout.layoutSource !== 'learned') return false
+  const chrome = layout.windowChrome
+  const band = (side: (typeof CHROME_SIDES)[number]): number =>
+    chrome[side] > 0 && chrome[`${side}Edges`] === null ? chrome[side] : 0
+  if (CHROME_SIDES.every((side) => band(side) === 0)) return false
+  const rect = layout.referenceGameRect
+  const grown = {
+    x: rect.x - band('left'),
+    y: rect.y - band('top'),
+    width: rect.width + band('left') + band('right'),
+    height: rect.height + band('top') + band('bottom'),
+  }
+  return layouts.some(
+    (setup) =>
+      setup.layoutSource === 'setup' &&
+      setup.referenceFrameSize.width === layout.referenceFrameSize.width &&
+      setup.referenceFrameSize.height === layout.referenceFrameSize.height &&
+      (['x', 'y', 'width', 'height'] as const).every(
+        (key) =>
+          Math.abs(setup.referenceGameRect[key] - grown[key]) <=
+          PHANTOM_RECT_TOLERANCE_PX,
+      ),
+  )
 }

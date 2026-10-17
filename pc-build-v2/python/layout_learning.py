@@ -121,6 +121,13 @@ class LayoutLearning:
                 self._event("failed", "LEARN_ASPECT_UNSUPPORTED")
             self._pending = None
             return None
+        if geometry.inferred_band:
+            # An inferred band trims the game to its seed layout's aspect, so a
+            # rect it trims to an unknown aspect is a stale band, not a new game
+            # (the owner's phantom 0.5488 layout, 14.10). Geometry re-proves the
+            # band on its next detection; nothing is learned or rejected meanwhile.
+            self._pending = None
+            return None
         if now - self._last_sample < 0.2 - 1e-9:
             return None
         self._last_sample = now

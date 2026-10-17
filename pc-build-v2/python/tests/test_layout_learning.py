@@ -51,6 +51,19 @@ def test_auto_learning_appends_and_fires_on_confirmation_frame_after_selfcheck()
     assert any(kind == "learning" and value["status"] == "waiting_vs" for _, kind, value in events)
 
 
+def test_no_learning_while_the_rect_is_trimmed_by_an_inferred_band(monkeypatch):
+    # A phantom band from a still menu strip trimmed the owner's F11 game to an
+    # unknown aspect on 14.10, and that rect was learned as a new layout.
+    monkeypatch.setattr(GameGeometry, "inferred_band", property(lambda self: True))
+    engine = TriggerEngine(game_payload())
+    output, events = run_new_format(engine)
+    assert output == []
+    assert not any(kind == "layout_learned" for _, kind, _ in events)
+    assert not any(kind == "learning" and value["status"] in ("rejected", "failed") for _, kind, value in events)
+    assert engine.learner.rejected_count == 0
+    assert len(engine.geometry.layouts) == 1
+
+
 def test_own_battle_profile_ignores_spectate_vs_without_failing():
     # Owner decision (field test 1): never cross-learn between own battles and spectating.
     engine = TriggerEngine(game_payload())
@@ -411,7 +424,8 @@ def test_learning_acceptance_uses_symmetric_wire_aspect_overlap(monkeypatch, sou
     learner = LayoutLearning(layouts, True)
     trigger = OrientationTrigger.build(frame, rect, badge)
     candidate = Candidate(0.9, badge.width, badge)
-    geometry = SimpleNamespace(rect=rect, aspect=480 / 640, reason="ok", frames=20, chrome=source["windowChrome"])
+    geometry = SimpleNamespace(rect=rect, aspect=480 / 640, reason="ok", frames=20, chrome=source["windowChrome"],
+                               inferred_band=False)
     learner.buffer(frame, 0, geometry)
     learner._pending = (trigger, candidate, frame.copy(), rect, source, 1.0)
     # This test isolates the post-self-check layout contract admission.

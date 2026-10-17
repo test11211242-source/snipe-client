@@ -9,6 +9,7 @@ import {
   MAX_CAPTURE_PROFILES,
   type CaptureConfiguration,
   type CaptureProfileCollection,
+  type GameLayout,
 } from '../../../shared/models/capture'
 import { ApplicationError } from '../../../shared/errors/application-error'
 import { GAME_ASPECT_MIN, GAME_ASPECT_MAX } from '../../../shared/contracts/game-aspect'
@@ -35,6 +36,7 @@ import {
 } from './capture-configuration-repository'
 import { v4CaptureFixture } from '../../../tests/capture-fixtures'
 import {
+  isPhantomChromeLayout,
   LegacyCaptureConfigurationSchema,
   type LegacyCaptureConfiguration,
   V4CaptureCollectionSchema,
@@ -1402,5 +1404,153 @@ describe('game-relative storage mutations', () => {
     expect(error).toMatchObject({ code: 'LAYOUT_SAVE_FAILED' })
     expect(files.get(profilePath('/v5', 'user'))).toBe(committed)
     expect([...files.keys()].some((path) => path.endsWith('.tmp'))).toBe(false)
+  })
+})
+
+const STRIP_EDGES = {
+  length: 256 as const,
+  thickness: 1,
+  angleQ8Base64: Buffer.alloc(256).toString('base64'),
+  weightQ8Base64: Buffer.alloc(256).toString('base64'),
+}
+
+/**
+ * The owner's MuMu F11 `ranked` profile (17.10.2026): the setup game and the
+ * layout learned on 14.10 through a phantom 57-px left band, plus two learned
+ * layouts that must survive: real (template-backed) chrome over the same rect,
+ * and template-less chrome that does not grow back into the setup game.
+ */
+function phantomChromeConfiguration(): CaptureConfiguration {
+  const base = gameConfiguration([0.5794, 0.5488, 0.62, 0.66])
+  if (base.calibration.coordinateSpace !== 'game_relative')
+    throw new Error('Expected game-relative fixture')
+  const frame = { width: 1080, height: 1920 }
+  const [setup, phantom, templated, distant] = base.calibration.layouts.map((layout) => ({
+    ...layout,
+    referenceFrameSize: frame,
+  })) as [GameLayout, GameLayout, GameLayout, GameLayout]
+  const left57 = { ...setup.windowChrome, left: 57 }
+  const layouts: GameLayout[] = [
+    { ...setup, referenceGameRect: { x: 0, y: 28, width: 1080, height: 1864 } },
+    {
+      ...phantom,
+      referenceGameRect: { x: 57, y: 28, width: 1023, height: 1864 },
+      windowChrome: left57,
+    },
+    {
+      ...templated,
+      referenceGameRect: { x: 57, y: 28, width: 1023, height: 1864 },
+      windowChrome: { ...left57, leftEdges: STRIP_EDGES },
+    },
+    {
+      ...distant,
+      referenceGameRect: { x: 100, y: 28, width: 980, height: 1864 },
+      windowChrome: left57,
+    },
+  ]
+  const { fingerprint: _fingerprint, ...unsigned } = base
+  void _fingerprint
+  const signed = { ...unsigned, calibration: { ...base.calibration, layouts } }
+  return { ...signed, fingerprint: captureConfigurationFingerprint(signed) }
+}
+
+describe('phantom-chrome learned layouts', () => {
+  it('are learned layouts whose template-less chrome grows back into a setup game rect', () => {
+    const config = phantomChromeConfiguration()
+    if (config.calibration.coordinateSpace !== 'game_relative')
+      throw new Error('Expected game-relative fixture')
+    const layouts = config.calibration.layouts
+    const [setup, phantom, templated, distant] = layouts as [
+      GameLayout,
+      GameLayout,
+      GameLayout,
+      GameLayout,
+    ]
+    expect(layouts.map((layout) => isPhantomChromeLayout(layout, layouts))).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ])
+    // Two pixels of peel jitter are tolerated, three are not.
+    const shifted = (dx: number): GameLayout => ({
+      ...phantom,
+      referenceGameRect: { ...phantom.referenceGameRect, width: 1023 + dx },
+    })
+    expect(isPhantomChromeLayout(shifted(2), layouts)).toBe(true)
+    expect(isPhantomChromeLayout(shifted(3), layouts)).toBe(false)
+    // Only the same reference frame size proves it, and only a setup game.
+    expect(
+      isPhantomChromeLayout(phantom, [
+        { ...setup, referenceFrameSize: { width: 1080, height: 1919 } },
+      ]),
+    ).toBe(false)
+    expect(
+      isPhantomChromeLayout(phantom, [{ ...setup, layoutSource: 'learned' }, phantom]),
+    ).toBe(false)
+    expect(isPhantomChromeLayout({ ...phantom, layoutSource: 'setup' }, layouts)).toBe(
+      false,
+    )
+    expect(isPhantomChromeLayout(templated, layouts)).toBe(false)
+    expect(isPhantomChromeLayout(distant, layouts)).toBe(false)
+  })
+
+  it('are removed once on read, re-signed, with the calibration identity kept', async () => {
+    const { fs, files } = memoryFileSystem()
+    const removed = vi.fn()
+    const options = {
+      now: () => new Date('2026-10-17T10:00:00.000Z'),
+      createProfileId: profileIdSequence(),
+      onPhantomChromeLayoutsRemoved: removed,
+    }
+    const config = phantomChromeConfiguration()
+    if (config.calibration.coordinateSpace !== 'game_relative')
+      throw new Error('Expected game-relative fixture')
+    const writer = new CaptureConfigurationRepository('/v5', fs, options)
+    await writer.save(config)
+    const stored = readCollection(files, '/v5', 'user')
+    expect(removed).toHaveBeenCalledTimes(0)
+
+    const target = new CaptureConfigurationRepository('/v5', fs, options)
+    const status = required(await target.list('user'))
+    expect(removed).toHaveBeenCalledExactlyOnceWith(1)
+    const saved = required(await target.get('user', status.activeProfileId)).configuration
+    if (saved.calibration.coordinateSpace !== 'game_relative')
+      throw new Error('Expected game-relative result')
+    const [setup, , templated, distant] = config.calibration.layouts
+    expect(saved.calibration).toEqual({
+      ...config.calibration,
+      revision: config.calibration.revision + 1,
+      layouts: [setup, templated, distant],
+    })
+    expect(saved.revision).toBe(config.revision + 1)
+    expect(saved.committedAt).toBe('2026-10-17T10:00:00.000Z')
+    const { fingerprint, ...unsigned } = saved
+    expect(captureConfigurationFingerprint(unsigned)).toBe(fingerprint)
+    const rewritten = readCollection(files, '/v5', 'user')
+    expect(rewritten.revision).toBe(stored.revision + 1)
+    const { fingerprint: collectionFingerprint, ...unsignedCollection } = rewritten
+    expect(captureProfileCollectionFingerprint(unsignedCollection)).toBe(
+      collectionFingerprint,
+    )
+
+    // Idempotent: a clean store is never rewritten.
+    const bytes = files.get(profilePath('/v5', 'user'))
+    await new CaptureConfigurationRepository('/v5', fs, options).list('user')
+    expect(files.get(profilePath('/v5', 'user'))).toBe(bytes)
+    expect(removed).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves full-frame and phantom-free game-relative profiles byte-identical', async () => {
+    const { fs, files } = memoryFileSystem()
+    const removed = vi.fn()
+    const target = new CaptureConfigurationRepository('/v5', fs, {
+      onPhantomChromeLayoutsRemoved: removed,
+    })
+    await target.save(gameConfiguration([0.42, 0.48]))
+    const bytes = files.get(profilePath('/v5', 'user'))
+    await target.list('user')
+    expect(files.get(profilePath('/v5', 'user'))).toBe(bytes)
+    expect(removed).not.toHaveBeenCalled()
   })
 })

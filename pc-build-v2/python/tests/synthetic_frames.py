@@ -66,3 +66,44 @@ def variants(image: np.ndarray) -> dict[str, np.ndarray]:
             "inverse": 255 - image, "dark": np.clip(image.astype(np.float32) * 0.7, 0, 255).astype(np.uint8),
             "bright": np.clip(image.astype(np.float32) * 1.3, 0, 255).astype(np.uint8),
             "gamma": np.round((image.astype(np.float32) / 255) ** 1.3 * 255).astype(np.uint8)}
+
+
+# Owner MuMu F11 portrait (17.10.2026) at one third of 1080×1920: the game is
+# stretched to 621 of 641 rows between black bars (aspect 0.5797).
+F11_WIDTH, F11_GAME, F11_BAR = 360, 621, 10
+PHANTOM_STRIP = cv2.blur(np.random.default_rng(5).integers(20, 120, (F11_GAME, 40, 3), dtype=np.uint8), (31, 1))
+NO_CHROME = {"top": 0, "bottom": 0, "left": 0, "right": 0,
+             "topEdges": None, "bottomEdges": None, "leftEdges": None, "rightEdges": None}
+
+
+def moving_noise(index: int, width: int = F11_WIDTH, height: int = F11_GAME) -> np.ndarray:
+    noise = np.random.default_rng(index).integers(0, 256, (height, width, 3), dtype=np.uint8)
+    return cv2.GaussianBlur(noise, (3, 3), 0)
+
+
+def f11_frame(game: np.ndarray) -> np.ndarray:
+    frame = np.zeros((F11_GAME + 2 * F11_BAR, F11_WIDTH, 3), np.uint8)
+    frame[F11_BAR:F11_BAR + F11_GAME] = game
+    return frame
+
+
+def phantom_band_menu(index: int, edge: int = 32) -> np.ndarray:
+    """The 03:57 screen, synthetic: uniform dark left inset, right margin and
+    bottom rows (the peel removes them), a still strip with a vertical border up
+    to `edge` and an animated middle. A phantom left band from a layout aspect
+    passes as chrome here, because the inset raw rect skips the letterbox test."""
+    game = moving_noise(index)
+    game[:, 7:edge] = PHANTOM_STRIP[:, 7:edge]
+    game[:, edge - 2:edge] = 230
+    game[:, :7] = 0
+    game[:, F11_WIDTH - 14:] = 0
+    game[F11_GAME - 51:] = 0
+    return f11_frame(game)
+
+
+def pre_battle(index: int) -> np.ndarray:
+    """The matchmaking screen before a VS: uniform rows above and below (0.68)."""
+    game = moving_noise(500 + index)
+    game[:49] = 0
+    game[F11_GAME - 42:] = 0
+    return f11_frame(game)
