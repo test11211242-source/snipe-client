@@ -1,0 +1,142 @@
+[
+  {
+    "name": "mode-picker-closed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Alpha",
+          "minutesAgo": 0
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Beta",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12
+        }
+      ]
+    }
+  },
+  {
+    "name": "mode-picker-open-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Alpha",
+          "minutesAgo": 0
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Beta",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12
+        }
+      ]
+    },
+    "steps": [
+      "(async () => { window.__h.click('Путь легенд'); await window.__h.sleep(400) })()"
+    ]
+  },
+  {
+    "name": "mode-picker-open-mini",
+    "width": 460,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Alpha",
+          "minutesAgo": 0
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Beta",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12
+        }
+      ]
+    },
+    "steps": [
+      "(async () => { window.__h.click('Путь легенд'); await window.__h.sleep(400) })()"
+    ]
+  },
+  {
+    "name": "mode-picker-event-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Alpha",
+          "minutesAgo": 0
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Beta",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12
+        }
+      ],
+      "preferences": {
+        "deckMode": "challenge",
+        "event": {
+          "tag": "#2PRCRPQL",
+          "title": "Grand Challenge"
+        }
+      }
+    },
+    "steps": [
+      "(async () => { window.__h.click('Grand Challenge'); await window.__h.sleep(400) })()"
+    ]
+  },
+  {
+    "name": "mode-picker-failed-wide",
+    "width": 1100,
+    "height": 700,
+    "fixture": {
+      "results": [
+        {
+          "n": 1,
+          "name": "Voron_17",
+          "rating": 2487,
+          "clan": "Alpha",
+          "minutesAgo": 0
+        },
+        {
+          "n": 2,
+          "name": "Dragon_X",
+          "rating": 2391,
+          "clan": "Beta",
+          "tag": "#9PQ0LRG",
+          "minutesAgo": 12
+        }
+      ],
+      "modeEvents": null
+    },
+    "steps": [
+      "(async () => { window.__h.click('Путь легенд'); await window.__h.sleep(400) })()"
+    ]
+  }
+]

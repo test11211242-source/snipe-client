@@ -1,8 +1,13 @@
-import type { DeckMode, MonitorResult } from '../../../../shared/models/monitor'
-import { Banner, Button, Card, Icon, Pill, Segment, Spinner } from '../../ui'
+import type {
+  DeckMode,
+  MonitorResult,
+  PickedEvent,
+} from '../../../../shared/models/monitor'
+import { Banner, Button, Card, Icon, Pill, Spinner } from '../../ui'
 import type { MonitorController } from '../monitor'
 import { clockTime } from '../h2h/format'
 import { REPROCESSED_LABEL } from './labels'
+import { ModePicker } from './ModePicker'
 import styles from './Opponent.module.css'
 import { SummaryCard } from './SessionPanel'
 import {
@@ -20,12 +25,11 @@ import {
 import { ResultBody } from './ResultBody'
 import type { OpponentPresentation } from './types'
 
-const DECK_MODES = [
-  { value: 'pol', label: 'Путь легенд', title: 'Применится к следующему поиску' },
-  { value: 'gt', label: 'Турнир', title: 'Применится к следующему поиску' },
-] as const satisfies readonly { value: DeckMode; label: string; title: string }[]
-
-const MODE_NAME: Record<DeckMode, string> = { pol: 'Путь легенд', gt: 'Турнир' }
+const MODE_NAME: Record<DeckMode, string> = {
+  pol: 'Путь легенд',
+  gt: 'Турнир',
+  challenge: 'Испытание',
+}
 
 function resultStatus(result: MonitorResult): {
   text: string
@@ -47,12 +51,14 @@ function resultStatus(result: MonitorResult): {
 function Head({
   presentation,
   deckMode,
+  event,
   onDeckMode,
   disabled,
 }: {
   presentation: OpponentPresentation
   deckMode: DeckMode
-  onDeckMode: (mode: DeckMode) => void
+  event: PickedEvent | null
+  onDeckMode: (mode: DeckMode, event: PickedEvent | null) => void
   disabled: boolean
 }): React.JSX.Element {
   const result = presentation.kind === 'result' ? presentation.result : null
@@ -83,11 +89,11 @@ function Head({
           <Pill>Колоды: {MODE_NAME[result.deckMode]}</Pill>
         ) : null}
       </div>
-      <Segment
-        label="Режим колод"
-        onChange={onDeckMode}
-        options={DECK_MODES.map((option) => ({ ...option, disabled }))}
-        value={deckMode}
+      <ModePicker
+        deckMode={deckMode}
+        disabled={disabled}
+        event={event}
+        onPick={onDeckMode}
       />
     </header>
   )
@@ -97,6 +103,7 @@ export function OpponentPanel({
   presentation,
   monitor,
   deckMode,
+  event,
   offlineAttempt,
   viewing,
   retry,
@@ -106,6 +113,8 @@ export function OpponentPanel({
   presentation: OpponentPresentation
   monitor: MonitorController
   deckMode: DeckMode
+  /** The picked game event when the mode is a challenge. */
+  event: PickedEvent | null
   /** Realtime connection lost: reconnect attempt number, or null when online. */
   offlineAttempt: number | null
   viewing: { title: string; hint: string } | null
@@ -167,7 +176,8 @@ export function OpponentPanel({
       <Head
         deckMode={deckMode}
         disabled={monitor.value === null}
-        onDeckMode={(mode) => void monitor.setDeckMode(mode)}
+        event={event}
+        onDeckMode={(mode, picked) => void monitor.setDeckMode(mode, picked)}
         presentation={presentation}
       />
       {offlineAttempt === null ? null : (

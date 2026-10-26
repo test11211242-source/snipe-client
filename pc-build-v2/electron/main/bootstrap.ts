@@ -24,6 +24,7 @@ import {
 } from './infrastructure/monitor-preferences-repository'
 import { ApiClient, AuthenticatedApiClient } from './services/api-client'
 import { AuthSession } from './services/auth-session'
+import { DeckModeService } from './services/deck-mode-service'
 import { H2HService } from './services/h2h-service'
 import { ApiAuthSessionRevoker } from './services/auth-session-revoker'
 import { CaptureService } from './services/capture-service'
@@ -250,6 +251,7 @@ setup.configureCaptureProfileLifecycle(
   (operation) => captureProfiles.runCaptureCommit(operation),
 )
 const h2h = new H2HService(authenticatedApi, auth)
+const deckModes = new DeckModeService(authenticatedApi)
 const streamer = new StreamerService(
   auth,
   authenticatedApi,
@@ -325,6 +327,7 @@ const application = new ApplicationController(
   captureProfiles,
   tray,
   h2h,
+  deckModes,
 )
 requestApplicationShutdown = () => application.requestShutdown()
 

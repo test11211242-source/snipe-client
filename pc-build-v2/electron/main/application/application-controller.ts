@@ -12,6 +12,7 @@ import { registerWidgetIpc } from '../ipc/register-widget-ipc'
 import { registerStreamerIpc } from '../ipc/register-streamer-ipc'
 import { registerUpdateIpc } from '../ipc/register-update-ipc'
 import { registerUiIpc } from '../ipc/register-ui-ipc'
+import type { DeckModeService } from '../services/deck-mode-service'
 import type { H2HService } from '../services/h2h-service'
 import type { AuthSession } from '../services/auth-session'
 import type { CaptureSourceRegistry } from '../services/capture-source-registry'
@@ -66,6 +67,7 @@ export class ApplicationController {
     private readonly captureProfiles: CaptureProfileService,
     private readonly tray?: TrayController,
     private readonly h2h?: H2HService,
+    private readonly deckModes?: DeckModeService,
   ) {}
 
   async start(): Promise<void> {
@@ -128,6 +130,7 @@ export class ApplicationController {
       logger: this.logger,
       monitor: this.monitor,
       widget: this.widget,
+      ...(this.deckModes === undefined ? {} : { deckModes: this.deckModes }),
     })
     const disposeWidgetIpc = registerWidgetIpc({
       windows: this.windows,

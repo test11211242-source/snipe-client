@@ -12,11 +12,21 @@ export const MonitorStateSchema = z.enum([
   'FAILED',
 ])
 const LegacyResultSearchModeSchema = z.enum(['fast', 'precise'])
-export const DeckModeSchema = z.enum(['pol', 'gt'])
+export const DeckModeSchema = z.enum(['pol', 'gt', 'challenge'])
+
+/** A live Clash Royale event (Supercell /events) picked for the challenge mode. */
+export const PickedEventSchema = z
+  .object({
+    tag: z.string().regex(/^#[0-9A-Z]{3,15}$/),
+    title: z.string().trim().min(1).max(200),
+  })
+  .strict()
 
 export const MonitorPreferencesSchema = z
   .object({
     deckMode: DeckModeSchema,
+    /** The picked event when `deckMode` is `challenge`; shared with the site through the server. */
+    event: PickedEventSchema.nullable().optional(),
   })
   .strict()
 
@@ -196,6 +206,7 @@ export const MonitorViewSchema = z
 
 export type MonitorState = z.infer<typeof MonitorStateSchema>
 export type DeckMode = z.infer<typeof DeckModeSchema>
+export type PickedEvent = z.infer<typeof PickedEventSchema>
 export type MonitorPreferences = z.infer<typeof MonitorPreferencesSchema>
 export type MonitorResult = z.infer<typeof MonitorResultSchema>
 export type MonitorSessionStats = z.infer<typeof MonitorSessionStatsSchema>

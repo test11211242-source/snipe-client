@@ -118,6 +118,7 @@ export function OpponentScreen(): React.JSX.Element {
     <div className={styles['screen']}>
       <OpponentPanel
         deckMode={view?.preferences.deckMode ?? 'pol'}
+        event={view?.preferences.event ?? null}
         monitor={monitor}
         offlineAttempt={
           offline ? Math.max(1, realtime.value?.reconnectAttempt ?? 1) : null
