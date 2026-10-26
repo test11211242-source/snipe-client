@@ -221,6 +221,8 @@ export const MonitorActionEventSchema = ProtocolBaseSchema.extend({
     .object({
       timestamp: z.iso.datetime(),
       triggerId: z.uuid(),
+      /** nickname: the VS capture; battle: the second zone (nickname and clan) after it. */
+      zone: z.enum(['nickname', 'battle']),
       width: z.number().int().positive().max(8192),
       height: z.number().int().positive().max(8192),
       byteLength: z

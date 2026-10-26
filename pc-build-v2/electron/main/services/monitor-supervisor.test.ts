@@ -638,6 +638,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       triggerId,
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('synthetic'),
     })
     await vi.waitFor(() =>
@@ -889,6 +890,7 @@ describe('MonitorSupervisor game-relative runtime', () => {
       triggerId: randomUUID(),
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.alloc(10),
     }
     test.ocr.process.mockResolvedValue(
@@ -1186,6 +1188,7 @@ describe('MonitorSupervisor concurrency', () => {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('private'),
     }
     test.listener()?.onTriggered(battleStart(action.timestamp))
@@ -1318,6 +1321,7 @@ describe('MonitorSupervisor concurrency', () => {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('private'),
     })
     await vi.waitFor(() => expect(observed).toHaveBeenCalledTimes(1))
@@ -1380,6 +1384,7 @@ describe('MonitorSupervisor concurrency', () => {
       triggerId: start.triggerId,
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('private nickname'),
     }
     test.ocr.process.mockResolvedValue({
@@ -1888,6 +1893,7 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image,
     }
     const firstResult = MonitorResultSchema.parse({
@@ -1957,6 +1963,7 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('private'),
     })
     await Promise.resolve()
@@ -1981,6 +1988,7 @@ describe('MonitorSupervisor M1 recovery, attempts and sessions', () => {
       timestamp: '2026-07-12T12:01:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('private'),
     })
     await Promise.resolve()
@@ -2219,6 +2227,7 @@ describe('review regression monitor ownership and persistence', () => {
       timestamp: '2026-07-12T12:00:00.000Z',
       width: 10,
       height: 10,
+      zone: 'nickname' as const,
       image: Buffer.from('crop'),
     }
     test.listener()?.onTriggered(battleStart(action.timestamp, action.triggerId))
@@ -2299,5 +2308,97 @@ describe('approved review projection followup', () => {
         message: 'Выберите окно игры заново в профиле',
       },
     })
+  })
+})
+
+describe('second zone for modes without a clan on the VS screen', () => {
+  function notFound(timestamp: string, deckMode: 'pol' | 'gt' | 'challenge') {
+    return MonitorResultSchema.parse({
+      id: randomUUID(),
+      kind: 'player_not_found',
+      timestamp,
+      searchMode: 'fast',
+      deckMode,
+      searchedNickname: 'Synthetic opponent',
+      message: 'Игрок не найден',
+    })
+  }
+  const vs = {
+    timestamp: '2026-07-12T12:00:00.000Z',
+    triggerId: '00000000-0000-4000-8000-0000000000a1',
+    width: 10,
+    height: 10,
+    zone: 'nickname' as const,
+    image: Buffer.from('vs nickname'),
+  }
+  const battle = {
+    ...vs,
+    zone: 'battle' as const,
+    image: Buffer.from('nickname and clan'),
+  }
+
+  it.each(['challenge', 'gt'] as const)(
+    'searches the battle-screen zone in %s mode',
+    async (deckMode) => {
+      const test = harness()
+      test.preferences.load.mockResolvedValue({ deckMode })
+      test.ocr.process.mockResolvedValue(notFound(vs.timestamp, deckMode))
+      await test.supervisor.start()
+      test.listener()?.onTriggered(battleStart(vs.timestamp, vs.triggerId))
+      test.listener()?.onAction(vs)
+      await settle()
+      expect(test.ocr.process).not.toHaveBeenCalled()
+      test.listener()?.onAction(battle)
+      await vi.waitFor(() =>
+        expect(test.supervisor.getCurrentView().results).toHaveLength(1),
+      )
+      expect(test.ocr.process).toHaveBeenCalledOnce()
+      expect(test.ocr.process.mock.calls[0]?.[0]).toMatchObject({
+        image: battle.image,
+        deckMode,
+      })
+      expect(test.supervisor.getCurrentView().results[0]).toMatchObject({
+        capturePolicy: 'battle_top_left',
+      })
+      await test.supervisor.stop()
+    },
+  )
+
+  it('searches the VS capture when the battle screen never comes', async () => {
+    const test = harness()
+    test.preferences.load.mockResolvedValue({ deckMode: 'challenge' })
+    test.ocr.process.mockResolvedValue(notFound(vs.timestamp, 'challenge'))
+    await test.supervisor.start()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    test.listener()?.onTriggered(battleStart(vs.timestamp, vs.triggerId))
+    test.listener()?.onAction(vs)
+    vi.advanceTimersByTime(6_999)
+    expect(test.ocr.process).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    vi.useRealTimers()
+    await vi.waitFor(() => expect(test.ocr.process).toHaveBeenCalledOnce())
+    expect(test.ocr.process.mock.calls[0]?.[0]).toMatchObject({ image: vs.image })
+    // A battle zone after the fallback has nothing to join.
+    test.listener()?.onAction(battle)
+    await settle()
+    expect(test.ocr.process).toHaveBeenCalledOnce()
+    await test.supervisor.stop()
+  })
+
+  it('keeps the VS capture for Path of Legends and ignores the battle zone', async () => {
+    const test = harness()
+    test.ocr.process.mockResolvedValue(notFound(vs.timestamp, 'pol'))
+    await test.supervisor.start()
+    test.listener()?.onTriggered(battleStart(vs.timestamp, vs.triggerId))
+    test.listener()?.onAction(vs)
+    await vi.waitFor(() => expect(test.ocr.process).toHaveBeenCalledOnce())
+    expect(test.ocr.process.mock.calls[0]?.[0]).toMatchObject({ image: vs.image })
+    test.listener()?.onAction(battle)
+    await settle()
+    expect(test.ocr.process).toHaveBeenCalledOnce()
+    expect(test.supervisor.getCurrentView().results[0]).toMatchObject({
+      capturePolicy: 'immediate_nickname',
+    })
+    await test.supervisor.stop()
   })
 })

@@ -53,6 +53,14 @@ interface SearchAction extends MonitorAction {
   deckMode: DeckMode
 }
 
+/**
+ * Modes whose VS screen shows no clan (owner, 26.10.2026): their search takes the second
+ * zone, the battle screen's nickname and clan, which the worker captures 2.5–6 s after the
+ * VS. Without it by BATTLE_ZONE_WAIT_MS the VS capture is searched.
+ */
+const BATTLE_ZONE_MODES: ReadonlySet<DeckMode> = new Set<DeckMode>(['challenge', 'gt'])
+const BATTLE_ZONE_WAIT_MS = 7_000
+
 const RECOVERABLE_SOURCE_CODES: Readonly<Record<string, true>> = {
   SOURCE_NOT_FOUND: true,
   SOURCE_AMBIGUOUS: true,
@@ -124,6 +132,9 @@ export class MonitorSupervisor {
   #ocrController: AbortController | null = null
   #ocrActive = false
   #pendingAction: SearchAction | null = null
+  /** A VS capture waiting for its second zone, and its fallback timer. */
+  #heldAction: SearchAction | null = null
+  #heldTimer: ReturnType<typeof setTimeout> | null = null
   #startPromise: Promise<MonitorView> | null = null
   #cancelStart: ((value: MonitorView | PromiseLike<MonitorView>) => void) | null = null
   #stopPromise: Promise<MonitorView> | null = null
@@ -356,6 +367,7 @@ export class MonitorSupervisor {
     this.#ocrController = null
     this.#ocrActive = false
     this.#pendingAction = null
+    this.clearHeldAction()
     this.#lastOwnBattleId = null
     this.#battleGap = true
     this.cancelRecovery()
@@ -411,6 +423,7 @@ export class MonitorSupervisor {
     this.#runController = new AbortController()
     this.#learningFailure = null
     this.#pendingAction = null
+    this.clearHeldAction()
     this.#ocrActive = false
     const session = this.#view.session
     const continuing = session?.endedAt === null
@@ -491,6 +504,7 @@ export class MonitorSupervisor {
     this.#ocrController?.abort()
     this.#ocrController = null
     this.#pendingAction = null
+    this.clearHeldAction()
     this.transition('STOPPING')
     const operation = this.stopProcess()
       .then(async () => {
@@ -855,12 +869,57 @@ export class MonitorSupervisor {
       !['STARTING', 'READY'].includes(this.#view.state)
     )
       return
+    if (action.zone === 'battle') {
+      // Path of Legends already searched the VS capture; a late zone has nothing to join.
+      const held = this.#heldAction
+      if (held === null || held.triggerId !== action.triggerId) return
+      this.clearHeldAction()
+      this.dispatchAction(generation, userId, contextGeneration, {
+        ...action,
+        triggerId: held.triggerId,
+        deckMode: held.deckMode,
+      })
+      return
+    }
     this.clearRetry()
     const captured: SearchAction = {
       ...action,
       triggerId: action.triggerId ?? this.#lastTriggerId ?? randomUUID(),
       deckMode: this.#view.preferences.deckMode,
     }
+    if (BATTLE_ZONE_MODES.has(captured.deckMode)) {
+      // A new VS before the last one's zone: that battle is gone, search the new one.
+      if (this.#heldAction !== null) this.increment('droppedActions')
+      this.clearHeldAction()
+      this.#heldAction = captured
+      this.#heldTimer = setTimeout(() => {
+        const held = this.#heldAction
+        this.clearHeldAction()
+        if (
+          held !== null &&
+          this.isCurrent(generation, userId, contextGeneration) &&
+          ['STARTING', 'READY'].includes(this.#view.state)
+        )
+          this.dispatchAction(generation, userId, contextGeneration, held)
+      }, BATTLE_ZONE_WAIT_MS)
+      this.#heldTimer.unref()
+      return
+    }
+    this.dispatchAction(generation, userId, contextGeneration, captured)
+  }
+
+  private clearHeldAction(): void {
+    if (this.#heldTimer !== null) clearTimeout(this.#heldTimer)
+    this.#heldTimer = null
+    this.#heldAction = null
+  }
+
+  private dispatchAction(
+    generation: number,
+    userId: string,
+    contextGeneration: number,
+    captured: SearchAction,
+  ): void {
     if (this.#ocrActive) {
       if (this.#pendingAction !== null) this.increment('droppedActions')
       this.#pendingAction = captured
@@ -970,7 +1029,10 @@ export class MonitorSupervisor {
       attemptId,
       profileId: this.#profileId,
       calibrationRevision: this.#calibrationRevision,
-      capturePolicy: 'immediate_nickname' as const,
+      capturePolicy:
+        action.zone === 'battle'
+          ? ('battle_top_left' as const)
+          : ('immediate_nickname' as const),
     }
     if (this.#profileId !== null && this.#calibrationRevision !== null) {
       this.patch({
@@ -1201,6 +1263,7 @@ export class MonitorSupervisor {
       this.#runController.abort()
       this.#ocrController?.abort()
       this.#pendingAction = null
+      this.clearHeldAction()
       this.#ocrActive = false
       this.clearRetry()
       this.waitForSource(
@@ -1213,6 +1276,7 @@ export class MonitorSupervisor {
     ++this.#generation
     this.#ocrController?.abort()
     this.#pendingAction = null
+    this.clearHeldAction()
     this.#ocrActive = false
     this.transition('FAILED', { error: publicError(error), runIntent: false })
     this.clearRetry()
