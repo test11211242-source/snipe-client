@@ -86,6 +86,19 @@ describe('local Windows build handoff', () => {
     receipt['sourceSha'] = 'b'.repeat(40)
     expect(validate().status).toBe(1)
   })
+  it('accepts a build where the owner skipped only the desktop e2e suite', () => {
+    receipt['checks'] = (receipt['checks'] as string[]).map((name) =>
+      name === 'test:e2e:windows' ? 'test:e2e:windows:skipped-by-owner' : name,
+    )
+    const result = validate()
+    expect(result.status, String(result.stderr)).toBe(0)
+  })
+  it('rejects any other skipped check', () => {
+    receipt['checks'] = (receipt['checks'] as string[]).map((name) =>
+      name === 'test' ? 'test:skipped-by-owner' : name,
+    )
+    expect(validate().status).toBe(1)
+  })
   it('rejects a build that skipped packaged Windows checks', () => {
     receipt['checks'] = ['lint', 'build']
     expect(validate().status).toBe(1)

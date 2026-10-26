@@ -28,6 +28,11 @@ CHECKS = [
     "test:python", "audit:release", "runtime:verify", "build:unpacked",
     "test:e2e:windows", "build", "installer-validation",
 ]
+# Owner decision 26.10.2026: the desktop e2e suite needs a landscape primary display at
+# least 1100 px wide and an untouched mouse. `--skip-e2e` skips only that step and the
+# receipt says so; the publication workflow accepts exactly this one substitution.
+E2E_CHECK = "test:e2e:windows"
+E2E_SKIPPED = "test:e2e:windows:skipped-by-owner"
 
 
 class PublishError(RuntimeError):
@@ -163,7 +168,7 @@ def windows_archive_tool() -> Path:
     raise PublishError("Install 64-bit 7-Zip for Windows; the bundled builder archive tool is 32-bit.")
 
 
-def build_local(runner: Runner) -> list[str]:
+def build_local(runner: Runner, *, skip_e2e: bool = False) -> list[str]:
     node_version = runner.run(["node.exe", "--version"], capture=True)
     if not node_version.startswith("v22."):
         raise PublishError("Local releases require Node.js 22, matching the supported toolchain.")
@@ -195,7 +200,10 @@ def build_local(runner: Runner) -> list[str]:
             (runner.root / "resources/runtime-integrity.json").is_file()):
         runner.npm("run", "runtime:build")
     runner.npm("run", "runtime:verify")
-    for name in ["build:unpacked", "test:e2e:windows", "build"]:
+    for name in ["build:unpacked", E2E_CHECK, "build"]:
+        if name == E2E_CHECK and skip_e2e:
+            print(f"==> {E2E_SKIPPED}", flush=True)
+            continue
         runner.step(name)
         runner.npm("run", name)
     version = json.loads((runner.root / "package.json").read_text("utf-8"))["version"]
@@ -210,7 +218,7 @@ def build_local(runner: Runner) -> list[str]:
                                  .read_text("utf-8"))["version"]
     if packaged_version != version:
         raise PublishError("The packaged application version does not match the installer.")
-    return CHECKS.copy()
+    return [E2E_SKIPPED if skip_e2e and name == E2E_CHECK else name for name in CHECKS]
 
 
 def save_receipt(root: Path, destination: Path, sha: str, correlation: str,
@@ -327,7 +335,7 @@ def publish(args: argparse.Namespace, runner: Runner) -> None:
         if args.plan:
             print(f"Mode: test\nBuild: local Windows\nVersion: {package['version']}\nPublish: no")
             return
-        checks = build_local(runner)
+        checks = build_local(runner, skip_e2e=args.skip_e2e)
         correlation = str(uuid.uuid4())
         destination = runner.root / "published" / package["version"] / f"local-{correlation}"
         save_receipt(runner.root, destination, runner.git("rev-parse", "HEAD"), correlation, checks)
@@ -340,6 +348,8 @@ def publish(args: argparse.Namespace, runner: Runner) -> None:
     public = fetch_public_manifest()
     version = select_version(package["version"], public["version"] if public else None, args.version)
     print(f"Mode: release\nBuild: this Windows PC\nVersion: {version}\nSource: {source_sha}", flush=True)
+    if args.skip_e2e:
+        print("Desktop e2e: skipped by owner", flush=True)
     if args.plan:
         return
     runner.gh("auth", "status")
@@ -365,7 +375,7 @@ def publish(args: argparse.Namespace, runner: Runner) -> None:
         added = True
         build_runner = Runner(workspace / "pc-build-v2", runner.log)
         build_runner.npm("version", version, "--no-git-tag-version", "--allow-same-version")
-        checks = build_local(build_runner)
+        checks = build_local(build_runner, skip_e2e=args.skip_e2e)
         runner.stage = "verify release metadata changes"
         changed = set(runner.git("diff", "--name-only", cwd=workspace).splitlines())
         allowed = {"pc-build-v2/package.json", "pc-build-v2/package-lock.json",
@@ -427,7 +437,11 @@ def main() -> int:
     parser.add_argument("--plan", "--dry-run", dest="plan", action="store_true")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--critical", action="store_true")
+    parser.add_argument("--skip-e2e", action="store_true",
+                        help="skip only the desktop e2e suite; the receipt records it")
     args = parser.parse_args()
+    if args.skip_e2e and args.mode == "resume":
+        parser.error("--skip-e2e applies to a build, not to resume")
     if args.critical and args.mode != "release":
         parser.error("--critical requires release mode")
     if args.mode == "resume" and (not args.version or not args.version.isdigit()):

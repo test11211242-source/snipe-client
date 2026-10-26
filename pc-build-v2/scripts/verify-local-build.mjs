@@ -16,6 +16,10 @@ const checks = [
   'build',
   'installer-validation',
 ]
+// The owner may skip only the desktop e2e suite (publish_update.py --skip-e2e).
+const checksWithoutE2e = checks.map((name) =>
+  name === 'test:e2e:windows' ? 'test:e2e:windows:skipped-by-owner' : name,
+)
 
 async function sha512(path) {
   const file = await open(path, 'r')
@@ -67,7 +71,8 @@ async function main() {
     receipt.version !== version ||
     receipt.sourceSha !== sha ||
     receipt.correlationId !== correlation ||
-    JSON.stringify(receipt.checks) !== JSON.stringify(checks)
+    (JSON.stringify(receipt.checks) !== JSON.stringify(checks) &&
+      JSON.stringify(receipt.checks) !== JSON.stringify(checksWithoutE2e))
   ) {
     throw new Error('Local Windows build receipt or required checks are invalid')
   }
