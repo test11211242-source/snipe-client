@@ -28,6 +28,11 @@ from trigger_matching import create_orb, create_orb_matcher, score_orb_alignment
 NORMALIZED_SIZE = 128
 # `triggered` rank fields when the check does not run (spectate, full-frame).
 NO_RANK = {"rank": RANK_UNKNOWN, "rankEvidence": None}
+# Second zone (owner, 26.10.2026): challenge and tournament VS screens show no clan, the
+# battle screen shows nickname and clan at the top-left about 2.5 s after the VS fire.
+# It is taken on the first frame after that without the VS; none after the deadline.
+BATTLE_CAPTURE_DELAY = 2.5
+BATTLE_CAPTURE_DEADLINE = 6.0
 # stderr code when a C3 asset cannot be loaded (opponent search goes on).
 C3_ASSET_FAILED = "PREDICTION_ASSET_UNAVAILABLE"
 
@@ -588,6 +593,8 @@ class TriggerEngine:
         self.triggered_rank: dict[str, Any] = NO_RANK
         self.prediction_report: dict[str, Any] | None = None
         self.last_match: MatchResult | None = None
+        self.battle_capture_at: float | None = None
+        self.battle_capture: tuple[bytes, int, int] | None = None
         self.candidates = VsCandidateLog()
         self._sample: dict[str, Any] | None = None
         self.configured_aspect = (
@@ -620,8 +627,10 @@ class TriggerEngine:
         inner = ratio_rect(self.profile.inner_ratio, frame_width, frame_height, outer)
         self.last_match = self.profile.evaluate(crop(bgr, inner))
         if not self.gate.observe(self.last_match.matched, now):
+            self._take_battle_zone(bgr, now, self.primary["regions"]["topLeftEvidenceRegion"], None)
             return None
         self.triggered = True
+        self.battle_capture_at = now
         data_rect = ratio_rect(self.data_ratio, frame_width, frame_height)
         return encode_action_png(crop(bgr, data_rect), self.limits)
 
@@ -767,6 +776,7 @@ class TriggerEngine:
                         self._own_battle(confirmation, confirmation_rect, layout, now)
                     self._sample = self._candidate(bgr, now, layout, None, matched=True, fired=fired, code="LAYOUT_LEARNED")
                     if fired:
+                        self.battle_capture_at = now
                         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], confirmation.shape[1], confirmation.shape[0], confirmation_rect)
                         return encode_action_png(crop(confirmation, data_rect), self.limits)
                     return None
@@ -797,7 +807,9 @@ class TriggerEngine:
         evidence = self.last_match.score if orientation or self.last_match.matched else None
         self._sample = self._candidate(bgr, now, layout, evidence, matched=self.last_match.matched, fired=fired)
         if not fired:
+            self._take_battle_zone(bgr, now, layout["regions"]["topLeftEvidenceRegion"], rect)
             return None
+        self.battle_capture_at = now
         self._own_battle(bgr, rect, layout, now)
         data_rect = ratio_rect(layout["regions"]["nicknameRegion"], bgr.shape[1], bgr.shape[0], rect)
         return encode_action_png(crop(bgr, data_rect), self.limits)
@@ -805,6 +817,29 @@ class TriggerEngine:
     def take_events(self):
         events, self.events = self.events, []
         return events
+
+    def _take_battle_zone(self, bgr, now, region, parent) -> None:
+        """The second zone of the last VS fire: once the VS is gone and the battle screen
+        is up (BATTLE_CAPTURE_DELAY), at most until BATTLE_CAPTURE_DEADLINE."""
+        fired_at = self.battle_capture_at
+        if fired_at is None or now - fired_at < BATTLE_CAPTURE_DELAY:
+            return
+        if now - fired_at > BATTLE_CAPTURE_DEADLINE:
+            self.battle_capture_at = None
+            return
+        if self.last_match is not None and self.last_match.matched:
+            return
+        self.battle_capture_at = None
+        try:
+            zone = ratio_rect(region, bgr.shape[1], bgr.shape[0], parent)
+            self.battle_capture = encode_action_png(crop(bgr, zone), self.limits)
+        except Exception:  # the VS capture stays the search's fallback
+            self.battle_capture = None
+
+    def take_battle_capture(self) -> tuple[bytes, int, int] | None:
+        """`(png, width, height)` of the second zone, once per VS fire."""
+        capture, self.battle_capture = self.battle_capture, None
+        return capture
 
     def take_triggered(self) -> bool:
         triggered = self.triggered

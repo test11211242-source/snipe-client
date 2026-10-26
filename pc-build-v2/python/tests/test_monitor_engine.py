@@ -49,6 +49,7 @@ def test_guarded_lifecycle(monkeypatch, stage, code):
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
                                take_events=lambda: [], take_prediction_result=lambda: None,
+                               take_battle_capture=lambda: None,
                                finish_prediction=lambda _now: None)
 
 
@@ -126,6 +127,7 @@ def test_diagnostics_are_written_only_when_the_match_state_changes(monkeypatch):
         state.take_events = lambda: []
         state.take_prediction_result = lambda: None
         state.finish_prediction = lambda _now: None
+        state.take_battle_capture = lambda: None
         return state
 
     class Backend:
@@ -177,6 +179,7 @@ def test_minimised_window_pauses_analysis_and_reports_both_transitions(monkeypat
             return None
         return SimpleNamespace(process=process, last_match=None, take_triggered=lambda: False,
                                take_events=lambda: [], take_prediction_result=lambda: None,
+                               take_battle_capture=lambda: None,
                                finish_prediction=lambda _now: None)
 
     class Backend:
@@ -248,6 +251,7 @@ def test_primary_trigger_emits_identity_kind_and_rank(monkeypatch, kind):
         process=lambda _frame, _now: (image, 2, 2), last_match=None,
         take_triggered=lambda: True, triggered_kind=kind, triggered_rank=RANKS[kind], take_events=lambda: [],
         take_prediction_result=lambda: None, finish_prediction=lambda _now: None,
+        take_battle_capture=lambda: None,
     )
     initialized = []
 
@@ -288,6 +292,7 @@ def test_primary_trigger_emits_identity_kind_and_rank(monkeypatch, kind):
     assert action["triggerId"] == triggered["triggerId"]
     assert action["timestamp"] == triggered["timestamp"]
     assert action["byteLength"] == len(image)
+    assert action["zone"] == "nickname"
 
 
 class ScriptedEngine:
@@ -323,6 +328,30 @@ class ScriptedEngine:
 
     def finish_prediction(self, _now):
         return self.finish
+
+    def take_battle_capture(self):
+        return None
+
+
+def test_second_zone_joins_its_vs_action():
+    vs, battle = (b"vs", 4, 2), (b"battle", 6, 3)
+    script = [vs, None, None]
+    battles = [None, None, battle]
+    engine = SimpleNamespace(
+        process=lambda _frame, _now: script.pop(0), last_match=None,
+        take_triggered=lambda: False, triggered_kind=None, take_events=lambda: [],
+        take_prediction_result=lambda: None, take_battle_capture=lambda: battles.pop(0),
+    )
+    frames = monitor.FrameEvents(engine)
+    out = []
+    for tick, (stamp, trigger_id) in enumerate(zip(["2026-10-26T10:00:00Z", "2026-10-26T10:00:01Z",
+                                                     "2026-10-26T10:00:03Z"], IDS)):
+        out += frames.process(np.zeros((2, 2, 3), np.uint8), tick, stamp, trigger_id)
+    actions = [payload for event_type, payload in out if event_type == "action"]
+    assert [(a["zone"], a["triggerId"], a["timestamp"], a["width"]) for a in actions] == [
+        ("nickname", IDS[0], "2026-10-26T10:00:00Z", 4),
+        ("battle", IDS[0], "2026-10-26T10:00:00Z", 6),
+    ]
 
 
 REPORT = {"outcome": "loss", "evidence": {"crowns": {"top": 1, "bottom": 0}, "deltaSign": "-", "deltaIcon": "pol"}}

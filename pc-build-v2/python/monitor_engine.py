@@ -47,6 +47,8 @@ class FrameEvents:
         self.engine = engine
         self.own_battle_id: str | None = None
         self.battle_gap = True
+        # The VS action whose second zone (battle screen) is still to come.
+        self.battle_zone_for: dict[str, str] | None = None
 
     def source_paused(self) -> None:
         self.battle_gap = True
@@ -66,14 +68,25 @@ class FrameEvents:
             if engine.triggered_kind == "battle":
                 self.own_battle_id, self.battle_gap = trigger_id, False
         if action is not None:
-            image, image_width, image_height = action
-            events.append(("action", {"timestamp": timestamp, "triggerId": trigger_id, "width": image_width,
-                                      "height": image_height, "byteLength": len(image),
-                                      "imageBase64": base64.b64encode(image).decode("ascii")}))
+            events.append(self._action(action, timestamp, trigger_id, "nickname"))
+            self.battle_zone_for = {"timestamp": timestamp, "triggerId": trigger_id}
+        battle = engine.take_battle_capture()
+        if battle is not None and self.battle_zone_for is not None:
+            events.append(self._action(battle, self.battle_zone_for["timestamp"],
+                                       self.battle_zone_for["triggerId"], "battle"))
+            self.battle_zone_for = None
         result = engine.take_prediction_result()
         if result is not None:
             events.append(self._result(*result))
         return events
+
+    @staticmethod
+    def _action(capture, timestamp: str, trigger_id: str, zone: str) -> tuple[str, dict[str, Any]]:
+        """`zone`: nickname is the VS capture, battle the second zone (nickname and clan)."""
+        image, image_width, image_height = capture
+        return ("action", {"timestamp": timestamp, "triggerId": trigger_id, "zone": zone,
+                           "width": image_width, "height": image_height, "byteLength": len(image),
+                           "imageBase64": base64.b64encode(image).decode("ascii")})
 
     def finish(self, now: float) -> list[tuple[str, dict[str, Any]]]:
         """Capture ends (stop, source closed, failure): the result screen being

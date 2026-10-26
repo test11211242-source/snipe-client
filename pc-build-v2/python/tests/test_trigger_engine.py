@@ -273,3 +273,44 @@ def test_vs_candidate_without_fire_drops_an_inferred_band(monkeypatch):
     assert not engine.geometry.inferred_band
     assert fires == [91]
     assert records[1:] == ["fired"]
+
+
+def test_second_zone_is_taken_once_the_battle_screen_replaces_the_vs() -> None:
+    trigger = trigger_image((120, 40, 80))
+    engine = TriggerEngine(payload(profile_for(trigger)))
+    vs = frame_for(trigger, (1, 2, 3))
+    battle = frame_for(trigger_image((120, 40, 80), include_ui=False), (7, 211, 33))
+    assert engine.process(vs, 0.0) is None
+    assert engine.process(vs, 0.11) is not None
+    assert engine.take_battle_capture() is None
+    # The VS is still up, and then the battle screen comes before the 2.5 s mark.
+    assert engine.process(vs, 1.0) is None
+    assert engine.process(battle, 2.4) is None
+    assert engine.take_battle_capture() is None
+    assert engine.process(vs, 2.7) is None
+    assert engine.take_battle_capture() is None
+    assert engine.process(battle, 2.85) is None
+    capture = engine.take_battle_capture()
+    assert capture is not None
+    encoded, width, height = capture
+    assert (width, height) == (128, 128)
+    decoded = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert tuple(int(value) for value in decoded[64, 64]) == (7, 211, 33)
+    # Once per VS fire.
+    assert engine.process(battle, 3.0) is None
+    assert engine.take_battle_capture() is None
+
+
+def test_second_zone_is_dropped_after_the_deadline() -> None:
+    trigger = trigger_image((30, 100, 180))
+    engine = TriggerEngine(payload(profile_for(trigger)))
+    vs = frame_for(trigger)
+    battle = frame_for(trigger_image((30, 100, 180), include_ui=False))
+    engine.process(vs, 0.0)
+    assert engine.process(vs, 0.11) is not None
+    for tick in range(1, 60):
+        engine.process(vs, 0.11 + tick * 0.1)
+    assert engine.process(battle, 6.5) is None
+    assert engine.take_battle_capture() is None
+    assert engine.process(battle, 6.7) is None
+    assert engine.take_battle_capture() is None

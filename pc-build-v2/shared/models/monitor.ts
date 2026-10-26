@@ -56,7 +56,10 @@ const ResultBaseSchema = z.object({
   deckMode: DeckModeSchema,
   searchedNickname: OptionalSafeTextSchema,
   reprocessed: z.boolean().default(false),
-  capturePolicy: z.literal('immediate_nickname').nullable().default(null),
+  capturePolicy: z
+    .enum(['immediate_nickname', 'battle_top_left'])
+    .nullable()
+    .default(null),
   sessionId: z.uuid().nullable().default(null),
   triggerId: z.uuid().nullable().default(null),
   attemptId: z.uuid().nullable().default(null),

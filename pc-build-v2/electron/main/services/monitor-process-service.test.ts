@@ -441,13 +441,14 @@ describe('MonitorProcessService', () => {
     child.event(4, 'action', {
       timestamp: '2026-07-12T12:00:00.000Z',
       triggerId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',
+      zone: 'battle',
       width: 20,
       height: 10,
       byteLength: image.byteLength,
       imageBase64: image.toString('base64'),
     })
     expect(processListener.onAction).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 20, height: 10, image }),
+      expect.objectContaining({ width: 20, height: 10, zone: 'battle', image }),
     )
     const result = {
       battleId: '19d970c1-fc4f-4bea-a767-8f108d3b8739',

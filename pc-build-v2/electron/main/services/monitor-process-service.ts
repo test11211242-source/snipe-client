@@ -87,6 +87,8 @@ export interface MonitorTimers {
 export interface MonitorAction {
   timestamp: string
   triggerId?: string
+  /** nickname: the VS capture; battle: the second zone after it, same trigger. */
+  zone: 'nickname' | 'battle'
   width: number
   height: number
   image: Buffer
@@ -551,6 +553,7 @@ export class MonitorProcessService {
       const action = {
         timestamp: event.payload.timestamp,
         triggerId: event.payload.triggerId,
+        zone: event.payload.zone,
         width: event.payload.width,
         height: event.payload.height,
         image,
