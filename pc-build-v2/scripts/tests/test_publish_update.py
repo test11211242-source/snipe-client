@@ -56,6 +56,29 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn("runtime:build", str(runner.npm.call_args_list))
         runner.gh.assert_not_called()
 
+    def test_skip_e2e_skips_only_the_desktop_suite_and_says_so(self):
+        runner = Mock()
+        runner.run.return_value = "v22.17.0"
+        with tempfile.TemporaryDirectory() as directory:
+            runner.root = Path(directory)
+            for path in [".venv/Scripts/python.exe", "resources/python-runtime/python.exe",
+                         "resources/runtime-integrity.json"]:
+                (runner.root / path).parent.mkdir(parents=True, exist_ok=True)
+                (runner.root / path).touch()
+            (runner.root / "package.json").write_text('{"version": "1.2.3"}', "utf-8")
+            release = runner.root / "release"
+            (release / "win-unpacked/resources").mkdir(parents=True)
+            (release / "CR_Tools_V2_Setup_1.2.3.exe").write_bytes(b"MZinstaller")
+            (release / "win-unpacked/resources/app-version.json").write_text(
+                '{"version": "1.2.3"}', "utf-8")
+            runner.environment = {}
+            with patch.object(publisher, "windows_archive_tool", return_value=Path("7z.exe")):
+                checks = publisher.build_local(runner, skip_e2e=True)
+        self.assertNotIn("test:e2e:windows", str(runner.npm.call_args_list))
+        self.assertIn("build:unpacked", str(runner.npm.call_args_list))
+        self.assertEqual(checks, [publisher.E2E_SKIPPED if name == publisher.E2E_CHECK else name
+                                  for name in publisher.CHECKS])
+
     def test_receipt_matches_saved_artifact_and_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
