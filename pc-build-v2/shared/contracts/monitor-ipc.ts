@@ -15,6 +15,7 @@ export const MONITOR_IPC_CHANNELS = Object.freeze({
   updatePreferences: 'monitor:update-preferences',
   retrySearch: 'monitor:retry-search',
   getHistory: 'monitor:get-history',
+  getModeOptions: 'monitor:get-mode-options',
 })
 
 export const EmptyMonitorPayloadSchema = z.object({}).strict()

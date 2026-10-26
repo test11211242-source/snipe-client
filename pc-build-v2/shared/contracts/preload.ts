@@ -33,6 +33,7 @@ import type {
 } from '../models/capture'
 import type { SetupFrame, SetupSessionView } from '../models/setup'
 import type { MonitorPreferences, MonitorResult, MonitorView } from '../models/monitor'
+import type { ModeOptions } from './game-events'
 import type {
   WidgetSettings,
   WidgetSettingsPatch,
@@ -104,6 +105,8 @@ export interface CrToolsApi {
   updateMonitorPreferences: (
     preferences: MonitorPreferences,
   ) => Promise<MonitorPreferences>
+  /** Live events for the mode picker and the mode the server holds (shared with the site). */
+  getModeOptions: () => Promise<ModeOptions>
   getWidgetStatus: () => Promise<WidgetStatus>
   showWidget: () => Promise<WidgetStatus>
   toggleWidget: () => Promise<WidgetStatus>

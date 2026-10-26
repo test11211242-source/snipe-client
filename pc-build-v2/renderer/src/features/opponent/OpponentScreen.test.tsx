@@ -264,10 +264,12 @@ describe('opponent card: found', () => {
       monitor: running({ results: [found(1, { deckMode: 'pol' })] }),
     })
     await screen.findByRole('heading', { name: 'Игрок1' })
-    fireEvent.click(screen.getByRole('button', { name: 'Турнир' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Путь легенд' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Турнир/ }))
     await waitFor(() =>
       expect(bridge.crTools.updateMonitorPreferences).toHaveBeenCalledWith({
         deckMode: 'gt',
+        event: null,
       }),
     )
     pushView(
@@ -278,6 +280,53 @@ describe('opponent card: found', () => {
     )
     expect(await screen.findByText('Колоды: Путь легенд')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Игрок1' })).toBeVisible()
+  })
+
+  it('picks a live game event as the search mode', async () => {
+    await renderMain({
+      monitor: running({ results: [found(1, { deckMode: 'pol' })] }),
+      modeEvents: [
+        {
+          tag: '#2PRCRPQL',
+          title: 'Grand Challenge',
+          description: null,
+          kind: 'challenge',
+          max_wins: 12,
+          max_losses: 3,
+          first_seen_at: iso(-3_600_000),
+          active: true,
+        },
+      ],
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Путь легенд' }))
+    const item = await screen.findByRole('menuitem', { name: /Grand Challenge/ })
+    expect(within(item).getByText('Новый')).toBeVisible()
+    expect(within(item).getByText('До 12 побед · 3 поражения')).toBeVisible()
+    fireEvent.click(item)
+    await waitFor(() =>
+      expect(bridge.crTools.updateMonitorPreferences).toHaveBeenCalledWith({
+        deckMode: 'challenge',
+        event: { tag: '#2PRCRPQL', title: 'Grand Challenge' },
+      }),
+    )
+    pushView(
+      running({
+        preferences: {
+          deckMode: 'challenge',
+          event: { tag: '#2PRCRPQL', title: 'Grand Challenge' },
+        },
+        results: [found(1, { deckMode: 'pol' })],
+      }),
+    )
+    expect(await screen.findByRole('button', { name: 'Grand Challenge' })).toBeVisible()
+  })
+
+  it('offers a retry when the event list fails to load', async () => {
+    await renderMain({ modeEvents: null })
+    fireEvent.click(await screen.findByRole('button', { name: 'Путь легенд' }))
+    expect(
+      await screen.findByRole('menuitem', { name: /Не удалось загрузить ивенты/ }),
+    ).toBeVisible()
   })
 
   it('opens the overlay from the card', async () => {

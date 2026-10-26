@@ -174,7 +174,7 @@ const expandSummary = (spec) => ({
 const mstate = fixture.monitorState ?? 'READY'
 const monitor = {
   state: mstate,
-  preferences: { deckMode: 'pol' },
+  preferences: fixture.preferences ?? { deckMode: 'pol' },
   readiness: {
     authenticated: true,
     captureConfigured: !fixture.noProfiles,
@@ -231,6 +231,50 @@ const data = {
   },
 }
 const ok = (v) => () => Promise.resolve(v)
+
+// Live game events for the mode picker, as /api/webapp/settings/events lists them.
+const MODE_EVENTS = [
+  {
+    tag: '#2PRCRPQL',
+    title: 'Grand Challenge',
+    description: null,
+    kind: 'challenge',
+    max_wins: 12,
+    max_losses: 3,
+    first_seen_at: '2026-10-01T10:00:00Z',
+    active: true,
+  },
+  {
+    tag: '#2PRCR20W',
+    title: '20 Win Challenge',
+    description: null,
+    kind: 'challenge',
+    max_wins: 20,
+    max_losses: 3,
+    first_seen_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+    active: true,
+  },
+  {
+    tag: '#2PRCR998',
+    title: 'Classic Challenge',
+    description: null,
+    kind: 'challenge',
+    max_wins: 12,
+    max_losses: 3,
+    first_seen_at: null,
+    active: true,
+  },
+  {
+    tag: '#2PRCRTRP',
+    title: 'Triple Elixir Battle',
+    description: null,
+    kind: 'special',
+    max_wins: null,
+    max_losses: null,
+    first_seen_at: '2026-10-20T10:00:00Z',
+    active: true,
+  },
+]
 const fail = () => Promise.reject(new Error('IPC_FAILED'))
 const failing = new Set(fixture.failing ?? [])
 const pick = (name, v) => (failing.has(name) ? fail : ok(v))
@@ -1372,6 +1416,11 @@ contextBridge.exposeInMainWorld('crTools', {
   logout: ok({ state: 'UNAUTHENTICATED', user: null, error: null }),
   getMonitorHistory: ok((fixture.history ?? []).map(expandResult)),
   updateMonitorPreferences: (preferences) => Promise.resolve(preferences),
+  getModeOptions: () =>
+    Promise.resolve({
+      events: fixture.modeEvents === undefined ? MODE_EVENTS : fixture.modeEvents,
+      preferences: monitor.preferences,
+    }),
   retryMonitorSearch: ok(monitor),
   getCardAsset: cardAsset,
   copyPlayerTag: ok({ copied: true }),

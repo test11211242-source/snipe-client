@@ -129,3 +129,98 @@ describe('monitor IPC result events', () => {
     expect(disposeResults).toHaveBeenCalledOnce()
   })
 })
+
+describe('monitor IPC search mode', () => {
+  const sender = { senderFrame: { url: 'file:///app/index.html' }, sender: {} }
+  const grand = { tag: '#2PRCRPQL', title: 'Grand Challenge' }
+  function register(deckModes: Record<string, unknown>, local = { deckMode: 'pol' }) {
+    const monitor = {
+      subscribeViews: vi.fn(() => () => undefined),
+      getPreferences: vi.fn().mockResolvedValue(local),
+      updatePreferences: vi.fn((next: unknown) => Promise.resolve(next)),
+    }
+    registerMonitorIpc({
+      windows: { assertSender: vi.fn() },
+      logger: { info: vi.fn() },
+      monitor,
+      deckModes,
+    } as never)
+    const handler = (channel: string) => {
+      const found = electron.handlers.get(channel)
+      if (found === undefined) throw new Error(`Missing ${channel} handler`)
+      return found
+    }
+    return { monitor, handler }
+  }
+
+  it('saves the mode on the server before keeping it locally', async () => {
+    const save = vi.fn().mockResolvedValue({ deckMode: 'challenge', event: grand })
+    const { monitor, handler } = register({ save })
+    await expect(
+      handler(MONITOR_IPC_CHANNELS.updatePreferences)(sender, {
+        deckMode: 'challenge',
+        event: grand,
+      }),
+    ).resolves.toEqual({ deckMode: 'challenge', event: grand })
+    expect(save).toHaveBeenCalledWith({ deckMode: 'challenge', event: grand })
+    expect(monitor.updatePreferences).toHaveBeenCalledWith({
+      deckMode: 'challenge',
+      event: grand,
+    })
+  })
+
+  it('keeps the local mode when the server refuses it', async () => {
+    const save = vi.fn().mockRejectedValue(new Error('gone'))
+    const { monitor, handler } = register({ save })
+    await expect(
+      handler(MONITOR_IPC_CHANNELS.updatePreferences)(sender, { deckMode: 'gt' }),
+    ).rejects.toThrow('gone')
+    expect(monitor.updatePreferences).not.toHaveBeenCalled()
+  })
+
+  it('takes the mode picked on the site and lists the live events', async () => {
+    const events = [
+      {
+        tag: grand.tag,
+        title: grand.title,
+        description: null,
+        kind: 'challenge',
+        max_wins: 12,
+        max_losses: 3,
+        first_seen_at: null,
+        active: true,
+      },
+    ]
+    const { monitor, handler } = register({
+      listEvents: vi.fn().mockResolvedValue(events),
+      read: vi.fn().mockResolvedValue({ deckMode: 'challenge', event: grand }),
+    })
+    await expect(
+      handler(MONITOR_IPC_CHANNELS.getModeOptions)(sender, {}),
+    ).resolves.toEqual({
+      events,
+      preferences: { deckMode: 'challenge', event: grand },
+    })
+    expect(monitor.updatePreferences).toHaveBeenCalledWith({
+      deckMode: 'challenge',
+      event: grand,
+    })
+  })
+
+  it('keeps the local mode when the server cannot be read', async () => {
+    const { monitor, handler } = register(
+      {
+        listEvents: vi.fn().mockResolvedValue(null),
+        read: vi.fn().mockResolvedValue(null),
+      },
+      { deckMode: 'gt' },
+    )
+    await expect(
+      handler(MONITOR_IPC_CHANNELS.getModeOptions)(sender, {}),
+    ).resolves.toEqual({
+      events: null,
+      preferences: { deckMode: 'gt' },
+    })
+    expect(monitor.updatePreferences).not.toHaveBeenCalled()
+  })
+})

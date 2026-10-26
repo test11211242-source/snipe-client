@@ -71,6 +71,7 @@ import {
   MonitorHistoryPayloadSchema,
   MonitorHistoryResultSchema,
 } from '../../shared/contracts/monitor-ipc'
+import { ModeOptionsSchema } from '../../shared/contracts/game-events'
 import {
   CardAssetRequestSchema,
   CardAssetResultSchema,
@@ -368,6 +369,13 @@ const api: CrToolsApi = Object.freeze<CrToolsApi>({
       await ipcRenderer.invoke(MONITOR_IPC_CHANNELS.updatePreferences, payload),
     )
   },
+  getModeOptions: async () =>
+    ModeOptionsSchema.parse(
+      await ipcRenderer.invoke(
+        MONITOR_IPC_CHANNELS.getModeOptions,
+        EmptyMonitorPayloadSchema.parse({}),
+      ),
+    ),
   getWidgetStatus: async () =>
     bootstrapResult(
       WidgetStatusResultSchema,

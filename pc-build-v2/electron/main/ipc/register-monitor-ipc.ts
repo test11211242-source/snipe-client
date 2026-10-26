@@ -10,7 +10,10 @@ import {
   MonitorHistoryPayloadSchema,
   MonitorHistoryResultSchema,
 } from '../../../shared/contracts/monitor-ipc'
+import { ModeOptionsSchema } from '../../../shared/contracts/game-events'
+import type { MonitorPreferences } from '../../../shared/models/monitor'
 import type { StructuredLogger } from '../infrastructure/structured-logger'
+import type { DeckModeService } from '../services/deck-mode-service'
 import type { MonitorSupervisor } from '../services/monitor-supervisor'
 import type { WidgetController } from '../services/widget-controller'
 import type { WindowCoordinator } from '../windows/window-coordinator'
@@ -21,6 +24,12 @@ interface MonitorIpcDependencies {
   logger: StructuredLogger
   monitor: MonitorSupervisor
   widget: WidgetController
+  /** The search mode shared with the site; without it the mode stays local. */
+  deckModes?: DeckModeService
+}
+
+function sameMode(a: MonitorPreferences, b: MonitorPreferences): boolean {
+  return a.deckMode === b.deckMode && (a.event?.tag ?? null) === (b.event?.tag ?? null)
 }
 
 function verify(event: IpcMainInvokeEvent, windows: WindowCoordinator): void {
@@ -58,9 +67,27 @@ export function registerMonitorIpc(dependencies: MonitorIpcDependencies): () => 
   ipcMain.handle(MONITOR_IPC_CHANNELS.updatePreferences, async (event, rawPayload) => {
     verify(event, dependencies.windows)
     const preferences = MonitorPreferencesPayloadSchema.parse(rawPayload)
+    // The server holds the mode for the site and this client; save there first.
+    const saved =
+      dependencies.deckModes === undefined
+        ? preferences
+        : await dependencies.deckModes.save(preferences)
     return MonitorPreferencesResultSchema.parse(
-      await dependencies.monitor.updatePreferences(preferences),
+      await dependencies.monitor.updatePreferences(saved),
     )
+  })
+  ipcMain.handle(MONITOR_IPC_CHANNELS.getModeOptions, async (event, rawPayload) => {
+    verify(event, dependencies.windows)
+    EmptyMonitorPayloadSchema.parse(rawPayload)
+    const deckModes = dependencies.deckModes
+    let preferences = await dependencies.monitor.getPreferences()
+    if (deckModes === undefined)
+      return ModeOptionsSchema.parse({ events: null, preferences })
+    const [events, server] = await Promise.all([deckModes.listEvents(), deckModes.read()])
+    // Picked on the site since: take the server's mode.
+    if (server !== null && !sameMode(server, preferences))
+      preferences = await dependencies.monitor.updatePreferences(server)
+    return ModeOptionsSchema.parse({ events, preferences })
   })
   ipcMain.handle(MONITOR_IPC_CHANNELS.retrySearch, async (event, rawPayload) => {
     verify(event, dependencies.windows)

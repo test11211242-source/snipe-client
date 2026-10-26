@@ -1,6 +1,7 @@
 import { vi, type Mock } from 'vitest'
 
 import type { AppSettingsView } from '../../../shared/contracts/app'
+import type { GameEvent } from '../../../shared/contracts/game-events'
 import type { AuthView } from '../../../shared/models/auth'
 import {
   CaptureProfileSummarySchema,
@@ -78,6 +79,8 @@ export interface BridgeOptions {
   failing?: readonly string[]
   /** Older history entries returned by getMonitorHistory. */
   history?: readonly MonitorResult[]
+  /** Live game events for the mode picker; null when the list fails to load. */
+  modeEvents?: GameEvent[] | null
 }
 
 export interface Bridge {
@@ -98,6 +101,7 @@ export interface Bridge {
     retryMonitorSearch: AsyncMock
     getMonitorHistory: AsyncMock
     updateMonitorPreferences: AsyncMock
+    getModeOptions: AsyncMock
     getCardAsset: AsyncMock
     copyPlayerTag: AsyncMock
     showWidget: AsyncMock
@@ -200,8 +204,14 @@ export function installBridge(options: BridgeOptions = {}): Bridge {
     ),
     retryMonitorSearch: vi.fn(() => Promise.resolve(monitor)),
     getMonitorHistory: vi.fn(() => Promise.resolve(options.history ?? [])),
-    updateMonitorPreferences: vi.fn((preferences: { deckMode: 'pol' | 'gt' }) =>
+    updateMonitorPreferences: vi.fn((preferences: MonitorView['preferences']) =>
       Promise.resolve(preferences),
+    ),
+    getModeOptions: vi.fn(() =>
+      Promise.resolve({
+        events: options.modeEvents === undefined ? [] : options.modeEvents,
+        preferences: monitor.preferences,
+      }),
     ),
     getCardAsset: vi.fn(() => Promise.resolve({ kind: 'unavailable' })),
     copyPlayerTag: vi.fn(() => Promise.resolve({ copied: true })),
