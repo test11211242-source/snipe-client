@@ -156,11 +156,16 @@ and promotion scripts from that checkout.
 The deployment script enforces directory mode `0755`, installer/manifest mode `0644`, and keeps
 its lock, high-water record, and prepared manifest non-public.
 
-The install-over-existing gate downloads the permanent pinned fixture from
-`https://updates.artcsworld.xyz/downloads/v2/CR_Tools_V2_Setup_0.1.18.exe`, then verifies the exact
-159201176-byte size and SHA-512 in `Test-InstallerUpgrade.ps1`. GitHub is not permanent release
-storage. Every workflow artifact has one-day retention and exists only to pass files between jobs
-and return the just-built installer to the publisher.
+A published release keeps the 3 newest installers, the one the manifest names, and the 0.1.18
+fixture if it is present; `promote-update.sh` removes the rest after the manifest commits.
+
+The install-over-existing gate in the hosted `pc-build-v2-release.yml` downloads a pinned fixture
+from `https://updates.artcsworld.xyz/downloads/v2/CR_Tools_V2_Setup_0.1.18.exe`, then verifies the
+exact 159201176-byte size and SHA-512 in `Test-InstallerUpgrade.ps1`. That fixture is no longer on
+the server (404, checked 01.11.2026), so this gate fails and that workflow cannot deploy until it
+is pinned to another installer. The one-command publisher below does not use it. GitHub is not
+permanent release storage. Every workflow artifact has one-day retention and exists only to pass
+files between jobs and return the just-built installer to the publisher.
 
 ## One-command Publisher
 

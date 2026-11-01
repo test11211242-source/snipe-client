@@ -126,6 +126,31 @@ if promote prepare '1.0.1' 'older' >/dev/null 2>&1; then
   exit 1
 fi
 
+publish() {
+  stage_release "$1" "$2"
+  [[ "$(promote prepare "$1" "$2" 2>/dev/null)" == 'PREPARED' ]]
+  [[ "$(promote commit "$1" "$2" 2>/dev/null)" == 'PROMOTED' ]]
+}
+
+installers() {
+  (cd "$TEST_ROOT" && ls CR_Tools_V2_Setup_*.exe | sort -V | tr '\n' ' ')
+}
+
+printf 'fixture' >"$TEST_ROOT/CR_Tools_V2_Setup_0.1.18.exe"
+printf 'not an installer' >"$TEST_ROOT/CR_Tools_V2_Setup_notes.exe"
+publish '1.2.0' 'third'
+[[ -e "$TEST_ROOT/CR_Tools_V2_Setup_1.0.0.exe" ]]
+publish '1.10.0' 'fourth'
+[[ ! -e "$TEST_ROOT/CR_Tools_V2_Setup_1.0.0.exe" ]]
+publish '1.11.0' 'fifth'
+[[ "$(installers)" == 'CR_Tools_V2_Setup_0.1.18.exe CR_Tools_V2_Setup_1.2.0.exe CR_Tools_V2_Setup_1.10.0.exe CR_Tools_V2_Setup_1.11.0.exe CR_Tools_V2_Setup_notes.exe ' ]]
+
+stage_release '1.12.0' 'sixth'
+[[ "$(promote prepare '1.12.0' 'sixth')" == 'PREPARED' ]]
+[[ "$(CR_TOOLS_PROMOTION_FAILPOINT=prune-installers promote commit '1.12.0' 'sixth' 2>/dev/null)" == 'PROMOTED' ]]
+[[ -e "$TEST_ROOT/CR_Tools_V2_Setup_1.2.0.exe" ]]
+[[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$TEST_ROOT/.high-water.v1.json")" == '1.12.0' ]]
+
 rm -f -- "$TEST_ROOT/manifest.json"
 stage_release '2.0.0' 'reset-attempt'
 if promote prepare '2.0.0' 'reset-attempt' --bootstrap >/dev/null 2>&1; then

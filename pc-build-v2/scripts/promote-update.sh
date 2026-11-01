@@ -48,7 +48,8 @@ done
 [[ "$STAGING_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] ||
   die 'Invalid staging ID.'
 [[ "$PHASE" == prepare || "$PHASE" == commit ]] || die 'Phase must be prepare or commit.'
-[[ -z "$FAILPOINT" || "$FAILPOINT" == after-manifest ]] || die 'Unknown promotion failpoint.'
+[[ -z "$FAILPOINT" || "$FAILPOINT" == after-manifest || "$FAILPOINT" == prune-installers ]] ||
+  die 'Unknown promotion failpoint.'
 [[ -d "$DIRECTORY" ]] || die 'Promotion directory does not exist.'
 command -v flock >/dev/null 2>&1 || die 'flock is required.'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required.'
@@ -63,6 +64,7 @@ high_water="$DIRECTORY/.high-water.v1.json"
 base_fixture="$DIRECTORY/CR_Tools_V2_Setup_0.1.18.exe"
 base_fixture_size='159201176'
 base_fixture_sha512='d2a2d50b7c2aada8d9ddd47e23520d2d49516b534d471c4c2237445eeb9495664daa1c4be68f3150e34c098632304de09d7ac2308cf3ea608ed43603d7d37bc4'
+installers_to_keep='3'
 
 cleanup() {
   rm -f -- "$staged_artifact" "$staged_manifest"
@@ -204,6 +206,30 @@ verify_artifact() {
     die 'Artifact hash verification failed.'
 }
 
+# Clients download only what the manifest names, so older installers are spare.
+# Removed names go to stderr: stdout carries the promotion result.
+prune_installers() {
+  [[ "$FAILPOINT" != prune-installers ]] || return 1
+  python3 - "$DIRECTORY" "$VERSION" "$(basename -- "$base_fixture")" "$installers_to_keep" <<'PY' >&2
+import os
+import re
+import sys
+
+directory, current, fixture, keep = sys.argv[1:]
+pattern = re.compile(r'CR_Tools_V2_Setup_((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))\.exe')
+installers = []
+for name in os.listdir(directory):
+    match = pattern.fullmatch(name)
+    if match:
+        installers.append((tuple(map(int, match.group(1).split('.'))), match.group(1), name))
+installers.sort(reverse=True)
+for _, version, name in installers[int(keep):]:
+    if version != current and name != fixture:
+        os.remove(os.path.join(directory, name))
+        print(f'Removed old installer {name}')
+PY
+}
+
 exec 9>"$DIRECTORY/.publish.lock"
 flock -x 9
 chmod 755 "$DIRECTORY"
@@ -321,4 +347,6 @@ if [[ "$FAILPOINT" == after-manifest ]]; then
 fi
 write_high_water "$VERSION" "${incoming_fields[4]}"
 rm -f -- "$prepared_manifest"
+# The new version is live: a failed cleanup must not fail its publication.
+prune_installers || printf 'WARNING: old installers were not pruned.\n' >&2
 printf 'PROMOTED\n'
